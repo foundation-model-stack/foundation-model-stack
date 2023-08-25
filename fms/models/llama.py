@@ -52,17 +52,17 @@ class LLaMABlock(nn.Module):
 
         self.ln = LayerNormParameterized(
             self.config.emb_dim,
-            elementwise_scale=self.config.elementwise_scale,
-            elementwise_shift=self.config.elementwise_shift,
-            use_mean=self.config.use_mean,
+            elementwise_scale=True,
+            elementwise_shift=False,
+            use_mean=False,
             eps=self.config.norm_eps,
             use_high_precision_pow=True,
         )
         self.ff_ln = LayerNormParameterized(
             self.config.emb_dim,
-            elementwise_scale=self.config.elementwise_scale,
-            elementwise_shift=self.config.elementwise_shift,
-            use_mean=self.config.use_mean,
+            elementwise_scale=True,
+            elementwise_shift=False,
+            use_mean=False,
             eps=self.config.norm_eps,
             use_high_precision_pow=True,
         )
@@ -79,7 +79,7 @@ class LLaMABlock(nn.Module):
             self.config.nheads,
             kvheads,
             p_dropout=self.config.p_dropout,
-            use_bias=self.config.use_bias,
+            use_bias=False,
             position_encoder=rotary_emb,
         )
         self.ff_sub_layer = GatedLinearUnit(
@@ -88,11 +88,11 @@ class LLaMABlock(nn.Module):
             multiple_of=self.config.multiple_of,
             activation_fn=fms.utils.str_to_activation(self.config.activation_fn),
             p_dropout=self.config.p_dropout,
-            use_bias=self.config.use_bias,
+            use_bias=False,
         )
 
         if self.config.p_dropout != 0:
-            self.dropout = nn.Dropout(self.config.p_droptout)
+            self.dropout = nn.Dropout(self.config.p_dropout)
 
     def forward(
         self,
@@ -243,7 +243,6 @@ class LLaMA(nn.Module):
         self.p_dropout = self.config.p_dropout
         self.width = self.config.emb_dim
         self.pad_id = self.config.pad_id
-        self.tie_head = self.config.tie_head
         self.max_expected_seq_len = self.config.max_expected_seq_len
 
         self.shared = WordEmbedding(
@@ -252,17 +251,17 @@ class LLaMA(nn.Module):
             padding_idx=self.config.pad_id,
             abs_pos=False,
             reversible=True,
-            tie_weights=self.config.tie_head,
-            bias=self.config.vocab_bias,
+            tie_weights=False,
+            bias=False,
         )
 
         self.stack = LLaMAStack(config)
 
         self.dec_norm = LayerNormParameterized(
             self.config.emb_dim,
-            elementwise_scale=self.config.elementwise_scale,
-            elementwise_shift=self.config.elementwise_shift,
-            use_mean=self.config.use_mean,
+            elementwise_scale=True,
+            elementwise_shift=False,
+            use_mean=False,
             eps=self.config.norm_eps,
             use_high_precision_pow=True,
         )
@@ -284,10 +283,9 @@ class LLaMA(nn.Module):
     def reset_params(self):
         # Modules are self-initializing, we're just going to down-scale the final prediction head to be
         # mixed-fan (inputs and gradients scale to the same inverse factors) if it isn't tied
-        if not self.tie_head:
-            self.shared.head.weight.data.normal_(
-                0, 1 / math.sqrt(math.sqrt(self.width * self.shared.vocab_size))
-            )
+        self.shared.head.weight.data.normal_(
+            0, 1 / math.sqrt(math.sqrt(self.width * self.shared.vocab_size))
+        )
 
     def forward(
         self,
