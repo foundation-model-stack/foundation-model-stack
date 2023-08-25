@@ -15,6 +15,7 @@ from fms.modules.embedding import WordEmbedding
 from fms.modules.feedforward import GatedLinearUnit
 from fms.modules.layernorm import LayerNormParameterized
 from fms.modules.positions import RotaryEmbedding
+from fms.utils.activation import str_to_activation
 from fms.utils.config import ModelConfig
 from fms.utils.tokenizers import get_tokenizer
 
@@ -277,15 +278,7 @@ class LLaMA(nn.Module):
     @classmethod
     def from_config(cls, config: LLaMAConfig) -> "LLaMA":
         config_dict = config.as_dict()
-        activation_fns_dict = {
-            "gelu": nn.GELU,
-            "relu": nn.ReLU,
-            "mish": nn.Mish,
-            "swish": nn.SiLU,
-        }
-        config_dict["activation_fn"] = activation_fns_dict[
-            config.activation_fn.lower()
-        ]()
+        config_dict["activation_fn"] = str_to_activation(config.activation_fn)
         return cls(**config_dict)
 
     def reset_params(self):
