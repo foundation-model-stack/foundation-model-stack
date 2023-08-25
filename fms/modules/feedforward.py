@@ -75,7 +75,7 @@ class GatedLinearUnit(nn.Module):
     ----
     emb_dim : int
         Dimensionality of input and output vectors.
-    hidden_grow_factor : int
+    hidden_grow_factor : float
         Sets dimensionality of inner latent space (emb_dim * hidden_grow_factor)
     multiple_of : Optional[int]
         Ensure inner latent space is a multiple of this parameter if defined (useful for
