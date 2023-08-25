@@ -4,6 +4,7 @@ import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Optional
 
 import torch
 import torch.nn as nn
@@ -11,7 +12,7 @@ import torch.nn as nn
 import fms.utils
 from fms.modules.attention import MultiHeadAttention
 from fms.modules.embedding import WordEmbedding
-from fms.modules.feedforward import FeedForwardBlock, GatedLinearUnit
+from fms.modules.feedforward import GatedLinearUnit
 from fms.modules.layernorm import LayerNormParameterized
 from fms.modules.positions import RotaryEmbedding
 from fms.utils.config import ModelConfig
@@ -29,9 +30,6 @@ from fms.utils.tokenizers import get_tokenizer
 class LLaMAConfig(ModelConfig):
     src_vocab_size: int = 32_000  # can be set by tokenizer
     emb_dim: int = 4096
-    elementwise_shift: bool = False
-    elementwise_scale: bool = True
-    use_mean: bool = False
     norm_eps: float = 1e-6
     nheads: int = 32
     kvheads: int = 0
@@ -41,9 +39,6 @@ class LLaMAConfig(ModelConfig):
     multiple_of: float = 256
     activation_fn: str = "swish"
     p_dropout: float = 0.0
-    use_bias: bool = False
-    tie_head: bool = False
-    vocab_bias: bool = False
     max_expected_seq_len: int = 2048
 
 
@@ -151,17 +146,94 @@ class LLaMABlock(nn.Module):
         else:
             return x
 
+class LLaMAStack(nn.Module):
+
+    def __init__(self, config: LLaMAConfig):
+        super().__init__()
+        self.config = config
+
+        self.rot_emb = RotaryEmbedding(
+            self.config.emb_dim // self.config.nheads,
+            self.config.max_expected_seq_len * 2,
+        )
+
+        self.stack = nn.ModuleList(
+            [LLaMABlock(self.config, self.rot_emb) for _ in range(self.config.nlayers)]
+        )
+
+    def forward(
+        self,
+        x_in,
+        mask=None,
+        past_key_value_states=None,
+        use_cache=False,
+        attn_algorithm=None
+    ):
+        # Embed the given vocabulary indices using the given attention mask, with pre-/post-norm and dropout as specified
+        # x_in: batch_size x seq_len
+        # mask: batch_size x seq_len x seq_len
+        # bias: nheads x seq_len x seq_len
+        if past_key_value_states is None:
+            past_key_value_states = [None for _ in range(len(self.stack))]
+
+        qlen = x_in.size(1)
+        klen = x_in.size(1)
+
+        # if we are using the cache, the key length needs to be extended with the past keys length
+        if use_cache and past_key_value_states[0] is not None:
+            klen += past_key_value_states[0][0].size(-2)
+
+        # if mask is none, we need to specify causal mask
+        if mask is None:
+            # we are caching and can assume all 1s in the mask
+            if use_cache and klen != 1 and qlen == 1:
+                # b x h x qlen x kvlen
+                is_causal_mask = False
+            else:
+                is_causal_mask = True
+        else:
+            is_causal_mask = False
+
+        x_in = self.shared(x_in)
+
+        # this is the output cache for all the decoder layers
+        present_key_value_states = []
+
+        for i, layer in enumerate(self.stack):
+            output = layer(
+                x=x_in,
+                mask=mask,
+                past_key_value_state=past_key_value_states[i],
+                use_cache=use_cache,
+                is_causal_mask=is_causal_mask,
+                attn_algorithm=attn_algorithm,
+            )
+
+            if use_cache:
+                x_in, present_key_value_state = output
+                present_key_value_states.append(present_key_value_state)
+
+            else:
+                x_in = output
+
+        dec_out = x_in
+        dec_out = self.dec_norm(dec_out)
+        if self.p_dropout:
+            dec_out = self.dropout(dec_out)
+
+        return dec_out, present_key_value_states
+
 
 class LLaMA(nn.Module):
     def __init__(
         self,
-        *args,
+        config: Optional[LLaMAConfig] = None,
         **kwargs,
     ):
         super(LLaMA, self).__init__()
-        if len(args) == 1 and isinstance(args[0], LLaMAConfig):
-            self.config = args[0]
-        elif len(args) == 0:
+        if config is not None:
+            self.config = config
+        elif len(kwargs) != 0:
             self.config = LLaMAConfig()
             self.config.update_config(**kwargs)
         else:
@@ -188,9 +260,7 @@ class LLaMA(nn.Module):
             self.config.max_expected_seq_len * 2,
         )
 
-        self.dec_process = nn.ModuleList(
-            [LLaMABlock(self.config, self.rot_emb) for _ in range(self.config.nlayers)]
-        )
+        self.stack = LLaMAStack(config)
 
         self.dec_norm = LayerNormParameterized(
             self.config.emb_dim,
@@ -231,68 +301,6 @@ class LLaMA(nn.Module):
                 0, 1 / math.sqrt(math.sqrt(self.width * self.shared.vocab_size))
             )
 
-    def _helper(
-        self,
-        x_in,
-        mask=None,
-        past_key_value_states=None,
-        use_cache=False,
-        attn_algorithm=None,
-    ):
-        # Embed the given vocabulary indices using the given attention mask, with pre-/post-norm and dropout as specified
-        # x_in: batch_size x seq_len
-        # mask: batch_size x seq_len x seq_len
-        # bias: nheads x seq_len x seq_len
-        if past_key_value_states is None:
-            past_key_value_states = [None for _ in range(len(self.dec_process))]
-
-        qlen = x_in.size(1)
-        klen = x_in.size(1)
-
-        # if we are using the cache, the key length needs to be extended with the past keys length
-        if use_cache and past_key_value_states[0] is not None:
-            klen += past_key_value_states[0][0].size(-2)
-
-        # if mask is none, we need to specify causal mask
-        if mask is None:
-            # we are caching and can assume all 1s in the mask
-            if use_cache and klen != 1 and qlen == 1:
-                # b x h x qlen x kvlen
-                is_causal_mask = False
-            else:
-                is_causal_mask = True
-        else:
-            is_causal_mask = False
-
-        x_in = self.shared(x_in)
-
-        # this is the output cache for all the decoder layers
-        present_key_value_states = []
-
-        for i, layer in enumerate(self.dec_process):
-            output = layer(
-                x=x_in,
-                mask=mask,
-                past_key_value_state=past_key_value_states[i],
-                use_cache=use_cache,
-                is_causal_mask=is_causal_mask,
-                attn_algorithm=attn_algorithm,
-            )
-
-            if use_cache:
-                x_in, present_key_value_state = output
-                present_key_value_states.append(present_key_value_state)
-
-            else:
-                x_in = output
-
-        dec_out = x_in
-        dec_out = self.dec_norm(dec_out)
-        if self.p_dropout:
-            dec_out = self.dropout(dec_out)
-
-        return dec_out, present_key_value_states
-
     def forward(
         self,
         x,
@@ -302,7 +310,7 @@ class LLaMA(nn.Module):
         only_last_token=False,
         attn_algorithm=None,
     ):
-        output, cache = self._helper(x, mask, past_key_value_states, use_cache, attn_algorithm)
+        output, cache = self.stack(x, mask, past_key_value_states, use_cache, attn_algorithm)
 
         if only_last_token:
             output = output[:, -1, :]
