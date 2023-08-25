@@ -255,11 +255,6 @@ class LLaMA(nn.Module):
             bias=self.config.vocab_bias,
         )
 
-        self.rot_emb = RotaryEmbedding(
-            self.config.emb_dim // self.config.nheads,
-            self.config.max_expected_seq_len * 2,
-        )
-
         self.stack = LLaMAStack(config)
 
         self.dec_norm = LayerNormParameterized(
