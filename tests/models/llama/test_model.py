@@ -1,7 +1,7 @@
 import pytest
 
 from fms.models.hf.llama.configuration_llama_hf import LLaMAHFConfig
-from fms.models.hf.llama.modeling_llama_hf import LLaMAHFLMHeadModel
+from fms.models.hf.llama.modeling_llama_hf import LLaMAHFForCausalLM
 from fms.models.llama import LLaMA, LLaMAConfig
 from ..base import _case_paths, _test_ids
 from ..test_hf_model import AbstractHFModelTest
@@ -17,7 +17,7 @@ class TestLlama(AbstractHFModelTest):
 
     _model_class = LLaMA
     _config_class = LLaMAConfig
-    _hf_model_class = LLaMAHFLMHeadModel
+    _hf_model_class = LLaMAHFForCausalLM
     _hf_config_class = LLaMAHFConfig
     _hf_specific_params = ["eos_token_id", "bos_token_id"]
     _hf_forward_parameters = ["input_ids", "labels"]
@@ -65,7 +65,7 @@ class TestLlama(AbstractHFModelTest):
             k = k.view(model.config.nheads, 2, -1, k.size(1)).transpose(1, 2).reshape(*k.size())
             layer.attn.key.weight.data = k
 
-        hf_model_fms = LLaMAHFLMHeadModel.from_fms_model(
+        hf_model_fms = LLaMAHFForCausalLM.from_fms_model(
             model,
             bos_token_id=hf_model.config.bos_token_id,
             eos_token_id=hf_model.config.eos_token_id,

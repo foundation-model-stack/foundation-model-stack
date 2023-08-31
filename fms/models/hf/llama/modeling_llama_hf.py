@@ -115,7 +115,7 @@ class LLaMAHF(HFDecoderModelArchitecture):
         }
 
 
-class LLaMAHFLMHeadModel(LLaMAHF):
+class LLaMAHFForCausalLM(LLaMAHF):
     _keys_to_ignore_on_load_missing = [r"lm_head.weight"]
     _tied_weights_keys = ["embedding.weight", "lm_head.weight"]
 
@@ -123,7 +123,7 @@ class LLaMAHFLMHeadModel(LLaMAHF):
         super().__init__(config=config, _include_lm_head="lm_head" not in kwargs, *args, **kwargs)
 
     @classmethod
-    def _hf_model_from_fms(cls, model: LLaMA, config: PretrainedConfig) -> "LLaMAHFLMHeadModel":
+    def _hf_model_from_fms(cls, model: LLaMA, config: PretrainedConfig) -> "LLaMAHFForCausalLM":
         return cls(
             config=config,
             decoder=model.stack,

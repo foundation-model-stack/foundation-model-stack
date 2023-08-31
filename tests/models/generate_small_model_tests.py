@@ -83,8 +83,8 @@ llama_7b_params = {
     "multiple_of": 2,
     "nheads": 2,
     "nlayers": 2,
-    "norm_eps": 1e-06,
-    "pad_id": -1,
+    "norm_eps": 1e-05,
+    "pad_id": 0,
 }
 
 if "llama" in models or len(models) == 0:

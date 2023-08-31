@@ -15,7 +15,7 @@ class LLaMAHFConfig(PretrainedConfig):
         nheads: int = 32,
         kvheads: int = 0,
         nlayers: int = 32,
-        pad_token_id: int = -1,
+        pad_token_id: int = 0,
         hidden_grow_factor: float = 8 / 3,
         multiple_of: float = 256.0,
         activation_fn: str = "swish",

@@ -1,1 +1,1 @@
-{"src_vocab_size": 384, "emb_dim": 16, "norm_eps": 1e-06, "nheads": 2, "kvheads": 0, "nlayers": 2, "pad_id": -1, "hidden_grow_factor": 2.6666666666666665, "multiple_of": 2, "activation_fn": "swish", "p_dropout": 0.0, "max_expected_seq_len": 2048}
+{"src_vocab_size": 384, "emb_dim": 16, "norm_eps": 1e-05, "nheads": 2, "kvheads": 0, "nlayers": 2, "pad_id": 0, "hidden_grow_factor": 2.6666666666666665, "multiple_of": 2, "activation_fn": "swish", "p_dropout": 0.0, "max_expected_seq_len": 2048}
