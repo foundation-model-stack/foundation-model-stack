@@ -343,8 +343,8 @@ def load_fms_llama(model_path: str, tokenizer_path: str):
 
     # Load Llama model from Meta's weights
     checkpoints = sorted(Path(model_path).glob("*.pth"))
-    world_size = os.getenv("WORLD_SIZE", 1)
-    local_rank = os.getenv("LOCAL_RANK", 0)
+    world_size = int(os.getenv("WORLD_SIZE", 1))
+    local_rank = int(os.getenv("LOCAL_RANK", 0))
 
     assert world_size == len(
         checkpoints
