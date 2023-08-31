@@ -25,6 +25,6 @@ llama: LLaMA = LLaMA(config)
 llama_hf = LLaMAHFForCausalLM.from_fms_model(llama)
 
 # generate some text
-generator = pipeline(task="text-generation", model=llama_hf, tokenizer=tokenizer)
-generator("""q: how are you? a: I am good. How about you? q: What is the weather like today? a:""")
+llama_generator = pipeline(task="text-generation", model=llama_hf, tokenizer=tokenizer)
+llama_generator("""q: how are you? a: I am good. How about you? q: What is the weather like today? a:""")
 ```
