@@ -30,7 +30,7 @@ parser.add_argument(
 
 args = parser.parse_args()
 
-local_rank = os.getenv("LOCAL_RANK", 0)
+local_rank = int(os.getenv("LOCAL_RANK", 0))
 device = torch.device(args.device_type, local_rank)
 
 torch.set_default_device(device)
