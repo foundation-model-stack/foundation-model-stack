@@ -149,10 +149,11 @@ class LLaMABlock(nn.Module):
 
 class LLaMAStack(nn.Module):
 
-    def __init__(self, config: LLaMAConfig):
+    def __init__(self, config: LLaMAConfig, embedding: nn.Module):
         super().__init__()
         self.config = config
 
+        self.embedding = (embedding, )
         self.rot_emb = RotaryEmbedding(
             self.config.emb_dim // self.config.nheads,
             self.config.max_expected_seq_len * 2,
@@ -161,6 +162,18 @@ class LLaMAStack(nn.Module):
         self.stack = nn.ModuleList(
             [LLaMABlock(self.config, self.rot_emb) for _ in range(self.config.nlayers)]
         )
+
+        self.dec_norm = LayerNormParameterized(
+            self.config.emb_dim,
+            elementwise_scale=True,
+            elementwise_shift=False,
+            use_mean=False,
+            eps=self.config.norm_eps,
+            use_high_precision_pow=True,
+        )
+
+        if config.p_dropout:
+            self.dropout = nn.Dropout(config.p_dropout)
 
     def forward(
         self,
@@ -195,7 +208,7 @@ class LLaMAStack(nn.Module):
         else:
             is_causal_mask = False
 
-        x_in = self.shared(x_in)
+        x_in = self.embedding[0](x_in)
 
         # this is the output cache for all the decoder layers
         present_key_value_states = []
@@ -219,7 +232,7 @@ class LLaMAStack(nn.Module):
 
         dec_out = x_in
         dec_out = self.dec_norm(dec_out)
-        if self.p_dropout:
+        if self.config.p_dropout:
             dec_out = self.dropout(dec_out)
 
         return dec_out, present_key_value_states
@@ -255,19 +268,7 @@ class LLaMA(nn.Module):
             bias=False,
         )
 
-        self.stack = LLaMAStack(config)
-
-        self.dec_norm = LayerNormParameterized(
-            self.config.emb_dim,
-            elementwise_scale=True,
-            elementwise_shift=False,
-            use_mean=False,
-            eps=self.config.norm_eps,
-            use_high_precision_pow=True,
-        )
-
-        if self.p_dropout:
-            self.dropout = nn.Dropout(self.config.p_dropout)
+        self.stack = LLaMAStack(self.config, self.shared.emb)
 
         self.reset_params()
 
@@ -276,9 +277,7 @@ class LLaMA(nn.Module):
 
     @classmethod
     def from_config(cls, config: LLaMAConfig) -> "LLaMA":
-        config_dict = config.as_dict()
-        config_dict["activation_fn"] = str_to_activation(config.activation_fn)
-        return cls(**config_dict)
+        return cls(config)
 
     def reset_params(self):
         # Modules are self-initializing, we're just going to down-scale the final prediction head to be
