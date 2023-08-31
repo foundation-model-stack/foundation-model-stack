@@ -59,8 +59,7 @@ class LLaMAHF(HFDecoderModelArchitecture):
         # in the case we have not yet received the encoder/decoder/embedding, initialize it here
         if decoder is None or embedding is None:
             params = config.to_dict()
-            params["pad_id"] = params.pop("pad_token_id")
-            model = LLaMA(**params)
+            model = LLaMA(pad_id=params.pop("pad_token_id"), **params)
             decoder = model.stack if decoder is None else decoder
             embedding = model.shared.emb if embedding is None else embedding
             include_lm_head = kwargs.get("_include_lm_head", False)

@@ -159,7 +159,7 @@ class LLaMAStack(nn.Module):
             self.config.max_expected_seq_len * 2,
         )
 
-        self.stack = nn.ModuleList(
+        self.layers = nn.ModuleList(
             [LLaMABlock(self.config, self.rot_emb) for _ in range(self.config.nlayers)]
         )
 
@@ -188,7 +188,7 @@ class LLaMAStack(nn.Module):
         # mask: batch_size x seq_len x seq_len
         # bias: nheads x seq_len x seq_len
         if past_key_value_states is None:
-            past_key_value_states = [None for _ in range(len(self.stack))]
+            past_key_value_states = [None for _ in range(len(self.layers))]
 
         qlen = x_in.size(1)
         klen = x_in.size(1)
@@ -213,7 +213,7 @@ class LLaMAStack(nn.Module):
         # this is the output cache for all the decoder layers
         present_key_value_states = []
 
-        for i, layer in enumerate(self.stack):
+        for i, layer in enumerate(self.layers):
             output = layer(
                 x=x_in,
                 mask=mask,
@@ -249,9 +249,9 @@ class LLaMA(nn.Module):
             self.config = config
         elif len(kwargs) != 0:
             self.config = LLaMAConfig()
-            self.config.update_config(**kwargs)
         else:
             raise RuntimeError("need to specify either a config or kwargs")
+        self.config.update_config(**kwargs)
 
         self.p_dropout = self.config.p_dropout
         self.width = self.config.emb_dim
@@ -309,9 +309,9 @@ class LLaMA(nn.Module):
 def _rename_weights_to_fms(orig_sd):
     replacements = [
         (r"^tok_embeddings", "shared.emb"),
-        (r"^norm", "dec_norm"),
+        (r"^norm", "stack.dec_norm"),
         (r"^output", "shared.head"),
-        (r"^layers", "dec_process"),
+        (r"^layers", "stack.layers"),
         (r"\.attention\.", ".attn."),
         (r"attn\.wq", "attn.query"),
         (r"attn\.wk", "attn.key"),
