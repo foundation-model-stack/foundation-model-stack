@@ -35,7 +35,7 @@ class LLaMAConfig(ModelConfig):
     nheads: int = 32
     kvheads: int = 0
     nlayers: int = 32
-    pad_id: int = -1
+    pad_id: int = 0
     hidden_grow_factor: float = 8 / 3
     multiple_of: float = 256
     activation_fn: str = "swish"
@@ -149,18 +149,31 @@ class LLaMABlock(nn.Module):
 
 class LLaMAStack(nn.Module):
 
-    def __init__(self, config: LLaMAConfig):
+    def __init__(self, config: LLaMAConfig, embedding: nn.Module):
         super().__init__()
         self.config = config
 
+        self.embedding = (embedding, )
         self.rot_emb = RotaryEmbedding(
             self.config.emb_dim // self.config.nheads,
             self.config.max_expected_seq_len * 2,
         )
 
-        self.stack = nn.ModuleList(
+        self.layers = nn.ModuleList(
             [LLaMABlock(self.config, self.rot_emb) for _ in range(self.config.nlayers)]
         )
+
+        self.dec_norm = LayerNormParameterized(
+            self.config.emb_dim,
+            elementwise_scale=True,
+            elementwise_shift=False,
+            use_mean=False,
+            eps=self.config.norm_eps,
+            use_high_precision_pow=True,
+        )
+
+        if config.p_dropout:
+            self.dropout = nn.Dropout(config.p_dropout)
 
     def forward(
         self,
@@ -175,7 +188,7 @@ class LLaMAStack(nn.Module):
         # mask: batch_size x seq_len x seq_len
         # bias: nheads x seq_len x seq_len
         if past_key_value_states is None:
-            past_key_value_states = [None for _ in range(len(self.stack))]
+            past_key_value_states = [None for _ in range(len(self.layers))]
 
         qlen = x_in.size(1)
         klen = x_in.size(1)
@@ -195,12 +208,12 @@ class LLaMAStack(nn.Module):
         else:
             is_causal_mask = False
 
-        x_in = self.shared(x_in)
+        x_in = self.embedding[0](x_in)
 
         # this is the output cache for all the decoder layers
         present_key_value_states = []
 
-        for i, layer in enumerate(self.stack):
+        for i, layer in enumerate(self.layers):
             output = layer(
                 x=x_in,
                 mask=mask,
@@ -219,7 +232,7 @@ class LLaMAStack(nn.Module):
 
         dec_out = x_in
         dec_out = self.dec_norm(dec_out)
-        if self.p_dropout:
+        if self.config.p_dropout:
             dec_out = self.dropout(dec_out)
 
         return dec_out, present_key_value_states
@@ -236,9 +249,9 @@ class LLaMA(nn.Module):
             self.config = config
         elif len(kwargs) != 0:
             self.config = LLaMAConfig()
-            self.config.update_config(**kwargs)
         else:
             raise RuntimeError("need to specify either a config or kwargs")
+        self.config.update_config(**kwargs)
 
         self.p_dropout = self.config.p_dropout
         self.width = self.config.emb_dim
@@ -255,19 +268,7 @@ class LLaMA(nn.Module):
             bias=False,
         )
 
-        self.stack = LLaMAStack(config)
-
-        self.dec_norm = LayerNormParameterized(
-            self.config.emb_dim,
-            elementwise_scale=True,
-            elementwise_shift=False,
-            use_mean=False,
-            eps=self.config.norm_eps,
-            use_high_precision_pow=True,
-        )
-
-        if self.p_dropout:
-            self.dropout = nn.Dropout(self.config.p_dropout)
+        self.stack = LLaMAStack(self.config, self.shared.emb)
 
         self.reset_params()
 
@@ -276,9 +277,7 @@ class LLaMA(nn.Module):
 
     @classmethod
     def from_config(cls, config: LLaMAConfig) -> "LLaMA":
-        config_dict = config.as_dict()
-        config_dict["activation_fn"] = str_to_activation(config.activation_fn)
-        return cls(**config_dict)
+        return cls(config)
 
     def reset_params(self):
         # Modules are self-initializing, we're just going to down-scale the final prediction head to be
@@ -310,9 +309,9 @@ class LLaMA(nn.Module):
 def _rename_weights_to_fms(orig_sd):
     replacements = [
         (r"^tok_embeddings", "shared.emb"),
-        (r"^norm", "dec_norm"),
+        (r"^norm", "stack.dec_norm"),
         (r"^output", "shared.head"),
-        (r"^layers", "dec_process"),
+        (r"^layers", "stack.layers"),
         (r"\.attention\.", ".attn."),
         (r"attn\.wq", "attn.query"),
         (r"attn\.wk", "attn.key"),
