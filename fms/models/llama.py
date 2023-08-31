@@ -7,6 +7,7 @@ from pathlib import Path
 
 import torch
 import torch.nn as nn
+from fms.distributed.strategy import DistributedStrategy
 
 import fms.utils
 from fms.modules.attention import MultiHeadAttention
@@ -45,6 +46,7 @@ class LLaMAConfig(ModelConfig):
     tie_head: bool = False
     vocab_bias: bool = False
     max_expected_seq_len: int = 2048
+    distributed_strategy: DistributedStrategy = fms.distributed.NoOpStrategy
 
 
 class LLaMABlock(nn.Module):
@@ -182,15 +184,19 @@ class LLaMA(nn.Module):
             tie_weights=self.config.tie_head,
             bias=self.config.vocab_bias,
         )
+        self.shared = self.config.distributed_strategy.distribute_layer(self.shared)
 
         self.rot_emb = RotaryEmbedding(
             self.config.emb_dim // self.config.nheads,
             self.config.max_expected_seq_len * 2,
         )
 
-        self.dec_process = nn.ModuleList(
-            [LLaMABlock(self.config, self.rot_emb) for _ in range(self.config.nlayers)]
-        )
+        self.dec_process = []
+        for i in range(self.config.nlayers):
+            block = LLaMABlock(self.config, self.rot_emb)
+            block = self.config.distributed_strategy.distribute_layer(block, i)
+            self.dec_process.append(block)
+        self.dec_process = nn.ModuleList(self.dec_process)
 
         self.dec_norm = LayerNormParameterized(
             self.config.emb_dim,
@@ -339,7 +345,16 @@ def _rename_weights_to_fms(orig_sd):
 
     return new_sd
 
-def load_fms_llama(model_path: str, tokenizer_path: str):
+def load_fms_llama(model_path: str, tokenizer_path: str, group = None):
+
+    if torch.distributed.is_initialized() and group is None:
+        group = torch.distributed.GroupMember.WORLD
+    if group is None:
+        world_size = 1
+        rank = 0
+    else:
+        world_size = group.size()
+        rank = group.rank()
     # from llama.tokenizer import Tokenizer
     model_path = os.path.expanduser(model_path)
     tokenizer_path = os.path.expanduser(tokenizer_path)
@@ -349,14 +364,12 @@ def load_fms_llama(model_path: str, tokenizer_path: str):
 
     # Load Llama model from Meta's weights
     checkpoints = sorted(Path(model_path).glob("*.pth"))
-    world_size = os.getenv("WORLD_SIZE", 1)
-    local_rank = os.getenv("LOCAL_RANK", 0)
 
     assert world_size == len(
         checkpoints
     ), f"Loading a checkpoint for MP={len(checkpoints)} but world size is {world_size}"
 
-    ckpt_path = checkpoints[local_rank]
+    ckpt_path = checkpoints[rank]
     checkpoint_sd = torch.load(ckpt_path, map_location="cpu")
     with open(Path(model_path) / "params.json", "r") as f:
         params = json.loads(f.read())

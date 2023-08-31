@@ -1,5 +1,9 @@
+import torch
+import torch.distributed
 import torch.nn as nn
 
+from fms.distributed.tensorparallel import apply_colwise_tp, apply_rowwise_tp, copy_to_tensor_model_parallel_region, reduce_from_tensor_model_parallel_region
+from torch.distributed.distributed_c10d import ProcessGroup
 
 class FeedForwardBlock(nn.Module):
     """
@@ -64,6 +68,68 @@ class FeedForwardBlock(nn.Module):
         if self.p_dropout:
             out = self.d(out)
         return self.w2(out)
+
+class TPFeedForwardBlock(FeedForwardBlock):
+    """
+    A two-layer, symmetric, fully-connected MLP structure with Tensor Parallel support.
+
+    Args
+    ----
+    Check FeedForwardBlock for up-to-date docs
+
+    world_size: int
+        the number of processes running this model in TP
+    rank: int
+        the index of this process wrt to the rest running the model in TP
+    """
+
+    def __init__(
+        self,
+        emb_dim,
+        hidden_grow_factor=4,
+        multiple_of=None,
+        activation_fn=nn.ReLU(),
+        p_dropout=0.1,
+        use_bias=True,
+        gain=1,
+        group:ProcessGroup=None,
+    ):
+        assert torch.distributed.is_initialized()
+        hidden_dim = int(hidden_grow_factor * emb_dim)
+        if multiple_of:
+            hidden_dim = multiple_of * ((hidden_dim + multiple_of - 1) // multiple_of)
+        world_size = group.size()
+        rank = group.rank()
+        assert hidden_dim % world_size == 0, "Hidden dim must be divisible by world size"
+        super(TPFeedForwardBlock, self).__init__(
+            emb_dim, hidden_grow_factor / world_size, multiple_of, activation_fn, p_dropout, use_bias, gain
+        )
+        self.rank = rank
+        self.world_size = world_size
+
+    @staticmethod
+    def import_module(ffb: FeedForwardBlock, group: ProcessGroup) -> "TPFeedForwardBlock":
+        tp_ffb = TPFeedForwardBlock(
+            emb_dim=ffb.w1.in_features,
+            hidden_grow_factor=ffb.hidden_dim / ffb.w1.in_features,
+            multiple_of=None,
+            activation_fn=ffb.a,
+            p_dropout=ffb.p_dropout,
+            use_bias=ffb.use_bias,
+            group=group,
+        )
+        return tp_ffb
+
+    def import_weights(self, ffb: FeedForwardBlock):
+        apply_colwise_tp(self.w1, ffb.w1, self.world_size, self.rank)
+        apply_rowwise_tp(self.w2, ffb.w2, self.world_size, self.rank)
+
+    def forward(self, x):
+        x_par = copy_to_tensor_model_parallel_region(x)
+        out_par = FeedForwardBlock.forward(self, x_par)
+        return reduce_from_tensor_model_parallel_region(out_par)
+
+
 
 
 class GatedLinearUnit(nn.Module):
@@ -133,3 +199,71 @@ class GatedLinearUnit(nn.Module):
         if self.p_dropout:
             out = self.d(out)
         return self.w2(out)
+
+
+class TPGatedLinearUnit(GatedLinearUnit):
+    """
+    A two-point-five-layer, fully-connected gated linear MLP structure (GLU).
+    Contains 50% extra params compared to FeedForwardBlock, adjust accordingly.
+    This subclass adds Tensor Parallel support.
+
+    Args
+    ----
+    Check GatedLinearUnit for up-to-date docs
+
+    world_size: int
+        the number of processes running this model in TP
+    rank: int
+        the index of this process wrt to the rest running the model in TP
+    """
+
+    def __init__(
+        self,
+        emb_dim,
+        hidden_grow_factor=4,
+        multiple_of=None,
+        activation_fn=nn.ReLU(),
+        p_dropout=0.1,
+        use_bias=True,
+        gain=1,
+        group:ProcessGroup = None
+    ):
+        assert torch.distributed.is_initialized()
+        world_size = group.size()
+        rank = group.rank()
+
+        hidden_dim = int(hidden_grow_factor * emb_dim)
+        if multiple_of:
+            hidden_dim = multiple_of * ((hidden_dim + multiple_of - 1) // multiple_of)
+        assert hidden_dim % world_size == 0, "Hidden dim must be divisible by world size"
+        super(TPGatedLinearUnit, self).__init__(
+            emb_dim, hidden_grow_factor / world_size, multiple_of, activation_fn, p_dropout, use_bias, gain
+        )
+        self.rank = rank
+        self.world_size = world_size
+
+    @staticmethod
+    def import_module(glu: GatedLinearUnit, world_size, rank) -> "TPGatedLinearUnit":
+        tp_glu = TPGatedLinearUnit(
+            emb_dim=glu.width,
+            hidden_grow_factor=glu.hidden_dim / glu.width,
+            multiple_of=None,
+            activation_fn=glu.a,
+            p_dropout=glu.p_dropout,
+            use_bias=glu.use_bias,
+            world_size=world_size,
+            rank=rank,
+        )
+
+        return tp_glu
+
+    def import_weights(self, glu: GatedLinearUnit):
+        apply_colwise_tp(self.w1, glu.w1, self.world_size, self.rank)
+        apply_colwise_tp(self.wg, glu.wg, self.world_size, self.rank)
+        apply_rowwise_tp(self.w2, glu.w2, self.world_size, self.rank)
+
+    def forward(self, x):
+        x_par = copy_to_tensor_model_parallel_region(x)
+        out_par = GatedLinearUnit.forward(self, x_par)
+        return reduce_from_tensor_model_parallel_region(out_par)
+
