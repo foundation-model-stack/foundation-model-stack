@@ -35,7 +35,7 @@ class LLaMAConfig(ModelConfig):
     nheads: int = 32
     kvheads: int = 0
     nlayers: int = 32
-    pad_id: int = 0
+    pad_id: int = -1
     hidden_grow_factor: float = 8 / 3
     multiple_of: float = 256
     activation_fn: str = "swish"
