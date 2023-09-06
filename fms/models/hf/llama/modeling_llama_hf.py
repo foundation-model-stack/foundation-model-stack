@@ -26,7 +26,7 @@ class LLaMAHFDecoder(HFDecoder):
         *args,
         **kwargs,
     ) -> BaseModelOutputWithPastAndCrossAttentions:
-        output = self.model(
+        output = self.model._helper(
             input_ids,
             attention_mask,
             past_key_value_states=past_key_values,
@@ -61,7 +61,7 @@ class LLaMAHF(HFDecoderModelArchitecture):
         if decoder is None or embedding is None:
             params = config.to_dict()
             model = LLaMA(pad_id=params.pop("pad_token_id"), **params)
-            decoder = model.stack if decoder is None else decoder
+            decoder = model if decoder is None else decoder
             embedding = model.shared.emb if embedding is None else embedding
 
         # these are now huggingface compatible
@@ -124,7 +124,7 @@ class LLaMAHFForCausalLM(LMHeadModelLMHeadMixin, LLaMAHF):
     def _hf_model_from_fms(cls, model: LLaMA, config: LLaMAHFConfig) -> "LLaMAHFForCausalLM":
         return cls(
             config=config,
-            decoder=model.stack,
+            decoder=model,
             embedding=model.shared.emb,
             lm_head=model.shared.head,
         )

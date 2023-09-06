@@ -36,7 +36,7 @@ class LLaMAConfig(ModelConfig):
     nheads: int = 32
     kvheads: int = 0
     nlayers: int = 32
-    pad_id: int = 0
+    pad_id: int = -1
     hidden_grow_factor: float = 8 / 3
     multiple_of: float = 256
     activation_fn: str = "swish"
@@ -148,96 +148,6 @@ class LLaMABlock(nn.Module):
         else:
             return x
 
-class LLaMAStack(nn.Module):
-
-    def __init__(self, config: LLaMAConfig, embedding: nn.Module):
-        super().__init__()
-        self.config = config
-
-        self.embedding = (embedding, )
-        self.rot_emb = RotaryEmbedding(
-            self.config.emb_dim // self.config.nheads,
-            self.config.max_expected_seq_len * 2,
-        )
-
-        self.layers = nn.ModuleList(
-            [LLaMABlock(self.config, self.rot_emb) for _ in range(self.config.nlayers)]
-        )
-
-        self.dec_norm = LayerNormParameterized(
-            self.config.emb_dim,
-            elementwise_scale=True,
-            elementwise_shift=False,
-            use_mean=False,
-            eps=self.config.norm_eps,
-            use_high_precision_pow=True,
-        )
-
-        if config.p_dropout:
-            self.dropout = nn.Dropout(config.p_dropout)
-
-    def forward(
-        self,
-        x_in,
-        mask=None,
-        past_key_value_states=None,
-        use_cache=False,
-        attn_algorithm=None
-    ):
-        # Embed the given vocabulary indices using the given attention mask, with pre-/post-norm and dropout as specified
-        # x_in: batch_size x seq_len
-        # mask: batch_size x seq_len x seq_len
-        # bias: nheads x seq_len x seq_len
-        if past_key_value_states is None:
-            past_key_value_states = [None for _ in range(len(self.layers))]
-
-        qlen = x_in.size(1)
-        klen = x_in.size(1)
-
-        # if we are using the cache, the key length needs to be extended with the past keys length
-        if use_cache and past_key_value_states[0] is not None:
-            klen += past_key_value_states[0][0].size(-2)
-
-        # if mask is none, we need to specify causal mask
-        if mask is None:
-            # we are caching and can assume all 1s in the mask
-            if use_cache and klen != 1 and qlen == 1:
-                # b x h x qlen x kvlen
-                is_causal_mask = False
-            else:
-                is_causal_mask = True
-        else:
-            is_causal_mask = False
-
-        x_in = self.embedding[0](x_in)
-
-        # this is the output cache for all the decoder layers
-        present_key_value_states = []
-
-        for i, layer in enumerate(self.layers):
-            output = layer(
-                x=x_in,
-                mask=mask,
-                past_key_value_state=past_key_value_states[i],
-                use_cache=use_cache,
-                is_causal_mask=is_causal_mask,
-                attn_algorithm=attn_algorithm,
-            )
-
-            if use_cache:
-                x_in, present_key_value_state = output
-                present_key_value_states.append(present_key_value_state)
-
-            else:
-                x_in = output
-
-        dec_out = x_in
-        dec_out = self.dec_norm(dec_out)
-        if self.config.p_dropout:
-            dec_out = self.dropout(dec_out)
-
-        return dec_out, present_key_value_states
-
 
 class LLaMA(nn.Module):
     def __init__(
@@ -269,7 +179,26 @@ class LLaMA(nn.Module):
             bias=False,
         )
 
-        self.stack = LLaMAStack(self.config, self.shared.emb)
+        self.rot_emb = RotaryEmbedding(
+            self.config.emb_dim // self.config.nheads,
+            self.config.max_expected_seq_len * 2,
+        )
+
+        self.layers = nn.ModuleList(
+            [LLaMABlock(self.config, self.rot_emb) for _ in range(self.config.nlayers)]
+        )
+
+        self.dec_norm = LayerNormParameterized(
+            self.config.emb_dim,
+            elementwise_scale=True,
+            elementwise_shift=False,
+            use_mean=False,
+            eps=self.config.norm_eps,
+            use_high_precision_pow=True,
+        )
+
+        if self.config.p_dropout:
+            self.dropout = nn.Dropout(config.p_dropout)
 
         self.reset_params()
 
@@ -287,6 +216,61 @@ class LLaMA(nn.Module):
             0, 1 / math.sqrt(math.sqrt(self.width * self.shared.vocab_size))
         )
 
+    def _helper(self, x_in, mask=None, past_key_value_states=None, use_cache=False, attn_algorithm=None):
+        # Embed the given vocabulary indices using the given attention mask, with pre-/post-norm and dropout as specified
+        # x_in: batch_size x seq_len
+        # mask: batch_size x seq_len x seq_len
+        # bias: nheads x seq_len x seq_len
+        if past_key_value_states is None:
+            past_key_value_states = [None for _ in range(len(self.layers))]
+
+        qlen = x_in.size(1)
+        klen = x_in.size(1)
+
+        # if we are using the cache, the key length needs to be extended with the past keys length
+        if use_cache and past_key_value_states[0] is not None:
+            klen += past_key_value_states[0][0].size(-2)
+
+        # if mask is none, we need to specify causal mask
+        if mask is None:
+            # we are caching and can assume all 1s in the mask
+            if use_cache and klen != 1 and qlen == 1:
+                # b x h x qlen x kvlen
+                is_causal_mask = False
+            else:
+                is_causal_mask = True
+        else:
+            is_causal_mask = False
+
+        x_in = self.shared(x_in)
+
+        # this is the output cache for all the decoder layers
+        present_key_value_states = []
+
+        for i, layer in enumerate(self.layers):
+            output = layer(
+                x=x_in,
+                mask=mask,
+                past_key_value_state=past_key_value_states[i],
+                use_cache=use_cache,
+                is_causal_mask=is_causal_mask,
+                attn_algorithm=attn_algorithm,
+            )
+
+            if use_cache:
+                x_in, present_key_value_state = output
+                present_key_value_states.append(present_key_value_state)
+
+            else:
+                x_in = output
+
+        dec_out = x_in
+        dec_out = self.dec_norm(dec_out)
+        if self.config.p_dropout:
+            dec_out = self.dropout(dec_out)
+
+        return dec_out, present_key_value_states
+
     def forward(
         self,
         x,
@@ -296,7 +280,7 @@ class LLaMA(nn.Module):
         only_last_token=False,
         attn_algorithm=None,
     ):
-        output, cache = self.stack(x, mask, past_key_value_states, use_cache, attn_algorithm)
+        output, cache = self._helper(x, mask, past_key_value_states, use_cache, attn_algorithm)
 
         if only_last_token:
             output = output[:, -1, :]
@@ -310,9 +294,9 @@ class LLaMA(nn.Module):
 def _rename_weights_to_fms(orig_sd):
     replacements = [
         (r"^tok_embeddings", "shared.emb"),
-        (r"^norm", "stack.dec_norm"),
+        (r"^norm", "dec_norm"),
         (r"^output", "shared.head"),
-        (r"^layers", "stack.layers"),
+        (r"^layers", "layers"),
         (r"\.attention\.", ".attn."),
         (r"attn\.wq", "attn.query"),
         (r"attn\.wk", "attn.key"),
@@ -407,8 +391,8 @@ def convert_hf_llama(hf_model: LlamaForCausalLM) -> LLaMA:
 
     replacements = [
         (r"^embed_tokens.weight", "shared.emb.weight"),
-        (r"^norm", "stack.dec_norm"),
-        (r"^layers", "stack.layers"),
+        (r"^norm", "dec_norm"),
+        (r"^layers", "layers"),
         (r"self_attn\.k_proj", "attn.key"),
         (r"self_attn\.v_proj", "attn.value"),
         (r"self_attn\.q_proj", "attn.query"),
@@ -428,8 +412,8 @@ def convert_hf_llama(hf_model: LlamaForCausalLM) -> LLaMA:
 
     model.load_state_dict(new_sd, strict=False)
     model.shared.head.weight = hf_model.lm_head.weight
-    model.stack.rot_emb.freqs = hf_model.model.layers[0].self_attn.rotary_emb.inv_freq
-    for layer in model.stack.layers:
+    model.rot_emb.freqs = hf_model.model.layers[0].self_attn.rotary_emb.inv_freq
+    for layer in model.layers:
         q = layer.attn.query.weight.data
         q = q.view(model.config.nheads, 2, -1, q.size(1)).transpose(1, 2).reshape(*q.size())
         layer.attn.query.weight.data = q
