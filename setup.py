@@ -8,5 +8,5 @@ setup(
     author_email="bvaughan@ibm.com",
     description="IBM Foundation Model Stack",
     packages=find_packages(),
-    install_requires=["torch >= 2.0"],
+    install_requires=["torch >= 2.0", "transformers >= 4.31.0"],
 )
