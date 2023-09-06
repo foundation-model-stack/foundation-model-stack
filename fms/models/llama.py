@@ -196,7 +196,7 @@ class LLaMA(nn.Module):
             use_high_precision_pow=True,
         )
 
-        if config.p_dropout:
+        if self.config.p_dropout:
             self.dropout = nn.Dropout(config.p_dropout)
 
         self.reset_params()
