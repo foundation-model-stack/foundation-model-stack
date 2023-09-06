@@ -37,7 +37,7 @@ class LLaMAConfig(ModelConfig):
     nlayers: int = 32
     pad_id: int = -1
     hidden_grow_factor: float = 8 / 3
-    multiple_of: float = 256
+    multiple_of: int = 256
     activation_fn: str = "swish"
     p_dropout: float = 0.0
     max_expected_seq_len: int = 2048
@@ -147,35 +147,74 @@ class LLaMABlock(nn.Module):
         else:
             return x
 
-class LLaMAStack(nn.Module):
 
-    def __init__(self, config: LLaMAConfig):
-        super().__init__()
-        self.config = config
+class LLaMA(nn.Module):
+    def __init__(
+        self,
+        config: Optional[LLaMAConfig] = None,
+        **kwargs,
+    ):
+        super(LLaMA, self).__init__()
+        if config is not None:
+            self.config = config
+        else:
+            self.config = LLaMAConfig()
+        self.config.update_config(**kwargs)
+
+        self.width = self.config.emb_dim
+        self.pad_id = self.config.pad_id
+        self.max_expected_seq_len = self.config.max_expected_seq_len
+
+        self.shared = WordEmbedding(
+            self.config.src_vocab_size,
+            self.config.emb_dim,
+            padding_idx=self.config.pad_id,
+            abs_pos=False,
+            reversible=True,
+            tie_weights=False,
+            bias=False,
+        )
 
         self.rot_emb = RotaryEmbedding(
             self.config.emb_dim // self.config.nheads,
             self.config.max_expected_seq_len * 2,
         )
 
-        self.stack = nn.ModuleList(
-            [LLaMABlock(self.config, self.rot_emb) for _ in range(self.config.nlayers)]
+        self.layers = nn.ModuleList([LLaMABlock(self.config, self.rot_emb) for _ in range(self.config.nlayers)])
+
+        self.dec_norm = LayerNormParameterized(
+            self.config.emb_dim,
+            elementwise_scale=True,
+            elementwise_shift=False,
+            use_mean=False,
+            eps=self.config.norm_eps,
+            use_high_precision_pow=True,
         )
 
-    def forward(
-        self,
-        x_in,
-        mask=None,
-        past_key_value_states=None,
-        use_cache=False,
-        attn_algorithm=None
-    ):
+        if self.config.p_dropout:
+            self.dropout = nn.Dropout(config.p_dropout)
+
+        self.reset_params()
+
+    def get_config(self) -> LLaMAConfig:
+        return self.config
+
+    @classmethod
+    def from_config(cls, config: LLaMAConfig) -> "LLaMA":
+        return cls(config)
+
+    def reset_params(self):
+        # Modules are self-initializing, we're just going to down-scale the final prediction head to be
+        # mixed-fan (inputs and gradients scale to the same inverse factors) if it isn't tied
+        self.shared.head.weight.data.normal_(0, 1 / math.sqrt(math.sqrt(self.width * self.shared.vocab_size)))
+
+    def _helper(self, x_in, mask=None, past_key_value_states=None, use_cache=False, attn_algorithm=None):
         # Embed the given vocabulary indices using the given attention mask, with pre-/post-norm and dropout as specified
         # x_in: batch_size x seq_len
         # mask: batch_size x seq_len x seq_len
         # bias: nheads x seq_len x seq_len
         if past_key_value_states is None:
-            past_key_value_states = [None for _ in range(len(self.stack))]
+            past_key_value_states = [None for _ in range(len(self.layers))]
 
         qlen = x_in.size(1)
         klen = x_in.size(1)
@@ -200,7 +239,7 @@ class LLaMAStack(nn.Module):
         # this is the output cache for all the decoder layers
         present_key_value_states = []
 
-        for i, layer in enumerate(self.stack):
+        for i, layer in enumerate(self.layers):
             output = layer(
                 x=x_in,
                 mask=mask,
@@ -219,73 +258,10 @@ class LLaMAStack(nn.Module):
 
         dec_out = x_in
         dec_out = self.dec_norm(dec_out)
-        if self.p_dropout:
+        if self.config.p_dropout:
             dec_out = self.dropout(dec_out)
 
         return dec_out, present_key_value_states
-
-
-class LLaMA(nn.Module):
-    def __init__(
-        self,
-        config: Optional[LLaMAConfig] = None,
-        **kwargs,
-    ):
-        super(LLaMA, self).__init__()
-        if config is not None:
-            self.config = config
-        elif len(kwargs) != 0:
-            self.config = LLaMAConfig()
-            self.config.update_config(**kwargs)
-        else:
-            raise RuntimeError("need to specify either a config or kwargs")
-
-        self.p_dropout = self.config.p_dropout
-        self.width = self.config.emb_dim
-        self.pad_id = self.config.pad_id
-        self.max_expected_seq_len = self.config.max_expected_seq_len
-
-        self.shared = WordEmbedding(
-            self.config.src_vocab_size,
-            self.config.emb_dim,
-            padding_idx=self.config.pad_id,
-            abs_pos=False,
-            reversible=True,
-            tie_weights=False,
-            bias=False,
-        )
-
-        self.stack = LLaMAStack(config)
-
-        self.dec_norm = LayerNormParameterized(
-            self.config.emb_dim,
-            elementwise_scale=True,
-            elementwise_shift=False,
-            use_mean=False,
-            eps=self.config.norm_eps,
-            use_high_precision_pow=True,
-        )
-
-        if self.p_dropout:
-            self.dropout = nn.Dropout(self.config.p_dropout)
-
-        self.reset_params()
-
-    def get_config(self) -> LLaMAConfig:
-        return self.config
-
-    @classmethod
-    def from_config(cls, config: LLaMAConfig) -> "LLaMA":
-        config_dict = config.as_dict()
-        config_dict["activation_fn"] = str_to_activation(config.activation_fn)
-        return cls(**config_dict)
-
-    def reset_params(self):
-        # Modules are self-initializing, we're just going to down-scale the final prediction head to be
-        # mixed-fan (inputs and gradients scale to the same inverse factors) if it isn't tied
-        self.shared.head.weight.data.normal_(
-            0, 1 / math.sqrt(math.sqrt(self.width * self.shared.vocab_size))
-        )
 
     def forward(
         self,
@@ -296,7 +272,7 @@ class LLaMA(nn.Module):
         only_last_token=False,
         attn_algorithm=None,
     ):
-        output, cache = self.stack(x, mask, past_key_value_states, use_cache, attn_algorithm)
+        output, cache = self._helper(x, mask, past_key_value_states, use_cache, attn_algorithm)
 
         if only_last_token:
             output = output[:, -1, :]
@@ -307,12 +283,13 @@ class LLaMA(nn.Module):
         else:
             return preds
 
+
 def _rename_weights_to_fms(orig_sd):
     replacements = [
         (r"^tok_embeddings", "shared.emb"),
         (r"^norm", "dec_norm"),
         (r"^output", "shared.head"),
-        (r"^layers", "dec_process"),
+        (r"^layers", "layers"),
         (r"\.attention\.", ".attn."),
         (r"attn\.wq", "attn.query"),
         (r"attn\.wk", "attn.key"),
@@ -332,6 +309,7 @@ def _rename_weights_to_fms(orig_sd):
         new_sd[new_name] = param
 
     return new_sd
+
 
 def load_fms_llama(model_path: str, tokenizer_path: str):
     # from llama.tokenizer import Tokenizer
@@ -371,8 +349,6 @@ def load_fms_llama(model_path: str, tokenizer_path: str):
         norm_eps=params["norm_eps"],
     )
     torch.set_default_tensor_type(torch.FloatTensor)
-    ibm_model.load_state_dict(
-        fms_sd, strict=False
-    )  # the meta weights have some extra stuff
+    ibm_model.load_state_dict(fms_sd, strict=False)  # the meta weights have some extra stuff
 
     return ibm_model, tokenizer
