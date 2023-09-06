@@ -574,12 +574,6 @@ class HFModelArchitecture(PreTrainedModel, metaclass=PostInitCaller):
     def get_input_embeddings(self) -> nn.Module:
         return self.embedding
 
-    def get_output_embeddings(self):
-        return self.lm_head
-
-    def set_output_embeddings(self, new_embeddings):
-        self.lm_head = new_embeddings
-
     @classmethod
     def from_fms_model(cls, model: nn.Module, **config_kwargs) -> "HFModelArchitecture":
         """Given a pytorch native model and a huggingface config, create a HFModelArchitecture
@@ -710,16 +704,6 @@ class HFModelArchitecture(PreTrainedModel, metaclass=PostInitCaller):
             "forward method of this class must be implemented, consider using the Decoder/EncoderDecoder versions"
         )
 
-    @abc.abstractmethod
-    def _produce_lm_output(
-        self,
-        logits: torch.FloatTensor,
-        loss: _Loss,
-        encoder_outputs: Optional[BaseModelOutputWithPastAndCrossAttentions],
-        decoder_outputs: Optional[BaseModelOutputWithPastAndCrossAttentions],
-    ) -> BaseModelOutput:
-        pass
-
     def _forward_pass(
         self,
         input_ids: torch.FloatTensor,  # this is always float tensor
@@ -804,36 +788,6 @@ class HFModelArchitecture(PreTrainedModel, metaclass=PostInitCaller):
 
         output = (output,) + decoder_outputs[1:] + encoder_outputs.to_tuple()
         return ((loss,) + output) if loss is not None else output
-
-    def prepare_inputs_for_generation(self, *args, **kwargs):
-        """This is a method required by huggingface for generation which is called to include all parameters to forward
-        within the generation loop
-        """
-        # this will call the child classes implementation
-        # user can override this to return extra params if the default parameters for that child class are not enough
-        return self._prepare_inputs_for_generation(*args, **kwargs)
-
-    @abc.abstractmethod
-    def _lm_head(
-        self,
-        input_ids: torch.Tensor,
-        *args,
-        **kwargs,
-    ) -> torch.Tensor:
-        """adapt your given pytorch native lm head to that of the one expected in huggingface. Note: This is not
-        required if your lm_head simply takes in the input_ids and returns a torch.Tensor
-
-        Parameters
-        ----------
-        input_ids: torch.Tensor
-            the downstream input_ids (either from other forward passes or a dataset)
-
-        Returns
-        -------
-        torch.Tensor
-            the output from the forward function of the lm_head if an lm_head exists
-        """
-        return self.lm_head(input_ids)
 
     @abc.abstractmethod
     def _compute_loss(self, prediction: torch.Tensor, labels: torch.Tensor) -> _Loss:
@@ -935,23 +889,6 @@ class HFDecoderModelArchitecture(HFModelArchitecture):
     def set_input_embeddings(self, value: nn.Module):
         self.decoder.set_input_embeddings(value)
         super().set_input_embeddings(value)
-
-    def _produce_lm_output(
-        self,
-        logits: torch.FloatTensor,
-        loss: _Loss,
-        encoder_outputs: Optional[BaseModelOutputWithPastAndCrossAttentions],
-        decoder_outputs: Optional[BaseModelOutputWithPastAndCrossAttentions],
-    ) -> ModelOutput:
-        # todo I believe we need to handle more types of output here depending on the lm head, for now this will do
-        return CausalLMOutputWithCrossAttentions(
-            loss=loss,
-            logits=logits,
-            past_key_values=decoder_outputs.past_key_values,
-            hidden_states=decoder_outputs.hidden_states,
-            attentions=decoder_outputs.attentions,
-            cross_attentions=decoder_outputs.cross_attentions,
-        )
 
     def _set_gradient_checkpointing(self, module, value=False):
         if isinstance(module, HFDecoder):
@@ -1185,7 +1122,7 @@ class HFDecoderModelArchitecture(HFModelArchitecture):
             if k not in model_inputs:
                 model_inputs[k] = v
 
-        return super().prepare_inputs_for_generation(
+        return self._prepare_inputs_for_generation(
             *args,
             **model_inputs,
         )
@@ -1272,22 +1209,6 @@ class HFEncoderModelArchitecture(HFModelArchitecture, _EncoderArchitectureMixin)
         super().__init__(embedding=embedding, config=config, *args, **kwargs)
         self.encoder = encoder
 
-    def _produce_lm_output(
-        self,
-        logits: torch.FloatTensor,
-        loss: _Loss,
-        encoder_outputs: Optional[BaseModelOutputWithPastAndCrossAttentions],
-        decoder_outputs: Optional[BaseModelOutputWithPastAndCrossAttentions],
-    ) -> ModelOutput:
-        return CausalLMOutputWithCrossAttentions(
-            loss=loss,
-            logits=logits,
-            past_key_values=encoder_outputs.past_key_values,
-            hidden_states=encoder_outputs.hidden_states,
-            attentions=encoder_outputs.attentions,
-            cross_attentions=encoder_outputs.cross_attentions,
-        )
-
     def _set_gradient_checkpointing(self, module, value=False):
         if isinstance(module, HFEncoder):
             if hasattr(module.model, "gradient_checkpointing"):
@@ -1298,16 +1219,6 @@ class HFEncoderModelArchitecture(HFModelArchitecture, _EncoderArchitectureMixin)
     def set_input_embeddings(self, value: nn.Module):
         self.encoder.set_input_embeddings(value)
         super().set_input_embeddings(value)
-
-    def prepare_inputs_for_generation(
-        self,
-        input_ids: torch.Tensor,
-        attention_mask: Optional[torch.Tensor] = None,
-        past_key_values: Optional[Tuple[torch.Tensor]] = None,
-        use_cache: Optional[bool] = None,
-        **model_kwargs,
-    ):
-        raise NotImplementedError("generation cannot be done on a encoder only model yet")
 
     def _load_state_dict_from_pytorch_weights(
         self,
@@ -1473,25 +1384,6 @@ class HFEncoderDecoderModelArchitecture(HFDecoderModelArchitecture, _EncoderArch
                 attention_mask = attention_mask.tril(diagonal=0)
 
         return attention_mask, hf_attention_mask
-
-    def _produce_lm_output(
-        self,
-        logits: torch.FloatTensor,
-        loss: _Loss,
-        encoder_outputs: Optional[BaseModelOutputWithPastAndCrossAttentions],
-        decoder_outputs: Optional[BaseModelOutputWithPastAndCrossAttentions],
-    ) -> ModelOutput:
-        return Seq2SeqLMOutput(
-            loss=loss,
-            logits=logits,
-            past_key_values=decoder_outputs.past_key_values,
-            decoder_hidden_states=decoder_outputs.hidden_states,
-            decoder_attentions=decoder_outputs.attentions,
-            cross_attentions=decoder_outputs.cross_attentions,
-            encoder_last_hidden_state=encoder_outputs.last_hidden_state,
-            encoder_hidden_states=encoder_outputs.hidden_states,
-            encoder_attentions=encoder_outputs.attentions,
-        )
 
     def set_input_embeddings(self, value: nn.Module):
         self.encoder.set_input_embeddings(value)
@@ -1779,8 +1671,7 @@ class HFEncoderDecoderModelArchitecture(HFDecoderModelArchitecture, _EncoderArch
             decoder_input_ids = decoder_input_ids[:, -1:]
         use_cache = use_cache if use_cache is not None else self.config.use_cache
 
-        return HFModelArchitecture.prepare_inputs_for_generation(
-            self,
+        return self._prepare_inputs_for_generation(
             decoder_input_ids,
             attention_mask=attention_mask,
             head_mask=head_mask,
@@ -1790,7 +1681,6 @@ class HFEncoderDecoderModelArchitecture(HFDecoderModelArchitecture, _EncoderArch
             encoder_outputs=encoder_outputs,
             past_key_values=past_key_values,
             use_cache=use_cache,
-            *args,
             **kwargs,
         )
 

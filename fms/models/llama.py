@@ -8,6 +8,7 @@ from typing import Optional
 
 import torch
 import torch.nn as nn
+from transformers import LlamaForCausalLM
 
 import fms.utils
 from fms.modules.attention import MultiHeadAttention
@@ -375,3 +376,66 @@ def load_fms_llama(model_path: str, tokenizer_path: str):
     )  # the meta weights have some extra stuff
 
     return ibm_model, tokenizer
+
+def convert_hf_llama(hf_model: LlamaForCausalLM) -> LLaMA:
+    """
+    Convert a Llama huggingface model to an fms model
+
+    Parameters
+    ----------
+    hf_model: LlamaForCausalLM
+        a Llama Huggingface model
+
+    Returns
+    -------
+    LLaMA
+        an FMS LLaMA model
+    """
+    import re
+    config = LLaMAConfig(
+        src_vocab_size=hf_model.config.vocab_size,
+        emb_dim=hf_model.config.hidden_size,
+        nheads=hf_model.config.num_attention_heads,
+        nlayers=hf_model.config.num_hidden_layers,
+        norm_eps=hf_model.config.rms_norm_eps,
+    )
+    model = LLaMA(config)
+    count_parameters = lambda m: sum(p.numel() for p in m.parameters())
+    assert count_parameters(model) == count_parameters(hf_model)
+
+    hf_sd = hf_model.model.state_dict()
+
+    replacements = [
+        (r"^embed_tokens.weight", "shared.emb.weight"),
+        (r"^norm", "stack.dec_norm"),
+        (r"^layers", "stack.layers"),
+        (r"self_attn\.k_proj", "attn.key"),
+        (r"self_attn\.v_proj", "attn.value"),
+        (r"self_attn\.q_proj", "attn.query"),
+        (r"self_attn\.o_proj", "attn.dense"),
+        (r"mlp\.gate_proj", "ff_sub_layer.wg"),
+        (r"mlp\.up_proj", "ff_sub_layer.w1"),
+        (r"mlp\.down_proj", "ff_sub_layer.w2"),
+        (r"input_layernorm", "ln"),
+        (r"post_attention_layernorm", "ff_ln"),
+    ]
+    new_sd = {}
+    for name, param in hf_sd.items():
+        new_name = name
+        for pattern, repl in replacements:
+            new_name = re.sub(pattern, repl, new_name)
+        new_sd[new_name] = param
+
+    model.load_state_dict(new_sd, strict=False)
+    model.shared.head.weight = hf_model.lm_head.weight
+    model.stack.rot_emb.freqs = hf_model.model.layers[0].self_attn.rotary_emb.inv_freq
+    for layer in model.stack.layers:
+        q = layer.attn.query.weight.data
+        q = q.view(model.config.nheads, 2, -1, q.size(1)).transpose(1, 2).reshape(*q.size())
+        layer.attn.query.weight.data = q
+
+        k = layer.attn.key.weight.data
+        k = k.view(model.config.nheads, 2, -1, k.size(1)).transpose(1, 2).reshape(*k.size())
+        layer.attn.key.weight.data = k
+
+    return model

@@ -6,6 +6,12 @@ from fms.models.llama import LLaMAConfig
 
 class LLaMAHFConfig(PretrainedConfig):
     model_type = "llama_hf"
+    attribute_map = {
+        "vocab_size": "src_vocab_size",
+        "hidden_size": "emb_dim",
+        "num_attention_heads": "nheads",
+        "num_hidden_layers": "nlayers",
+    }
 
     def __init__(
         self,
@@ -15,9 +21,10 @@ class LLaMAHFConfig(PretrainedConfig):
         nheads: int = 32,
         kvheads: int = 0,
         nlayers: int = 32,
+        # note this is different from the non-hf config (which is -1), hf keeps a different default
         pad_token_id: int = 0,
         hidden_grow_factor: float = 8 / 3,
-        multiple_of: float = 256.0,
+        multiple_of: int = 256,
         activation_fn: str = "swish",
         p_dropout: float = 0.0,
         max_expected_seq_len: int = 2048,

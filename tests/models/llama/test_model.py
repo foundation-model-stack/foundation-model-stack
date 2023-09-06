@@ -2,7 +2,7 @@ import pytest
 
 from fms.models.hf.llama.configuration_llama_hf import LLaMAHFConfig
 from fms.models.hf.llama.modeling_llama_hf import LLaMAHFForCausalLM
-from fms.models.llama import LLaMA, LLaMAConfig
+from fms.models.llama import LLaMA, LLaMAConfig, convert_hf_llama
 from ..base import _case_paths, _test_ids
 from ..test_hf_model import AbstractHFModelTest
 import torch
@@ -29,41 +29,16 @@ class TestLlama(AbstractHFModelTest):
     @pytest.mark.slow
     def test_llama_7b_equivalence(self):
         """Tests llama equivalence with a known implementation. Takes approximately 8:38 on an mbp with M1 chip"""
-        from transformers import AutoModelForCausalLM, pipeline
+        from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
 
-        from transformers import AutoTokenizer
         # for now, this test won't be run, but it has been verified
         # if you would like to try this, set llama_model_path to the huggingface llama2 model path
-        llama_model_path = ""
+        llama_model_path = "/Users/joshuarosenkranz/Desktop/llama_models/7B-F"
         tokenizer = AutoTokenizer.from_pretrained(llama_model_path, use_fast=True)
         hf_model = AutoModelForCausalLM.from_pretrained(llama_model_path)
 
-        config = LLaMAConfig(
-            src_vocab_size=tokenizer.vocab_size,
-            emb_dim=4096,
-            multiple_of=256,
-            nheads=32,
-            nlayers=32,
-            norm_eps=1e-05,
-            pad_id=hf_model.config.pad_token_id,
-        )
-        model = LLaMA(config)
-        count_parameters = lambda m: sum(p.numel() for p in m.parameters())
-        assert count_parameters(model) == count_parameters(hf_model)
-
-        hf_sd = hf_model.model.state_dict()
-        hf_sd = rename_weights_to_fms(hf_sd)
-        model.load_state_dict(hf_sd, strict=False)
-        model.shared.head.weight = hf_model.lm_head.weight
-        model.stack.rot_emb.freqs = hf_model.model.layers[0].self_attn.rotary_emb.inv_freq
-        for layer in model.stack.layers:
-            q = layer.attn.query.weight.data
-            q = q.view(model.config.nheads, 2, -1, q.size(1)).transpose(1, 2).reshape(*q.size())
-            layer.attn.query.weight.data = q
-
-            k = layer.attn.key.weight.data
-            k = k.view(model.config.nheads, 2, -1, k.size(1)).transpose(1, 2).reshape(*k.size())
-            layer.attn.key.weight.data = k
+        # convert the hf model to fms
+        model = convert_hf_llama(hf_model)
 
         hf_model_fms = LLaMAHFForCausalLM.from_fms_model(
             model,
@@ -72,6 +47,7 @@ class TestLlama(AbstractHFModelTest):
             pad_token_id=hf_model.config.pad_token_id
         )
 
+        count_parameters = lambda m: sum(p.numel() for p in m.parameters())
         assert count_parameters(hf_model_fms) == count_parameters(hf_model)
 
         model.eval()

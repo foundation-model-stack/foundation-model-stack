@@ -55,8 +55,6 @@ def compare_model_signatures(model_params_1: ModelSignatureParams, model_params_
 
     signature = np.array(signature)
     signature2 = np.array(signature2)
-    print(signature)
-    print(signature2)
     assert np.allclose(signature, signature2, atol=1e-3)
 
 def get_signature(

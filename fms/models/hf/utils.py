@@ -22,19 +22,19 @@ def register_fms_models():
 
 def mask_2d_to_3d(inp: torch.Tensor) -> torch.BoolTensor:
     """
-        Produces a block-diagonal boolean attention mask matrix A where A[i,j]=True if tokens i and j are both pads,
-        or both non-pads, False otherwise.
-        ...
-        Args
-        ----
-        inp : torch.Tensor
-            Input batch of vocab indices. Expects shape [batch_size, sequence_length].
-        ...
-        Returns
-        -------
-        mask : torch.BoolTensor
-            Mask tensor corresponding to inp. Will be of shape [batch_size, sequence_length, sequence_length].
-        """
+    Produces a block-diagonal boolean attention mask matrix A where A[i,j]=True if tokens i and j are both pads,
+    or both non-pads, False otherwise.
+    ...
+    Args
+    ----
+    inp : torch.Tensor
+        Input batch of vocab indices. Expects shape [batch_size, sequence_length].
+    ...
+    Returns
+    -------
+    mask : torch.BoolTensor
+        Mask tensor corresponding to inp. Will be of shape [batch_size, sequence_length, sequence_length].
+    """
     is_pad = inp == 0
     mask = is_pad.unsqueeze(-1) == is_pad.unsqueeze(-2)
     return mask

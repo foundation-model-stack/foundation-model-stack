@@ -2,13 +2,14 @@ from typing import Optional, Tuple
 
 import torch
 import torch.nn as nn
-from torch.nn.modules.loss import _Loss
 from transformers import PretrainedConfig
 from transformers.modeling_outputs import BaseModelOutputWithPastAndCrossAttentions
 
 from fms.models.hf.llama.configuration_llama_hf import LLaMAHFConfig
+from fms.models.hf.lm_head_mixins import LMHeadModelLMHeadMixin
 from fms.models.hf.modeling_hf_adapter import HFDecoder, HFDecoderModelArchitecture
 from fms.models.llama import LLaMA
+
 class LLaMAHFDecoder(HFDecoder):
     """Adapter for the LlamaDecoder"""
 
@@ -62,9 +63,6 @@ class LLaMAHF(HFDecoderModelArchitecture):
             model = LLaMA(pad_id=params.pop("pad_token_id"), **params)
             decoder = model.stack if decoder is None else decoder
             embedding = model.shared.emb if embedding is None else embedding
-            include_lm_head = kwargs.get("_include_lm_head", False)
-            if include_lm_head:
-                kwargs["lm_head"] = model.shared.head
 
         # these are now huggingface compatible
         decoder = LLaMAHFDecoder(decoder, config)
@@ -115,27 +113,18 @@ class LLaMAHF(HFDecoderModelArchitecture):
         }
 
 
-class LLaMAHFForCausalLM(LLaMAHF):
+class LLaMAHFForCausalLM(LMHeadModelLMHeadMixin, LLaMAHF):
     _keys_to_ignore_on_load_missing = [r"lm_head.weight"]
     _tied_weights_keys = ["embedding.weight", "lm_head.weight"]
 
-    def __init__(self, config: PretrainedConfig, *args, **kwargs):
-        super().__init__(config=config, _include_lm_head="lm_head" not in kwargs, *args, **kwargs)
+    def __init__(self, config: LLaMAHFConfig, *args, **kwargs):
+        super().__init__(config=config, bias=False, *args, **kwargs)
 
     @classmethod
-    def _hf_model_from_fms(cls, model: LLaMA, config: PretrainedConfig) -> "LLaMAHFForCausalLM":
+    def _hf_model_from_fms(cls, model: LLaMA, config: LLaMAHFConfig) -> "LLaMAHFForCausalLM":
         return cls(
             config=config,
             decoder=model.stack,
             embedding=model.shared.emb,
             lm_head=model.shared.head,
-        )
-
-    def _compute_loss(self, prediction: torch.Tensor, labels: torch.Tensor) -> _Loss:
-        loss_fn = nn.CrossEntropyLoss(ignore_index=-100)
-        shift_output = prediction[..., :-1, :].contiguous()
-        shift_labels = labels[..., 1:].contiguous()
-        return loss_fn(
-            shift_output.view(-1, self.config.src_vocab_size),
-            shift_labels.view(-1),
         )
