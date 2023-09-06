@@ -4,11 +4,10 @@ import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
 
 import torch
 import torch.nn as nn
-from transformers import LlamaForCausalLM
 
 import fms.utils
 from fms.modules.attention import MultiHeadAttention
@@ -16,9 +15,8 @@ from fms.modules.embedding import WordEmbedding
 from fms.modules.feedforward import GatedLinearUnit
 from fms.modules.layernorm import LayerNormParameterized
 from fms.modules.positions import RotaryEmbedding
-from fms.utils.activation import str_to_activation
 from fms.utils.config import ModelConfig
-from fms.utils.tokenizers import get_tokenizer
+from fms.utils.tokenizers import get_tokenizer, _has_hf
 
 
 # params emb_dim heads layers lr
@@ -355,7 +353,7 @@ def load_fms_llama(model_path: str, tokenizer_path: str):
     return ibm_model, tokenizer
 
 
-def convert_hf_llama(hf_model: LlamaForCausalLM) -> LLaMA:
+def convert_hf_llama(hf_model: "LlamaForCausalLM") -> LLaMA:
     """
     Convert a Llama huggingface model to an fms model
 
@@ -369,6 +367,10 @@ def convert_hf_llama(hf_model: LlamaForCausalLM) -> LLaMA:
     LLaMA
         an FMS LLaMA model
     """
+
+    if not _has_hf:
+        raise ImportError("in order to convert huggingface weights, you need to have transformers installed")
+
     import re
 
     config = LLaMAConfig(
