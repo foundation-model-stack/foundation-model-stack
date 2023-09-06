@@ -29,9 +29,7 @@ def test_generate():
     result = tokenizer.convert_tokens_to_string(tokenizer.convert_ids_to_tokens(result))
     assert result == "ABCDEFGHIJ"
 
-    result = generate(
-        _model_mock, ids, max_new_tokens=5, do_sample=True, temperature=0.01
-    )
+    result = generate(_model_mock, ids, max_new_tokens=5, do_sample=True, temperature=0.01)
     result = tokenizer.convert_tokens_to_string(tokenizer.convert_ids_to_tokens(result))
     assert result == "ABCDEFGHIJ"
 
@@ -49,16 +47,10 @@ def test_batched():
     ids = torch.stack((first, second), dim=0)
     result = generate(_model_mock, ids, max_new_tokens=5, do_sample=False)
     assert torch.allclose(result[0], result[1])
-    result = tokenizer.convert_tokens_to_string(
-        tokenizer.convert_ids_to_tokens(result[0])
-    )
+    result = tokenizer.convert_tokens_to_string(tokenizer.convert_ids_to_tokens(result[0]))
     assert result == "ABCDEFGHIJ"
 
-    result = generate(
-        _model_mock, ids, max_new_tokens=5, do_sample=True, temperature=0.01
-    )
+    result = generate(_model_mock, ids, max_new_tokens=5, do_sample=True, temperature=0.01)
     assert torch.allclose(result[0], result[1])
-    result = tokenizer.convert_tokens_to_string(
-        tokenizer.convert_ids_to_tokens(result[0])
-    )
+    result = tokenizer.convert_tokens_to_string(tokenizer.convert_ids_to_tokens(result[0]))
     assert result == "ABCDEFGHIJ"

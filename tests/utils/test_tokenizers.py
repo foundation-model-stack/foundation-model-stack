@@ -11,15 +11,13 @@ def test_hf_compat():
     fm_tokenizer = get_tokenizer(tokenizer_name)
     hf_tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
     assert fm_tokenizer.tokenize("hello") == hf_tokenizer.tokenize("hello")
-    assert fm_tokenizer.convert_ids_to_tokens(
-        [0, 1, 2]
-    ) == hf_tokenizer.convert_ids_to_tokens([0, 1, 2])
-    assert fm_tokenizer.convert_tokens_to_ids(
+    assert fm_tokenizer.convert_ids_to_tokens([0, 1, 2]) == hf_tokenizer.convert_ids_to_tokens([0, 1, 2])
+    assert fm_tokenizer.convert_tokens_to_ids(["hello", "world"]) == hf_tokenizer.convert_tokens_to_ids(
         ["hello", "world"]
-    ) == hf_tokenizer.convert_tokens_to_ids(["hello", "world"])
-    assert fm_tokenizer.convert_tokens_to_string(
+    )
+    assert fm_tokenizer.convert_tokens_to_string(["hello", "world"]) == hf_tokenizer.convert_tokens_to_string(
         ["hello", "world"]
-    ) == hf_tokenizer.convert_tokens_to_string(["hello", "world"])
+    )
 
 
 def test_char_tokenizer():
