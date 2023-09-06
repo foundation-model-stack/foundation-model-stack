@@ -7,7 +7,7 @@ import torch
 
 
 @pytest.mark.slow
-def test_llama_7b_equivalence(self):
+def test_llama_7b_equivalence():
     """Tests llama equivalence with a known implementation. Takes approximately 8:38 on an mbp with M1 chip"""
     from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
 
