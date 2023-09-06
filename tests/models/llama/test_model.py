@@ -47,25 +47,25 @@ class TestLlama(AbstractHFModelTest):
             pad_token_id=hf_model.config.pad_token_id
         )
 
-        count_parameters = lambda m: sum(p.numel() for p in m.parameters())
-        assert count_parameters(hf_model_fms) == count_parameters(hf_model)
-
         model.eval()
         hf_model.eval()
         hf_model_fms.eval()
 
-        hf_model_fms.eval()
+        # Test Parameter Count
+
+        count_parameters = lambda m: sum(p.numel() for p in m.parameters())
+        assert count_parameters(hf_model_fms) == count_parameters(hf_model)
+
+        # Test Model Signatures
+
         inp = torch.arange(0, 16).unsqueeze(0)
-
         fms_signature_params = ModelSignatureParams(model=model, params=1, inp=inp)
-
         hf_fms_signature_params = HFModelSignatureParams(
             model=hf_model_fms,
             params=["input_ids", "labels"],
             other_params={"return_dict": True},
             inp=inp
         )
-
         hf_signature_params = HFModelSignatureParams(
             model=hf_model,
             params=["input_ids", "labels"],
@@ -75,6 +75,8 @@ class TestLlama(AbstractHFModelTest):
 
         compare_model_signatures(fms_signature_params, hf_fms_signature_params)
         compare_model_signatures(hf_fms_signature_params, hf_signature_params)
+
+        # Test Generation Pipeline
 
         prompt = """q: how are you? a: I am good. How about you? q: What is the weather like today? a:"""
 
@@ -92,8 +94,18 @@ class TestLlama(AbstractHFModelTest):
         output_hf = generator_hf(prompt)
         output_hf_fms = generator_hf_fms(prompt)
         assert output_hf == output_hf_fms
-        print(output_hf)
-        print(output_hf_fms)
+
+        # Test Train Loss
+
+        inputs = torch.arange(0, 16).unsqueeze(0)
+        labels = torch.arange(0, 16).unsqueeze(0)
+        hf_model_loss = hf_model(input_ids=inputs, labels=labels, return_dict=True).loss
+        hf_model_fms_loss = hf_model_fms(input_ids=inputs, labels=labels, return_dict=True).loss
+
+        import math
+        torch._assert(
+            math.isclose(hf_model_loss.item(), hf_model_fms_loss.item(), abs_tol=1e-3), f"model loss is not equal"
+        )
 
 
 def rename_weights_to_fms(orig_sd):
