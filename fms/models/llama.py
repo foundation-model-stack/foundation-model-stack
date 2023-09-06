@@ -38,7 +38,7 @@ class LLaMAConfig(ModelConfig):
     nlayers: int = 32
     pad_id: int = -1
     hidden_grow_factor: float = 8 / 3
-    multiple_of: float = 256
+    multiple_of: int = 256
     activation_fn: str = "swish"
     p_dropout: float = 0.0
     max_expected_seq_len: int = 2048
@@ -158,13 +158,10 @@ class LLaMA(nn.Module):
         super(LLaMA, self).__init__()
         if config is not None:
             self.config = config
-        elif len(kwargs) != 0:
-            self.config = LLaMAConfig()
         else:
-            raise RuntimeError("need to specify either a config or kwargs")
+            self.config = LLaMAConfig()
         self.config.update_config(**kwargs)
 
-        self.p_dropout = self.config.p_dropout
         self.width = self.config.emb_dim
         self.pad_id = self.config.pad_id
         self.max_expected_seq_len = self.config.max_expected_seq_len
@@ -184,9 +181,7 @@ class LLaMA(nn.Module):
             self.config.max_expected_seq_len * 2,
         )
 
-        self.layers = nn.ModuleList(
-            [LLaMABlock(self.config, self.rot_emb) for _ in range(self.config.nlayers)]
-        )
+        self.layers = nn.ModuleList([LLaMABlock(self.config, self.rot_emb) for _ in range(self.config.nlayers)])
 
         self.dec_norm = LayerNormParameterized(
             self.config.emb_dim,
@@ -212,9 +207,7 @@ class LLaMA(nn.Module):
     def reset_params(self):
         # Modules are self-initializing, we're just going to down-scale the final prediction head to be
         # mixed-fan (inputs and gradients scale to the same inverse factors) if it isn't tied
-        self.shared.head.weight.data.normal_(
-            0, 1 / math.sqrt(math.sqrt(self.width * self.shared.vocab_size))
-        )
+        self.shared.head.weight.data.normal_(0, 1 / math.sqrt(math.sqrt(self.width * self.shared.vocab_size)))
 
     def _helper(self, x_in, mask=None, past_key_value_states=None, use_cache=False, attn_algorithm=None):
         # Embed the given vocabulary indices using the given attention mask, with pre-/post-norm and dropout as specified
@@ -291,6 +284,7 @@ class LLaMA(nn.Module):
         else:
             return preds
 
+
 def _rename_weights_to_fms(orig_sd):
     replacements = [
         (r"^tok_embeddings", "shared.emb"),
@@ -316,6 +310,7 @@ def _rename_weights_to_fms(orig_sd):
         new_sd[new_name] = param
 
     return new_sd
+
 
 def load_fms_llama(model_path: str, tokenizer_path: str):
     # from llama.tokenizer import Tokenizer
@@ -355,11 +350,10 @@ def load_fms_llama(model_path: str, tokenizer_path: str):
         norm_eps=params["norm_eps"],
     )
     torch.set_default_tensor_type(torch.FloatTensor)
-    ibm_model.load_state_dict(
-        fms_sd, strict=False
-    )  # the meta weights have some extra stuff
+    ibm_model.load_state_dict(fms_sd, strict=False)  # the meta weights have some extra stuff
 
     return ibm_model, tokenizer
+
 
 def convert_hf_llama(hf_model: LlamaForCausalLM) -> LLaMA:
     """
@@ -376,6 +370,7 @@ def convert_hf_llama(hf_model: LlamaForCausalLM) -> LLaMA:
         an FMS LLaMA model
     """
     import re
+
     config = LLaMAConfig(
         src_vocab_size=hf_model.config.vocab_size,
         emb_dim=hf_model.config.hidden_size,
