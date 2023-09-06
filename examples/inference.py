@@ -22,10 +22,10 @@ parser.add_argument(
     "--tokenizer", type=str, required=True, help="Path to the tokenizer (e.g. ~/tokenizer.model)"
 )
 parser.add_argument(
-    "--compile", type=bool, default=False, help="Use torch.compile (slow for first inference pass)"
+    "--compile", action="store_true", help="Use torch.compile (slow for first inference pass)"
 )
 parser.add_argument(
-    "--deterministic", type=bool, default=False, help="Set torch.use_deterministic_algorithms? Requires env variable `CUBLAS_WORKSPACE_CONFIG=:4096:8`"
+    "--deterministic", action="store_true", help="Set torch.use_deterministic_algorithms? Requires env variable `CUBLAS_WORKSPACE_CONFIG=:4096:8`"
 )
 
 args = parser.parse_args()
