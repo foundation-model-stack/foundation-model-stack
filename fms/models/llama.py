@@ -376,9 +376,13 @@ def convert_hf_llama(hf_model: "LlamaForCausalLM") -> LLaMA:
     config = LLaMAConfig(
         src_vocab_size=hf_model.config.vocab_size,
         emb_dim=hf_model.config.hidden_size,
+        norm_eps=hf_model.config.rms_norm_eps,
         nheads=hf_model.config.num_attention_heads,
         nlayers=hf_model.config.num_hidden_layers,
-        norm_eps=hf_model.config.rms_norm_eps,
+        hidden_grow_factor=hf_model.config.intermediate_size / hf_model.config.hidden_size,
+        multiple_of=1,  # this is set to 1 as it is encoded in the hidden dimension
+        activation_fn=hf_model.config.hidden_act,
+        max_expected_seq_len=hf_model.config.max_position_embeddings,
     )
     model = LLaMA(config)
     count_parameters = lambda m: sum(p.numel() for p in m.parameters())
