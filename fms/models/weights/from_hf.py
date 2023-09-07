@@ -1,5 +1,6 @@
 from fms.models.llama import LLaMA, LLaMAConfig
-from fms.utils.tokenizers import get_tokenizer, _has_hf
+from fms.utils.tokenizers import _has_hf, get_tokenizer
+
 
 def load_weights(hf_model: "LlamaForCausalLM") -> LLaMA:
     """
@@ -15,8 +16,10 @@ def load_weights(hf_model: "LlamaForCausalLM") -> LLaMA:
     """
 
     if not _has_hf:
-        raise ImportError("in order to convert huggingface weights, you need to have transformers installed")
-    
+        raise ImportError(
+            "in order to convert huggingface weights, you need to have transformers installed"
+        )
+
     import re
 
     config = LLaMAConfig(
@@ -25,7 +28,8 @@ def load_weights(hf_model: "LlamaForCausalLM") -> LLaMA:
         norm_eps=hf_model.config.rms_norm_eps,
         nheads=hf_model.config.num_attention_heads,
         nlayers=hf_model.config.num_hidden_layers,
-        hidden_grow_factor=hf_model.config.intermediate_size / hf_model.config.hidden_size,
+        hidden_grow_factor=hf_model.config.intermediate_size
+        / hf_model.config.hidden_size,
         multiple_of=1,  # this is set to 1 as it is encoded in the hidden dimension
         activation_fn=hf_model.config.hidden_act,
         max_expected_seq_len=hf_model.config.max_position_embeddings,
@@ -62,11 +66,19 @@ def load_weights(hf_model: "LlamaForCausalLM") -> LLaMA:
     model.rot_emb.freqs = hf_model.model.layers[0].self_attn.rotary_emb.inv_freq
     for layer in model.layers:
         q = layer.attn.query.weight.data
-        q = q.view(model.config.nheads, 2, -1, q.size(1)).transpose(1, 2).reshape(*q.size())
+        q = (
+            q.view(model.config.nheads, 2, -1, q.size(1))
+            .transpose(1, 2)
+            .reshape(*q.size())
+        )
         layer.attn.query.weight.data = q
 
         k = layer.attn.key.weight.data
-        k = k.view(model.config.nheads, 2, -1, k.size(1)).transpose(1, 2).reshape(*k.size())
+        k = (
+            k.view(model.config.nheads, 2, -1, k.size(1))
+            .transpose(1, 2)
+            .reshape(*k.size())
+        )
         layer.attn.key.weight.data = k
 
     return model

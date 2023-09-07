@@ -1,11 +1,13 @@
 import json
 import os
-from pathlib import Path
 import re
+from pathlib import Path
 
 import torch
+
 from fms.models.llama import LLaMA
 from fms.utils.tokenizers import get_tokenizer
+
 
 def _rename_weights_to_fms(orig_sd):
     replacements = [
@@ -74,6 +76,8 @@ def load_weights(model_path: str, tokenizer_path: str):
         norm_eps=params["norm_eps"],
     )
     torch.set_default_dtype(torch.float32)
-    model.load_state_dict(fms_sd, strict=False)  # the meta weights have some extra stuff
+    model.load_state_dict(
+        fms_sd, strict=False
+    )  # the meta weights have some extra stuff
 
     return model, tokenizer
