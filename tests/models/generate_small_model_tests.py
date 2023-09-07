@@ -10,12 +10,24 @@ from fms.models.llama import LLaMA, LLaMAConfig
 
 parser = argparse.ArgumentParser(description="generate small model tests")
 
-parser.add_argument("--generate_config", action="store_true", help="create a new config from the model params")
-parser.add_argument("--generate_weights", action="store_true", help="save the model state with weights reset")
 parser.add_argument(
-    "--generate_signature", action="store_true", help="generate a signature for this model and save the signature"
+    "--generate_config",
+    action="store_true",
+    help="create a new config from the model params",
 )
-parser.add_argument("--generate_tokenizer", action="store_true", help="save the tokenizer")
+parser.add_argument(
+    "--generate_weights",
+    action="store_true",
+    help="save the model state with weights reset",
+)
+parser.add_argument(
+    "--generate_signature",
+    action="store_true",
+    help="generate a signature for this model and save the signature",
+)
+parser.add_argument(
+    "--generate_tokenizer", action="store_true", help="save the tokenizer"
+)
 parser.add_argument(
     "--model",
     default="",

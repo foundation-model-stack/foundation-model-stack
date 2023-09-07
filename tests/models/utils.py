@@ -18,7 +18,9 @@ class ModelSignatureParams:
     inp: Optional[torch.LongTensor] = None
 
 
-def compare_model_signatures(model_params_1: ModelSignatureParams, model_params_2: ModelSignatureParams):
+def compare_model_signatures(
+    model_params_1: ModelSignatureParams, model_params_2: ModelSignatureParams
+):
     """This utility function will compare the signature between 2 models using np.allclose
 
     Parameters
@@ -111,7 +113,9 @@ def get_signature(
             params_to_ignore.append(k)
 
     if len(params_to_ignore) != 0:
-        print(f"the following params were ignored as they did not exist in the forward function: {params_to_ignore}")
+        print(
+            f"the following params were ignored as they did not exist in the forward function: {params_to_ignore}"
+        )
 
     if isinstance(params, list):
         inps = {p: inp for p in params}

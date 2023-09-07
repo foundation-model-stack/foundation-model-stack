@@ -83,7 +83,9 @@ class AbstractModelTest(AbstractConfigTest):
 
     def test_model_output(self, model, signature):
         actual = utils.get_signature(model, params=self._forward_parameters)
-        assert np.allclose(np.array(actual), np.array(signature)), _FAILED_MODEL_SIGNATURE_OUTPUT_MSG
+        assert np.allclose(
+            np.array(actual), np.array(signature)
+        ), _FAILED_MODEL_SIGNATURE_OUTPUT_MSG
 
     def test_get_config(self, model, config):
         assert model.get_config().as_dict() == config.as_dict()
