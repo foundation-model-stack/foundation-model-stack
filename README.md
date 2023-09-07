@@ -26,7 +26,7 @@ Without further ado, here be some numbers/plots:
 
 ![image](https://github.com/ibm-pytorch/foundation-model-stack/assets/919977/16ea178f-1c50-4f26-b549-dd21f73f51f8)
 
-First, let's explain this plot: here, we're comparing the implementation of LlaMA-7B in this repo (llama-fms) to the implementation in HuggingFace's TGI (llama), which uses Flash Attention v2 and manually fused kernels. We observe similar performance between our compiled llama (compile+SDPA) and the manually tuned one in TGI. You can think of VUS as the batch size. This is running on a single A100 80GB GPU using the watsonx.ai infrastructure and benchmarking code, which lets us easily compare to the HF TGI implementation on a similar environment (IBM's TGIS).
+First, let's explain this plot: here, we're comparing the implementation of LlaMA-7B in this repo (llama-fms) to the implementation hosted in HuggingFace's TGI (llama), which uses Flash Attention v2 and manually fused kernels. We observe similar performance between our compiled llama (compile+SDPA) and the manually tuned one in TGI. VUS stands for Virtual UserS, and has a direct equivalency to the batch size in this benchmark. This is running on a single A100 80GB GPU using the watsonx.ai infrastructure and benchmarking code, which lets us easily compare to the HF TGI implementation on a similar environment (IBM's TGIS).
 
 Similar results for 13B on single GPU will be posted shortly.
 
