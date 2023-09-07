@@ -4,8 +4,16 @@ from typing import List, Tuple, Union
 import torch
 import torch.nn as nn
 from numpy import sign
-from fms.distributed.tensorparallel import all_gather_from_tensor_model_parallel_region, apply_colwise_tp, apply_embedding_tp, apply_rowwise_tp, copy_to_tensor_model_parallel_region, reduce_from_tensor_model_parallel_region
 from torch.distributed.distributed_c10d import ProcessGroup
+
+from fms.distributed.tensorparallel import (
+    all_gather_from_tensor_model_parallel_region,
+    apply_colwise_tp,
+    apply_embedding_tp,
+    apply_rowwise_tp,
+    copy_to_tensor_model_parallel_region,
+    reduce_from_tensor_model_parallel_region,
+)
 
 
 class WordEmbedding(nn.Module):
@@ -149,27 +157,58 @@ class TPWordEmbedding(WordEmbedding):
         tie_weights=True,
         bias=False,
         debug=False,
-        group: ProcessGroup = None
+        group: ProcessGroup = None,
     ):
         assert torch.distributed.is_initialized()
         if group is None:
             group = torch.distributed.GroupMember.WORLD
         world_size = group.size()
         rank = group.rank()
-        assert emb_dim % world_size == 0, "The embedding dimensions must be divisible by world size"
-        assert vocab_size % world_size == 0, "The number of tokens must be divisible by world size"
-        super(TPWordEmbedding, self).__init__(
-            vocab_size,
-            emb_dim,
-            padding_idx,
-            max_pos,
-            abs_pos,
-            reversible,
-            tie_weights,
-            bias,
-            debug,
-            tp_world_size=world_size,
-        )
+        assert (
+            emb_dim % world_size == 0
+        ), "The embedding dimensions must be divisible by world size"
+        assert (
+            vocab_size % world_size == 0
+        ), "The number of tokens must be divisible by world size"
+        super(WordEmbedding, self).__init__()
+
+        self.vocab_size = vocab_size
+        self.emb_dim = emb_dim
+        if padding_idx is not None:
+            padding_idx = (
+                padding_idx if (padding_idx >= 0 and padding_idx < vocab_size) else None
+            )
+        self.padding_idx = padding_idx
+        self.max_pos = max_pos
+        self.abs_pos = abs_pos
+        self.reversible = reversible
+        self.debug = debug
+        self.tie_weights = tie_weights
+        self.bias = bias
+
+        assert (
+            reversible or not tie_weights
+        ), "Error: weights cannot be tied when there is no output head!"
+        if padding_idx is None:
+            self.emb = nn.Embedding(self.vocab_size, self.emb_dim // world_size)
+        else:
+            self.emb = nn.Embedding(
+                self.vocab_size,
+                self.emb_dim // world_size,
+                padding_idx=self.padding_idx,
+            )
+        if abs_pos:
+            self.pos_emb = nn.Embedding(max_pos, self.emb_dim // world_size)
+            self.register_buffer("pos_id", torch.arange(max_pos).unsqueeze(0))
+        if reversible:
+            assert (
+                self.vocab_size % world_size == 0
+            ), "The vocab size should be a multiple of the world size!"
+            self.head = nn.Linear(
+                self.emb_dim, self.vocab_size // world_size, bias=bias
+            )
+            if tie_weights:
+                self.head.weight = self.emb.weight
 
         self.rank = rank
         self.world_size = world_size
@@ -186,7 +225,7 @@ class TPWordEmbedding(WordEmbedding):
             we.tie_weights,
             we.bias,
             we.debug,
-            group
+            group,
         )
         return tp_we
 
@@ -203,6 +242,8 @@ class TPWordEmbedding(WordEmbedding):
         inp_par = copy_to_tensor_model_parallel_region(inp)
         out_par = WordEmbedding.forward(self, inp_par, reverse=reverse)
         if not reverse:
-            return all_gather_from_tensor_model_parallel_region(out_par)
+            return all_gather_from_tensor_model_parallel_region(
+                out_par, self.rank, self.world_size
+            )
         else:
             return reduce_from_tensor_model_parallel_region(out_par)

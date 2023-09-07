@@ -2,11 +2,16 @@ from typing import Optional
 
 import torch
 from torch import nn
-from torch.nn import functional as F
-from fms.distributed.tensorparallel import apply_colwise_tp, apply_rowwise_tp, copy_to_tensor_model_parallel_region, reduce_from_tensor_model_parallel_region
-
-from fms.modules.positions import PositionEncoder
 from torch.distributed.distributed_c10d import ProcessGroup
+from torch.nn import functional as F
+
+from fms.distributed.tensorparallel import (
+    apply_colwise_tp,
+    apply_rowwise_tp,
+    copy_to_tensor_model_parallel_region,
+    reduce_from_tensor_model_parallel_region,
+)
+from fms.modules.positions import PositionEncoder
 
 
 class MultiHeadAttention(nn.Module):
@@ -230,6 +235,7 @@ class MultiHeadAttention(nn.Module):
         else:
             return out
 
+
 class TPMultiHeadAttention(MultiHeadAttention):
     """
     Performs multi-headed self- or cross-attention, with optional attention masking.
@@ -263,7 +269,9 @@ class TPMultiHeadAttention(MultiHeadAttention):
             group = torch.distributed.GroupMember.WORLD
         world_size = group.size()
         rank = group.rank()
-        assert nheads % world_size == 0, "The number of heads must be divisible by world size"
+        assert (
+            nheads % world_size == 0
+        ), "The number of heads must be divisible by world size"
         super(TPMultiHeadAttention, self).__init__(
             emb_dim,
             emb_kq,
@@ -280,7 +288,9 @@ class TPMultiHeadAttention(MultiHeadAttention):
         self.world_size = world_size
 
     @staticmethod
-    def import_module(mha: MultiHeadAttention, world_size, rank) -> "TPMultiHeadAttention":
+    def import_module(
+        mha: MultiHeadAttention, group: ProcessGroup
+    ) -> "TPMultiHeadAttention":
         tp_mha = TPMultiHeadAttention(
             emb_dim=mha.emb_dim,
             emb_kq=mha.emb_kq_per_head,
@@ -289,8 +299,7 @@ class TPMultiHeadAttention(MultiHeadAttention):
             kvheads=mha.kvheads,
             p_dropout=mha.p_dropout,
             use_bias=mha.use_bias,
-            world_size=world_size,
-            rank=rank,
+            group=group,
         )
         return tp_mha
 
@@ -314,14 +323,11 @@ class TPMultiHeadAttention(MultiHeadAttention):
         k,
         v,
         mask=None,
-        rel_pos_bias=None,
-        start_pos=None,
         attn_algorithm=None,
         past_key_value_state=None,
         use_cache=False,
         is_self=True,
         is_causal_mask=False,
-        iteration=None,
     ):
         """
         Check MultiHeadAttention for up-to-date arguments and docs
@@ -330,7 +336,7 @@ class TPMultiHeadAttention(MultiHeadAttention):
         q_par = copy_to_tensor_model_parallel_region(q)
         k_par = copy_to_tensor_model_parallel_region(k)
         v_par = copy_to_tensor_model_parallel_region(v)
-        rel_pos_bias_par = copy_to_tensor_model_parallel_region(rel_pos_bias)
+        # rel_pos_bias_par = copy_to_tensor_model_parallel_region(rel_pos_bias)
 
         out_par = MultiHeadAttention.forward(
             self,
@@ -338,14 +344,11 @@ class TPMultiHeadAttention(MultiHeadAttention):
             k_par,
             v_par,
             mask,
-            rel_pos_bias_par,
-            start_pos,
             attn_algorithm,
             past_key_value_state,
             use_cache,
             is_self,
             is_causal_mask,
-            iteration,
         )
 
         # if use_cache=True, we return the hidden_state as well as the kv cache.
@@ -356,4 +359,3 @@ class TPMultiHeadAttention(MultiHeadAttention):
         else:
             out = reduce_from_tensor_model_parallel_region(out_par)
             return out
-

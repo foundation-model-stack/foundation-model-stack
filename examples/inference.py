@@ -3,12 +3,16 @@ import itertools
 import os
 
 import torch
+from torch import distributed as dist
 
+from fms.distributed.strategy import TensorParallelStrategy
 from fms.models.llama import LLaMA, load_fms_llama
 from fms.utils.generation import generate
 
 
 # This example script validates the LLaMA implementation by running inference on a couple of prompts.
+# Example usage:
+# srun -N 1 --gres=gpu:2 torchrun --nproc_per_node=2 ~/repos/newfms/examples/inference.py --model_path=~/models/13-F --tokenizer=~/models/tokenizer.model --distributed
 
 parser = argparse.ArgumentParser(description="Script to run inference on a LLaMA model")
 parser.add_argument("--device_type", type=str, default="cuda")
@@ -16,21 +20,37 @@ parser.add_argument(
     "--model_path",
     type=str,
     required=True,
-    help="Path to the directory containing LLaMa weights",
+    help="Path to the directory containing LLaMa weights (.pth files sharded by tensor parallel rank, not HF weights)",
 )
 parser.add_argument(
-    "--tokenizer", type=str, required=True, help="Path to the tokenizer (e.g. ~/tokenizer.model)"
+    "--tokenizer",
+    type=str,
+    required=True,
+    help="Path to the tokenizer (e.g. ~/tokenizer.model)",
 )
 parser.add_argument(
-    "--compile", type=bool, default=False, help="Use torch.compile (slow for first inference pass)"
+    "--compile",
+    type=bool,
+    default=False,
+    help="Use torch.compile (slow for first inference pass)",
 )
 parser.add_argument(
-    "--deterministic", type=bool, default=False, help="Set torch.use_deterministic_algorithms? Requires env variable `CUBLAS_WORKSPACE_CONFIG=:4096:8`"
+    "--deterministic",
+    type=bool,
+    default=False,
+    help="Set torch.use_deterministic_algorithms? Requires env variable `CUBLAS_WORKSPACE_CONFIG=:4096:8`",
+)
+parser.add_argument(
+    "--distributed",
+    action="store_true",
+    help="This is a distributed job (multiple instances run with RANK+WORLD_SIZE)",
 )
 
 args = parser.parse_args()
 
-local_rank = os.getenv("LOCAL_RANK", 0)
+local_rank = int(os.getenv("LOCAL_RANK", 0))
+
+
 device = torch.device(args.device_type, local_rank)
 
 torch.set_default_device(device)
@@ -40,9 +60,13 @@ torch.set_default_dtype(torch.half)
 if args.deterministic:
     torch.use_deterministic_algorithms(True)
 
+if args.distributed:
+    dist.init_process_group()
+
 print("loading model")
 model, tokenizer = load_fms_llama(args.model_path, args.tokenizer)
 model.eval()
+print("loading complete on rank", local_rank)
 
 if args.compile:
     print("compiling model")
@@ -77,9 +101,13 @@ prompt2 = ids_for_prompt(prompt2)
 max_len = max([len(prompt) for prompt in [prompt1, prompt2]])
 prompt1 = pad_prompt(prompt1, max_len)
 prompt2 = pad_prompt(prompt2, max_len)
-ids = torch.stack((prompt2, prompt1), dim=0)
+# ids = torch.stack((prompt2, prompt1), dim=0)
+ids = prompt1.unsqueeze(0)
+
 
 def print_result(result):
+    if local_rank != 0:
+        return
     # stop at EOS token if present
     eos_idx = torch.where(result == tokenizer.convert_tokens_to_ids("</s>"))
     eos_idx = eos_idx[0]
@@ -97,17 +125,27 @@ def infer(use_cache, do_sample):
     print("use_cache", use_cache, ";; do_sample", do_sample)
     print("==================")
     result = generate(
-        model, ids.clone().detach(), max_new_tokens=50, use_cache=use_cache, do_sample=do_sample
+        model,
+        ids,
+        max_new_tokens=50,
+        use_cache=use_cache,
+        do_sample=do_sample,
+        verbosity=1000,
     )
     for i in range(result.shape[0]):
         print_result(result[i])
         print()
 
+    # if local_rank == 0:
+    print("generating output")
+    # do_sample = [True, False]
+    # use_cache = [True, False] # these are identical with greedy iff `torch.use_deterministic_algorithms(True)`
+    # for sample, cache in itertools.product(do_sample, use_cache):
+    #     infer(cache, sample)
+    #     print()
+    #     print()
 
-print("generating output")
-do_sample = [True, False]
-use_cache = [True, False] # these are identical with greedy iff `torch.use_deterministic_algorithms(True)`
-for sample, cache in itertools.product(do_sample, use_cache):
-    infer(cache, sample)
-    print()
-    print()
+
+infer(False, False)
+
+print("finished", local_rank)

@@ -7,9 +7,13 @@ from pathlib import Path
 
 import torch
 import torch.nn as nn
-from fms.distributed.strategy import DistributedStrategy
 
 import fms.utils
+from fms.distributed.strategy import (
+    DistributedStrategy,
+    NoOpStrategy,
+    TensorParallelStrategy,
+)
 from fms.modules.attention import MultiHeadAttention
 from fms.modules.embedding import WordEmbedding
 from fms.modules.feedforward import FeedForwardBlock, GatedLinearUnit
@@ -46,7 +50,7 @@ class LLaMAConfig(ModelConfig):
     tie_head: bool = False
     vocab_bias: bool = False
     max_expected_seq_len: int = 2048
-    distributed_strategy: DistributedStrategy = fms.distributed.NoOpStrategy
+    distributed_strategy: DistributedStrategy = NoOpStrategy
 
 
 class LLaMABlock(nn.Module):
@@ -184,7 +188,7 @@ class LLaMA(nn.Module):
             tie_weights=self.config.tie_head,
             bias=self.config.vocab_bias,
         )
-        self.shared = self.config.distributed_strategy.distribute_layer(self.shared)
+        self.shared = self.config.distributed_strategy.distribute_module(self.shared)
 
         self.rot_emb = RotaryEmbedding(
             self.config.emb_dim // self.config.nheads,
@@ -308,7 +312,9 @@ class LLaMA(nn.Module):
         only_last_token=False,
         attn_algorithm=None,
     ):
-        output, cache = self._helper(x, mask, past_key_value_states, use_cache, attn_algorithm)
+        output, cache = self._helper(
+            x, mask, past_key_value_states, use_cache, attn_algorithm
+        )
 
         if only_last_token:
             output = output[:, -1, :]
@@ -318,6 +324,7 @@ class LLaMA(nn.Module):
             return preds, cache
         else:
             return preds
+
 
 def _rename_weights_to_fms(orig_sd):
     replacements = [
@@ -345,10 +352,11 @@ def _rename_weights_to_fms(orig_sd):
 
     return new_sd
 
-def load_fms_llama(model_path: str, tokenizer_path: str, group = None):
 
+def load_fms_llama(model_path: str, tokenizer_path: str, group=None):
     if torch.distributed.is_initialized() and group is None:
         group = torch.distributed.GroupMember.WORLD
+
     if group is None:
         world_size = 1
         rank = 0
@@ -379,7 +387,11 @@ def load_fms_llama(model_path: str, tokenizer_path: str, group = None):
 
     # IBM LLaMa
     fms_sd = _rename_weights_to_fms(checkpoint_sd)
-    torch.set_default_tensor_type(torch.cuda.HalfTensor)
+
+    extra_args = {}
+    if world_size > 1:
+        extra_args["distributed_strategy"] = TensorParallelStrategy()
+
     ibm_model = LLaMA(
         src_vocab_size=tokenizer.vocab_size(),
         emb_dim=params["dim"],
@@ -388,8 +400,9 @@ def load_fms_llama(model_path: str, tokenizer_path: str, group = None):
         hidden_grow_factor=hidden_grow_factor,
         multiple_of=params["multiple_of"],
         norm_eps=params["norm_eps"],
+        **extra_args,
     )
-    torch.set_default_tensor_type(torch.FloatTensor)
+
     ibm_model.load_state_dict(
         fms_sd, strict=False
     )  # the meta weights have some extra stuff

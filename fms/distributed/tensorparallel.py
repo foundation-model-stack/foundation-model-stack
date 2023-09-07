@@ -1,52 +1,17 @@
 from typing import Any, Tuple
 
 import torch
-import torch._dynamo as dynamo
-import torch.distributed as dist
 import torch.distributed._functional_collectives as distfunc
-from torch.distributed.distributed_c10d import ProcessGroup
-
 from torch import nn
-from fms.modules.attention import MultiHeadAttention, TPMultiHeadAttention
-from fms.modules.embedding import TPWordEmbedding, WordEmbedding
-
-from fms.modules.feedforward import FeedForwardBlock, GatedLinearUnit, TPFeedForwardBlock, TPGatedLinearUnit
-from fms.modules.positions import Alibi
-
-def _tp_wrapped(module: nn.Module, group: ProcessGroup):
-    if isinstance(module, FeedForwardBlock):
-        return TPFeedForwardBlock.import_module(module, group)
-    elif isinstance(module, GatedLinearUnit):
-        return TPGatedLinearUnit.import_module(module, group)
-    elif isinstance(module, MultiHeadAttention):
-        return TPMultiHeadAttention.import_module(module, group)
-    elif isinstance(module, Alibi):
-        raise NotImplementedError("TODO: implement TP for Alibi")
-        # tp_layer = TPAlibi.import_module(layer, world_size, rank, dtype)
-        # setattr(model, name, tp_layer)
-    elif isinstance(module, WordEmbedding):
-        return TPWordEmbedding.import_module(module, group)
-    else:
-        return module
-
-
-def apply_tp(model: nn.Module, group: ProcessGroup):
-    wrapped = _tp_wrapped(model, group)
-    if wrapped is not model:
-        return wrapped
-
-    for name, layer in model.named_children():
-        tp_layer = apply_tp(layer)
-        setattr(model, name, tp_layer)
-    return model
-
 
 
 def apply_colwise_tp(par_mod: nn.Linear, mod: nn.Linear, world_size, rank):
     # Divide the weight matrix along the last dimension.
     output_size_per_partition = mod.out_features // world_size
     with torch.no_grad():
-        par_mod.weight.copy_(torch.split(mod.weight, output_size_per_partition, dim=0)[rank])
+        par_mod.weight.copy_(
+            torch.split(mod.weight, output_size_per_partition, dim=0)[rank]
+        )
         if par_mod.bias is not None:
             par_mod.bias.copy_(torch.split(mod.bias, output_size_per_partition)[rank])
     # print(f"For rank {rank}, we have the following weights: Base weight {mod.weight} bias {mod.bias}; Par weight {par_mod.weight}, bias {par_mod.bias}")
@@ -56,7 +21,9 @@ def apply_rowwise_tp(par_mod: nn.Linear, mod: nn.Linear, world_size, rank):
     # Divide the weight matrix along the last dimension.
     output_size_per_partition = mod.in_features // world_size
     with torch.no_grad():
-        par_mod.weight.copy_(torch.split(mod.weight, output_size_per_partition, dim=1)[rank])
+        par_mod.weight.copy_(
+            torch.split(mod.weight, output_size_per_partition, dim=1)[rank]
+        )
         if par_mod.bias is not None:
             if rank == 0:
                 par_mod.bias.copy_(mod.bias)
@@ -69,7 +36,9 @@ def apply_embedding_tp(par_mod: nn.Embedding, mod: nn.Embedding, world_size, ran
     # Divide the weight matrix along the last dimension.
     output_size_per_partition = mod.embedding_dim // world_size
     with torch.no_grad():
-        par_mod.weight.copy_(torch.split(mod.weight, output_size_per_partition, dim=1)[rank])
+        par_mod.weight.copy_(
+            torch.split(mod.weight, output_size_per_partition, dim=1)[rank]
+        )
     # print(f"For rank {rank}, we have the following weights: Base weight {mod.weight} bias {mod.bias}; Par weight {par_mod.weight}, bias {par_mod.bias}")
 
 
@@ -117,12 +86,9 @@ def _all_gather(input_: torch.Tensor, is_host_dist=False) -> torch.Tensor:
     return new_inp
 
 
-def _split(input_: torch.Tensor, group) -> torch.Tensor:
+def _split(input_: torch.Tensor, rank, world_size) -> torch.Tensor:
     """Split the tensor along its last dimension and keep the
     corresponding slice."""
-
-    world_size = group.size()
-    rank = group.rank()
 
     if world_size == 1:
         return input_
@@ -180,13 +146,14 @@ class _AllGatherFromModelParallelRegion(torch.autograd.Function):
         return _all_gather(input_)
 
     @staticmethod
-    def forward(ctx, input_, group):
-        ctx.group = group
+    def forward(ctx, input_, rank, world_size):
+        ctx.rank = rank
+        ctx.world_size = world_size
         return _all_gather(input_)
 
     @staticmethod
     def backward(ctx, grad_output):
-        return _split(grad_output, ctx.group)
+        return _split(grad_output, ctx.rank, ctx.world_size)
 
 
 def copy_to_tensor_model_parallel_region(input_):
@@ -197,5 +164,5 @@ def reduce_from_tensor_model_parallel_region(input_):
     return _ReduceFromModelParallelRegion.apply(input_)
 
 
-def all_gather_from_tensor_model_parallel_region(input_):
-    return _AllGatherFromModelParallelRegion.apply(input_)
+def all_gather_from_tensor_model_parallel_region(input_, rank, world_size):
+    return _AllGatherFromModelParallelRegion.apply(input_, rank, world_size)

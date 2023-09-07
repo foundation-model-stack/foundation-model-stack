@@ -1,8 +1,9 @@
-./build
-./dist
-./.pytest_cache
+build
+dist
+.pytest_cache
 */**/__pycache__
 *.pyc
 */**/*.pyc
 .vscode
+fms.egg-info
 

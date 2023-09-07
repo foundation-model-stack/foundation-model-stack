@@ -1,9 +1,15 @@
 import torch
 import torch.distributed
 import torch.nn as nn
-
-from fms.distributed.tensorparallel import apply_colwise_tp, apply_rowwise_tp, copy_to_tensor_model_parallel_region, reduce_from_tensor_model_parallel_region
 from torch.distributed.distributed_c10d import ProcessGroup
+
+from fms.distributed.tensorparallel import (
+    apply_colwise_tp,
+    apply_rowwise_tp,
+    copy_to_tensor_model_parallel_region,
+    reduce_from_tensor_model_parallel_region,
+)
+
 
 class FeedForwardBlock(nn.Module):
     """
@@ -69,6 +75,7 @@ class FeedForwardBlock(nn.Module):
             out = self.d(out)
         return self.w2(out)
 
+
 class TPFeedForwardBlock(FeedForwardBlock):
     """
     A two-layer, symmetric, fully-connected MLP structure with Tensor Parallel support.
@@ -92,7 +99,7 @@ class TPFeedForwardBlock(FeedForwardBlock):
         p_dropout=0.1,
         use_bias=True,
         gain=1,
-        group:ProcessGroup=None,
+        group: ProcessGroup = None,
     ):
         assert torch.distributed.is_initialized()
         hidden_dim = int(hidden_grow_factor * emb_dim)
@@ -100,15 +107,25 @@ class TPFeedForwardBlock(FeedForwardBlock):
             hidden_dim = multiple_of * ((hidden_dim + multiple_of - 1) // multiple_of)
         world_size = group.size()
         rank = group.rank()
-        assert hidden_dim % world_size == 0, "Hidden dim must be divisible by world size"
+        assert (
+            hidden_dim % world_size == 0
+        ), "Hidden dim must be divisible by world size"
         super(TPFeedForwardBlock, self).__init__(
-            emb_dim, hidden_grow_factor / world_size, multiple_of, activation_fn, p_dropout, use_bias, gain
+            emb_dim,
+            hidden_grow_factor / world_size,
+            multiple_of,
+            activation_fn,
+            p_dropout,
+            use_bias,
+            gain,
         )
         self.rank = rank
         self.world_size = world_size
 
     @staticmethod
-    def import_module(ffb: FeedForwardBlock, group: ProcessGroup) -> "TPFeedForwardBlock":
+    def import_module(
+        ffb: FeedForwardBlock, group: ProcessGroup
+    ) -> "TPFeedForwardBlock":
         tp_ffb = TPFeedForwardBlock(
             emb_dim=ffb.w1.in_features,
             hidden_grow_factor=ffb.hidden_dim / ffb.w1.in_features,
@@ -128,8 +145,6 @@ class TPFeedForwardBlock(FeedForwardBlock):
         x_par = copy_to_tensor_model_parallel_region(x)
         out_par = FeedForwardBlock.forward(self, x_par)
         return reduce_from_tensor_model_parallel_region(out_par)
-
-
 
 
 class GatedLinearUnit(nn.Module):
@@ -165,16 +180,18 @@ class GatedLinearUnit(nn.Module):
         gain=1,
     ):
         super(GatedLinearUnit, self).__init__()
-        hidden_dim = int(hidden_grow_factor * emb_dim)
+        self.hidden_dim = int(hidden_grow_factor * emb_dim)
         if multiple_of:
-            hidden_dim = multiple_of * ((hidden_dim + multiple_of - 1) // multiple_of)
-        self.w1 = nn.Linear(emb_dim, hidden_dim, bias=use_bias)
-        self.wg = nn.Linear(emb_dim, hidden_dim, bias=use_bias)
+            self.hidden_dim = multiple_of * (
+                (self.hidden_dim + multiple_of - 1) // multiple_of
+            )
+        self.w1 = nn.Linear(emb_dim, self.hidden_dim, bias=use_bias)
+        self.wg = nn.Linear(emb_dim, self.hidden_dim, bias=use_bias)
         self.a = activation_fn
         self.p_dropout = p_dropout
         if p_dropout:
             self.d = nn.Dropout(p_dropout)
-        self.w2 = nn.Linear(hidden_dim, emb_dim, bias=use_bias)
+        self.w2 = nn.Linear(self.hidden_dim, emb_dim, bias=use_bias)
         self.use_bias = use_bias
         self.width = emb_dim
         self.grow_factor = hidden_grow_factor
@@ -226,7 +243,7 @@ class TPGatedLinearUnit(GatedLinearUnit):
         p_dropout=0.1,
         use_bias=True,
         gain=1,
-        group:ProcessGroup = None
+        group: ProcessGroup = None,
     ):
         assert torch.distributed.is_initialized()
         world_size = group.size()
@@ -235,15 +252,23 @@ class TPGatedLinearUnit(GatedLinearUnit):
         hidden_dim = int(hidden_grow_factor * emb_dim)
         if multiple_of:
             hidden_dim = multiple_of * ((hidden_dim + multiple_of - 1) // multiple_of)
-        assert hidden_dim % world_size == 0, "Hidden dim must be divisible by world size"
+        assert (
+            hidden_dim % world_size == 0
+        ), "Hidden dim must be divisible by world size"
         super(TPGatedLinearUnit, self).__init__(
-            emb_dim, hidden_grow_factor / world_size, multiple_of, activation_fn, p_dropout, use_bias, gain
+            emb_dim,
+            hidden_grow_factor / world_size,
+            multiple_of,
+            activation_fn,
+            p_dropout,
+            use_bias,
+            gain,
         )
         self.rank = rank
         self.world_size = world_size
 
     @staticmethod
-    def import_module(glu: GatedLinearUnit, world_size, rank) -> "TPGatedLinearUnit":
+    def import_module(glu: GatedLinearUnit, group: ProcessGroup) -> "TPGatedLinearUnit":
         tp_glu = TPGatedLinearUnit(
             emb_dim=glu.width,
             hidden_grow_factor=glu.hidden_dim / glu.width,
@@ -251,8 +276,7 @@ class TPGatedLinearUnit(GatedLinearUnit):
             activation_fn=glu.a,
             p_dropout=glu.p_dropout,
             use_bias=glu.use_bias,
-            world_size=world_size,
-            rank=rank,
+            group=group,
         )
 
         return tp_glu
@@ -266,4 +290,3 @@ class TPGatedLinearUnit(GatedLinearUnit):
         x_par = copy_to_tensor_model_parallel_region(x)
         out_par = GatedLinearUnit.forward(self, x_par)
         return reduce_from_tensor_model_parallel_region(out_par)
-

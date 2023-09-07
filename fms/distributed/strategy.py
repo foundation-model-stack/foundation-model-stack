@@ -1,20 +1,24 @@
 from abc import abstractmethod
 from typing import List
+
 import torch
 import torch.distributed
 from torch import nn
-from fms.distributed import tensorparallel
+
+from fms.utils import tp_wrapping
+
 
 class DistributedStrategy:
     def __init__(self, from_meta=False):
-        self.from_meta=from_meta
+        self.from_meta = from_meta
 
     def distribute_module(self, module: nn.Module) -> nn.Module:
         """
-        Optionally a distributed strategy may distribute modules that are not 
+        Optionally a distributed strategy may distribute modules that are not
         numbered layers
         """
         return module
+
     @abstractmethod
     def distribute_layer(self, block: nn.Module, layer: int) -> nn.Module:
         """
@@ -29,20 +33,28 @@ class NotDistributed(DistributedStrategy):
 
     def distribute_module(self, module: nn.Module) -> nn.Module:
         return module
+
     def distribute_layer(self, block: nn.Module, layer: int) -> nn.Module:
         return block
 
+
 NoOpStrategy = NotDistributed()
+
 
 class DeviceMover(nn.Module):
     def __init__(self, module: nn.Module, device):
         self.module = module.to(device)
         self.device = device
+
     def forward(self, *args, **kwargs):
         device = self.device
         args = [arg.to(device) if type(arg) == torch.Tensor else arg for arg in args]
-        kwargs = {k : (kwargs[k].to(device) if type(kwargs[k]) == torch.Tensor else kwargs[k]) for k in kwargs}
+        kwargs = {
+            k: (kwargs[k].to(device) if type(kwargs[k]) == torch.Tensor else kwargs[k])
+            for k in kwargs
+        }
         return self.module(*args, **kwargs)
+
 
 class UniformModelParallelStrategy(DistributedStrategy):
     def __init__(self, devices: List[int], num_layers: int, from_meta=False):
@@ -77,6 +89,7 @@ class UniformModelParallelStrategy(DistributedStrategy):
         else:
             return module.to(device)
 
+
 class TensorParallelStrategy(DistributedStrategy):
     def __init__(self, group=None, from_meta=False):
         super().__init__(from_meta)
@@ -84,8 +97,7 @@ class TensorParallelStrategy(DistributedStrategy):
         self.group = group if group is not None else torch.distributed.GroupMember.WORLD
 
     def distribute_module(self, module: nn.Module) -> nn.Module:
-        return tensorparallel.apply_tp(module, self.group)
+        return tp_wrapping.apply_tp(module, self.group)
+
     def distribute_layer(self, block: nn.Module, layer: int) -> nn.Module:
-        return tensorparallel.apply_tp(block, self.group)
-
-
+        return tp_wrapping.apply_tp(block, self.group)
