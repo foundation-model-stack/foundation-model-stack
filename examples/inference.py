@@ -9,6 +9,9 @@ from fms.utils.generation import generate
 
 
 # This example script validates the LLaMA implementation by running inference on a couple of prompts.
+#
+# Example usage with single-GPU 7B model on slurm, with torch.compile and determinstic behavior:
+# CUBLAS_WORKSPACE_CONFIG=:4096:8 srun -N 1 --gres=gpu:1 python examples/inference.py --model_path=~/models/7B-F/ --tokenizer=~/models/tokenizer.model --compile --deterministic
 
 parser = argparse.ArgumentParser(description="Script to run inference on a LLaMA model")
 parser.add_argument("--device_type", type=str, default="cuda")
@@ -49,9 +52,10 @@ if args.compile:
     # compiling can make first inference pass slow
     model = torch.compile(model)
 
-prompt1 = "Below is an instruction that describes a task. Write a response that appropriately completes the request.\n\n### Instruction:\nProvide a list of instructions for preparing chicken soup.\n\n### Response:"
-prompt2 = "Below is an instruction that describes a task. Write a response that appropriately completes the request.\n\n### Instruction:\nExplain some popular greetings in Spanish.\n\n### Response:"
+template = "Below is an instruction that describes a task. Write a response that appropriately completes the request.\n\n### Instruction:\n{}\n\n### Response:"
 
+prompt1 = template.format("Provide a list of instructions for preparing chicken soup.")
+prompt2 = template.format("Explain some popular greetings in Spanish.")
 
 def ids_for_prompt(prompt):
     tokens = tokenizer.tokenize(prompt)

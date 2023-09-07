@@ -1,5 +1,6 @@
-./build
-./dist
+build
+dist
+fms.egg-info
 ./.pytest_cache
 */**/__pycache__
 *.pyc
