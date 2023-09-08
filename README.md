@@ -1,7 +1,9 @@
 # Foundation Model Stack
 
-Foundation Model Stack is a collection of components for development, training,
-and tuning of foundation models.
+Foundation Model Stack is a collection of components for development, inference, training, and tuning of foundation models leveraging PyTorch native components. For inference optimizations we aim to support PyTorch compile, accelerated transformers, and tensor parallelism. At training time we aim to support FSDP and various parallelism strategies, accelerated transformers, and PyTorch compile.
+
+## Status
+* 09/08/2023: Inference on 7B, 13B LLaMa models
 
 ## Installation
 
@@ -13,32 +15,29 @@ or
 python setup.py install
 ```
 
-There's an example inference script under `./examples`.
+An example of inference on our implementation of LLaMA can be found in `examples/inference.py`.
 
 
-## Llama
+## Inference
 
-The first model we are releasing here is our reimplementation of Llama. Our reasoning behind reimplementing Llama is to support the combination of torch.compile(), PyTorch's scaled_dot_product_attention, and Tensor Parallel. Currently, no other open-source implementation we are aware of supports the three at the same time, for a variety of reasons.
+Our approach for inference optimization is to use PyTorch compile, accelerated transformers, and tensor parallelism. PyTorch compile compiles the code into optimized kernels, accelerated transformers leverages `scaled_dot_product_attention` (SDPA) for accelerating attention computation while saving memory, and tensor parallelism is necessary for larger models like LLaMa 70B. In our experiments with various models `torch.compile` has given 2-2.5x speedups for inference, with `SDPA` providing 30-40% improvements.
 
-PSA: As of 09/07/2023, there's still two pending issues in PyTorch preventing Tensor Parallel from fully working with torch.compile(): https://github.com/pytorch/pytorch/issues/107824 prevents training/finetuning from working, and https://github.com/pytorch/pytorch/issues/108780 requires adding graph breaks to preserve accuracy. Once these are fixed, the performance numbers reported below can be achieved without any loss of accuracy. Without these fixes, the combination compile+TP+SDPA will be fast but generate incorrect results.
+We initially provide a re-implementation of the LLaMA2 architecture. To enable the model to compile, we reimplement `RoPE` encodings without complex numbers. We have verified that the `forward` pass compiles (there is work that needs to be done for `backward` to work with FSDP).
 
-Without further ado, here be some numbers/plots:
+The figure below shows the latency improvements as we move from eager mode execution to adding SDPA, compile, and SDPA+Compile. The measurements are for 7 and 13B models.
 
-![image](https://github.com/ibm-pytorch/foundation-model-stack/assets/919977/16ea178f-1c50-4f26-b549-dd21f73f51f8)
+![image (21)](https://github.com/ibm-pytorch/foundation-model-stack/assets/8322403/3d9c6a0f-c3ef-454b-806c-271f352afa4d)
 
-First, let's explain this plot: here, we're comparing the implementation of LlaMA-7B in this repo (llama-fms) to the implementation hosted in HuggingFace's TGI (llama), which uses Flash Attention v2 and manually fused kernels. We observe similar performance between our compiled llama (compile+SDPA) and the manually tuned one in TGI. VUS stands for Virtual UserS, and has a direct equivalency to the batch size in this benchmark. This is running on a single A100 80GB GPU using the watsonx.ai infrastructure and benchmarking code, which lets us easily compare to the HF TGI implementation on a similar environment (IBM's TGIS).
 
-Similar results for 13B on single GPU will be posted shortly.
+Tensor parallel inference numbers for 13B and 70B models are **coming soon**!
 
-As for TP+compile+SDPA results, we have observed the following (with incorrect results due to issues in PSA above and with the caveat that once the issues are fixed there might be a performance change):
+## Training (Coming Soon!!)
 
-4 A100 80GB GPUs: 34.5 ms/token for bs=1 (vs 50-55ms/token in the TGI implementation running on the same stack w/ Flash V2 and a custom layer norm kernel)
-
-8 A100 80GB GPUs: 29 ms/token for bs=1
-
-Further performance studies will be posted here as they come out, as well as open-source benchmarking scripts to reproduce the results seen here.
+## Open Issues
+* https://github.com/pytorch/pytorch/issues/108780 requires adding graph breaks to preserve accuracy.
+* https://github.com/pytorch/pytorch/issues/107824 prevents training/finetuning from working
 
 ## References
 
-Huggingface TGI: https://github.com/huggingface/text-generation-inference
-IBM TGIS: https://github.com/IBM/text-generation-inference
+* Huggingface TGI: https://github.com/huggingface/text-generation-inference
+* IBM TGIS: https://github.com/IBM/text-generation-inference
