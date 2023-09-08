@@ -1,4 +1,5 @@
 import argparse
+import os.path
 from typing import Type, Union
 
 import torch
@@ -51,6 +52,10 @@ def save(
 ):
     """save the model config/weights/signature/tokenizer for a given test case"""
     model_test_path = f"{_models_path}/{model_test_name}"
+
+    # create the test case folder if it does not exist
+    if not os.path.exists(model_test_path):
+        os.mkdir(model_test_path)
 
     # if generate config is true, create a new config from the model params
     # if generate config is false, simply load the config that already exists
