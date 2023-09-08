@@ -22,9 +22,11 @@ Our approach for inference optimization as we stated earlier is to use PyTorch c
 
 Given the popularity of the LLaMa2 models, we target the optimization of inference of the LLaMa2 family of models. This particular repository re-implements the LLaMa architecture so that the `RoPE` encodings will compile, we have verified that `forward` pass compiles (there is work that needs to be done for the `backward` to work with FSDP).
 
-TODO: Get graph from Mudhakar and remove 70B from it.
+The figure below shows the latency improvements as we move from eager mode execution to adding SDPA, compile, and SDPA+Compile. The measurements are for 7 and 13B models.
+![image (21)](https://github.com/ibm-pytorch/foundation-model-stack/assets/8322403/3d9c6a0f-c3ef-454b-806c-271f352afa4d)
 
-Tensor parallel inference numbers are **coming soon**!
+
+Tensor parallel inference numbers for 13B and 70B models are **coming soon**!
 
 ## Training (Coming Soon!!)
 
