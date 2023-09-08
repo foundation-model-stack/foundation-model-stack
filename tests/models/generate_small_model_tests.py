@@ -89,8 +89,8 @@ test_to_generate = []
 
 ############### LLAMA ###################
 
-# scaled down version of llama2 7b
-mock_llama2_7b_params = {
+# scaled down version of llama2
+mock_llama2_params = {
     "src_vocab_size": tokenizer.vocab_size,
     "emb_dim": 16,
     "multiple_of": 2,
@@ -103,10 +103,10 @@ mock_llama2_7b_params = {
 if "llama" in models or len(models) == 0:
     test_to_generate.append(
         [
-            "llama/mock.llama2.7b",
+            "llama/mock.llama2",
             LLaMA,
             LLaMAConfig,
-            mock_llama2_7b_params,
+            mock_llama2_params,
             1,
         ]
     )
