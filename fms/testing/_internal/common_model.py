@@ -8,10 +8,9 @@ import pytest
 import torch
 import torch.nn as nn
 
-from fm.utils import utils
-
 from fms.testing.comparison import ModelSignatureParams, compare_model_signatures
 from fms.testing._internal.common_config import AbstractConfigTest
+from fms.testing.model_utils import get_signature
 from fms.utils.config import ModelConfig
 
 _FAILED_MODEL_WEIGHTS_LOAD_MSG = """
@@ -152,7 +151,7 @@ class AbstractModelTest(AbstractConfigTest, ModelFixtureMixin):
 
     def test_model_output(self, model, signature):
         """test consistency of model output with signature"""
-        actual = utils.get_signature(model, params=self._forward_parameters)
+        actual = get_signature(model, params=self._forward_parameters)
         assert np.allclose(
             np.array(actual), np.array(signature)
         ), _FAILED_MODEL_SIGNATURE_OUTPUT_MSG
