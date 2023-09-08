@@ -15,7 +15,7 @@ Failed to load the configuration that was stored in the test case resources for 
 
 1. configuration parameters have changed 
 
-If (1), then please re-run fm_nlp.tests.architecture.generate_small_model_tests with --generate_config
+If (1), then please re-run fms.tests.models.generate_small_model_tests with --generate_config
 
 Please provide a justification for re-running the generate_small_model_tests in a PR
 """
