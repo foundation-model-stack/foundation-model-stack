@@ -179,7 +179,7 @@ class LLaMA(nn.Module):
         self.tie_head = self.config.tie_head
         self.max_expected_seq_len = self.config.max_expected_seq_len
 
-        self.shared = WordEmbedding(
+        shared = WordEmbedding(
             self.config.src_vocab_size,
             self.config.emb_dim,
             padding_idx=self.config.pad_id,
@@ -188,7 +188,7 @@ class LLaMA(nn.Module):
             tie_weights=self.config.tie_head,
             bias=self.config.vocab_bias,
         )
-        self.shared = self.config.distributed_strategy.distribute_module(self.shared)
+        self.shared = self.config.distributed_strategy.distribute_module(shared)
 
         self.rot_emb = RotaryEmbedding(
             self.config.emb_dim // self.config.nheads,
@@ -391,6 +391,9 @@ def load_fms_llama(model_path: str, tokenizer_path: str, group=None):
     extra_args = {}
     if world_size > 1:
         extra_args["distributed_strategy"] = TensorParallelStrategy()
+
+    if "n_kv_heads" in params:
+        extra_args["kvheads"] = params["n_kv_heads"]
 
     ibm_model = LLaMA(
         src_vocab_size=tokenizer.vocab_size(),

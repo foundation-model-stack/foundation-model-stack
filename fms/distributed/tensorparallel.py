@@ -1,6 +1,7 @@
 from typing import Any, Tuple
 
 import torch
+import torch._dynamo as dynamo
 import torch.distributed._functional_collectives as distfunc
 from torch import nn
 
@@ -42,6 +43,7 @@ def apply_embedding_tp(par_mod: nn.Embedding, mod: nn.Embedding, world_size, ran
     # print(f"For rank {rank}, we have the following weights: Base weight {mod.weight} bias {mod.bias}; Par weight {par_mod.weight}, bias {par_mod.bias}")
 
 
+@dynamo.disable(recursive=True)
 def _all_reduce(input_: torch.Tensor, is_host_dist=False) -> torch.Tensor:
     """All-reduce the input tensor across model parallel group."""
     world_size = torch.distributed.get_world_size()
@@ -55,6 +57,7 @@ def _all_reduce(input_: torch.Tensor, is_host_dist=False) -> torch.Tensor:
     else:
         cpu_inp = input_
     cpu_inp = distfunc.all_reduce(cpu_inp, "sum", list(range(world_size)))
+    distfunc.wait_tensor(cpu_inp)
     if is_host_dist:
         new_inp = cpu_inp.to(orig_device)
     else:
@@ -62,23 +65,8 @@ def _all_reduce(input_: torch.Tensor, is_host_dist=False) -> torch.Tensor:
 
     return new_inp
 
-def all_gather_tensor(
-    self: torch.Tensor,
-    gather_dim: int,
-    group,
-    tag: str = "",
-):
-    self.contiguous()
-    tag, rankset, group_size = distfunc._expand_group(group, tag)
-    tensor = torch.ops.c10d_functional.all_gather_into_tensor(self, tag, rankset, group_size)  # type: ignore[attr-defined]
-    res = distfunc._maybe_wrap_tensor(tensor)
-    distfunc.wait_tensor(res)
-    # TODO this should be done inside AsyncCollectiveTensor to delay the wait() call
-    if gather_dim != 0:
-        res = torch.cat(torch.chunk(res, group_size, dim=0), dim=gather_dim)
-    return res
 
-
+@dynamo.disable(recursive=True)
 def _all_gather(input_: torch.Tensor, is_host_dist=False) -> torch.Tensor:
     """Gather the input tensor across model parallel group."""
     world_size = torch.distributed.get_world_size()
@@ -93,7 +81,7 @@ def _all_gather(input_: torch.Tensor, is_host_dist=False) -> torch.Tensor:
         cpu_inp = input_
 
     last_dim = cpu_inp.dim() - 1
-    cpu_inp = all_gather_tensor(cpu_inp, last_dim, list(range(world_size)))
+    cpu_inp = distfunc.all_gather_tensor(cpu_inp, last_dim, list(range(world_size)))
 
     if is_host_dist:
         new_inp = cpu_inp.to(orig_device)

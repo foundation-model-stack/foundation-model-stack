@@ -260,7 +260,7 @@ class TPMultiHeadAttention(MultiHeadAttention):
         kvheads,
         p_dropout=None,
         use_bias=False,
-        factorable_emb=None,
+        position_encoder: Optional[PositionEncoder] = None,
         gain=1,
         group: ProcessGroup = None,
     ):
@@ -280,7 +280,7 @@ class TPMultiHeadAttention(MultiHeadAttention):
             (kvheads // world_size) if kvheads > 1 else kvheads,
             p_dropout,
             use_bias,
-            factorable_emb,
+            position_encoder,
             gain,
         )
 
@@ -299,6 +299,7 @@ class TPMultiHeadAttention(MultiHeadAttention):
             kvheads=mha.kvheads,
             p_dropout=mha.p_dropout,
             use_bias=mha.use_bias,
+            position_encoder=mha.position_encoder,
             group=group,
         )
         return tp_mha

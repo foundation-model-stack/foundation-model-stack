@@ -98,10 +98,11 @@ prompt2 = ids_for_prompt(prompt2)
 
 max_len = max([len(prompt) for prompt in [prompt1, prompt2]])
 prompt1 = pad_prompt(prompt1, max_len)
-prompt2 = pad_prompt(prompt2, max_len)
-# ids = torch.stack((prompt2, prompt1), dim=0)
+# LLaMA 7B did better on the spanish prompt vs 13B.
+# TODO: add a better english prompt to demonstrate padding/batching.
+#prompt2 = pad_prompt(prompt2, max_len)
+#ids = torch.stack((prompt2, prompt1), dim=0)
 ids = prompt1.unsqueeze(0)
-
 
 def print_result(result):
     if local_rank != 0:
@@ -113,15 +114,19 @@ def print_result(result):
         eos_idx = eos_idx[0].item()
         result = result[: eos_idx + 1]
 
+    # print(result)
+    # print(tokenizer.convert_ids_to_tokens(result))
     print(tokenizer.convert_tokens_to_string(tokenizer.convert_ids_to_tokens(result)))
+    print()
 
 
 def infer(use_cache, do_sample):
     # With greedy generation (do_sample=False) we _should_ always get the same results.
     # There is currently a bug in start_pos for batched rotary embeddings that can lead
     # varying results for the same prompt.
-    print("use_cache", use_cache, ";; do_sample", do_sample)
-    print("==================")
+    if local_rank == 0:
+        print("use_cache", use_cache, ";; do_sample", do_sample)
+        print("==================")
     result = generate(
         model,
         ids,
@@ -131,18 +136,12 @@ def infer(use_cache, do_sample):
     )
     for i in range(result.shape[0]):
         print_result(result[i])
-        print()
-
-    # if local_rank == 0:
-    print("generating output")
-    # do_sample = [True, False]
-    # use_cache = [True, False] # these are identical with greedy iff `torch.use_deterministic_algorithms(True)`
-    # for sample, cache in itertools.product(do_sample, use_cache):
-    #     infer(cache, sample)
-    #     print()
-    #     print()
 
 
-infer(False, False)
+print("generating output", local_rank)
+do_sample = [True, False]
+use_cache = [True, False]  # True/False are identical with greedy iff `torch.use_deterministic_algorithms(True)`
+for sample, cache in itertools.product(do_sample, use_cache):
+    dist.barrier()
+    infer(cache, sample)
 
-print("finished", local_rank)

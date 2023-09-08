@@ -216,16 +216,16 @@ class TPWordEmbedding(WordEmbedding):
     @staticmethod
     def import_module(we: WordEmbedding, group: ProcessGroup) -> "TPWordEmbedding":
         tp_we = TPWordEmbedding(
-            we.vocab_size,
-            we.emb_dim,
-            we.padding_idx,
-            we.max_pos,
-            we.abs_pos,
-            we.reversible,
-            we.tie_weights,
-            we.bias,
-            we.debug,
-            group,
+            vocab_size=we.vocab_size,
+            emb_dim=we.emb_dim,
+            padding_idx=we.padding_idx,
+            max_pos=we.max_pos,
+            abs_pos=we.abs_pos,
+            reversible=we.reversible,
+            tie_weights=we.tie_weights,
+            bias=we.bias,
+            debug=we.debug,
+            group=group,
         )
         return tp_we
 
@@ -241,9 +241,6 @@ class TPWordEmbedding(WordEmbedding):
         # vocab_idx: b n d if reverse, else b n
         inp_par = copy_to_tensor_model_parallel_region(inp)
         out_par = WordEmbedding.forward(self, inp_par, reverse=reverse)
-        if not reverse:
-            return all_gather_from_tensor_model_parallel_region(
-                out_par, self.rank, self.world_size
-            )
-        else:
-            return reduce_from_tensor_model_parallel_region(out_par)
+        return all_gather_from_tensor_model_parallel_region(
+            out_par, self.rank, self.world_size
+        )
