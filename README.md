@@ -38,5 +38,5 @@ Tensor parallel inference numbers for 13B and 70B models are **coming soon**!
 
 ## References
 
-Huggingface TGI: https://github.com/huggingface/text-generation-inference
-IBM TGIS: https://github.com/IBM/text-generation-inference
+* Huggingface TGI: https://github.com/huggingface/text-generation-inference
+* IBM TGIS: https://github.com/IBM/text-generation-inference
