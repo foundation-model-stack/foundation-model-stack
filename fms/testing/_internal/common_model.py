@@ -1,17 +1,11 @@
-import abc
-import os
-import tempfile
-from typing import Type
-
 import numpy as np
-import pytest
 import torch
 import torch.nn as nn
 
 from fm.utils import utils
 
-from fms.testing._internal.common_config import AbstractConfigTest
 from fms.testing.comparison import ModelSignatureParams, compare_model_signatures
+from fms.testing._internal.common_config import *
 
 
 _FAILED_MODEL_WEIGHTS_LOAD_MSG = """
@@ -36,8 +30,27 @@ Please provide a justification for re-running generate_small_model_tests in a PR
 """
 
 
+@pytest.fixture(scope="class", autouse=True)
+def model(cases, config, model_class) -> nn.Module:
+    model = model_class(config)
+    try:
+        model.load_state_dict(torch.load(os.path.join(cases, "model_state.pth")))
+    except RuntimeError:
+        raise RuntimeError(_FAILED_MODEL_WEIGHTS_LOAD_MSG)
+    return model
+
+
+@pytest.fixture(scope="class", autouse=True)
+def signature(cases) -> nn.Module:
+    return torch.load(os.path.join(cases, "signature.pth"))
+
+
 class AbstractModelTest(AbstractConfigTest):
     """General model testing class for future use with other models"""
+
+    @pytest.fixture(scope="class", autouse=True)
+    def model_class(self) -> Type[nn.Module]:
+        return self._model_class
 
     @property
     @abc.abstractmethod
@@ -48,19 +61,6 @@ class AbstractModelTest(AbstractConfigTest):
     @abc.abstractmethod
     def _forward_parameters(self) -> int:
         pass
-
-    @pytest.fixture
-    def model(self, cases, config) -> nn.Module:
-        model = self._model_class(config)
-        try:
-            model.load_state_dict(torch.load(os.path.join(cases, "model_state.pth")))
-        except RuntimeError:
-            raise RuntimeError(_FAILED_MODEL_WEIGHTS_LOAD_MSG)
-        return model
-
-    @pytest.fixture
-    def signature(self, cases) -> nn.Module:
-        return torch.load(os.path.join(cases, "signature.pth"))
 
     def test_model_round_trip(self, model, config):
         """Test that the config can save and load properly (config and model)"""

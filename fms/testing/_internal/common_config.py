@@ -21,25 +21,30 @@ Please provide a justification for re-running the generate_small_model_tests in 
 """
 
 
+@pytest.fixture(autouse=True, scope="class")
+def config(request, cases, config_class) -> ModelConfig:
+    config_path = os.path.join(cases, "config.json")
+    with open(config_path, "r", encoding="utf-8") as reader:
+        text = reader.read()
+    json_dict = json.loads(text)
+    try:
+        config = config_class(**json_dict)
+    except RuntimeError:
+        raise RuntimeError(_FAILED_CONFIG_LOAD_MSG)
+    return config
+
+
 class AbstractConfigTest(AbstractResourcePath):
     """General config testing class for future use with other models"""
+
+    @pytest.fixture(scope="class", autouse=True)
+    def config_class(self) -> Type[ModelConfig]:
+        return self._config_class
 
     @property
     @abc.abstractmethod
     def _config_class(self) -> Type[ModelConfig]:
         pass
-
-    @pytest.fixture
-    def config(self, cases) -> ModelConfig:
-        config_path = os.path.join(cases, "config.json")
-        with open(config_path, "r", encoding="utf-8") as reader:
-            text = reader.read()
-        json_dict = json.loads(text)
-        try:
-            config = self._config_class(**json_dict)
-        except RuntimeError:
-            raise RuntimeError(_FAILED_CONFIG_LOAD_MSG)
-        return config
 
     def test_config_round_trip(self, config):
         """Test that the config can save and load properly"""

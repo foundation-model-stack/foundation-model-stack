@@ -36,6 +36,8 @@ def resource_path_fixture(
     return pytest.fixture(
         params=_case_paths(test_name, common_tests_path),
         ids=lambda path: _test_ids(path, prefix),
+        scope="class",
+        autouse=True,
     )
 
 
