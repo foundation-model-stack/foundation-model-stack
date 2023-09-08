@@ -25,6 +25,7 @@ Our approach for inference optimization is to use PyTorch compile, accelerated t
 We initially provide a re-implementation of the LLaMA2 architecture. To enable the model to compile, we reimplement `RoPE` encodings without complex numbers. We have verified that the `forward` pass compiles (there is work that needs to be done for `backward` to work with FSDP).
 
 The figure below shows the latency improvements as we move from eager mode execution to adding SDPA, compile, and SDPA+Compile. The measurements are for 7 and 13B models.
+
 ![image (21)](https://github.com/ibm-pytorch/foundation-model-stack/assets/8322403/3d9c6a0f-c3ef-454b-806c-271f352afa4d)
 
 
