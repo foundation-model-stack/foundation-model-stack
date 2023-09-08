@@ -11,8 +11,8 @@ def get_signature(
     logits_getter_fn: Optional[Callable] = None,
     device: Union[int, str] = "cpu",
 ) -> List[float]:
-    """Takes a model, and the number of inputs it expects in a forward pass. Returns a compressed signature
-    that acts as an effective hash for the model, allowing for correctness checking
+    """Takes a model, and the number of inputs / named parameters it expects in a forward pass and returns a compressed
+    signature that acts as an effective tool for output correctness checking within some tolerance
 
     Note: signatures will always be created with fp32 precision
 
