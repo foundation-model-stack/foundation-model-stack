@@ -43,51 +43,29 @@ def apply_embedding_tp(par_mod: nn.Embedding, mod: nn.Embedding, world_size, ran
     # print(f"For rank {rank}, we have the following weights: Base weight {mod.weight} bias {mod.bias}; Par weight {par_mod.weight}, bias {par_mod.bias}")
 
 
-@dynamo.disable(recursive=True)
-def _all_reduce(input_: torch.Tensor, is_host_dist=False) -> torch.Tensor:
+def _all_reduce(input_: torch.Tensor) -> torch.Tensor:
     """All-reduce the input tensor across model parallel group."""
     world_size = torch.distributed.get_world_size()
 
     if world_size == 1:
         return input_
 
-    if is_host_dist:
-        orig_device = input_.device
-        cpu_inp = input_.to("cpu")
-    else:
-        cpu_inp = input_
-    cpu_inp = distfunc.all_reduce(cpu_inp, "sum", list(range(world_size)))
-    distfunc.wait_tensor(cpu_inp)
-    if is_host_dist:
-        new_inp = cpu_inp.to(orig_device)
-    else:
-        new_inp = cpu_inp
-
-    return new_inp
+    # graph breaks can be removed after fix for: https://github.com/pytorch/pytorch/issues/108780
+    torch._dynamo.graph_break()
+    return distfunc.all_reduce(input_, "sum", list(range(world_size)))
 
 
-@dynamo.disable(recursive=True)
-def _all_gather(input_: torch.Tensor, is_host_dist=False) -> torch.Tensor:
+def _all_gather(input_: torch.Tensor) -> torch.Tensor:
     """Gather the input tensor across model parallel group."""
     world_size = torch.distributed.get_world_size()
 
     if world_size == 1:
         return input_
 
-    if is_host_dist:
-        orig_device = input_.device
-        cpu_inp = input_.to("cpu")
-    else:
-        cpu_inp = input_
-
-    last_dim = cpu_inp.dim() - 1
-    cpu_inp = distfunc.all_gather_tensor(cpu_inp, last_dim, list(range(world_size)))
-
-    if is_host_dist:
-        new_inp = cpu_inp.to(orig_device)
-    else:
-        new_inp = cpu_inp
-    return new_inp
+    last_dim = input_.dim() - 1
+    # graph breaks can be removed after fix for: https://github.com/pytorch/pytorch/issues/108780
+    torch._dynamo.graph_break()
+    return distfunc.all_gather_tensor(input_, last_dim, list(range(world_size)))
 
 
 def _split(input_: torch.Tensor, rank, world_size) -> torch.Tensor:
