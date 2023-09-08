@@ -10,7 +10,7 @@ def get_signature(
     optional_params: Optional[dict] = None,
     logits_getter_fn: Optional[Callable] = None,
     device: Union[int, str] = "cpu",
-):
+) -> List[float]:
     """Takes a model, and the number of inputs it expects in a forward pass. Returns a compressed signature
     that acts as an effective hash for the model, allowing for correctness checking
 
