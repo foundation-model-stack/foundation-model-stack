@@ -1,11 +1,17 @@
+import abc
+import os
+import tempfile
+from typing import Type
+
 import numpy as np
+import pytest
 import torch
 import torch.nn as nn
 
 from fm.utils import utils
 
 from fms.testing.comparison import ModelSignatureParams, compare_model_signatures
-from fms.testing._internal.common_config import *
+from fms.testing._internal.common_config import AbstractConfigTest
 
 
 _FAILED_MODEL_WEIGHTS_LOAD_MSG = """
@@ -30,23 +36,17 @@ Please provide a justification for re-running generate_small_model_tests in a PR
 """
 
 
-@pytest.fixture(scope="class", autouse=True)
-def model(cases, config, model_class) -> nn.Module:
-    model = model_class(config)
-    try:
-        model.load_state_dict(torch.load(os.path.join(cases, "model_state.pth")))
-    except RuntimeError:
-        raise RuntimeError(_FAILED_MODEL_WEIGHTS_LOAD_MSG)
-    return model
+class ModelFixtureMixin(metaclass=abc.ABCMeta):
+    """Mix this in with another AbstractResourcePath testing class to include the model and model_class fixtures"""
 
-
-@pytest.fixture(scope="class", autouse=True)
-def signature(cases) -> nn.Module:
-    return torch.load(os.path.join(cases, "signature.pth"))
-
-
-class AbstractModelTest(AbstractConfigTest):
-    """General model testing class for future use with other models"""
+    @pytest.fixture(scope="class", autouse=True)
+    def model(self, cases, config, model_class) -> nn.Module:
+        model = model_class(config)
+        try:
+            model.load_state_dict(torch.load(os.path.join(cases, "model_state.pth")))
+        except RuntimeError:
+            raise RuntimeError(_FAILED_MODEL_WEIGHTS_LOAD_MSG)
+        return model
 
     @pytest.fixture(scope="class", autouse=True)
     def model_class(self) -> Type[nn.Module]:
@@ -57,11 +57,22 @@ class AbstractModelTest(AbstractConfigTest):
     def _model_class(self) -> Type[nn.Module]:
         pass
 
+
+class AbstractModelTest(AbstractConfigTest, ModelFixtureMixin):
+    """General model testing class for future use with other models"""
+
+    # abstract methods
     @property
     @abc.abstractmethod
     def _forward_parameters(self) -> int:
         pass
 
+    # class specific fixtures
+    @pytest.fixture(scope="class", autouse=True)
+    def signature(self, cases) -> nn.Module:
+        return torch.load(os.path.join(cases, "signature.pth"))
+
+    # common tests
     def test_model_round_trip(self, model, config):
         """Test that the config can save and load properly (config and model)"""
         model_from_config = type(model)(config)

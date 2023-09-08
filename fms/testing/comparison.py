@@ -20,6 +20,16 @@ class ModelSignatureParams:
     inp: Optional[torch.LongTensor] = None
 
 
+@dataclasses.dataclass
+class HFModelSignatureParams(ModelSignatureParams):
+    """Specific form of model Signature params which defaults the other params and logits getter to take what hf requires"""
+
+    other_params: Optional[Dict] = dataclasses.field(
+        default_factory=lambda: {"return_dict": True}
+    )
+    logits_getter_fn: Optional[Callable] = lambda o: o.logits
+
+
 def compare_model_signatures(
     model_params_1: ModelSignatureParams,
     model_params_2: ModelSignatureParams,

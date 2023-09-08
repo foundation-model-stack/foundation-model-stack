@@ -21,21 +21,20 @@ Please provide a justification for re-running the generate_small_model_tests in 
 """
 
 
-@pytest.fixture(autouse=True, scope="class")
-def config(request, cases, config_class) -> ModelConfig:
-    config_path = os.path.join(cases, "config.json")
-    with open(config_path, "r", encoding="utf-8") as reader:
-        text = reader.read()
-    json_dict = json.loads(text)
-    try:
-        config = config_class(**json_dict)
-    except RuntimeError:
-        raise RuntimeError(_FAILED_CONFIG_LOAD_MSG)
-    return config
+class ConfigFixtureMixin(metaclass=abc.ABCMeta):
+    """Mix this in with another AbstractResourcePath testing class to include the config and config_class fixtures"""
 
-
-class AbstractConfigTest(AbstractResourcePath):
-    """General config testing class for future use with other models"""
+    @pytest.fixture(autouse=True, scope="class")
+    def config(self, request, cases, config_class) -> ModelConfig:
+        config_path = os.path.join(cases, "config.json")
+        with open(config_path, "r", encoding="utf-8") as reader:
+            text = reader.read()
+        json_dict = json.loads(text)
+        try:
+            config = config_class(**json_dict)
+        except RuntimeError:
+            raise RuntimeError(_FAILED_CONFIG_LOAD_MSG)
+        return config
 
     @pytest.fixture(scope="class", autouse=True)
     def config_class(self) -> Type[ModelConfig]:
@@ -45,6 +44,12 @@ class AbstractConfigTest(AbstractResourcePath):
     @abc.abstractmethod
     def _config_class(self) -> Type[ModelConfig]:
         pass
+
+
+class AbstractConfigTest(AbstractResourcePath, ConfigFixtureMixin):
+    """General config testing class for future use with other models"""
+
+    # common tests
 
     def test_config_round_trip(self, config):
         """Test that the config can save and load properly"""
