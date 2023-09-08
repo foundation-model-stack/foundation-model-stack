@@ -4,6 +4,7 @@ import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Optional
 
 import torch
 import torch.nn as nn
@@ -16,9 +17,10 @@ from fms.distributed.strategy import (
 )
 from fms.modules.attention import MultiHeadAttention
 from fms.modules.embedding import WordEmbedding
-from fms.modules.feedforward import FeedForwardBlock, GatedLinearUnit
+from fms.modules.feedforward import GatedLinearUnit
 from fms.modules.layernorm import LayerNormParameterized
 from fms.modules.positions import RotaryEmbedding
+from fms.utils.activation import str_to_activation
 from fms.utils.config import ModelConfig
 from fms.utils.tokenizers import get_tokenizer
 
@@ -34,21 +36,15 @@ from fms.utils.tokenizers import get_tokenizer
 class LLaMAConfig(ModelConfig):
     src_vocab_size: int = 32_000  # can be set by tokenizer
     emb_dim: int = 4096
-    elementwise_shift: bool = False
-    elementwise_scale: bool = True
-    use_mean: bool = False
     norm_eps: float = 1e-6
     nheads: int = 32
     kvheads: int = 0
     nlayers: int = 32
     pad_id: int = -1
     hidden_grow_factor: float = 8 / 3
-    multiple_of: float = 256
+    multiple_of: int = 256
     activation_fn: str = "swish"
     p_dropout: float = 0.0
-    use_bias: bool = False
-    tie_head: bool = False
-    vocab_bias: bool = False
     max_expected_seq_len: int = 2048
     distributed_strategy: DistributedStrategy = NoOpStrategy
 
@@ -62,17 +58,17 @@ class LLaMABlock(nn.Module):
 
         self.ln = LayerNormParameterized(
             self.config.emb_dim,
-            elementwise_scale=self.config.elementwise_scale,
-            elementwise_shift=self.config.elementwise_shift,
-            use_mean=self.config.use_mean,
+            elementwise_scale=True,
+            elementwise_shift=False,
+            use_mean=False,
             eps=self.config.norm_eps,
             use_high_precision_pow=True,
         )
         self.ff_ln = LayerNormParameterized(
             self.config.emb_dim,
-            elementwise_scale=self.config.elementwise_scale,
-            elementwise_shift=self.config.elementwise_shift,
-            use_mean=self.config.use_mean,
+            elementwise_scale=True,
+            elementwise_shift=False,
+            use_mean=False,
             eps=self.config.norm_eps,
             use_high_precision_pow=True,
         )
@@ -89,7 +85,7 @@ class LLaMABlock(nn.Module):
             self.config.nheads,
             kvheads,
             p_dropout=self.config.p_dropout,
-            use_bias=self.config.use_bias,
+            use_bias=False,
             position_encoder=rotary_emb,
         )
         self.ff_sub_layer = GatedLinearUnit(
@@ -98,11 +94,11 @@ class LLaMABlock(nn.Module):
             multiple_of=self.config.multiple_of,
             activation_fn=fms.utils.str_to_activation(self.config.activation_fn),
             p_dropout=self.config.p_dropout,
-            use_bias=self.config.use_bias,
+            use_bias=False,
         )
 
         if self.config.p_dropout != 0:
-            self.dropout = nn.Dropout(self.config.p_droptout)
+            self.dropout = nn.Dropout(self.config.p_dropout)
 
     def forward(
         self,
@@ -161,22 +157,18 @@ class LLaMABlock(nn.Module):
 class LLaMA(nn.Module):
     def __init__(
         self,
-        *args,
+        config: Optional[LLaMAConfig] = None,
         **kwargs,
     ):
         super(LLaMA, self).__init__()
-        if len(args) == 1 and isinstance(args[0], LLaMAConfig):
-            self.config = args[0]
-        elif len(args) == 0:
-            self.config = LLaMAConfig()
-            self.config.update_config(**kwargs)
+        if config is not None:
+            self.config = config
         else:
-            raise RuntimeError("need to specify either a config or kwargs")
+            self.config = LLaMAConfig()
+        self.config.update_config(**kwargs)
 
-        self.p_dropout = self.config.p_dropout
         self.width = self.config.emb_dim
         self.pad_id = self.config.pad_id
-        self.tie_head = self.config.tie_head
         self.max_expected_seq_len = self.config.max_expected_seq_len
 
         shared = WordEmbedding(
@@ -185,8 +177,8 @@ class LLaMA(nn.Module):
             padding_idx=self.config.pad_id,
             abs_pos=False,
             reversible=True,
-            tie_weights=self.config.tie_head,
-            bias=self.config.vocab_bias,
+            tie_weights=False,
+            bias=False,
         )
         self.shared = self.config.distributed_strategy.distribute_module(shared)
 
@@ -195,24 +187,24 @@ class LLaMA(nn.Module):
             self.config.max_expected_seq_len * 2,
         )
 
-        self.dec_process = []
+        self.layers = []
         for i in range(self.config.nlayers):
             block = LLaMABlock(self.config, self.rot_emb)
             block = self.config.distributed_strategy.distribute_layer(block, i)
-            self.dec_process.append(block)
-        self.dec_process = nn.ModuleList(self.dec_process)
+            self.layers.append(block)
+        self.layers = nn.ModuleList(self.layers)
 
         self.dec_norm = LayerNormParameterized(
             self.config.emb_dim,
-            elementwise_scale=self.config.elementwise_scale,
-            elementwise_shift=self.config.elementwise_shift,
-            use_mean=self.config.use_mean,
+            elementwise_scale=True,
+            elementwise_shift=False,
+            use_mean=False,
             eps=self.config.norm_eps,
             use_high_precision_pow=True,
         )
 
-        if self.p_dropout:
-            self.dropout = nn.Dropout(self.config.p_dropout)
+        if self.config.p_dropout:
+            self.dropout = nn.Dropout(config.p_dropout)
 
         self.reset_params()
 
@@ -221,40 +213,20 @@ class LLaMA(nn.Module):
 
     @classmethod
     def from_config(cls, config: LLaMAConfig) -> "LLaMA":
-        config_dict = config.as_dict()
-        activation_fns_dict = {
-            "gelu": nn.GELU,
-            "relu": nn.ReLU,
-            "mish": nn.Mish,
-            "swish": nn.SiLU,
-        }
-        config_dict["activation_fn"] = activation_fns_dict[
-            config.activation_fn.lower()
-        ]()
-        return cls(**config_dict)
+        return cls(config)
 
     def reset_params(self):
         # Modules are self-initializing, we're just going to down-scale the final prediction head to be
         # mixed-fan (inputs and gradients scale to the same inverse factors) if it isn't tied
-        if not self.tie_head:
-            self.shared.head.weight.data.normal_(
-                0, 1 / math.sqrt(math.sqrt(self.width * self.shared.vocab_size))
-            )
+        self.shared.head.weight.data.normal_(0, 1 / math.sqrt(math.sqrt(self.width * self.shared.vocab_size)))
 
-    def _helper(
-        self,
-        x_in,
-        mask=None,
-        past_key_value_states=None,
-        use_cache=False,
-        attn_algorithm=None,
-    ):
+    def _helper(self, x_in, mask=None, past_key_value_states=None, use_cache=False, attn_algorithm=None):
         # Embed the given vocabulary indices using the given attention mask, with pre-/post-norm and dropout as specified
         # x_in: batch_size x seq_len
         # mask: batch_size x seq_len x seq_len
         # bias: nheads x seq_len x seq_len
         if past_key_value_states is None:
-            past_key_value_states = [None for _ in range(len(self.dec_process))]
+            past_key_value_states = [None for _ in range(len(self.layers))]
 
         qlen = x_in.size(1)
         klen = x_in.size(1)
@@ -279,7 +251,7 @@ class LLaMA(nn.Module):
         # this is the output cache for all the decoder layers
         present_key_value_states = []
 
-        for i, layer in enumerate(self.dec_process):
+        for i, layer in enumerate(self.layers):
             output = layer(
                 x=x_in,
                 mask=mask,
@@ -298,7 +270,7 @@ class LLaMA(nn.Module):
 
         dec_out = x_in
         dec_out = self.dec_norm(dec_out)
-        if self.p_dropout:
+        if self.config.p_dropout:
             dec_out = self.dropout(dec_out)
 
         return dec_out, present_key_value_states
@@ -331,7 +303,7 @@ def _rename_weights_to_fms(orig_sd):
         (r"^tok_embeddings", "shared.emb"),
         (r"^norm", "dec_norm"),
         (r"^output", "shared.head"),
-        (r"^layers", "dec_process"),
+        (r"^layers", "layers"),
         (r"\.attention\.", ".attn."),
         (r"attn\.wq", "attn.query"),
         (r"attn\.wk", "attn.key"),

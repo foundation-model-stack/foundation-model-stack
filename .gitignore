@@ -1,6 +1,7 @@
 build
 dist
 .pytest_cache
+fms.egg-info
 */**/__pycache__
 *.pyc
 */**/*.pyc
