@@ -10,6 +10,11 @@ import torch
 import torch.nn as nn
 
 import fms.utils
+from fms.distributed.strategy import (
+    DistributedStrategy,
+    NoOpStrategy,
+    TensorParallelStrategy,
+)
 from fms.modules.attention import MultiHeadAttention
 from fms.modules.embedding import WordEmbedding
 from fms.modules.feedforward import GatedLinearUnit
@@ -41,6 +46,7 @@ class LLaMAConfig(ModelConfig):
     activation_fn: str = "swish"
     p_dropout: float = 0.0
     max_expected_seq_len: int = 2048
+    distributed_strategy: DistributedStrategy = NoOpStrategy
 
 
 class LLaMABlock(nn.Module):
@@ -165,7 +171,7 @@ class LLaMA(nn.Module):
         self.pad_id = self.config.pad_id
         self.max_expected_seq_len = self.config.max_expected_seq_len
 
-        self.shared = WordEmbedding(
+        shared = WordEmbedding(
             self.config.src_vocab_size,
             self.config.emb_dim,
             padding_idx=self.config.pad_id,
@@ -174,13 +180,19 @@ class LLaMA(nn.Module):
             tie_weights=False,
             bias=False,
         )
+        self.shared = self.config.distributed_strategy.distribute_module(shared)
 
         self.rot_emb = RotaryEmbedding(
             self.config.emb_dim // self.config.nheads,
             self.config.max_expected_seq_len * 2,
         )
 
-        self.layers = nn.ModuleList([LLaMABlock(self.config, self.rot_emb) for _ in range(self.config.nlayers)])
+        self.layers = []
+        for i in range(self.config.nlayers):
+            block = LLaMABlock(self.config, self.rot_emb)
+            block = self.config.distributed_strategy.distribute_layer(block, i)
+            self.layers.append(block)
+        self.layers = nn.ModuleList(self.layers)
 
         self.dec_norm = LayerNormParameterized(
             self.config.emb_dim,
@@ -272,7 +284,9 @@ class LLaMA(nn.Module):
         only_last_token=False,
         attn_algorithm=None,
     ):
-        output, cache = self._helper(x, mask, past_key_value_states, use_cache, attn_algorithm)
+        output, cache = self._helper(
+            x, mask, past_key_value_states, use_cache, attn_algorithm
+        )
 
         if only_last_token:
             output = output[:, -1, :]
@@ -311,7 +325,16 @@ def _rename_weights_to_fms(orig_sd):
     return new_sd
 
 
-def load_fms_llama(model_path: str, tokenizer_path: str):
+def load_fms_llama(model_path: str, tokenizer_path: str, group=None):
+    if torch.distributed.is_initialized() and group is None:
+        group = torch.distributed.GroupMember.WORLD
+
+    if group is None:
+        world_size = 1
+        rank = 0
+    else:
+        world_size = group.size()
+        rank = group.rank()
     # from llama.tokenizer import Tokenizer
     model_path = os.path.expanduser(model_path)
     tokenizer_path = os.path.expanduser(tokenizer_path)
@@ -321,14 +344,12 @@ def load_fms_llama(model_path: str, tokenizer_path: str):
 
     # Load Llama model from Meta's weights
     checkpoints = sorted(Path(model_path).glob("*.pth"))
-    world_size = int(os.getenv("WORLD_SIZE", 1))
-    local_rank = int(os.getenv("LOCAL_RANK", 0))
 
     assert world_size == len(
         checkpoints
     ), f"Loading a checkpoint for MP={len(checkpoints)} but world size is {world_size}"
 
-    ckpt_path = checkpoints[local_rank]
+    ckpt_path = checkpoints[rank]
     checkpoint_sd = torch.load(ckpt_path, map_location="cpu")
     with open(Path(model_path) / "params.json", "r") as f:
         params = json.loads(f.read())
@@ -338,7 +359,14 @@ def load_fms_llama(model_path: str, tokenizer_path: str):
 
     # IBM LLaMa
     fms_sd = _rename_weights_to_fms(checkpoint_sd)
-    torch.set_default_tensor_type(torch.cuda.HalfTensor)
+
+    extra_args = {}
+    if world_size > 1:
+        extra_args["distributed_strategy"] = TensorParallelStrategy()
+
+    if "n_kv_heads" in params:
+        extra_args["kvheads"] = params["n_kv_heads"]
+
     ibm_model = LLaMA(
         src_vocab_size=tokenizer.vocab_size(),
         emb_dim=params["dim"],
@@ -347,8 +375,11 @@ def load_fms_llama(model_path: str, tokenizer_path: str):
         hidden_grow_factor=hidden_grow_factor,
         multiple_of=params["multiple_of"],
         norm_eps=params["norm_eps"],
+        **extra_args,
     )
-    torch.set_default_tensor_type(torch.FloatTensor)
-    ibm_model.load_state_dict(fms_sd, strict=False)  # the meta weights have some extra stuff
+
+    ibm_model.load_state_dict(
+        fms_sd, strict=False
+    )  # the meta weights have some extra stuff
 
     return ibm_model, tokenizer
