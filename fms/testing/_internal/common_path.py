@@ -3,6 +3,7 @@ import os
 from typing import List
 
 import pytest
+from _pytest.fixtures import FixtureFunction, FixtureRequest
 
 
 def _case_paths(test_name: str, common_tests_path: str) -> List[str]:
@@ -15,9 +16,11 @@ def resource_path_fixture(
     test_name: str,
     prefix: str,
     common_tests_path: str = "../../../tests/resources/models",
-):
+) -> FixtureFunction:
     """
-    Pytest Fixture which will find all files under thr resources/models directory within the folder directory_name
+    Pytest Fixture which will find all files under the common_tests_path directory within the folder test_name. If
+    using this fixture, the number of tests created is exactly equal to the number of files directly within the
+    test_name folder
 
     Parameters
     ----------
@@ -30,8 +33,20 @@ def resource_path_fixture(
 
     Returns
     -------
-    pytest.fixture
-        a pytest fixture which will find all resources under resources/model/<directory_name>
+    FixtureFunction
+        a pytest fixture which will find all test case resource folders under <common_tests_path>/<test_name>
+
+    Examples
+    --------
+
+    >>> @resource_path_fixture(test_name="my_test_case", prefix="my file test case", common_tests_path="/path/to/tests/resources/some_tests")
+    >>> def resource_path(self, request):
+    >>>     return request.param
+
+    >>> @pytest.fixture
+    >>> def my_resource(resource_path):
+    >>>     # this path is now referring to a file in /path/to/tests/resources/some_tests/<folder_i>/my_file.json where there exists multiple folders in some_tests
+    >>>     my_file_path = os.path.join(resource_path, "my_file.json")
     """
     return pytest.fixture(
         params=_case_paths(test_name, common_tests_path),
@@ -46,7 +61,27 @@ def _test_ids(path, prefix):
 
 
 class AbstractResourcePath(metaclass=abc.ABCMeta):
+    """A simple abstract class which provides a contract to a specific test case resource path to its extending classes"""
+
     @pytest.fixture
     @abc.abstractmethod
-    def cases(self, request):
+    def resource_path(self, request: FixtureRequest) -> str:
+        """get the directory containing the files to be tested
+
+        Parameters
+        ----------
+        request: FixtureRequest
+            a special fixture providing information of the requesting test function
+
+        Returns
+        -------
+        str
+            the absolute path to the directory containing the files to be tested
+        Examples
+        --------
+
+        >>> @resource_path_fixture(test_name="llama", prefix="model")
+        >>> def resource_path(self, request: FixtureRequest):
+        >>>     return request.param
+        """
         pass

@@ -1,7 +1,7 @@
 import abc
 import os
 import tempfile
-from typing import Type
+from typing import Type, List
 
 import numpy as np
 import pytest
@@ -12,7 +12,7 @@ from fm.utils import utils
 
 from fms.testing.comparison import ModelSignatureParams, compare_model_signatures
 from fms.testing._internal.common_config import AbstractConfigTest
-
+from fms.utils.config import ModelConfig
 
 _FAILED_MODEL_WEIGHTS_LOAD_MSG = """
 Failed to load the state dict of the model that was stored in the test case resources for the following reason:
@@ -40,21 +40,54 @@ class ModelFixtureMixin(metaclass=abc.ABCMeta):
     """Mix this in with another AbstractResourcePath testing class to include the model and model_class fixtures"""
 
     @pytest.fixture(scope="class", autouse=True)
-    def model(self, cases, config, model_class) -> nn.Module:
+    def model(
+        self, resource_path: str, config: ModelConfig, model_class: Type[nn.Module]
+    ) -> nn.Module:
+        """
+        get the model stored in the test case directory
+
+        Parameters
+        ----------
+        resource_path: str
+            path to the specific test case directory specified in resource_path fixture
+        config: ModelConfig
+            the model config associated with this test case
+        model_class: Type[nn.Module]
+            the model class type
+
+        Returns
+        -------
+        nn.Module
+            the model from the test case directory to be tested
+        """
         model = model_class(config)
         try:
-            model.load_state_dict(torch.load(os.path.join(cases, "model_state.pth")))
+            model.load_state_dict(
+                torch.load(os.path.join(resource_path, "model_state.pth"))
+            )
         except RuntimeError:
             raise RuntimeError(_FAILED_MODEL_WEIGHTS_LOAD_MSG)
         return model
 
     @pytest.fixture(scope="class", autouse=True)
     def model_class(self) -> Type[nn.Module]:
+        """
+        Returns
+        -------
+        Type[nn.Module]
+            the model class type which will be tested
+        """
         return self._model_class
 
     @property
     @abc.abstractmethod
     def _model_class(self) -> Type[nn.Module]:
+        """
+        Returns
+        -------
+        Type[nn.Module]
+            the model class type which will be tested
+        """
         pass
 
 
@@ -65,16 +98,41 @@ class AbstractModelTest(AbstractConfigTest, ModelFixtureMixin):
     @property
     @abc.abstractmethod
     def _forward_parameters(self) -> int:
+        """get the number of parameters required to run a forward pass
+
+        Note: In most cases with FMS models:
+        decoder-only - 1
+        encoder-only - 1
+        encoder-decoder - 2
+
+        Returns
+        -------
+        int
+            the number of parameters required to run a forward pass.
+        """
         pass
 
     # class specific fixtures
     @pytest.fixture(scope="class", autouse=True)
-    def signature(self, cases) -> nn.Module:
-        return torch.load(os.path.join(cases, "signature.pth"))
+    def signature(self, resource_path) -> List[float]:
+        """retrieve the signature from the test case directory
+
+        Parameters
+        ----------
+        resource_path: str
+            path to the specific test case directory specified in resource_path fixture
+
+        Returns
+        -------
+        List[float]
+            the signature stored in the test case directory that was created when generate_small_model_tests was called
+            for this specific test model
+        """
+        return torch.load(os.path.join(resource_path, "signature.pth"))
 
     # common tests
     def test_model_round_trip(self, model, config):
-        """Test that the config can save and load properly (config and model)"""
+        """Test that the model can save and load properly (config and model)"""
         model_from_config = type(model)(config)
         assert model_from_config.config.as_dict() == config.as_dict()
 
@@ -93,10 +151,12 @@ class AbstractModelTest(AbstractConfigTest, ModelFixtureMixin):
         )
 
     def test_model_output(self, model, signature):
+        """test consistency of model output with signature"""
         actual = utils.get_signature(model, params=self._forward_parameters)
         assert np.allclose(
             np.array(actual), np.array(signature)
         ), _FAILED_MODEL_SIGNATURE_OUTPUT_MSG
 
     def test_get_config(self, model, config):
+        """test get_config method works as intended and returns the right config"""
         assert model.get_config().as_dict() == config.as_dict()

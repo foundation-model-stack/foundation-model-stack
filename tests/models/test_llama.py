@@ -13,5 +13,5 @@ class TestLlama(AbstractModelTest):
     _config_class = LLaMAConfig
 
     @resource_path_fixture(test_name="llama", prefix="model")
-    def cases(self, request):
+    def resource_path(self, request):
         return request.param
