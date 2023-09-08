@@ -14,7 +14,6 @@ def generate(
     do_sample: bool = True,
     num_beams: int = 1,
     use_cache: bool = False,
-    verbosity: int = 0,
 ):
     """
     A trivial generate function that can be used for validation/testing in
@@ -56,8 +55,6 @@ def generate(
 
     for _ in range(max_new_tokens):
         input_ids = next_input[:, -max_seq_len:]
-        if verbosity > 100:
-            print("calling `forward`")
         output = model.forward(input_ids, **kwargs)
         if use_cache:
             logits, past_key_value_states = output
@@ -77,9 +74,6 @@ def generate(
             next_val = torch.multinomial(probs, num_samples=1)
         else:
             next_val = torch.argmax(logits, dim=-1).unsqueeze(0).t()
-
-        if verbosity > 10:
-            print("next val:", next_val)
 
         result = torch.cat((result, next_val), dim=-1)
 

@@ -30,14 +30,12 @@ parser.add_argument(
 )
 parser.add_argument(
     "--compile",
-    type=bool,
-    default=False,
+    action="store_true",
     help="Use torch.compile (slow for first inference pass)",
 )
 parser.add_argument(
     "--deterministic",
-    type=bool,
-    default=False,
+    action="store_true",
     help="Set torch.use_deterministic_algorithms? Requires env variable `CUBLAS_WORKSPACE_CONFIG=:4096:8`",
 )
 parser.add_argument(
@@ -130,7 +128,6 @@ def infer(use_cache, do_sample):
         max_new_tokens=50,
         use_cache=use_cache,
         do_sample=do_sample,
-        verbosity=1000,
     )
     for i in range(result.shape[0]):
         print_result(result[i])
