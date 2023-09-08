@@ -2,7 +2,7 @@ import pytest
 
 
 from fms.models.llama import LLaMA, LLaMAConfig
-from fms.testing._internal.common_paths import resource_path_fixture
+from fms.testing._internal.common_path import resource_path_fixture
 from fms.testing._internal.common_model import AbstractModelTest
 
 

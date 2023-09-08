@@ -7,7 +7,7 @@ from typing import Type
 import pytest
 
 from fms.utils.config import ModelConfig
-from fms.testing._internal.common_paths import AbstractResourcePath
+from fms.testing._internal.common_path import AbstractResourcePath
 
 
 _FAILED_CONFIG_LOAD_MSG = """
