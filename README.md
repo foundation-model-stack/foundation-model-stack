@@ -1,6 +1,9 @@
 # Foundation Model Stack
 
-Foundation Model Stack is a collection of components for development of training, tuning, and inference of foundation models leveraging PyTorch native components. The current (09/08/2023) state is that we support inference optimizations on LLaMa models. For inference optimizations, the main approach we take is to leverage PyTorch compile, accelerated transformers, and tensor parallelism. For training optimizations, we use FSDP and the various sharding strategies, accelerated transformers, and PyTorch compile.
+Foundation Model Stack is a collection of components for development of training, tuning, and inference of foundation models leveraging PyTorch native components.  For inference optimizations, the main approach we take is to leverage PyTorch compile, accelerated transformers, and tensor parallelism. For training optimizations, we use FSDP and the various sharding strategies, accelerated transformers, and PyTorch compile.
+
+## Status
+* 09/08/2023: Inference on 7B, 13B LLaMa models
 
 ## Installation
 
