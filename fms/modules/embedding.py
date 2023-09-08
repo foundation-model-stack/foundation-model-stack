@@ -4,6 +4,16 @@ from typing import List, Tuple, Union
 import torch
 import torch.nn as nn
 from numpy import sign
+from torch.distributed.distributed_c10d import ProcessGroup
+
+from fms.distributed.tensorparallel import (
+    all_gather_from_tensor_model_parallel_region,
+    apply_colwise_tp,
+    apply_embedding_tp,
+    apply_rowwise_tp,
+    copy_to_tensor_model_parallel_region,
+    reduce_from_tensor_model_parallel_region,
+)
 
 
 class WordEmbedding(nn.Module):
@@ -55,6 +65,7 @@ class WordEmbedding(nn.Module):
         self.debug = debug
         self.tie_weights = tie_weights
         self.bias = bias
+        self.max_pos = max_pos
         assert (
             reversible or not tie_weights
         ), "Error: weights cannot be tied when there is no output head!"
@@ -117,3 +128,119 @@ class WordEmbedding(nn.Module):
                     self.reversible
                 ), "Error: cannot make prediction when there is no output head!"
             return self.head(inp)
+
+
+class TPWordEmbedding(WordEmbedding):
+    """
+    Input/output embedding layer for sequence models.
+    Includes vocabulary and optional absolute positional encodings.
+    Can optionally include output embeddings, to provide "reversed" output prediction logits.
+    ...
+    Args
+    ----
+    Check WordEmbedding for up-to-date docs
+
+    world_size: int
+        the number of processes running this model in TP
+    rank: int
+        the index of this process wrt to the rest running the model in TP
+    """
+
+    def __init__(
+        self,
+        vocab_size,
+        emb_dim,
+        padding_idx=None,
+        max_pos=512,
+        abs_pos=False,
+        reversible=True,
+        tie_weights=True,
+        bias=False,
+        debug=False,
+        group: ProcessGroup = None,
+    ):
+        assert torch.distributed.is_initialized()
+        if group is None:
+            group = torch.distributed.GroupMember.WORLD
+        world_size = group.size()
+        rank = group.rank()
+        assert (
+            emb_dim % world_size == 0
+        ), "The embedding dimensions must be divisible by world size"
+        assert (
+            vocab_size % world_size == 0
+        ), "The number of tokens must be divisible by world size"
+        super(WordEmbedding, self).__init__()
+
+        self.vocab_size = vocab_size
+        self.emb_dim = emb_dim
+        if padding_idx is not None:
+            padding_idx = (
+                padding_idx if (padding_idx >= 0 and padding_idx < vocab_size) else None
+            )
+        self.padding_idx = padding_idx
+        self.max_pos = max_pos
+        self.abs_pos = abs_pos
+        self.reversible = reversible
+        self.debug = debug
+        self.tie_weights = tie_weights
+        self.bias = bias
+
+        assert (
+            reversible or not tie_weights
+        ), "Error: weights cannot be tied when there is no output head!"
+        if padding_idx is None:
+            self.emb = nn.Embedding(self.vocab_size, self.emb_dim // world_size)
+        else:
+            self.emb = nn.Embedding(
+                self.vocab_size,
+                self.emb_dim // world_size,
+                padding_idx=self.padding_idx,
+            )
+        if abs_pos:
+            self.pos_emb = nn.Embedding(max_pos, self.emb_dim // world_size)
+            self.register_buffer("pos_id", torch.arange(max_pos).unsqueeze(0))
+        if reversible:
+            assert (
+                self.vocab_size % world_size == 0
+            ), "The vocab size should be a multiple of the world size!"
+            self.head = nn.Linear(
+                self.emb_dim, self.vocab_size // world_size, bias=bias
+            )
+            if tie_weights:
+                self.head.weight = self.emb.weight
+
+        self.rank = rank
+        self.world_size = world_size
+
+    @staticmethod
+    def import_module(we: WordEmbedding, group: ProcessGroup) -> "TPWordEmbedding":
+        tp_we = TPWordEmbedding(
+            vocab_size=we.vocab_size,
+            emb_dim=we.emb_dim,
+            padding_idx=we.padding_idx,
+            max_pos=we.max_pos,
+            abs_pos=we.abs_pos,
+            reversible=we.reversible,
+            tie_weights=we.tie_weights,
+            bias=we.bias,
+            debug=we.debug,
+            group=group,
+        )
+        return tp_we
+
+    def import_weights(self, we: WordEmbedding):
+        apply_embedding_tp(self.emb, we.emb, self.world_size, self.rank)
+        if self.abs_pos:
+            apply_embedding_tp(self.pos_emb, we.pos_emb, self.world_size, self.rank)
+        if self.reversible and not self.tie_weights:
+            apply_colwise_tp(self.head, we.head, self.world_size, self.rank)
+
+    def forward(self, inp, reverse=False):
+        # If reverse is False, compute input embeddings. If reverse is True, compute output logits.
+        # vocab_idx: b n d if reverse, else b n
+        inp_par = copy_to_tensor_model_parallel_region(inp)
+        out_par = WordEmbedding.forward(self, inp_par, reverse=reverse)
+        return all_gather_from_tensor_model_parallel_region(
+            out_par, self.rank, self.world_size
+        )
