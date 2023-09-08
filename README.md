@@ -1,7 +1,7 @@
 # Foundation Model Stack
 
 Foundation Model Stack is a collection of components for development, training,
-and tuning of foundation models.
+and tuning of foundation models leveraging PyTorch native components only. The current (09/08/2023) state is that we support inference optimizations on LLaMa models. For inference optimizations, the main approach we take is to leverage PyTorch compile, accelerated transformers, and tensor parallelism. For training optimizations, we use FSDP and the various sharding strategies, accelerated transformers, and PyTorch compile.
 
 ## Installation
 
@@ -13,30 +13,24 @@ or
 python setup.py install
 ```
 
-There's an example inference script under `./examples`.
+For an example inference, one can run the script in `./examples`.
 
 
-## Llama
+## Inference
 
-The first model we are releasing here is our reimplementation of Llama. Our reasoning behind reimplementing Llama is to support the combination of torch.compile(), PyTorch's scaled_dot_product_attention, and Tensor Parallel. Currently, no other open-source implementation we are aware of supports the three at the same time, for a variety of reasons.
+Our approach for inference optimization as we stated earlier is to use PyTorch compile, accelerated transformers, and tensor parallelism. PyTorch compile compiles the code into optimized kernels, accelerated transformers leverages `scaled_dot_product_attention` (SDPA) for accelerating attention computation while saving memory, and tensor parallelism is necessary for larger models like LLaMa 70B. In our experiments with various models, `compile` has given 2-2.5x speedups for inference, with `SDPA` providing 30-40% improvements.
 
-PSA: As of 09/07/2023, there's still two pending issues in PyTorch preventing Tensor Parallel from fully working with torch.compile(): https://github.com/pytorch/pytorch/issues/107824 prevents training/finetuning from working, and https://github.com/pytorch/pytorch/issues/108780 requires adding graph breaks to preserve accuracy. Once these are fixed, the performance numbers reported below can be achieved without any loss of accuracy. Without these fixes, the combination compile+TP+SDPA will be fast but generate incorrect results.
+Given the popularity of the LLaMa2 models, we target the optimization of inference of the LLaMa2 family of models. This particular repository re-implements the LLaMa architecture so that the `RoPE` encodings will compile, we have verified that `forward` pass compiles (there is work that needs to be done for the `backward` to work with FSDP).
 
-Without further ado, here be some numbers/plots:
+TODO: Get graph from Mudhakar and remove 70B from it.
 
-![image](https://github.com/ibm-pytorch/foundation-model-stack/assets/919977/16ea178f-1c50-4f26-b549-dd21f73f51f8)
+Tensor parallel inference numbers are **coming soon**!
 
-First, let's explain this plot: here, we're comparing the implementation of LlaMA-7B in this repo (llama-fms) to the implementation hosted in HuggingFace's TGI (llama), which uses Flash Attention v2 and manually fused kernels. We observe similar performance between our compiled llama (compile+SDPA) and the manually tuned one in TGI. VUS stands for Virtual UserS, and has a direct equivalency to the batch size in this benchmark. This is running on a single A100 80GB GPU using the watsonx.ai infrastructure and benchmarking code, which lets us easily compare to the HF TGI implementation on a similar environment (IBM's TGIS).
+## Training (Coming Soon!!)
 
-Similar results for 13B on single GPU will be posted shortly.
-
-As for TP+compile+SDPA results, we have observed the following (with incorrect results due to issues in PSA above and with the caveat that once the issues are fixed there might be a performance change):
-
-4 A100 80GB GPUs: 34.5 ms/token for bs=1 (vs 50-55ms/token in the TGI implementation running on the same stack w/ Flash V2 and a custom layer norm kernel)
-
-8 A100 80GB GPUs: 29 ms/token for bs=1
-
-Further performance studies will be posted here as they come out, as well as open-source benchmarking scripts to reproduce the results seen here.
+## Open Issues
+* https://github.com/pytorch/pytorch/issues/108780 requires adding graph breaks to preserve accuracy.
+* https://github.com/pytorch/pytorch/issues/107824 prevents training/finetuning from working
 
 ## References
 
