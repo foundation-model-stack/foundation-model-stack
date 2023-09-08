@@ -7,7 +7,7 @@ from typing import Type
 import pytest
 
 from fms.utils.config import ModelConfig
-from tests.models.base import ModelBase
+from fms.testing._internal.common_paths import AbstractResourcePath
 
 
 _FAILED_CONFIG_LOAD_MSG = """
@@ -21,7 +21,7 @@ Please provide a justification for re-running the generate_small_model_tests in 
 """
 
 
-class AbstractConfigTest(ModelBase):
+class AbstractConfigTest(AbstractResourcePath):
     """General config testing class for future use with other models"""
 
     @property

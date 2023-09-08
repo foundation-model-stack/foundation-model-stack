@@ -10,13 +10,13 @@ import torch.nn as nn
 
 from fm.utils import utils
 
-from .test_config import AbstractConfigTest
-from .utils import ModelSignatureParams, compare_model_signatures
+from fms.testing._internal.common_config import AbstractConfigTest
+from fms.testing.comparison import ModelSignatureParams, compare_model_signatures
 
 
 _FAILED_MODEL_WEIGHTS_LOAD_MSG = """
 Failed to load the state dict of the model that was stored in the test case resources for the following reason:
-            
+
 1. named parameter change in the underlying architecture. 
 
 If (1), then please re-run fm_nlp.tests.architecture.generate_small_model_tests with --generate_weights --generate_signature
@@ -26,7 +26,7 @@ Please provide a justifaction for re-running the generate_small_model_tests in a
 
 _FAILED_MODEL_SIGNATURE_OUTPUT_MSG = """
 Failed consistency of signature. This could fail for one of 2 reasons:
-        
+
 1. either there was a change in the model architecture which caused a difference in model output
 2. a bug was fixed which is causing a different model output and that is expected
 

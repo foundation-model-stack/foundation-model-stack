@@ -2,9 +2,8 @@ import pytest
 
 
 from fms.models.llama import LLaMA, LLaMAConfig
-from ..base import _case_paths, _test_ids
-
-from ..test_model import AbstractModelTest
+from fms.testing._internal.common_paths import resource_path_fixture
+from fms.testing._internal.common_model import AbstractModelTest
 
 
 class TestLlama(AbstractModelTest):
@@ -16,6 +15,6 @@ class TestLlama(AbstractModelTest):
     _config_class = LLaMAConfig
     _forward_parameters = 1
 
-    @pytest.fixture(params=_case_paths("llama"), ids=_test_ids)
+    @resource_path_fixture(test_name="llama", prefix="model")
     def cases(self, request):
         return request.param
