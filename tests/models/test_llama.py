@@ -1,11 +1,20 @@
 from fms.models.llama import LLaMA, LLaMAConfig
+from fms.testing._internal.common_config import CommonConfigTestMixin
+from fms.testing._internal.common_model import CommonModelTestMixin
+from fms.testing._internal.common_model_consistency import ModelConsistencyTestMixin
 from fms.testing._internal.common_path import resource_path_fixture
-from fms.testing._internal.common_model import *
 
 
-class TestLlama(AbstractModelTest):
+class TestLlamaMixin(
+    CommonModelTestMixin, CommonConfigTestMixin, ModelConsistencyTestMixin
+):
     """
     Model Test Suite for llama
+
+    This suite will include tests for:
+    - model configuration
+    - basic load/save model
+    - consistency of model output
     """
 
     _forward_parameters = 1

@@ -75,7 +75,7 @@ class ConfigFixtureMixin(metaclass=abc.ABCMeta):
         pass
 
 
-class AbstractConfigTest(AbstractResourcePath, ConfigFixtureMixin):
+class CommonConfigTestMixin(AbstractResourcePath, ConfigFixtureMixin):
     """General config testing class for future use with other models"""
 
     # common tests
