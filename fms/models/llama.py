@@ -1,6 +1,7 @@
 import json
 import math
 import os
+import pickle
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -208,6 +209,62 @@ class LLaMA(nn.Module):
             self.dropout = nn.Dropout(config.p_dropout)
 
         self.reset_params()
+
+    def save(self, path: Union[str, os.PathLike]):
+        """
+        save the model state, config, and distributed strategy to the given directory path
+
+        Parameters
+        ----------
+        path: Union[str, os.PathLike]
+            path to save model to
+        """
+        # if the path does not exist, create it
+        if not os.path.exists(path):
+            os.mkdir(path)
+        else:
+            # if the path exists, but is a file, this model cannot be saved to that path
+            if os.path.isfile(path):
+                raise NotADirectoryError(
+                    "this path already exists and is referring to a file, but should be a directory"
+                )
+
+        torch.save(self.state_dict(), f"{path}/model_state.pth")
+        self.config.save(f"{path}/config.json")
+        with open(f"{path}/distributed_strategy.bin", "wb") as file:
+            pickle.dump(self.distributed_strategy, file)
+
+    @classmethod
+    def load(cls, path: Union[str, os.PathLike]) -> "LLaMA":
+        """
+        loads all contents of the model given a directory containing the model state, config, and distributed strategy
+
+        Parameters
+        ----------
+        path: Union[str, os.PathLike]
+            path to load model from
+
+        Returns
+        -------
+        LLaMA
+            a LLaMA model with weights fully initialized
+        """
+        if not os.path.exists(path):
+            raise FileNotFoundError("This path does not exist")
+        else:
+            if os.path.isfile(path):
+                raise NotADirectoryError(
+                    "this path already exists and is referring to a file, but should be a directory"
+                )
+
+        model_state = torch.load(f"{path}/model_state.pth")
+        config = LLaMAConfig.load(f"{path}/config.json")
+        with open(f"{path}/distributed_strategy.bin", "rb") as file:
+            distributed_strategy = pickle.load(file)
+
+        model = cls(config=config, distributed_strategy=distributed_strategy)
+        model.load_state_dict(model_state)
+        return model
 
     def get_config(self) -> LLaMAConfig:
         return self.config
