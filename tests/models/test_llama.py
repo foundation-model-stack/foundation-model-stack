@@ -2,8 +2,12 @@ import os.path
 import tempfile
 
 import pytest
+from torch import nn
 
-from fms.distributed.strategy import NotDistributed, NoOpStrategy
+from fms.distributed.strategy import (
+    NoOpStrategy,
+    DistributedStrategy,
+)
 from fms.models.llama import LLaMA
 
 
@@ -15,8 +19,15 @@ def text_file_path(tmpdir):
     yield f"{tmpdir}/file.txt"
 
 
-@pytest.fixture(params=[NotDistributed, NoOpStrategy])
-def mock_llama2():
+class MockStrategy(DistributedStrategy):
+    """This is used for non-distributed testing to make sure loading model gives us a non-default strategy"""
+
+    def distribute_layer(self, block: nn.Module, layer: int) -> nn.Module:
+        return block
+
+
+@pytest.fixture(params=[NoOpStrategy, MockStrategy()])
+def mock_llama2(request):
     return LLaMA(
         src_vocab_size=256,
         emb_dim=16,
@@ -25,11 +36,13 @@ def mock_llama2():
         nlayers=2,
         norm_eps=1e-05,
         pad_id=0,
+        distributed_strategy=request.param,
     )
 
 
 @pytest.fixture
 def model_location(tmpdir, mock_llama2):
+    # todo: In later testing update, this will refer to a directory with model files in it already, for now using model.save here
     mock_llama2.save(f"{tmpdir}/saved_model")
     yield f"{tmpdir}/saved_model"
 
