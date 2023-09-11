@@ -117,6 +117,13 @@ class Test<model_name>(CommonModelTestMixin, CommonConfigTestMixin, ModelConsist
 ```
 
 The above testing suite includes CommonModelTestMixin, CommonConfigTestMixin, ModelConsistencyTestMixin. 
+
+CommonModelTestMixin - a mixin that provides model fixtures as well as a common set of tests that all models should be able to test for
+CommonConfigTestMixin - a mixin that provides config fixtures as well as a common set of tests that all ModelConfig should be able to test for
+ModelConsistencyTestMixin - a mixin that provides signature fixtures as well as a set of tests that checks output equivalency of models
+
+Note: these are in no way the entire set of tests required, just the bare minimum set of tests and they will be expanded in the future, along with more test suite mixins
+
 In FMS, testing utilities for Models can be included as mixins to the model testing suite in order to have the model test for these features.
 If, for instance, a model does not require one of these mixins for any reason, they can be omitted for the model (though these are most likely all basic model tests a model should be able to test for)
 The idea is that, we will also have other TesterMixins in the future, which may be specific to only certain types of models (i.e. GenerationTestMixin, etc.)
