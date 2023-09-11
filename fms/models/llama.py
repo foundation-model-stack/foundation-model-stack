@@ -46,7 +46,6 @@ class LLaMAConfig(ModelConfig):
     activation_fn: str = "swish"
     p_dropout: float = 0.0
     max_expected_seq_len: int = 2048
-    distributed_strategy: DistributedStrategy = NoOpStrategy
 
 
 class LLaMABlock(nn.Module):
@@ -158,6 +157,7 @@ class LLaMA(nn.Module):
     def __init__(
         self,
         config: Optional[LLaMAConfig] = None,
+        distributed_strategy: DistributedStrategy = NoOpStrategy,
         **kwargs,
     ):
         super(LLaMA, self).__init__()
@@ -166,6 +166,7 @@ class LLaMA(nn.Module):
         else:
             self.config = LLaMAConfig()
         self.config.update_config(**kwargs)
+        self.distributed_strategy = distributed_strategy
 
         self.width = self.config.emb_dim
         self.pad_id = self.config.pad_id
@@ -180,7 +181,7 @@ class LLaMA(nn.Module):
             tie_weights=False,
             bias=False,
         )
-        self.shared = self.config.distributed_strategy.distribute_module(shared)
+        self.shared = self.distributed_strategy.distribute_module(shared)
 
         self.rot_emb = RotaryEmbedding(
             self.config.emb_dim // self.config.nheads,
@@ -190,7 +191,7 @@ class LLaMA(nn.Module):
         self.layers = []
         for i in range(self.config.nlayers):
             block = LLaMABlock(self.config, self.rot_emb)
-            block = self.config.distributed_strategy.distribute_layer(block, i)
+            block = self.distributed_strategy.distribute_layer(block, i)
             self.layers.append(block)
         self.layers = nn.ModuleList(self.layers)
 
@@ -218,9 +219,18 @@ class LLaMA(nn.Module):
     def reset_params(self):
         # Modules are self-initializing, we're just going to down-scale the final prediction head to be
         # mixed-fan (inputs and gradients scale to the same inverse factors) if it isn't tied
-        self.shared.head.weight.data.normal_(0, 1 / math.sqrt(math.sqrt(self.width * self.shared.vocab_size)))
+        self.shared.head.weight.data.normal_(
+            0, 1 / math.sqrt(math.sqrt(self.width * self.shared.vocab_size))
+        )
 
-    def _helper(self, x_in, mask=None, past_key_value_states=None, use_cache=False, attn_algorithm=None):
+    def _helper(
+        self,
+        x_in,
+        mask=None,
+        past_key_value_states=None,
+        use_cache=False,
+        attn_algorithm=None,
+    ):
         # Embed the given vocabulary indices using the given attention mask, with pre-/post-norm and dropout as specified
         # x_in: batch_size x seq_len
         # mask: batch_size x seq_len x seq_len
