@@ -5,9 +5,7 @@ from fms.testing._internal.common_model_consistency import ModelConsistencyTestM
 from fms.testing._internal.common_path import resource_path_fixture
 
 
-class TestLlamaMixin(
-    CommonModelTestMixin, CommonConfigTestMixin, ModelConsistencyTestMixin
-):
+class TestLlama(CommonModelTestMixin, CommonConfigTestMixin, ModelConsistencyTestMixin):
     """
     Model Test Suite for llama
 
