@@ -7,8 +7,10 @@ The following are the steps to follow to add your own model testing suite:
 
 ### 1.1. Edit the generate_small_model_tests.py script
 
-Edit the generate_small_model_tests.py script which is used to generate a mock model/config/signature/tokenizer and store the output in tests/resources/models/<model_name>/<model_specific_name>.
-Note: Currently there is no automated script to generate this code, but this may be addressed in the future
+Edit the _generate_small_model_tests.py_ script which is used to generate a mock `model/config/signature/tokenizer` and store the output in `tests/resources/models/<model_name>/<model_specific_name>`.
+
+Note: Currently there is no automated script to generate this code, but this may be addressed in the future.
+
 This script currently has all models that are being tested in FMS. In order to create your own model, you will need to add a section as follows:
 
 ```python
@@ -37,23 +39,25 @@ the entire architecture, not recreate an equivalent test with the larger model
 
 ### 1.2. Run the generate_small_model_tests.py script
 
-In order to run the generate_small_model_tests.py, you simply open a commandline and run:
+In order to run the _generate_small_model_tests.py_, you simply open a commandline and run:
 
 ```bash
 python /path/to/generate_small_model_tests.py --model=<model_name> --generate_weights --generate_config --generate_signature --generate_tokenizer 
 ```
 
-This script will generate the following resources under tests/resources/models
+This script will generate the following resources under `tests/resources/models`
 
+```
 <model_name>
 | tokenizer/
 | config.json
 | model_state.pth
 | signature.pth
+```
 
 These resources will be used directly by your model test suite and will provide useful consistency testing between versions
 
-Note: A single model can have any number of specific models (for instance llama has llama2 and llam2 with gqa), and each folder under tests/resources/models/<model_name> will generate tests for that specific model
+Note: A single model can have any number of specific models (for instance llama has llama2 and llam2 with gqa), and each folder under `tests/resources/models/<model_name>` will generate tests for that specific model
 
 ### 1.3. Run the generate_small_model_tests.py script to patch current resources (*optional*)
 
