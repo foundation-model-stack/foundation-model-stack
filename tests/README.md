@@ -129,3 +129,8 @@ In order to run the tests, simply open a commandline and run:
 ```bash
 python /path/to/test_<model_name>.py 
 ```
+
+The final suite of tests with the above configuration will produce something similar to the following:
+
+![img.png](img.png)
+
