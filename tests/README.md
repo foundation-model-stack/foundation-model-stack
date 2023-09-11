@@ -7,7 +7,7 @@ The following are the steps to follow to add your own model testing suite:
 
 ### 1.1. Edit the generate_small_model_tests.py script
 
-Edit the _generate_small_model_tests.py_ script which is used to generate a mock `model/config/signature/tokenizer` and store the output in `tests/resources/models/<model_name>/<model_specific_name>`.
+Edit the _generate_small_model_tests.py_ script which is used to generate a mock `model`/`config`/`signature`/`tokenizer` and store the output in `tests/resources/models/<model_name>/<model_specific_name>`.
 
 Note: Currently there is no automated script to generate this code, but this may be addressed in the future.
 
@@ -16,7 +16,7 @@ This script currently has all models that are being tested in FMS. In order to c
 ```python
 ############### <model_name> ###################
 
-# scaled down version of llama2
+# scaled down version of model
 <specific_model_name>_params = {
     "src_vocab_size": tokenizer.vocab_size, # we require the vocab size be based on the small tokenizer
     ...
@@ -34,12 +34,12 @@ if <model_name> in models or len(models) == 0:
     )
 ```
 
-Note: The parameters to the model is only supposed to be a scaled down version of that model, we are only trying to run through
+Note: The parameters to the model are only supposed to be a scaled down version of that model, we are only trying to run through
 the entire architecture, not recreate an equivalent test with the larger model
 
 ### 1.2. Run the generate_small_model_tests.py script
 
-In order to run the _generate_small_model_tests.py_, you simply open a commandline and run:
+In order to run the _generate_small_model_tests.py_, simply open the commandline and run:
 
 ```bash
 python /path/to/generate_small_model_tests.py --model=<model_name> --generate_weights --generate_config --generate_signature --generate_tokenizer 
@@ -57,7 +57,7 @@ This script will generate the following resources under `tests/resources/models`
 
 These resources will be used directly by your model test suite and will provide useful consistency testing between versions
 
-Note: A single model can have any number of specific models (for instance llama has llama2 and llam2 with gqa), and each folder under `tests/resources/models/<model_name>` will generate tests for that specific model
+Note: A single model can have any number of specific models (for instance llama has llama2 and llama2 with gqa), and each folder under `tests/resources/models/<model_name>` will generate tests for that specific model.
 
 ### 1.3. Run the generate_small_model_tests.py script to patch current resources (*optional*)
 
