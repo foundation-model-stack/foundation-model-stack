@@ -143,5 +143,5 @@ python /path/to/test_<model_name>.py
 
 The final suite of tests with the above configuration will produce something similar to the following:
 
-![img.png](img.png)
+![test_suite_example.png](test_suite_example.png)
 
