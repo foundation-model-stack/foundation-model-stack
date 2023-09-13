@@ -75,6 +75,7 @@ class LLaMABlock(nn.Module):
         if self.config.kvheads == 0:
             kvheads = self.config.nheads
         else:
+            kvheads = self.config.kvheads
             assert self.config.nheads % self.config.kvheads == 0
 
         self.attn = MultiHeadAttention(
