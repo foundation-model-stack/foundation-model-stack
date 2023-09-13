@@ -191,8 +191,8 @@ class MultiHeadAttention(nn.Module):
         expansion = self.nheads // self.kvheads
         # k/v: b h l d
         if expansion != 1:
-            keys = keys.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
-            values = values.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
+            keys_e = keys.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
+            values_e = values.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
 
         if attn_algorithm:
             # Pick which fused attn kernels will run.
@@ -206,8 +206,8 @@ class MultiHeadAttention(nn.Module):
 
         attn = F.scaled_dot_product_attention(
             queries,
-            keys,
-            values,
+            keys_e,
+            values_e,
             attn_mask=attn_mask,
             dropout_p=self.p_dropout if self.training else 0.0,
             is_causal=is_causal_mask,
