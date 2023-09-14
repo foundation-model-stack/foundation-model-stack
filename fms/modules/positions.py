@@ -102,9 +102,8 @@ class RotaryEmbedding(PositionEncoder):
     def __init__(
         self,
         dim: int,
-        max_position_embeddings: int = 2048,
-        ratio: int = 10000,
-        device=None,
+        ratio: int = 10_000,
+        device=None
     ):
         """
         This implementation of Rotary Position Embeddings (RoPE) avoids
@@ -117,7 +116,7 @@ class RotaryEmbedding(PositionEncoder):
         ----
         dim : int
             Per-head embedding dimension
-        max_position_embeddings : int
+        max_seq_len : int
             Maximum expected sequence length for the model, if exceeded the cached freqs will be recomputed
         ratio: int
             The ratio for the geometric progression to compute the rotation angles
@@ -127,15 +126,19 @@ class RotaryEmbedding(PositionEncoder):
             ratio
             ** (torch.arange(0, dim, 2, device=device)[: (dim // 2)].float() / dim)
         )
-        self.compute_freqs_cis(max_position_embeddings)
+        self.cached_freqs = {}
+        self.max_seq_len_cached = {}
 
-    def compute_freqs_cis(self, max_position_embeddings=2048):
+    def compute_freqs_cis(self, device, max_position_embeddings=2048):
+        if device in self.cached_freqs and max_position_embeddings <= self.max_seq_len_cached[device]:
+            return
+
         t = torch.arange(
-            max_position_embeddings, device=self.freqs.device, dtype=self.freqs.dtype
+            max_position_embeddings, device=device, dtype=self.freqs.dtype
         )
-        freqs = torch.outer(t, self.freqs).float()
-        self.max_seq_len_cached = max_position_embeddings
-        self.cached_freqs = torch.stack(
+        freqs = torch.outer(t, self.freqs.to(device)).float()
+        self.max_seq_len_cached[device] = max_position_embeddings
+        self.cached_freqs[device] = torch.stack(
             [
                 torch.cos(freqs),
                 -torch.sin(freqs),
@@ -182,19 +185,17 @@ class RotaryEmbedding(PositionEncoder):
         k_ = k.float().reshape(*k.shape[:-1], -1, 2)  # B H L D/2 2
 
         if isinstance(start_pos, int):
-            if start_pos + seq_len > self.max_seq_len_cached:
-                self.compute_freqs_cis(start_pos + seq_len)
-            cur_freqs = self.cached_freqs[start_pos : start_pos + seq_len]
+            self.compute_freqs_cis(q.device, start_pos + seq_len)
+            cur_freqs = self.cached_freqs[q.device][start_pos : start_pos + seq_len]
             freqs = self.reshape_for_broadcast(q_, cur_freqs)
         else:
             # TODO: this branch currently unused
             max_start_pos = torch.max(start_pos).item()
-            if max_start_pos + seq_len > self.max_seq_len_cached:
-                self.compute_freqs_cis(max_start_pos + seq_len)
+            self.compute_freqs_cis(q.device, max_start_pos + seq_len)
             freqs_idxs = torch.arange(0, seq_len, dtype=torch.long).repeat(
                 start_pos.shape[0]
             ).view(-1, seq_len) + start_pos.view(-1, 1)
-            freqs = self.cached_freqs[freqs_idxs].unsqueeze(1)
+            freqs = self.cached_freqs[q.device][freqs_idxs].unsqueeze(1)
 
         freqs = freqs.float()  # 1 1 L D/2 2 2
         q_out = freqs.mul(q_.unsqueeze(-2)).sum(5).flatten(3)
