@@ -12,7 +12,7 @@ def test_rotary_embeddings_math():
     k = 2 * torch.tensor([[1, 0], [1, 0]], dtype=torch.float).unsqueeze(0).unsqueeze(
         0
     )  # b h s e
-    rotary_embeddings = RotaryEmbedding(2, 2, 1)
+    rotary_embeddings = RotaryEmbedding(2, 2)
 
     qr, kr = rotary_embeddings.adjusted_qk(q, k)
 
