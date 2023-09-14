@@ -99,12 +99,7 @@ class Alibi(PositionEncoder):
 
 
 class RotaryEmbedding(PositionEncoder):
-    def __init__(
-        self,
-        dim: int,
-        ratio: int = 10_000,
-        device=None
-    ):
+    def __init__(self, dim: int, ratio: int = 10_000, device=None):
         """
         This implementation of Rotary Position Embeddings (RoPE) avoids
         complex numbers, and so can be used with torch.compile.
@@ -130,12 +125,13 @@ class RotaryEmbedding(PositionEncoder):
         self.max_seq_len_cached = {}
 
     def compute_freqs_cis(self, device, max_position_embeddings=2048):
-        if device in self.cached_freqs and max_position_embeddings <= self.max_seq_len_cached[device]:
+        if (
+            device in self.cached_freqs
+            and max_position_embeddings <= self.max_seq_len_cached[device]
+        ):
             return
 
-        t = torch.arange(
-            max_position_embeddings, device=device, dtype=self.freqs.dtype
-        )
+        t = torch.arange(max_position_embeddings, device=device, dtype=self.freqs.dtype)
         freqs = torch.outer(t, self.freqs.to(device)).float()
         self.max_seq_len_cached[device] = max_position_embeddings
         self.cached_freqs[device] = torch.stack(

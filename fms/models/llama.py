@@ -205,7 +205,9 @@ class LLaMA(nn.Module):
             eps=self.config.norm_eps,
             use_high_precision_pow=True,
         )
-        self.dec_norm = self.distributed_strategy.distribute_module(dec_norm, final_layers=True)
+        self.dec_norm = self.distributed_strategy.distribute_module(
+            dec_norm, final_layers=True
+        )
 
         if self.config.p_dropout:
             self.dropout = nn.Dropout(config.p_dropout)
@@ -380,7 +382,9 @@ def load_fms_llama(model_path: str, tokenizer_path: str, group=None):
     elif torch.cuda.device_count() > 1:
         print("using model parallel")
         devices = [i for i in range(torch.cuda.device_count())]
-        extra_args["distributed_strategy"] = UniformModelParallelStrategy(devices, params["n_layers"])
+        extra_args["distributed_strategy"] = UniformModelParallelStrategy(
+            devices, params["n_layers"]
+        )
 
     if "n_kv_heads" in params:
         extra_args["kvheads"] = params["n_kv_heads"]

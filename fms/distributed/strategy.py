@@ -12,7 +12,9 @@ class DistributedStrategy:
     def __init__(self, from_meta=False):
         self.from_meta = from_meta
 
-    def distribute_module(self, module: nn.Module, final_layers: bool=False) -> nn.Module:
+    def distribute_module(
+        self, module: nn.Module, final_layers: bool = False
+    ) -> nn.Module:
         """
         Optionally a distributed strategy may distribute modules that are not
         numbered layers
@@ -31,7 +33,9 @@ class NotDistributed(DistributedStrategy):
     def __init__(self, from_meta=False):
         super().__init__(from_meta)
 
-    def distribute_module(self, module: nn.Module, final_layers: bool=False) -> nn.Module:
+    def distribute_module(
+        self, module: nn.Module, final_layers: bool = False
+    ) -> nn.Module:
         return module
 
     def distribute_layer(self, block: nn.Module, layer: int) -> nn.Module:
@@ -47,8 +51,8 @@ class DeviceMover(nn.Module):
         self.device = device
         # make this wrapper module behave as if it was the wrapped module.
         attr = module.__dict__
-        attr['module'] = module.to(device)
-        attr['device'] = device
+        attr["module"] = module.to(device)
+        attr["device"] = device
         self.__dict__ = attr
 
     def forward(self, *args, **kwargs):
@@ -85,9 +89,11 @@ class UniformModelParallelStrategy(DistributedStrategy):
         wrapped = DeviceMover(block, device)
         return wrapped
 
-    def distribute_module(self, module: nn.Module, final_layers: bool=False) -> nn.Module:
+    def distribute_module(
+        self, module: nn.Module, final_layers: bool = False
+    ) -> nn.Module:
         if final_layers:
-            device = self.layer_to_device[len(self.layer_to_device)-1]
+            device = self.layer_to_device[len(self.layer_to_device) - 1]
         else:
             device = self.layer_to_device[0]
         if self.from_meta:
@@ -102,7 +108,9 @@ class TensorParallelStrategy(DistributedStrategy):
         assert torch.distributed.is_initialized(), "must initialize a process group"
         self.group = group if group is not None else torch.distributed.GroupMember.WORLD
 
-    def distribute_module(self, module: nn.Module, final_layers: bool=False) -> nn.Module:
+    def distribute_module(
+        self, module: nn.Module, final_layers: bool = False
+    ) -> nn.Module:
         return tp_wrapping.apply_tp(module, self.group)
 
     def distribute_layer(self, block: nn.Module, layer: int) -> nn.Module:
