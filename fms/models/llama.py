@@ -46,8 +46,8 @@ class LLaMAConfig(ModelConfig):
     multiple_of: int = 256
     activation_fn: str = "swish"
     p_dropout: float = 0.0
-    max_expected_seq_len: int = 2048
-    ntk_scaling: bool = False
+    max_expected_seq_len: int = 4096
+    ntk_scaling: bool = True
 
 
 class LLaMABlock(nn.Module):
@@ -188,6 +188,8 @@ class LLaMA(nn.Module):
 
         self.rot_emb = RotaryEmbedding(
             dim=self.config.emb_dim // self.config.nheads,
+            ntk_scaling=self.config.ntk_scaling,
+            max_seq_len=self.config.max_expected_seq_len,
         )
 
         self.layers = []
