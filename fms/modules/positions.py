@@ -99,7 +99,9 @@ class Alibi(PositionEncoder):
 
 
 class RotaryEmbedding(PositionEncoder):
-    def __init__(self, dim: int, ratio: int = 10_000, max_seq_len=2048, ntk_scaling=False):
+    def __init__(
+        self, dim: int, ratio: int = 10_000, max_seq_len=2048, ntk_scaling=False
+    ):
         """
         This implementation of Rotary Position Embeddings (RoPE) avoids
         complex numbers, and so can be used with torch.compile.
@@ -128,7 +130,9 @@ class RotaryEmbedding(PositionEncoder):
         if not self.ntk_scaling:
             alpha = 1
         else:
-            alpha = int(2 ** math.ceil(math.log2( math.ceil( seq_len / self.max_seq_len) ) ))
+            alpha = int(
+                2 ** math.ceil(math.log2(math.ceil(seq_len / self.max_seq_len)))
+            )
         return alpha
 
     def compute_freqs_cis(self, device, max_seq_len=2048):
@@ -142,22 +146,25 @@ class RotaryEmbedding(PositionEncoder):
         # `2**i` where i is the ratio of actual vs initial max seq len. (i.e. 2,
         # 4, 8, ... as needed)
         alpha = self._alpha(max_seq_len)
-        
+
         if device not in self.cached_freqs:
             self.cached_freqs[device] = {}
         if device not in self.max_seq_len_cached:
             self.max_seq_len_cached[device] = 0
-                
+
         max_seq_len = max(max_seq_len, self.max_seq_len * alpha)
 
-        if (alpha in self.cached_freqs[device] and max_seq_len <= self.max_seq_len_cached[device]):
+        if (
+            alpha in self.cached_freqs[device]
+            and max_seq_len <= self.max_seq_len_cached[device]
+        ):
             return alpha
 
         ratio = self.ratio
         dim = self.dim
 
         if self.ntk_scaling:
-            ratio = ratio * alpha ** (dim / (dim-2))
+            ratio = ratio * alpha ** (dim / (dim - 2))
 
         freqs = 1.0 / (
             ratio
@@ -217,7 +224,9 @@ class RotaryEmbedding(PositionEncoder):
 
         if isinstance(start_pos, int):
             alpha = self.compute_freqs_cis(q.device, start_pos + seq_len)
-            cur_freqs = self.cached_freqs[q.device][alpha][start_pos : start_pos + seq_len]
+            cur_freqs = self.cached_freqs[q.device][alpha][
+                start_pos : start_pos + seq_len
+            ]
             freqs = self.reshape_for_broadcast(q_, cur_freqs)
         else:
             # TODO: this branch currently unused
