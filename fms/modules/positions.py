@@ -146,17 +146,18 @@ class RotaryEmbedding(PositionEncoder):
         # `2**i` where i is the ratio of actual vs initial max seq len. (i.e. 2,
         # 4, 8, ... as needed)
         alpha = self._alpha(max_seq_len)
+        dev_idx = device.index
 
-        if device not in self.cached_freqs:
-            self.cached_freqs[device] = {}
-        if device not in self.max_seq_len_cached:
-            self.max_seq_len_cached[device] = 0
+        if dev_idx not in self.cached_freqs:
+            self.cached_freqs[dev_idx] = {}
+        if dev_idx not in self.max_seq_len_cached:
+            self.max_seq_len_cached[dev_idx] = 0
 
         max_seq_len = max(max_seq_len, self.max_seq_len * alpha)
 
         if (
-            alpha in self.cached_freqs[device]
-            and max_seq_len <= self.max_seq_len_cached[device]
+            alpha in self.cached_freqs[dev_idx]
+            and max_seq_len <= self.max_seq_len_cached[dev_idx]
         ):
             return alpha
 
@@ -173,8 +174,8 @@ class RotaryEmbedding(PositionEncoder):
 
         t = torch.arange(max_seq_len, device=device, dtype=freqs.dtype)
         freqs = torch.outer(t, freqs).float()
-        self.max_seq_len_cached[device] = max_seq_len
-        self.cached_freqs[device][alpha] = torch.stack(
+        self.max_seq_len_cached[dev_idx] = max_seq_len
+        self.cached_freqs[dev_idx][alpha] = torch.stack(
             [
                 torch.cos(freqs),
                 -torch.sin(freqs),
@@ -224,7 +225,7 @@ class RotaryEmbedding(PositionEncoder):
 
         if isinstance(start_pos, int):
             alpha = self.compute_freqs_cis(q.device, start_pos + seq_len)
-            cur_freqs = self.cached_freqs[q.device][alpha][
+            cur_freqs = self.cached_freqs[q.device.index][alpha][
                 start_pos : start_pos + seq_len
             ]
             freqs = self.reshape_for_broadcast(q_, cur_freqs)
@@ -235,9 +236,10 @@ class RotaryEmbedding(PositionEncoder):
             freqs_idxs = torch.arange(0, seq_len, dtype=torch.long).repeat(
                 start_pos.shape[0]
             ).view(-1, seq_len) + start_pos.view(-1, 1)
-            freqs = self.cached_freqs[q.device][alpha][freqs_idxs].unsqueeze(1)
+            freqs = self.cached_freqs[q.device.index][alpha][freqs_idxs].unsqueeze(1)
 
         freqs = freqs.float()  # 1 1 L D/2 2 2
         q_out = freqs.mul(q_.unsqueeze(-2)).sum(5).flatten(3)
         k_out = freqs.mul(k_.unsqueeze(-2)).sum(5).flatten(3)
+
         return q_out.type_as(q).contiguous(), k_out.type_as(k).contiguous()
