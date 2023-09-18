@@ -1,8 +1,11 @@
+import copy
 import inspect
 import json
 import os
 from dataclasses import asdict, dataclass
 from typing import Union
+
+from fm_nlp.architecture.config import ModelConfig
 
 
 @dataclass
@@ -28,9 +31,26 @@ class ModelConfig:
         with open(file_path, "w") as f:
             json.dump(self.as_dict(), f)
 
-    def update_config(self, **kwargs):
+    def updated(self, **kwargs) -> "ModelConfig":
+        """Clone this ModelConfig and override the parameters of the ModelConfig specified by kwargs
+
+        Note: This will always return a deep copy
+
+        Parameters
+        ----------
+        kwargs
+            all possibly ModelConfig dataclass named parameters to override
+
+        Returns
+        -------
+        ModelConfig
+            a new instance of ModelConfig with the parameters overridden
+        """
+        # create a deep copy as we don't want to modify this reference
+        copied_config = copy.deepcopy(self)
         for k, v in kwargs.items():
-            if hasattr(self, k):
-                setattr(self, k, v)
+            if hasattr(copied_config, k):
+                setattr(copied_config, k, v)
             else:
                 print(f"Warning: unknown parameter {k}")
+        return copied_config
