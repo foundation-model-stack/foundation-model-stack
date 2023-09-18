@@ -99,7 +99,9 @@ class Alibi(PositionEncoder):
 
 
 class RotaryEmbedding(PositionEncoder):
-    def __init__(self, dim: int, ratio: int = 10_000, device=None):
+    def __init__(
+        self, dim: int, ratio: int = 10_000, max_seq_len=2048, ntk_scaling=False
+    ):
         """
         This implementation of Rotary Position Embeddings (RoPE) avoids
         complex numbers, and so can be used with torch.compile.
@@ -117,24 +119,62 @@ class RotaryEmbedding(PositionEncoder):
             The ratio for the geometric progression to compute the rotation angles
         """
         super(RotaryEmbedding, self).__init__()
-        self.freqs = 1.0 / (
+        self.dim = dim
+        self.ratio = ratio
+        self.cached_freqs = {}
+        self.max_seq_len_cached = {}
+        self.ntk_scaling = ntk_scaling
+        self.max_seq_len = max_seq_len
+
+    def _alpha(self, seq_len) -> int:
+        if not self.ntk_scaling:
+            alpha = 1
+        else:
+            alpha = int(
+                2 ** math.ceil(math.log2(math.ceil(seq_len / self.max_seq_len)))
+            )
+        return alpha
+
+    def compute_freqs_cis(self, device, max_seq_len=2048):
+        # NTK scaling.
+        # https://arxiv.org/abs/2306.15595
+        # https://www.reddit.com/r/LocalLLaMA/comments/14lz7j5/ntkaware_scaled_rope_allows_llama_models_to_have/
+        #
+        # we'll store the freqs for each alpha value. This means that for
+        # shorter sequences, we preserve the original scale.
+        # To limit the number of multiples to store we'll maintain alphas for
+        # `2**i` where i is the ratio of actual vs initial max seq len. (i.e. 2,
+        # 4, 8, ... as needed)
+        alpha = self._alpha(max_seq_len)
+
+        if device not in self.cached_freqs:
+            self.cached_freqs[device] = {}
+        if device not in self.max_seq_len_cached:
+            self.max_seq_len_cached[device] = 0
+
+        max_seq_len = max(max_seq_len, self.max_seq_len * alpha)
+
+        if (
+            alpha in self.cached_freqs[device]
+            and max_seq_len <= self.max_seq_len_cached[device]
+        ):
+            return alpha
+
+        ratio = self.ratio
+        dim = self.dim
+
+        if self.ntk_scaling:
+            ratio = ratio * alpha ** (dim / (dim - 2))
+
+        freqs = 1.0 / (
             ratio
             ** (torch.arange(0, dim, 2, device=device)[: (dim // 2)].float() / dim)
         )
-        self.cached_freqs = {}
-        self.max_seq_len_cached = {}
 
-    def compute_freqs_cis(self, device, max_position_embeddings=2048):
-        if (
-            device in self.cached_freqs
-            and max_position_embeddings <= self.max_seq_len_cached[device]
-        ):
-            return
-
-        t = torch.arange(max_position_embeddings, device=device, dtype=self.freqs.dtype)
-        freqs = torch.outer(t, self.freqs.to(device)).float()
-        self.max_seq_len_cached[device] = max_position_embeddings
-        self.cached_freqs[device] = torch.stack(
+        t = torch.arange(max_seq_len, device=device, dtype=freqs.dtype)
+        freqs = torch.outer(t, freqs).float()
+        self.max_seq_len_cached[device] = max_seq_len
+        self.cached_freqs[device][alpha] = torch.stack(
             [
                 torch.cos(freqs),
                 -torch.sin(freqs),
@@ -143,6 +183,8 @@ class RotaryEmbedding(PositionEncoder):
             ],
             dim=2,
         ).view(*freqs.shape, 2, 2)
+
+        return alpha
 
     def reshape_for_broadcast(self, x: torch.Tensor, cur_freqs):
         ndim = x.ndim
@@ -181,17 +223,19 @@ class RotaryEmbedding(PositionEncoder):
         k_ = k.float().reshape(*k.shape[:-1], -1, 2)  # B H L D/2 2
 
         if isinstance(start_pos, int):
-            self.compute_freqs_cis(q.device, start_pos + seq_len)
-            cur_freqs = self.cached_freqs[q.device][start_pos : start_pos + seq_len]
+            alpha = self.compute_freqs_cis(q.device, start_pos + seq_len)
+            cur_freqs = self.cached_freqs[q.device][alpha][
+                start_pos : start_pos + seq_len
+            ]
             freqs = self.reshape_for_broadcast(q_, cur_freqs)
         else:
             # TODO: this branch currently unused
             max_start_pos = torch.max(start_pos).item()
-            self.compute_freqs_cis(q.device, max_start_pos + seq_len)
+            alpha = self.compute_freqs_cis(q.device, max_start_pos + seq_len)
             freqs_idxs = torch.arange(0, seq_len, dtype=torch.long).repeat(
                 start_pos.shape[0]
             ).view(-1, seq_len) + start_pos.view(-1, 1)
-            freqs = self.cached_freqs[q.device][freqs_idxs].unsqueeze(1)
+            freqs = self.cached_freqs[q.device][alpha][freqs_idxs].unsqueeze(1)
 
         freqs = freqs.float()  # 1 1 L D/2 2 2
         q_out = freqs.mul(q_.unsqueeze(-2)).sum(5).flatten(3)
