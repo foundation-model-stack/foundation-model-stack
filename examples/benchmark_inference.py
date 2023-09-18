@@ -110,22 +110,27 @@ def log_result(result):
         print(f"\t{ms:0.2f} ms per token")
 
 
-print("Uncompiled results:")
-print("- with use_cache=True, excluding first call")
+def print0(*args):
+    if local_rank == 0:
+        print(*args)
+
+
+print0("Uncompiled results:")
+print0("- with use_cache=True, excluding first call")
 log_result(timeit.repeat(lambda: one_token(model, True), number=iters))
-print("- without cache")
+print0("- without cache")
 log_result(timeit.repeat(lambda: one_token(model, False), number=iters))
 
-print("Compiling model...")
+print0("Compiling model...")
 model = torch.compile(model)
 
 # compiling can make first inference pass slow. warmup:
 one_token(model, True)
 one_token(model, False)
 
-print()
-print("Compiled results:")
-print("- with use_cache=True, excluding first call")
+print0()
+print0("Compiled results:")
+print0("- with use_cache=True, excluding first call")
 log_result(timeit.repeat(lambda: one_token(model, True), number=iters))
-print("- without cache")
+print0("- without cache")
 log_result(timeit.repeat(lambda: one_token(model, False), number=iters))
