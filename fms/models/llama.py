@@ -1,3 +1,4 @@
+import copy
 import json
 import math
 import os
@@ -168,7 +169,7 @@ class LLaMA(nn.Module):
             self.config = config
         else:
             self.config = LLaMAConfig()
-        self.config.update_config(**kwargs)
+        self.config = self.config.updated(**kwargs)
         self.distributed_strategy = distributed_strategy
 
         self.width = self.config.emb_dim
