@@ -128,12 +128,17 @@ class RotaryEmbedding(PositionEncoder):
 
     def _alpha(self, seq_len) -> int:
         if not self.ntk_scaling:
-            alpha = 1
+            return 1
         else:
-            alpha = int(
-                2 ** math.ceil(math.log2(math.ceil(seq_len / self.max_seq_len)))
-            )
-        return alpha
+            alpha = seq_len / self.max_seq_len
+            alpha = math.ceil(alpha)
+            # for some reason math.log2 didn't `torch.compile` but
+            # `math.log` does
+            alpha = math.log(alpha) / math.log(2)
+            alpha = math.ceil(alpha)
+            alpha = 2**alpha
+            alpha = int(alpha)
+            return alpha
 
     def compute_freqs_cis(self, device, max_seq_len=2048):
         # NTK scaling.
@@ -225,9 +230,9 @@ class RotaryEmbedding(PositionEncoder):
 
         if isinstance(start_pos, int):
             alpha = self.compute_freqs_cis(q.device, start_pos + seq_len)
-            cur_freqs = self.cached_freqs[q.device.index][alpha][
-                start_pos : start_pos + seq_len
-            ]
+            cur_freqs = self.cached_freqs[q.device.index]
+            cur_freqs = cur_freqs[alpha]
+            cur_freqs = cur_freqs[start_pos : start_pos + seq_len]
             freqs = self.reshape_for_broadcast(q_, cur_freqs)
         else:
             # TODO: this branch currently unused

@@ -50,9 +50,25 @@ def _all_reduce(input_: torch.Tensor) -> torch.Tensor:
     if world_size == 1:
         return input_
 
-    # graph breaks can be removed after fix for: https://github.com/pytorch/pytorch/issues/108780
-    torch._dynamo.graph_break()
     return distfunc.all_reduce(input_, "sum", list(range(world_size)))
+
+
+# Fix #2: Asserts + dynamic shapes create graph breaks
+# This function is redefined from torch.distributed._functional_collectives.all_gather_tensor
+# to remove an assert that creates an extra graph break
+def _all_gather_tensor(
+    self: torch.Tensor,
+    gather_dim: int,
+    group: distfunc.RANK_TYPES,
+    tag: str = "",
+):
+    tag, rankset, group_size = distfunc._expand_group(group, tag)
+    tensor = torch.ops.c10d_functional.all_gather_into_tensor(self, tag, rankset, group_size)  # type: ignore[attr-defined]
+    res = distfunc._maybe_wrap_tensor(tensor)
+    # TODO this should be done inside AsyncCollectiveTensor to delay the wait() call
+    if gather_dim != 0:
+        res = torch.cat(torch.chunk(res, group_size, dim=0), dim=gather_dim)
+    return res
 
 
 def _all_gather(input_: torch.Tensor) -> torch.Tensor:
@@ -63,9 +79,7 @@ def _all_gather(input_: torch.Tensor) -> torch.Tensor:
         return input_
 
     last_dim = input_.dim() - 1
-    # graph breaks can be removed after fix for: https://github.com/pytorch/pytorch/issues/108780
-    torch._dynamo.graph_break()
-    return distfunc.all_gather_tensor(input_, last_dim, list(range(world_size)))
+    return _all_gather_tensor(input_, last_dim, list(range(world_size)))
 
 
 def _split(input_: torch.Tensor, rank, world_size) -> torch.Tensor:
