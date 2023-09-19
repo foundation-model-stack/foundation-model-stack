@@ -86,6 +86,16 @@ ids = torch.randint(
     tokenizer.vocab_size(), (BATCH_SIZE, SEQ_LEN), device=device, dtype=torch.long
 )
 
+# This first forward call generates the cache for use in cases where
+# `use_cache=True`.
+#
+# For performance purposes, this call can be considered equivalent to
+# `use_cache=False`.
+#
+# The actual performance of generation with `use_cache=True` would be the cost
+# of the first token without cache, plus the cost of all subsequent tokens with
+# cache. I.e. the amortized per-token cost would depend on the number of tokens
+# generated.
 logits, cache = model.forward(ids, use_cache=True)
 logits = logits[:, -1, :]
 next_val = torch.argmax(logits, dim=-1).unsqueeze(0).t()
