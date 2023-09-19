@@ -11,7 +11,7 @@ from fms.models.llama import load_fms_llama
 
 # Example running llama 7B on one A100:
 #
-# $ srun -N 1 --gres=gpu:1 torchrun --nproc_per_node=1 ./examples/benchmark_inference.py --model_path=~/models/7B-F/ --tokenizer=~/models/tokenizer.model --batch_size=2 --seq_len=500
+# $ srun -N 1 --gres=gpu:1 torchrun --nproc_per_node=1 ./scripts/benchmark_inference.py --model_path=~/models/7B-F/ --tokenizer=~/models/tokenizer.model --batch_size=2 --seq_len=500
 # loading model
 # loading complete on rank 0
 # Uncompiled results:

@@ -17,7 +17,7 @@ or
 python setup.py install
 ```
 
-An example of inference on our implementation of LLaMA can be found in `examples/inference.py`.
+An example of inference on our implementation of LLaMA can be found in `scripts/inference.py`.
 
 
 ## Inference

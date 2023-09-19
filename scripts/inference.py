@@ -13,9 +13,9 @@ from fms.utils.generation import generate
 # This example script validates the LLaMA implementation by running inference on a couple of prompts.
 #
 # Example usage with single-GPU 7B model on slurm, with torch.compile and determinstic behavior:
-# CUBLAS_WORKSPACE_CONFIG=:4096:8 srun -N 1 --gres=gpu:1 python examples/inference.py --model_path=~/models/7B-F/ --tokenizer=~/models/tokenizer.model --compile --deterministic
+# CUBLAS_WORKSPACE_CONFIG=:4096:8 srun -N 1 --gres=gpu:1 python scripts/inference.py --model_path=~/models/7B-F/ --tokenizer=~/models/tokenizer.model --compile --deterministic
 # Example usage of 13B model on 2 GPUs with Tensor Parallel:
-# srun -N 1 --gres=gpu:2 torchrun --nproc_per_node=2 ~/repos/newfms/examples/inference.py --model_path=~/models/13-F --tokenizer=~/models/tokenizer.model --distributed
+# srun -N 1 --gres=gpu:2 torchrun --nproc_per_node=2 scripts/inference.py --model_path=~/models/13B-F --tokenizer=~/models/tokenizer.model --distributed
 
 parser = argparse.ArgumentParser(description="Script to run inference on a LLaMA model")
 parser.add_argument("--device_type", type=str, default="cuda")
