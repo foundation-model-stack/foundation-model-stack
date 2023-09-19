@@ -92,6 +92,15 @@ next_val = torch.argmax(logits, dim=-1).unsqueeze(0).t()
 result = torch.cat((ids[:, 1:], next_val), dim=-1)
 
 
+# The function we're measuring, with or without caching.
+#
+# In a realistic generate function, the sequence length would grow with each
+# subsequent token, and so the average cost would be from a variety of sequence
+# lengths.
+# We capture the time to generate a single token from a given sequence length
+# and batch size. This means we're measuring the cost of the forward pass
+# in isolation in a way that's easier to compare, and avoids including the cost
+# of the concatenation operation.
 def one_token(m, use_cache):
     if use_cache:
         return m.forward(next_val, past_key_value_states=cache, use_cache=True)
