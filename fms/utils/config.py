@@ -5,8 +5,6 @@ import os
 from dataclasses import asdict, dataclass
 from typing import Union
 
-from fm_nlp.architecture.config import ModelConfig
-
 
 @dataclass
 class ModelConfig:
