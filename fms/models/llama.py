@@ -48,7 +48,7 @@ class LLaMAConfig(ModelConfig):
     activation_fn: str = "swish"
     p_dropout: float = 0.0
     max_expected_seq_len: int = 4096
-    ntk_scaling: bool = True
+    ntk_scaling: bool = False
 
 
 class LLaMABlock(nn.Module):
