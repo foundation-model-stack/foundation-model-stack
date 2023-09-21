@@ -6,7 +6,7 @@ import torch
 from transformers import AutoTokenizer
 
 from fms.models.llama import LLaMA, LLaMAConfig
-from fms.testing.model_utils import get_signature
+from fms.testing.comparison import get_signature
 
 parser = argparse.ArgumentParser(description="generate small model tests")
 
@@ -37,7 +37,7 @@ parser.add_argument(
 args = parser.parse_args()
 
 tokenizer = AutoTokenizer.from_pretrained("google/byt5-small")
-_models_path = "../../tests/resources/models"
+_models_path = "../resources/models"
 
 models = set(args.model.split(","))
 

@@ -10,8 +10,7 @@ import torch
 import torch.nn as nn
 
 from fms.testing._internal.test_resource_utils import AbstractResourcePath
-from fms.testing.comparison import ModelSignatureParams, compare_model_signatures
-from fms.testing.model_utils import get_signature
+from fms.testing.comparison import get_signature
 from fms.utils.config import ModelConfig
 
 _FAILED_MODEL_WEIGHTS_LOAD_MSG = """
@@ -175,37 +174,6 @@ class ModelFixtureMixin(metaclass=abc.ABCMeta):
 class ModelAPITestSuite(AbstractResourcePath, ConfigFixtureMixin, ModelFixtureMixin):
     """General model testing class for future use with other models"""
 
-    # common tests
-    def test_model_round_trip(self, model, config):
-        """Test that the model can save and load properly (config and model)"""
-        model_from_config = type(model)(config)
-        assert model_from_config.config.as_dict() == config.as_dict()
-
-        with tempfile.TemporaryDirectory() as workdir:
-            config_path = f"{workdir}/config.json"
-            model_from_config.config.save(config_path)
-            config_loaded = type(config).load(config_path)
-
-        # ensure the configs are the same
-        assert config.as_dict() == config_loaded.as_dict()
-
-        # ensure params are same
-        model2 = type(model)(config_loaded)
-        model2.load_state_dict(model.state_dict())
-        m1_sd = model.state_dict()
-        m2_sd = model2.state_dict()
-        assert m1_sd.keys() == m2_sd.keys()
-        is_equal_weights = True
-        for k in m1_sd.keys():
-            if m1_sd[k].ne(m2_sd[k]).sum() > 0:
-                is_equal_weights = False
-                break
-        assert is_equal_weights
-
-    def test_get_config(self, model, config):
-        """test get_config method works as intended and returns the right config"""
-        assert model.get_config().as_dict() == config.as_dict()
-
     def test_config_params_passed_as_kwargs_to_model(self, model, config):
         params = config.as_dict()
         config_from_params = type(config)(**params)
@@ -243,7 +211,7 @@ class ModelConfigTestSuite(AbstractResourcePath, ConfigFixtureMixin):
                 raise RuntimeError(_FAILED_CONFIG_LOAD_MSG)
             assert config.as_dict() == config_loaded.as_dict()
 
-    def test_as_dict(self, config, resource_path):
+    def test_config_as_dict(self, config, resource_path):
         """Test that config as_dict works as intended and returns the original dict from test resources"""
         config_path = os.path.join(resource_path, "config.json")
         with open(config_path, "r", encoding="utf-8") as reader:

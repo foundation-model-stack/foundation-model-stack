@@ -1,7 +1,7 @@
 # Model Testing
 
 In order to create your own model testing suite, fms provides a set of scripts/mixins that can be used in automating model testing.
-The following are the steps to follow to add your own model testing suite:
+The following are the steps to follow to add a new model to the suite of generic model tests:
 
 ## 1. Create a model resources for your model
 
@@ -42,7 +42,7 @@ the entire architecture, not recreate an equivalent test with the larger model
 In order to run the _generate_small_model_tests.py_, simply open the commandline and run:
 
 ```bash
-python /path/to/generate_small_model_tests.py --model=<model_name> --generate_weights --generate_config --generate_signature --generate_tokenizer 
+python /tests/scripts/generate_small_model_tests.py --model=<model_name> --generate_weights --generate_config --generate_signature --generate_tokenizer 
 ```
 
 This script will generate the following resources under `tests/resources/models`
@@ -143,5 +143,13 @@ python /path/to/test_<model_name>.py
 
 The final suite of tests with the above configuration will produce something similar to the following:
 
-![test_suite_example.png](test_suite_example.png)
+```
+TestModel
+|test_model_output
+|test_config_round_trip
+|test_config_as_dict
+|test_config_params_passed_as_kwargs_to_model
+|test_config_passed_to_model
+|test_config_passed_to_model_and_updated
+```
 
