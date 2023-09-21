@@ -100,7 +100,7 @@ Create a test file with the name test_<model_name>.py under tests/models
 Add the following code to the file, which will create a generic testing class for your model:
 
 ```python
-class Test<model_name>(CommonModelTestMixin, CommonConfigTestMixin, ModelConsistencyTestMixin):
+class Test<model_name>(ModelAPITestSuite, ModelConfigTestSuite, ModelConsistencyTestSuite):
     """
     Model Test Suite for <model_name>
 
@@ -120,11 +120,11 @@ class Test<model_name>(CommonModelTestMixin, CommonConfigTestMixin, ModelConsist
         return request.param
 ```
 
-The above testing suite includes CommonModelTestMixin, CommonConfigTestMixin, ModelConsistencyTestMixin. 
+The above testing suite includes ModelAPITestSuite, ModelConfigTestSuite, ModelConsistencyTestSuite. 
 
-CommonModelTestMixin - a mixin that provides model fixtures as well as a common set of tests that all models should be able to test for
-CommonConfigTestMixin - a mixin that provides config fixtures as well as a common set of tests that all ModelConfig should be able to test for
-ModelConsistencyTestMixin - a mixin that provides signature fixtures as well as a set of tests that checks output equivalency of models
+ModelAPITestSuite - a test suite that provides model fixtures as well as a common set of tests that all models should be able to test for
+ModelConfigTestSuite - a test suite that provides config fixtures as well as a common set of tests that all ModelConfig should be able to test for
+ModelConsistencyTestSuite - a test suite that provides signature fixtures as well as a set of tests that checks output equivalency of models
 
 Note: these are in no way the entire set of tests required, just the bare minimum set of tests and they will be expanded in the future, along with more test suite mixins
 

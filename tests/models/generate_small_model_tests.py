@@ -5,9 +5,8 @@ from typing import Type, Union
 import torch
 from transformers import AutoTokenizer
 
-from fm.utils import get_signature
-
 from fms.models.llama import LLaMA, LLaMAConfig
+from fms.testing.model_utils import get_signature
 
 parser = argparse.ArgumentParser(description="generate small model tests")
 

@@ -1,11 +1,13 @@
 from fms.models.llama import LLaMA, LLaMAConfig
-from fms.testing._internal.common_config import CommonConfigTestMixin
-from fms.testing._internal.common_model import CommonModelTestMixin
-from fms.testing._internal.common_model_consistency import ModelConsistencyTestMixin
-from fms.testing._internal.common_path import resource_path_fixture
+from fms.testing._internal.model_test_suite import (
+    ModelAPITestSuite,
+    ModelConfigTestSuite,
+    ModelConsistencyTestSuite,
+)
+from fms.testing._internal.test_resource_utils import resource_path_fixture
 
 
-class TestLlama(CommonModelTestMixin, CommonConfigTestMixin, ModelConsistencyTestMixin):
+class TestLlama(ModelAPITestSuite, ModelConfigTestSuite, ModelConsistencyTestSuite):
     """
     Model Test Suite for llama
 

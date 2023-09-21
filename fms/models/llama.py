@@ -1,3 +1,4 @@
+import copy
 import json
 import math
 import os
@@ -14,6 +15,7 @@ from fms.distributed.strategy import (
     DistributedStrategy,
     NoOpStrategy,
     TensorParallelStrategy,
+    UniformModelParallelStrategy,
 )
 from fms.modules.attention import MultiHeadAttention
 from fms.modules.embedding import WordEmbedding
@@ -45,7 +47,8 @@ class LLaMAConfig(ModelConfig):
     multiple_of: int = 256
     activation_fn: str = "swish"
     p_dropout: float = 0.0
-    max_expected_seq_len: int = 2048
+    max_expected_seq_len: int = 4096
+    ntk_scaling: bool = True
 
 
 class LLaMABlock(nn.Module):
@@ -75,6 +78,7 @@ class LLaMABlock(nn.Module):
         if self.config.kvheads == 0:
             kvheads = self.config.nheads
         else:
+            kvheads = self.config.kvheads
             assert self.config.nheads % self.config.kvheads == 0
 
         self.attn = MultiHeadAttention(
@@ -165,7 +169,7 @@ class LLaMA(nn.Module):
             self.config = config
         else:
             self.config = LLaMAConfig()
-        self.config.update_config(**kwargs)
+        self.config = self.config.updated(**kwargs)
         self.distributed_strategy = distributed_strategy
 
         self.width = self.config.emb_dim
@@ -184,8 +188,9 @@ class LLaMA(nn.Module):
         self.shared = self.distributed_strategy.distribute_module(shared)
 
         self.rot_emb = RotaryEmbedding(
-            self.config.emb_dim // self.config.nheads,
-            self.config.max_expected_seq_len * 2,
+            dim=self.config.emb_dim // self.config.nheads,
+            ntk_scaling=self.config.ntk_scaling,
+            max_seq_len=self.config.max_expected_seq_len,
         )
 
         self.layers = []
@@ -195,13 +200,16 @@ class LLaMA(nn.Module):
             self.layers.append(block)
         self.layers = nn.ModuleList(self.layers)
 
-        self.dec_norm = LayerNormParameterized(
+        dec_norm = LayerNormParameterized(
             self.config.emb_dim,
             elementwise_scale=True,
             elementwise_shift=False,
             use_mean=False,
             eps=self.config.norm_eps,
             use_high_precision_pow=True,
+        )
+        self.dec_norm = self.distributed_strategy.distribute_module(
+            dec_norm, final_layers=True
         )
 
         if self.config.p_dropout:
@@ -372,7 +380,14 @@ def load_fms_llama(model_path: str, tokenizer_path: str, group=None):
 
     extra_args = {}
     if world_size > 1:
+        print("using tensor parallel")
         extra_args["distributed_strategy"] = TensorParallelStrategy()
+    elif torch.cuda.device_count() > 1:
+        print("using model parallel")
+        devices = [i for i in range(torch.cuda.device_count())]
+        extra_args["distributed_strategy"] = UniformModelParallelStrategy(
+            devices, params["n_layers"]
+        )
 
     if "n_kv_heads" in params:
         extra_args["kvheads"] = params["n_kv_heads"]
