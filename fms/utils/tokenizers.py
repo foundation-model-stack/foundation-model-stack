@@ -77,6 +77,7 @@ class _SentencePieceTokenizer(BaseTokenizer):
     """
     An adapter for a sentencepiece tokenizer.
     """
+
     def __init__(self, path: str):
         super().__init__()
         from sentencepiece import SentencePieceProcessor

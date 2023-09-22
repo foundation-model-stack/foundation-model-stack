@@ -2,6 +2,7 @@ from typing import Dict, Type, Union
 
 import torch.nn as nn
 
+
 """
 Simple dict which given an activation string, return an activation function class
 """
@@ -59,5 +60,7 @@ def activation_to_str(activation: Union[Type[nn.Module], nn.Module]) -> str:
         activation = type(activation)
 
     if activation not in (a for a in __CLS_2_ACT.keys()):
-        raise TypeError(f"activation module or activation module type must be one of {__CLS_2_ACT.keys()}")
+        raise TypeError(
+            f"activation module or activation module type must be one of {__CLS_2_ACT.keys()}"
+        )
     return __CLS_2_ACT[activation]
