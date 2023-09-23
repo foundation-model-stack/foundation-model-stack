@@ -10,6 +10,7 @@ from fms.models.hf.lm_head_mixins import LMHeadModelLMHeadMixin
 from fms.models.hf.modeling_hf_adapter import HFDecoder, HFDecoderModelArchitecture
 from fms.models.llama import LLaMA
 
+
 class LLaMAHFDecoder(HFDecoder):
     """Adapter for the LlamaDecoder"""
 
@@ -22,7 +23,9 @@ class LLaMAHFDecoder(HFDecoder):
         attention_mask: Optional[torch.Tensor] = None,
         past_key_values: Optional[Tuple[torch.Tensor]] = None,
         use_cache: Optional[bool] = None,
-        attn_algorithm: Optional[str] = None,  # this can be passed in from top most forward
+        attn_algorithm: Optional[
+            str
+        ] = None,  # this can be passed in from top most forward
         *args,
         **kwargs,
     ) -> BaseModelOutputWithPastAndCrossAttentions:
@@ -37,8 +40,9 @@ class LLaMAHFDecoder(HFDecoder):
         present_key_values = None
         if isinstance(output, tuple):
             output, present_key_values = output
-
-        return BaseModelOutputWithPastAndCrossAttentions(last_hidden_state=output, past_key_values=present_key_values)
+        return BaseModelOutputWithPastAndCrossAttentions(
+            last_hidden_state=output, past_key_values=present_key_values
+        )
 
 
 class LLaMAHF(HFDecoderModelArchitecture):
@@ -100,7 +104,11 @@ class LLaMAHF(HFDecoderModelArchitecture):
         # subtracting the current token index in the batch minus
         # the original starting positions
         use_cache_loc = self.config.use_cache if use_cache is None else use_cache
-        if use_cache_loc and past_key_values is not None and isinstance(start_pos, torch.Tensor):
+        if (
+            use_cache_loc
+            and past_key_values is not None
+            and isinstance(start_pos, torch.Tensor)
+        ):
             start_pos = start_pos - past_key_values[0][0].shape[2]
 
         return {
@@ -121,7 +129,9 @@ class LLaMAHFForCausalLM(LMHeadModelLMHeadMixin, LLaMAHF):
         super().__init__(config=config, bias=False, *args, **kwargs)
 
     @classmethod
-    def _hf_model_from_fms(cls, model: LLaMA, config: LLaMAHFConfig) -> "LLaMAHFForCausalLM":
+    def _hf_model_from_fms(
+        cls, model: LLaMA, config: LLaMAHFConfig
+    ) -> "LLaMAHFForCausalLM":
         return cls(
             config=config,
             decoder=model,

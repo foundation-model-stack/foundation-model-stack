@@ -4,6 +4,7 @@ from transformers import PretrainedConfig
 
 from fms.models.llama import LLaMAConfig
 
+
 class LLaMAHFConfig(PretrainedConfig):
     model_type = "llama_hf"
     attribute_map = {
@@ -51,12 +52,19 @@ class LLaMAHFConfig(PretrainedConfig):
             eos_token_id=eos_token_id,
             bos_token_id=bos_token_id,
             is_decoder=is_decoder,
-            tie_word_embeddings=False, # this is handled by the underlying model
+            tie_word_embeddings=kwargs.pop(
+                "tie_word_embeddings", False
+            ),  # note: This was added here as we handle tying of heads with our underlying model, we may want to revisit this in future
+            **kwargs,
         )
 
     @classmethod
-    def from_pretrained(cls, pretrained_model_name_or_path, **kwargs) -> "PretrainedConfig":
-        config_dict, kwargs = cls.get_config_dict(pretrained_model_name_or_path, **kwargs)
+    def from_pretrained(
+        cls, pretrained_model_name_or_path, **kwargs
+    ) -> "PretrainedConfig":
+        config_dict, kwargs = cls.get_config_dict(
+            pretrained_model_name_or_path, **kwargs
+        )
 
         return cls.from_dict(config_dict, **kwargs)
 

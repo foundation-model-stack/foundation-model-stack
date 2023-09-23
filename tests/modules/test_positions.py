@@ -12,7 +12,7 @@ def test_rotary_embeddings_math():
     k = 2 * torch.tensor([[1, 0], [1, 0]], dtype=torch.float).unsqueeze(0).unsqueeze(
         0
     )  # b h s e
-    rotary_embeddings = RotaryEmbedding(2, 2, 1)
+    rotary_embeddings = RotaryEmbedding(2, 2)
 
     qr, kr = rotary_embeddings.adjusted_qk(q, k)
 
@@ -50,7 +50,7 @@ def test_rotary_embeddings_pair_math():
     orig_dotp = q @ k.transpose(2, 3)
     rotated_dotp = qr @ kr.transpose(2, 3)
 
-    print(orig_dotp, rotated_dotp)
+    # print(orig_dotp, rotated_dotp)
 
     # If two pairs of k/q have the same dot product before rotation,
     # and the same amount of rotation is applied to both pairs,
@@ -123,3 +123,32 @@ def test_rotary_embeddings_relativity():
     # (since they're farther apart).
     torch.testing.assert_close(rotated_dotp[0, 0, 0, 2], rotated_dotp[0, 0, 3, 5])
     assert torch.abs(rotated_dotp[0, 0, 0, 2] - rotated_dotp[0, 0, 0, 5]) > 1e-5
+
+
+def test_rotary_ntk():
+    # B x H x S x Eh
+    B = 3
+    H = 5
+    S = 10
+    DIM = 50
+    q = torch.randn((B, H, S, DIM))
+    k = torch.randn((B, H, S, DIM))
+
+    e = RotaryEmbedding(DIM, max_seq_len=S, ntk_scaling=False)
+    (
+        adj_q,
+        adj_k,
+    ) = e.adjusted_qk(q, k)
+    ntk = RotaryEmbedding(DIM, max_seq_len=S, ntk_scaling=True)
+    ntk_q, ntk_k = ntk.adjusted_qk(q, k)
+
+    # <= max_seq_len, results should be the same with ntk_scaling.
+    torch.testing.assert_close(adj_q, ntk_q)
+    torch.testing.assert_close(adj_k, ntk_k)
+
+    scaled_ratio = 10_000 / 2 ** (DIM / (DIM - 2))
+    ntk = RotaryEmbedding(DIM, max_seq_len=S / 2, ratio=scaled_ratio, ntk_scaling=True)
+    ntk_q, ntk_k = ntk.adjusted_qk(q, k)
+    # being double the length is equivalent to being (approximately) half the base
+    torch.testing.assert_close(adj_q, ntk_q)
+    torch.testing.assert_close(adj_k, ntk_k)

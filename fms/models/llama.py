@@ -1,3 +1,4 @@
+import copy
 import json
 import math
 import os
@@ -10,6 +11,12 @@ import torch
 import torch.nn as nn
 
 import fms.utils
+from fms.distributed.strategy import (
+    DistributedStrategy,
+    NoOpStrategy,
+    TensorParallelStrategy,
+    UniformModelParallelStrategy,
+)
 from fms.modules.attention import MultiHeadAttention
 from fms.modules.embedding import WordEmbedding
 from fms.modules.feedforward import GatedLinearUnit
@@ -39,7 +46,8 @@ class LLaMAConfig(ModelConfig):
     multiple_of: int = 256
     activation_fn: str = "swish"
     p_dropout: float = 0.0
-    max_expected_seq_len: int = 2048
+    max_expected_seq_len: int = 4096
+    ntk_scaling: bool = True
 
 
 class LLaMABlock(nn.Module):
@@ -69,6 +77,7 @@ class LLaMABlock(nn.Module):
         if self.config.kvheads == 0:
             kvheads = self.config.nheads
         else:
+            kvheads = self.config.kvheads
             assert self.config.nheads % self.config.kvheads == 0
 
         self.attn = MultiHeadAttention(
@@ -151,6 +160,7 @@ class LLaMA(nn.Module):
     def __init__(
         self,
         config: Optional[LLaMAConfig] = None,
+        distributed_strategy: DistributedStrategy = NoOpStrategy,
         **kwargs,
     ):
         super(LLaMA, self).__init__()
@@ -158,13 +168,14 @@ class LLaMA(nn.Module):
             self.config = config
         else:
             self.config = LLaMAConfig()
-        self.config.update_config(**kwargs)
+        self.config = self.config.updated(**kwargs)
+        self.distributed_strategy = distributed_strategy
 
         self.width = self.config.emb_dim
         self.pad_id = self.config.pad_id
         self.max_expected_seq_len = self.config.max_expected_seq_len
 
-        self.shared = WordEmbedding(
+        shared = WordEmbedding(
             self.config.src_vocab_size,
             self.config.emb_dim,
             padding_idx=self.config.pad_id,
@@ -173,21 +184,31 @@ class LLaMA(nn.Module):
             tie_weights=False,
             bias=False,
         )
+        self.shared = self.distributed_strategy.distribute_module(shared)
 
         self.rot_emb = RotaryEmbedding(
-            self.config.emb_dim // self.config.nheads,
-            self.config.max_expected_seq_len * 2,
+            dim=self.config.emb_dim // self.config.nheads,
+            ntk_scaling=self.config.ntk_scaling,
+            max_seq_len=self.config.max_expected_seq_len,
         )
 
-        self.layers = nn.ModuleList([LLaMABlock(self.config, self.rot_emb) for _ in range(self.config.nlayers)])
+        self.layers = []
+        for i in range(self.config.nlayers):
+            block = LLaMABlock(self.config, self.rot_emb)
+            block = self.distributed_strategy.distribute_layer(block, i)
+            self.layers.append(block)
+        self.layers = nn.ModuleList(self.layers)
 
-        self.dec_norm = LayerNormParameterized(
+        dec_norm = LayerNormParameterized(
             self.config.emb_dim,
             elementwise_scale=True,
             elementwise_shift=False,
             use_mean=False,
             eps=self.config.norm_eps,
             use_high_precision_pow=True,
+        )
+        self.dec_norm = self.distributed_strategy.distribute_module(
+            dec_norm, final_layers=True
         )
 
         if self.config.p_dropout:
@@ -205,9 +226,18 @@ class LLaMA(nn.Module):
     def reset_params(self):
         # Modules are self-initializing, we're just going to down-scale the final prediction head to be
         # mixed-fan (inputs and gradients scale to the same inverse factors) if it isn't tied
-        self.shared.head.weight.data.normal_(0, 1 / math.sqrt(math.sqrt(self.width * self.shared.vocab_size)))
+        self.shared.head.weight.data.normal_(
+            0, 1 / math.sqrt(math.sqrt(self.width * self.shared.vocab_size))
+        )
 
-    def _helper(self, x_in, mask=None, past_key_value_states=None, use_cache=False, attn_algorithm=None):
+    def _helper(
+        self,
+        x_in,
+        mask=None,
+        past_key_value_states=None,
+        use_cache=False,
+        attn_algorithm=None,
+    ):
         # Embed the given vocabulary indices using the given attention mask, with pre-/post-norm and dropout as specified
         # x_in: batch_size x seq_len
         # mask: batch_size x seq_len x seq_len
@@ -271,7 +301,9 @@ class LLaMA(nn.Module):
         only_last_token=False,
         attn_algorithm=None,
     ):
-        output, cache = self._helper(x, mask, past_key_value_states, use_cache, attn_algorithm)
+        output, cache = self._helper(
+            x, mask, past_key_value_states, use_cache, attn_algorithm
+        )
 
         if only_last_token:
             output = output[:, -1, :]
@@ -310,7 +342,16 @@ def _rename_weights_to_fms(orig_sd):
     return new_sd
 
 
-def load_fms_llama(model_path: str, tokenizer_path: str):
+def load_fms_llama(model_path: str, tokenizer_path: str, group=None):
+    if torch.distributed.is_initialized() and group is None:
+        group = torch.distributed.GroupMember.WORLD
+
+    if group is None:
+        world_size = 1
+        rank = 0
+    else:
+        world_size = group.size()
+        rank = group.rank()
     # from llama.tokenizer import Tokenizer
     model_path = os.path.expanduser(model_path)
     tokenizer_path = os.path.expanduser(tokenizer_path)
@@ -320,14 +361,12 @@ def load_fms_llama(model_path: str, tokenizer_path: str):
 
     # Load Llama model from Meta's weights
     checkpoints = sorted(Path(model_path).glob("*.pth"))
-    world_size = int(os.getenv("WORLD_SIZE", 1))
-    local_rank = int(os.getenv("LOCAL_RANK", 0))
 
     assert world_size == len(
         checkpoints
     ), f"Loading a checkpoint for MP={len(checkpoints)} but world size is {world_size}"
 
-    ckpt_path = checkpoints[local_rank]
+    ckpt_path = checkpoints[rank]
     checkpoint_sd = torch.load(ckpt_path, map_location="cpu")
     with open(Path(model_path) / "params.json", "r") as f:
         params = json.loads(f.read())
@@ -337,7 +376,21 @@ def load_fms_llama(model_path: str, tokenizer_path: str):
 
     # IBM LLaMa
     fms_sd = _rename_weights_to_fms(checkpoint_sd)
-    torch.set_default_tensor_type(torch.cuda.HalfTensor)
+
+    extra_args = {}
+    if world_size > 1:
+        print("using tensor parallel")
+        extra_args["distributed_strategy"] = TensorParallelStrategy()
+    elif torch.cuda.device_count() > 1:
+        print("using model parallel")
+        devices = [i for i in range(torch.cuda.device_count())]
+        extra_args["distributed_strategy"] = UniformModelParallelStrategy(
+            devices, params["n_layers"]
+        )
+
+    if "n_kv_heads" in params:
+        extra_args["kvheads"] = params["n_kv_heads"]
+
     ibm_model = LLaMA(
         src_vocab_size=tokenizer.vocab_size(),
         emb_dim=params["dim"],
@@ -346,9 +399,12 @@ def load_fms_llama(model_path: str, tokenizer_path: str):
         hidden_grow_factor=hidden_grow_factor,
         multiple_of=params["multiple_of"],
         norm_eps=params["norm_eps"],
+        **extra_args,
     )
-    torch.set_default_tensor_type(torch.FloatTensor)
-    ibm_model.load_state_dict(fms_sd, strict=False)  # the meta weights have some extra stuff
+
+    ibm_model.load_state_dict(
+        fms_sd, strict=False
+    )  # the meta weights have some extra stuff
 
     return ibm_model, tokenizer
 
@@ -369,7 +425,9 @@ def convert_hf_llama(hf_model: "LlamaForCausalLM") -> LLaMA:
     """
 
     if not _has_hf:
-        raise ImportError("in order to convert huggingface weights, you need to have transformers installed")
+        raise ImportError(
+            "in order to convert huggingface weights, you need to have transformers installed"
+        )
 
     import re
 
@@ -379,7 +437,8 @@ def convert_hf_llama(hf_model: "LlamaForCausalLM") -> LLaMA:
         norm_eps=hf_model.config.rms_norm_eps,
         nheads=hf_model.config.num_attention_heads,
         nlayers=hf_model.config.num_hidden_layers,
-        hidden_grow_factor=hf_model.config.intermediate_size / hf_model.config.hidden_size,
+        hidden_grow_factor=hf_model.config.intermediate_size
+        / hf_model.config.hidden_size,
         multiple_of=1,  # this is set to 1 as it is encoded in the hidden dimension
         activation_fn=hf_model.config.hidden_act,
         max_expected_seq_len=hf_model.config.max_position_embeddings,
@@ -416,11 +475,19 @@ def convert_hf_llama(hf_model: "LlamaForCausalLM") -> LLaMA:
     model.rot_emb.freqs = hf_model.model.layers[0].self_attn.rotary_emb.inv_freq
     for layer in model.layers:
         q = layer.attn.query.weight.data
-        q = q.view(model.config.nheads, 2, -1, q.size(1)).transpose(1, 2).reshape(*q.size())
+        q = (
+            q.view(model.config.nheads, 2, -1, q.size(1))
+            .transpose(1, 2)
+            .reshape(*q.size())
+        )
         layer.attn.query.weight.data = q
 
         k = layer.attn.key.weight.data
-        k = k.view(model.config.nheads, 2, -1, k.size(1)).transpose(1, 2).reshape(*k.size())
+        k = (
+            k.view(model.config.nheads, 2, -1, k.size(1))
+            .transpose(1, 2)
+            .reshape(*k.size())
+        )
         layer.attn.key.weight.data = k
 
     return model

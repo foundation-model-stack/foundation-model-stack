@@ -2,8 +2,13 @@ import pytest
 
 from fms.models.hf.llama.modeling_llama_hf import LLaMAHFForCausalLM
 from fms.models.llama import convert_hf_llama
-from tests.models.utils import HFModelSignatureParams, ModelSignatureParams, compare_model_signatures
 import torch
+
+from fms.testing.comparison import (
+    compare_model_signatures,
+    HFModelSignatureParams,
+    ModelSignatureParams,
+)
 
 
 @pytest.mark.slow
@@ -41,7 +46,10 @@ def test_llama_7b_equivalence():
     inp = torch.arange(0, 16).unsqueeze(0)
     fms_signature_params = ModelSignatureParams(model=model, params=1, inp=inp)
     hf_fms_signature_params = HFModelSignatureParams(
-        model=hf_model_fms, params=["input_ids", "labels"], other_params={"return_dict": True}, inp=inp
+        model=hf_model_fms,
+        params=["input_ids", "labels"],
+        other_params={"return_dict": True},
+        inp=inp,
     )
     hf_signature_params = HFModelSignatureParams(
         model=hf_model,
@@ -58,7 +66,12 @@ def test_llama_7b_equivalence():
     prompt = """q: how are you? a: I am good. How about you? q: What is the weather like today? a:"""
 
     generator_hf = pipeline(
-        task="text-generation", model=hf_model, tokenizer=tokenizer, use_cache=True, num_beams=3, max_new_tokens=20
+        task="text-generation",
+        model=hf_model,
+        tokenizer=tokenizer,
+        use_cache=True,
+        num_beams=3,
+        max_new_tokens=20,
     )
     generator_hf_fms = pipeline(
         task="text-generation",
@@ -77,10 +90,13 @@ def test_llama_7b_equivalence():
     inputs = torch.arange(0, 16).unsqueeze(0)
     labels = torch.arange(0, 16).unsqueeze(0)
     hf_model_loss = hf_model(input_ids=inputs, labels=labels, return_dict=True).loss
-    hf_model_fms_loss = hf_model_fms(input_ids=inputs, labels=labels, return_dict=True).loss
+    hf_model_fms_loss = hf_model_fms(
+        input_ids=inputs, labels=labels, return_dict=True
+    ).loss
 
     import math
 
     torch._assert(
-        math.isclose(hf_model_loss.item(), hf_model_fms_loss.item(), abs_tol=1e-3), f"model loss is not equal"
+        math.isclose(hf_model_loss.item(), hf_model_fms_loss.item(), abs_tol=1e-3),
+        f"model loss is not equal",
     )

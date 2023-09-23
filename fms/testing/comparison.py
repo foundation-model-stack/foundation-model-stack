@@ -22,40 +22,11 @@ class ModelSignatureParams:
 class HFModelSignatureParams(ModelSignatureParams):
     """Specific form of model Signature params which defaults the other params and logits getter to take what hf requires"""
 
-    other_params: Optional[Dict] = dataclasses.field(default_factory=lambda: {"return_dict": True})
+    other_params: Optional[Dict] = dataclasses.field(
+        default_factory=lambda: {"return_dict": True}
+    )
     logits_getter_fn: Optional[Callable] = lambda o: o.logits
 
-
-def compare_model_signatures(model_params_1: ModelSignatureParams, model_params_2: ModelSignatureParams):
-    """This utility function will compare the signature between 2 models using np.allclose
-
-    Parameters
-    ----------
-
-    model_params_1: ModelSignatureParam
-        set of params to generate first signature
-
-    model_params_2: ModelSignatureParam
-        set of params to generate second signature
-    """
-    model_params_1.model.eval()
-    model_params_2.model.eval()
-    signature = get_signature(
-        model_params_1.model,
-        params=model_params_1.params,
-        optional_params=model_params_1.other_params,
-        logits_getter_fn=model_params_1.logits_getter_fn,
-    )
-    signature2 = get_signature(
-        model_params_2.model,
-        params=model_params_2.params,
-        optional_params=model_params_2.other_params,
-        logits_getter_fn=model_params_2.logits_getter_fn,
-    )
-
-    signature = np.array(signature)
-    signature2 = np.array(signature2)
-    assert np.allclose(signature, signature2, atol=1e-3)
 
 def get_signature(
     model,
@@ -64,9 +35,9 @@ def get_signature(
     optional_params: Optional[dict] = None,
     logits_getter_fn: Optional[Callable] = None,
     device: Union[int, str] = "cpu",
-):
-    """Takes a model, and the number of inputs it expects in a forward pass. Returns a compressed signature
-    that acts as an effective hash for the model, allowing for correctness checking
+) -> List[float]:
+    """Takes a model, and the number of inputs / named parameters it expects in a forward pass and returns a compressed
+    signature that acts as an effective tool for output correctness checking within some tolerance
 
     Note: signatures will always be created with fp32 precision
 
@@ -118,7 +89,9 @@ def get_signature(
             params_to_ignore.append(k)
 
     if len(params_to_ignore) != 0:
-        print(f"the following params were ignored as they did not exist in the forward function: {params_to_ignore}")
+        print(
+            f"the following params were ignored as they did not exist in the forward function: {params_to_ignore}"
+        )
 
     if isinstance(params, list):
         inps = {p: inp for p in params}
@@ -139,3 +112,46 @@ def get_signature(
 
     s = p.max(2)[0] - p.min(2)[0]
     return (s.squeeze() - s.min()).tolist()
+
+
+def compare_model_signatures(
+    model_params_1: ModelSignatureParams,
+    model_params_2: ModelSignatureParams,
+    atol: float = 1e-3,
+):
+    """This utility function will compare the signature between 2 models using np.allclose
+
+    Parameters
+    ----------
+
+    model_params_1: ModelSignatureParam
+        set of params to generate first signature
+
+    model_params_2: ModelSignatureParam
+        set of params to generate second signature
+
+    atol: float, optional
+        The absolute tolerance (default is 1e-3)
+    """
+    model_params_1.model.eval()
+    model_params_2.model.eval()
+    signature = get_signature(
+        model_params_1.model,
+        params=model_params_1.params,
+        optional_params=model_params_1.other_params,
+        logits_getter_fn=model_params_1.logits_getter_fn,
+        inp=model_params_1.inp,
+    )
+    signature2 = get_signature(
+        model_params_2.model,
+        params=model_params_2.params,
+        optional_params=model_params_2.other_params,
+        logits_getter_fn=model_params_2.logits_getter_fn,
+        inp=model_params_2.inp,
+    )
+
+    signature = np.array(signature)
+    signature2 = np.array(signature2)
+    assert np.allclose(signature, signature2, atol=atol), np.mean(
+        np.abs(signature2 - signature)
+    )

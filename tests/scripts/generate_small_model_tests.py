@@ -1,21 +1,33 @@
 import argparse
+import os.path
 from typing import Type, Union
 
 import torch
 from transformers import AutoTokenizer
 
-from fm.utils import get_signature
-
 from fms.models.llama import LLaMA, LLaMAConfig
+from fms.testing.comparison import get_signature
 
 parser = argparse.ArgumentParser(description="generate small model tests")
 
-parser.add_argument("--generate_config", action="store_true", help="create a new config from the model params")
-parser.add_argument("--generate_weights", action="store_true", help="save the model state with weights reset")
 parser.add_argument(
-    "--generate_signature", action="store_true", help="generate a signature for this model and save the signature"
+    "--generate_config",
+    action="store_true",
+    help="create a new config from the model params",
 )
-parser.add_argument("--generate_tokenizer", action="store_true", help="save the tokenizer")
+parser.add_argument(
+    "--generate_weights",
+    action="store_true",
+    help="save the model state with weights reset",
+)
+parser.add_argument(
+    "--generate_signature",
+    action="store_true",
+    help="generate a signature for this model and save the signature",
+)
+parser.add_argument(
+    "--generate_tokenizer", action="store_true", help="save the tokenizer"
+)
 parser.add_argument(
     "--model",
     default="",
@@ -25,7 +37,7 @@ parser.add_argument(
 args = parser.parse_args()
 
 tokenizer = AutoTokenizer.from_pretrained("google/byt5-small")
-_models_path = "../../tests/resources/models"
+_models_path = "../resources/models"
 
 models = set(args.model.split(","))
 
@@ -39,6 +51,10 @@ def save(
 ):
     """save the model config/weights/signature/tokenizer for a given test case"""
     model_test_path = f"{_models_path}/{model_test_name}"
+
+    # create the test case folder if it does not exist
+    if not os.path.exists(model_test_path):
+        os.mkdir(model_test_path)
 
     # if generate config is true, create a new config from the model params
     # if generate config is false, simply load the config that already exists
@@ -77,7 +93,8 @@ test_to_generate = []
 
 ############### LLAMA ###################
 
-llama_7b_params = {
+# scaled down version of llama2
+mock_llama2_params = {
     "src_vocab_size": tokenizer.vocab_size,
     "emb_dim": 16,
     "multiple_of": 2,
@@ -88,7 +105,15 @@ llama_7b_params = {
 }
 
 if "llama" in models or len(models) == 0:
-    test_to_generate.append(["llama/mock.7b", LLaMA, LLaMAConfig, llama_7b_params, 1])
+    test_to_generate.append(
+        [
+            "llama/mock.llama2",
+            LLaMA,
+            LLaMAConfig,
+            mock_llama2_params,
+            1,
+        ]
+    )
 
 ############### GENERATE TESTS ###################
 

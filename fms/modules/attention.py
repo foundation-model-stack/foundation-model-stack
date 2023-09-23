@@ -2,8 +2,15 @@ from typing import Optional
 
 import torch
 from torch import nn
+from torch.distributed.distributed_c10d import ProcessGroup
 from torch.nn import functional as F
 
+from fms.distributed.tensorparallel import (
+    apply_colwise_tp,
+    apply_rowwise_tp,
+    copy_to_tensor_model_parallel_region,
+    reduce_from_tensor_model_parallel_region,
+)
 from fms.modules.positions import PositionEncoder
 
 
@@ -184,8 +191,13 @@ class MultiHeadAttention(nn.Module):
         expansion = self.nheads // self.kvheads
         # k/v: b h l d
         if expansion != 1:
-            keys = keys.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
-            values = values.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
+            keys_e = keys.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
+            values_e = (
+                values.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
+            )
+        else:
+            keys_e = keys
+            values_e = values
 
         if attn_algorithm:
             # Pick which fused attn kernels will run.
@@ -199,8 +211,8 @@ class MultiHeadAttention(nn.Module):
 
         attn = F.scaled_dot_product_attention(
             queries,
-            keys,
-            values,
+            keys_e,
+            values_e,
             attn_mask=attn_mask,
             dropout_p=self.p_dropout if self.training else 0.0,
             is_causal=is_causal_mask,
@@ -220,10 +232,137 @@ class MultiHeadAttention(nn.Module):
             .contiguous()
             .view(batch_size, q_len, self.nheads * self.emb_v_per_head)
         )
+
         out = self.dense(attn)
 
         # if use_cache=True, we return the hidden_state as well as the kv cache
         if use_cache:
             return out, (keys, values)
         else:
+            return out
+
+
+class TPMultiHeadAttention(MultiHeadAttention):
+    """
+    Performs multi-headed self- or cross-attention, with optional attention masking.
+    This subclass adds support for Tensor Parallel
+    ...
+    Args
+    ----
+    Check MultiHeadAttention for up-to-date docs
+
+    world_size: int
+        the number of processes running this model in TP
+    rank: int
+        the index of this process wrt to the rest running the model in TP
+    """
+
+    def __init__(
+        self,
+        emb_dim,
+        emb_kq,
+        emb_v,
+        nheads,
+        kvheads,
+        p_dropout=None,
+        use_bias=False,
+        position_encoder: Optional[PositionEncoder] = None,
+        gain=1,
+        group: ProcessGroup = None,
+    ):
+        assert torch.distributed.is_initialized()
+        if group is None:
+            group = torch.distributed.GroupMember.WORLD
+        world_size = group.size()
+        rank = group.rank()
+        assert (
+            nheads % world_size == 0
+        ), "The number of heads must be divisible by world size"
+        super(TPMultiHeadAttention, self).__init__(
+            emb_dim,
+            emb_kq,
+            emb_v,
+            nheads // world_size,
+            (kvheads // world_size) if kvheads > 1 else kvheads,
+            p_dropout,
+            use_bias,
+            position_encoder,
+            gain,
+        )
+
+        self.rank = rank
+        self.world_size = world_size
+
+    @staticmethod
+    def import_module(
+        mha: MultiHeadAttention, group: ProcessGroup
+    ) -> "TPMultiHeadAttention":
+        tp_mha = TPMultiHeadAttention(
+            emb_dim=mha.emb_dim,
+            emb_kq=mha.emb_kq_per_head,
+            emb_v=mha.emb_v_per_head,
+            nheads=mha.nheads,
+            kvheads=mha.kvheads,
+            p_dropout=mha.p_dropout,
+            use_bias=mha.use_bias,
+            position_encoder=mha.position_encoder,
+            group=group,
+        )
+        return tp_mha
+
+    def import_weights(self, mha: MultiHeadAttention):
+        apply_colwise_tp(self.query, mha.query, self.world_size, self.rank)
+        if self.kvheads == 1:
+            with torch.no_grad():
+                self.key.weight.copy_(mha.key.weight)
+                self.value.weight.copy_(mha.value.weight)
+                if self.use_bias:
+                    self.key.bias.copy_(mha.key.bias)
+                    self.value.bias.copy_(mha.value.bias)
+        else:
+            apply_colwise_tp(self.key, mha.key, self.world_size, self.rank)
+            apply_colwise_tp(self.value, mha.value, self.world_size, self.rank)
+        apply_rowwise_tp(self.dense, mha.dense, self.world_size, self.rank)
+
+    def forward(
+        self,
+        q,
+        k,
+        v,
+        mask=None,
+        attn_algorithm=None,
+        past_key_value_state=None,
+        use_cache=False,
+        is_self=True,
+        is_causal_mask=False,
+    ):
+        """
+        Check MultiHeadAttention for up-to-date arguments and docs
+        """
+
+        q_par = copy_to_tensor_model_parallel_region(q)
+        k_par = copy_to_tensor_model_parallel_region(k)
+        v_par = copy_to_tensor_model_parallel_region(v)
+        # rel_pos_bias_par = copy_to_tensor_model_parallel_region(rel_pos_bias)
+
+        out_par = MultiHeadAttention.forward(
+            self,
+            q_par,
+            k_par,
+            v_par,
+            mask,
+            attn_algorithm,
+            past_key_value_state,
+            use_cache,
+            is_self,
+            is_causal_mask,
+        )
+
+        # if use_cache=True, we return the hidden_state as well as the kv cache.
+        # We only reduce the output, and keep the cache thread-local
+        if use_cache:
+            out = reduce_from_tensor_model_parallel_region(out_par[0])
+            return out, out_par[1]
+        else:
+            out = reduce_from_tensor_model_parallel_region(out_par)
             return out

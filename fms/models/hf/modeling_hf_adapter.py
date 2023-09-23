@@ -33,7 +33,9 @@ class _HFBase(PreTrainedModel):
     HFModelArchitecture.
     """
 
-    def __init__(self, model: nn.Module, config: PretrainedConfig, attention_mask_dim: int = 2):
+    def __init__(
+        self, model: nn.Module, config: PretrainedConfig, attention_mask_dim: int = 2
+    ):
         super().__init__(config)
         self.main_input_name = "input_ids"
 
@@ -64,7 +66,9 @@ class _HFBase(PreTrainedModel):
             raise NotImplementedError("you must implement get_input_embeddings method")
 
     @abc.abstractmethod
-    def _compute_masks(self, attention_mask: torch.Tensor, *args, **kwargs) -> Tuple[torch.Tensor, torch.Tensor]:
+    def _compute_masks(
+        self, attention_mask: torch.Tensor, *args, **kwargs
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         """Given an attention mask, compute the 2d/3d attention equivalent mask
 
         Parameters
@@ -87,19 +91,35 @@ class _HFBase(PreTrainedModel):
         **kwargs,
     ):
         if input_ids is not None and inputs_embeds is not None:
-            raise ValueError(f"You cannot specify both input_ids and inputs_embeds at the same time")
+            raise ValueError(
+                f"You cannot specify both input_ids and inputs_embeds at the same time"
+            )
 
-        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
-        output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
+        return_dict = (
+            return_dict if return_dict is not None else self.config.use_return_dict
+        )
+        output_attentions = (
+            output_attentions
+            if output_attentions is not None
+            else self.config.output_attentions
+        )
         output_hidden_states = (
-            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
+            output_hidden_states
+            if output_hidden_states is not None
+            else self.config.output_hidden_states
         )
 
         # if the user happens to get the encoder and call it with a hf attention mask
         # this is what will get called during hf generate if an attention mask is given
         compute_mask = kwargs.get("compute_mask", True)
-        if compute_mask and attention_mask is not None and len(attention_mask.shape) == 2:
-            (attention_mask, hf_attention_mask) = self._compute_masks(attention_mask, *args, **kwargs)
+        if (
+            compute_mask
+            and attention_mask is not None
+            and len(attention_mask.shape) == 2
+        ):
+            (attention_mask, hf_attention_mask) = self._compute_masks(
+                attention_mask, *args, **kwargs
+            )
 
             if self._attention_mask_dim == 2:
                 attention_mask = hf_attention_mask
@@ -145,7 +165,9 @@ class HFEncoder(_HFBase):
     encoder.
     """
 
-    def __init__(self, model: nn.Module, config: PretrainedConfig, attention_mask_dim: int = 2):
+    def __init__(
+        self, model: nn.Module, config: PretrainedConfig, attention_mask_dim: int = 2
+    ):
         # make sure the config is properly set
         encoder_config = copy.deepcopy(config)
         encoder_config.is_decoder = False
@@ -273,8 +295,12 @@ class HFEncoder(_HFBase):
             return_dict=True,
         )
 
-    def _compute_masks(self, attention_mask: torch.Tensor, *args, **kwargs) -> Tuple[torch.Tensor, torch.Tensor]:
-        return _EncoderArchitectureMixin._produce_encoder_attention_mask_from_hf(attention_mask)
+    def _compute_masks(
+        self, attention_mask: torch.Tensor, *args, **kwargs
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        return _EncoderArchitectureMixin._produce_encoder_attention_mask_from_hf(
+            attention_mask
+        )
 
 
 class HFDecoder(_HFBase):
@@ -289,7 +315,9 @@ class HFDecoder(_HFBase):
     decoder.
     """
 
-    def __init__(self, model: nn.Module, config: PretrainedConfig, attention_mask_dim: int = 2):
+    def __init__(
+        self, model: nn.Module, config: PretrainedConfig, attention_mask_dim: int = 2
+    ):
         # make sure the config is properly set
         decoder_config = copy.deepcopy(config)
         decoder_config.is_decoder = True
@@ -546,7 +574,12 @@ class HFModelArchitecture(PreTrainedModel, metaclass=PostInitCaller):
     supports_gradient_checkpointing = True
 
     def __init__(
-        self, embedding: nn.Module, config: PretrainedConfig, lm_head: Optional[nn.Module] = None, *args, **kwargs
+        self,
+        embedding: nn.Module,
+        config: PretrainedConfig,
+        lm_head: Optional[nn.Module] = None,
+        *args,
+        **kwargs,
     ):
         """Initialize an HFModelArchitecture
 
@@ -560,7 +593,7 @@ class HFModelArchitecture(PreTrainedModel, metaclass=PostInitCaller):
             Optionally include an lm_head in this model. If an lm_head is not included, the lm_head logic will be
             skipped (default to None)
         """
-        super().__init__(config, *args, **kwargs)
+        super().__init__(type(config).from_dict(config.to_dict()), *args, **kwargs)
         self.lm_head = lm_head
         self.embedding = embedding
 
@@ -591,12 +624,16 @@ class HFModelArchitecture(PreTrainedModel, metaclass=PostInitCaller):
         HFModelArchitecture
             the initialized model architecture
         """
-        hf_config = cls.config_class.from_fms_config(model.get_config(), **config_kwargs)
+        hf_config = cls.config_class.from_fms_config(
+            model.get_config(), **config_kwargs
+        )
         return cls._hf_model_from_fms(model, hf_config)
 
     @staticmethod
     @abc.abstractmethod
-    def _hf_model_from_fms(model: nn.Module, config: PretrainedConfig) -> "HFModelArchitecture":
+    def _hf_model_from_fms(
+        model: nn.Module, config: PretrainedConfig
+    ) -> "HFModelArchitecture":
         pass
 
     @classmethod
@@ -608,7 +645,9 @@ class HFModelArchitecture(PreTrainedModel, metaclass=PostInitCaller):
         lm_differentiator: Optional[str] = None,
         decoder_differentiator: Optional[str] = None,
         encoder_differentiator: Optional[str] = None,
-        device_map: Optional[Union[str, Dict[str, Union[int, str, torch.device]]]] = None,
+        device_map: Optional[
+            Union[str, Dict[str, Union[int, str, torch.device]]]
+        ] = None,
         *args,
         **kwargs,
     ):
@@ -649,7 +688,9 @@ class HFModelArchitecture(PreTrainedModel, metaclass=PostInitCaller):
             for key in sd_keys:
                 for remap_key, remap_value in remap_weights.items():
                     if remap_key in key:
-                        model_sd[key.replace(remap_key, remap_value)] = model_sd.pop(key)
+                        model_sd[key.replace(remap_key, remap_value)] = model_sd.pop(
+                            key
+                        )
         model = cls(config, *args, **kwargs)
         model._load_state_dict_from_pytorch_weights(
             model,
@@ -660,8 +701,16 @@ class HFModelArchitecture(PreTrainedModel, metaclass=PostInitCaller):
         )
         return model
 
-    def _load_state_dict_torch_native(self, torch_native, model_sd, differentiator, strict: bool = True):
-        params = set([name for name, _ in list(torch_native.named_parameters()) + list(torch_native.named_buffers())])
+    def _load_state_dict_torch_native(
+        self, torch_native, model_sd, differentiator, strict: bool = True
+    ):
+        params = set(
+            [
+                name
+                for name, _ in list(torch_native.named_parameters())
+                + list(torch_native.named_buffers())
+            ]
+        )
 
         if differentiator:
             load_sd = {}
@@ -686,7 +735,9 @@ class HFModelArchitecture(PreTrainedModel, metaclass=PostInitCaller):
         encoder_differentiator,
     ):
         # here we have already loaded everything not specific to this model, so no need to be specific
-        self._load_state_dict_torch_native(model, model_sd, lm_differentiator, strict=False)
+        self._load_state_dict_torch_native(
+            model, model_sd, lm_differentiator, strict=False
+        )
 
     def forward(
         self,
@@ -745,7 +796,9 @@ class HFModelArchitecture(PreTrainedModel, metaclass=PostInitCaller):
             Seq2SeqModelOutput if loss was not computed and no lm head exists
         """
         use_cache = use_cache if use_cache is not None else self.config.use_cache
-        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+        return_dict = (
+            return_dict if return_dict is not None else self.config.use_return_dict
+        )
 
         # generation or training (using the trainer) is happening, so must use the lm head
         if self.lm_head is not None and not (use_cache is None and labels is None):
@@ -767,7 +820,9 @@ class HFModelArchitecture(PreTrainedModel, metaclass=PostInitCaller):
         # this could be used as output for State1, State2 and State3
         if return_dict:
             if self.lm_head is not None or loss is not None:
-                output = self._produce_lm_output(output, loss, encoder_outputs, decoder_outputs)
+                output = self._produce_lm_output(
+                    output, loss, encoder_outputs, decoder_outputs
+                )
             else:
                 if encoder_outputs and decoder_outputs:
                     output = Seq2SeqModelOutput(
@@ -808,7 +863,9 @@ class HFModelArchitecture(PreTrainedModel, metaclass=PostInitCaller):
         pass
 
     @abc.abstractmethod
-    def _prepare_inputs_for_generation(self, input_ids: torch.Tensor, **model_kwargs) -> dict:
+    def _prepare_inputs_for_generation(
+        self, input_ids: torch.Tensor, **model_kwargs
+    ) -> dict:
         """Prepare input into a dictionary to be passed to forward for generation.
 
         Parameters
@@ -849,7 +906,10 @@ class _EncoderArchitectureMixin:
             batch_size = encoder_hidden_states.shape[0]
             encoder_seq_length = encoder_hidden_states.shape[1]
             attention_mask = torch.ones(
-                batch_size, encoder_seq_length, device=encoder_hidden_states.device, dtype=torch.long
+                batch_size,
+                encoder_seq_length,
+                device=encoder_hidden_states.device,
+                dtype=torch.long,
             )
         return self._compute_attention_masks(
             input_ids,
@@ -871,7 +931,14 @@ class HFDecoderModelArchitecture(HFModelArchitecture):
     - handles generic processing for the cache
     """
 
-    def __init__(self, decoder: HFDecoder, embedding: nn.Module, config: PretrainedConfig, *args, **kwargs):
+    def __init__(
+        self,
+        decoder: HFDecoder,
+        embedding: nn.Module,
+        config: PretrainedConfig,
+        *args,
+        **kwargs,
+    ):
         """Initialize an HFDecoderModelArchitecture
 
         Parameters
@@ -895,9 +962,13 @@ class HFDecoderModelArchitecture(HFModelArchitecture):
             if hasattr(module.model, "gradient_checkpointing"):
                 module.model.gradient_checkpointing = value
             else:
-                raise NotImplementedError("gradient_checkpoint does not exist in the underlying model")
+                raise NotImplementedError(
+                    "gradient_checkpoint does not exist in the underlying model"
+                )
 
-    def create_hf_attention_mask(self, input_ids: torch.LongTensor) -> torch.FloatTensor:
+    def create_hf_attention_mask(
+        self, input_ids: torch.LongTensor
+    ) -> torch.FloatTensor:
         """a convenience method for creating a 2d attention mask that huggingface would expect
 
         Parameters
@@ -916,7 +987,9 @@ class HFDecoderModelArchitecture(HFModelArchitecture):
         return (input_ids != self.config.pad_token_id).float()
 
     @staticmethod
-    def _produce_decoder_attention_mask_from_hf(decoder_attention_mask, is_cache_used_and_filled):
+    def _produce_decoder_attention_mask_from_hf(
+        decoder_attention_mask, is_cache_used_and_filled
+    ):
         hf_dec_attention_mask = decoder_attention_mask
         decoder_attention_mask = mask_2d_to_3d(hf_dec_attention_mask)
         # if user provides labels and decoder mask during training, we expect them to be compatible and do not check
@@ -962,12 +1035,16 @@ class HFDecoderModelArchitecture(HFModelArchitecture):
             # attention mask is in huggingface format, and we must save it for later, and create the proper 3d format
             # for use in encode
             if len(attention_mask.shape) == 2:
-                attention_mask, hf_attention_mask = mask_f(attention_mask, is_cache_used_and_filled)
+                attention_mask, hf_attention_mask = mask_f(
+                    attention_mask, is_cache_used_and_filled
+                )
             # when attention mask is 3d, we cannot recreate the 2d mask, so just return None and handle later
             elif len(attention_mask.shape) == 3:
                 hf_attention_mask = None
             else:
-                raise ValueError(f"attention mask needs to be given in either a 2d or 3d shape")
+                raise ValueError(
+                    f"attention mask needs to be given in either a 2d or 3d shape"
+                )
         return attention_mask, hf_attention_mask
 
     def forward(
@@ -1071,7 +1148,9 @@ class HFDecoderModelArchitecture(HFModelArchitecture):
         decoder_differentiator,
         encoder_differentiator,
     ):
-        self._load_state_dict_torch_native(model.decoder.model, model_sd, decoder_differentiator)
+        self._load_state_dict_torch_native(
+            model.decoder.model, model_sd, decoder_differentiator
+        )
         super()._load_state_dict_from_pytorch_weights(
             model,
             model_sd,
@@ -1081,7 +1160,13 @@ class HFDecoderModelArchitecture(HFModelArchitecture):
         )
 
     def prepare_inputs_for_generation(
-        self, input_ids, past_key_values=None, use_cache=None, inputs_embeds=None, *args, **kwargs
+        self,
+        input_ids,
+        past_key_values=None,
+        use_cache=None,
+        inputs_embeds=None,
+        *args,
+        **kwargs,
     ):
         """handles caching logic required for generation input and calls its base classes method of the same name"""
         token_type_ids = kwargs.get("token_type_ids", None)
@@ -1131,7 +1216,11 @@ class HFDecoderModelArchitecture(HFModelArchitecture):
         """A method required by huggingface generate when beam search is used"""
         reordered_past = ()
         for layer_past in past:
-            reordered_past += (tuple(past_state.index_select(0, beam_idx) for past_state in layer_past),)
+            reordered_past += (
+                tuple(
+                    past_state.index_select(0, beam_idx) for past_state in layer_past
+                ),
+            )
         return reordered_past
 
     @abc.abstractmethod
@@ -1194,7 +1283,14 @@ class HFEncoderModelArchitecture(HFModelArchitecture, _EncoderArchitectureMixin)
     - provides convenience methods for encoder architectures
     """
 
-    def __init__(self, encoder: HFEncoder, embedding: nn.Module, config: PretrainedConfig, *args, **kwargs):
+    def __init__(
+        self,
+        encoder: HFEncoder,
+        embedding: nn.Module,
+        config: PretrainedConfig,
+        *args,
+        **kwargs,
+    ):
         """Initialize an HFEncoderModelArchitecture
 
         Parameters
@@ -1214,7 +1310,9 @@ class HFEncoderModelArchitecture(HFModelArchitecture, _EncoderArchitectureMixin)
             if hasattr(module.model, "gradient_checkpointing"):
                 module.model.gradient_checkpointing = value
             else:
-                raise NotImplementedError("gradient_checkpoint does not exist in the underlying model")
+                raise NotImplementedError(
+                    "gradient_checkpoint does not exist in the underlying model"
+                )
 
     def set_input_embeddings(self, value: nn.Module):
         self.encoder.set_input_embeddings(value)
@@ -1228,7 +1326,9 @@ class HFEncoderModelArchitecture(HFModelArchitecture, _EncoderArchitectureMixin)
         decoder_differentiator,
         encoder_differentiator,
     ):
-        self._load_state_dict_torch_native(model.encoder.model, model_sd, encoder_differentiator)
+        self._load_state_dict_torch_native(
+            model.encoder.model, model_sd, encoder_differentiator
+        )
         HFModelArchitecture._load_state_dict_from_pytorch_weights(
             self,
             model,
@@ -1315,7 +1415,9 @@ class HFEncoderModelArchitecture(HFModelArchitecture, _EncoderArchitectureMixin)
         )
 
 
-class HFEncoderDecoderModelArchitecture(HFDecoderModelArchitecture, _EncoderArchitectureMixin):
+class HFEncoderDecoderModelArchitecture(
+    HFDecoderModelArchitecture, _EncoderArchitectureMixin
+):
     """
     A specific form of HFDecoderModelArchitecture which provides the logic for an encoder-decoder architecture. This class
     handles tasks such as:
@@ -1350,7 +1452,9 @@ class HFEncoderDecoderModelArchitecture(HFDecoderModelArchitecture, _EncoderArch
         config: PretrainedConfig
             a huggingface config
         """
-        super().__init__(embedding=embedding, config=config, decoder=decoder, *args, **kwargs)
+        super().__init__(
+            embedding=embedding, config=config, decoder=decoder, *args, **kwargs
+        )
         self.encoder = encoder
 
     def get_encoder(self):
@@ -1367,7 +1471,11 @@ class HFEncoderDecoderModelArchitecture(HFDecoderModelArchitecture, _EncoderArch
         inference: bool = False,
     ):
         if inference and not is_cache_used_and_filled:
-            bos_token_id = self.config.eos_token_id if self.config.bos_token_id is None else self.config.bos_token_id
+            bos_token_id = (
+                self.config.eos_token_id
+                if self.config.bos_token_id is None
+                else self.config.bos_token_id
+            )
             _input_ids = torch.empty(input_ids.shape, device=input_ids.device)
             _input_ids.copy_(input_ids)
             _input_ids[:, 0] = bos_token_id
@@ -1394,7 +1502,9 @@ class HFEncoderDecoderModelArchitecture(HFDecoderModelArchitecture, _EncoderArch
             if hasattr(module.model, "gradient_checkpointing"):
                 module.model.gradient_checkpointing = value
             else:
-                raise NotImplementedError("gradient_checkpoint does not exist in the encoder model")
+                raise NotImplementedError(
+                    "gradient_checkpoint does not exist in the encoder model"
+                )
         super()._set_gradient_checkpointing(module, value)
 
     def forward(
@@ -1507,13 +1617,17 @@ class HFEncoderDecoderModelArchitecture(HFDecoderModelArchitecture, _EncoderArch
         """
 
         attention_mask, hf_attention_mask = self._compute_encoder_attention_masks(
-            input_ids if input_ids is not None else inputs_embeds, attention_mask, encoder_outputs
+            input_ids if input_ids is not None else inputs_embeds,
+            attention_mask,
+            encoder_outputs,
         )
 
         # if encoder outputs is not given, we need to compute the encoder hidden state and attention mask
         if encoder_outputs is None:
             if input_ids is None and inputs_embeds is None:
-                raise ValueError("if encoder outputs not given, we must get encoder input_ids or inputs_embeds")
+                raise ValueError(
+                    "if encoder outputs not given, we must get encoder input_ids or inputs_embeds"
+                )
             # encoder here should only receive our 3d format for attention_mask or None (compute it there)
             encoder_outputs = self.encoder(
                 input_ids=input_ids,
@@ -1550,8 +1664,13 @@ class HFEncoderDecoderModelArchitecture(HFDecoderModelArchitecture, _EncoderArch
 
         # compute the decoder attention masks (3d and 2d)
         is_cache_used_and_filled = use_cache and past_key_values is not None
-        (decoder_attention_mask, hf_dec_attention_mask,) = self._compute_decoder_attention_masks(
-            decoder_input_ids if decoder_input_ids is not None else decoder_inputs_embeds,
+        (
+            decoder_attention_mask,
+            hf_dec_attention_mask,
+        ) = self._compute_decoder_attention_masks(
+            decoder_input_ids
+            if decoder_input_ids is not None
+            else decoder_inputs_embeds,
             decoder_attention_mask,
             is_cache_used_and_filled,
             inference=use_cache is not None,
@@ -1577,7 +1696,9 @@ class HFEncoderDecoderModelArchitecture(HFDecoderModelArchitecture, _EncoderArch
                 if is_cache_used_and_filled:
                     hf_dec_attention_mask = hf_dec_attention_mask[:, -1:]
 
-                cross_attention_mask = mask_2d_to_3d_bidirectional(hf_dec_attention_mask, hf_attention_mask)
+                cross_attention_mask = mask_2d_to_3d_bidirectional(
+                    hf_dec_attention_mask, hf_attention_mask
+                )
             # I don't believe this case is possible as if both attention masks are None, and we have both input_ids and decoder_input_ids
             # we would have generated the corresponding hf_attention masks in _compute_attention_masks
             # keeping this case here for completeness for now
@@ -1585,7 +1706,9 @@ class HFEncoderDecoderModelArchitecture(HFDecoderModelArchitecture, _EncoderArch
                 attention_mask is None and decoder_attention_mask is None
             ):
                 # compute the cross mask based on the input_ids and decoder_input_ids
-                cross_attention_mask = mask_2d_to_3d_bidirectional(decoder_input_ids, input_ids)
+                cross_attention_mask = mask_2d_to_3d_bidirectional(
+                    decoder_input_ids, input_ids
+                )
             else:
                 raise ValueError(
                     "Cannot compute the cross attention mask unless both input_ids and decoder_input_ids "
@@ -1602,7 +1725,8 @@ class HFEncoderDecoderModelArchitecture(HFDecoderModelArchitecture, _EncoderArch
             if attention_mask is not None and self.decoder._attention_mask_dim == 2
             else attention_mask,
             attention_mask=hf_dec_attention_mask
-            if decoder_attention_mask is not None and self.decoder._attention_mask_dim == 2
+            if decoder_attention_mask is not None
+            and self.decoder._attention_mask_dim == 2
             else decoder_attention_mask,
             inputs_embeds=decoder_inputs_embeds,
             past_key_values=past_key_values,
@@ -1640,7 +1764,9 @@ class HFEncoderDecoderModelArchitecture(HFDecoderModelArchitecture, _EncoderArch
         # shift inputs to the right
         if is_torch_fx_proxy(labels):
             # Item assignment is not supported natively for proxies.
-            shifted_input_ids = torch.full(labels.shape[:-1] + (1,), decoder_start_token_id)
+            shifted_input_ids = torch.full(
+                labels.shape[:-1] + (1,), decoder_start_token_id
+            )
             shifted_input_ids = torch.cat([shifted_input_ids, labels[..., :-1]], dim=-1)
         else:
             shifted_input_ids = labels.new_zeros(labels.shape)
@@ -1692,7 +1818,9 @@ class HFEncoderDecoderModelArchitecture(HFDecoderModelArchitecture, _EncoderArch
         decoder_differentiator,
         encoder_differentiator,
     ):
-        self._load_state_dict_torch_native(model.encoder.model, model_sd, encoder_differentiator)
+        self._load_state_dict_torch_native(
+            model.encoder.model, model_sd, encoder_differentiator
+        )
         super()._load_state_dict_from_pytorch_weights(
             model,
             model_sd,
