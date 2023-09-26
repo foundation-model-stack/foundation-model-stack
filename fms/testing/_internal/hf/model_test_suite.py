@@ -57,7 +57,9 @@ class HFConfigFixtureMixin(ConfigFixtureMixin, metaclass=abc.ABCMeta):
     # class specific fixtures
     @pytest.fixture(scope="class", autouse=True)
     def tokenizer(self, resource_path: str) -> PreTrainedTokenizer:
-        return AutoTokenizer.from_pretrained(os.path.join(resource_path, "tokenizer"))
+        return AutoTokenizer.from_pretrained(
+            os.path.join(resource_path, "tokenizer"), padding_side="left"
+        )
 
     @pytest.fixture(scope="class", autouse=True)
     def hf_config(
@@ -290,9 +292,6 @@ class HFModelGenerationTestSuite(
         text_1 = "hello how are you?"
         text_2 = "a: this is a test. b: this is another test. a:"
         text_batch = [text_1, text_2]
-
-        # required for batch generation
-        tokenizer.padding_side = "left"
 
         output_batch = self._predict_text(
             hf_model, tokenizer, text_batch, use_cache, num_beams
