@@ -1,5 +1,6 @@
 import math
 import unittest
+
 import torch
 
 from fms.modules.embedding import WordEmbedding
@@ -48,14 +49,27 @@ class RotaryEmbeddingTests(unittest.TestCase):
         qr, kr = rotary_embeddings.adjusted_qk(q, k)
 
         # This should not throw
-        qr, kr = rotary_embeddings.adjusted_qk(q, k, torch.arange(0, q.size(2), device=q.device, dtype=torch.long), None)
+        qr, kr = rotary_embeddings.adjusted_qk(
+            q, k, torch.arange(0, q.size(2), device=q.device, dtype=torch.long), None
+        )
 
         with self.assertRaises(IndexError):
-            qr, kr = rotary_embeddings.adjusted_qk(q, k, torch.arange(0, q.size(2), device=q.device, dtype=torch.float), None)
+            qr, kr = rotary_embeddings.adjusted_qk(
+                q,
+                k,
+                torch.arange(0, q.size(2), device=q.device, dtype=torch.float),
+                None,
+            )
 
     def test_math(self):
-        q = torch.tensor([[1, 0], [1, 0]], dtype=torch.float).unsqueeze(0).unsqueeze(0)  # b h s e
-        k = 2 * torch.tensor([[1, 0], [1, 0]], dtype=torch.float).unsqueeze(0).unsqueeze(0)  # b h s e
+        q = (
+            torch.tensor([[1, 0], [1, 0]], dtype=torch.float).unsqueeze(0).unsqueeze(0)
+        )  # b h s e
+        k = 2 * torch.tensor([[1, 0], [1, 0]], dtype=torch.float).unsqueeze(
+            0
+        ).unsqueeze(
+            0
+        )  # b h s e
         rotary_embeddings = RotaryEmbedding(2, ratio=1, max_seq_len=2)
 
         qr, kr = rotary_embeddings.adjusted_qk(q, k)
@@ -63,14 +77,30 @@ class RotaryEmbeddingTests(unittest.TestCase):
         rot0 = torch.tensor([[math.cos(0), -math.sin(0)], [math.sin(0), math.cos(0)]])
         rot1 = torch.tensor([[math.cos(1), -math.sin(1)], [math.sin(1), math.cos(1)]])
 
-        torch.testing.assert_close(torch.matmul(rot0, q[..., 0, :].squeeze()), qr[..., 0, :].squeeze())
-        torch.testing.assert_close(torch.matmul(rot1, q[..., 1, :].squeeze()), qr[..., 1, :].squeeze())
-        torch.testing.assert_close(torch.matmul(rot0, k[..., 0, :].squeeze()), kr[..., 0, :].squeeze())
-        torch.testing.assert_close(torch.matmul(rot1, k[..., 1, :].squeeze()), kr[..., 1, :].squeeze())
+        torch.testing.assert_close(
+            torch.matmul(rot0, q[..., 0, :].squeeze()), qr[..., 0, :].squeeze()
+        )
+        torch.testing.assert_close(
+            torch.matmul(rot1, q[..., 1, :].squeeze()), qr[..., 1, :].squeeze()
+        )
+        torch.testing.assert_close(
+            torch.matmul(rot0, k[..., 0, :].squeeze()), kr[..., 0, :].squeeze()
+        )
+        torch.testing.assert_close(
+            torch.matmul(rot1, k[..., 1, :].squeeze()), kr[..., 1, :].squeeze()
+        )
 
     def test_pair_math(self):
-        q = torch.tensor([[0, 1, 2, 3], [0, -1, 2, -3]], dtype=torch.float).unsqueeze(0).unsqueeze(0)  # b h s e
-        k = torch.tensor([[1, -1, 1, -1], [1, 1, 1, 1]], dtype=torch.float).unsqueeze(0).unsqueeze(0)  # b h s e
+        q = (
+            torch.tensor([[0, 1, 2, 3], [0, -1, 2, -3]], dtype=torch.float)
+            .unsqueeze(0)
+            .unsqueeze(0)
+        )  # b h s e
+        k = (
+            torch.tensor([[1, -1, 1, -1], [1, 1, 1, 1]], dtype=torch.float)
+            .unsqueeze(0)
+            .unsqueeze(0)
+        )  # b h s e
         rotary_embeddings = RotaryEmbedding(4, max_seq_len=2)
         qr, kr = rotary_embeddings.adjusted_qk(q, k)
         orig_dotp = q @ k.transpose(2, 3)
@@ -89,7 +119,9 @@ class RotaryEmbeddingTests(unittest.TestCase):
 
         qr, kr = rotary_embeddings.adjusted_qk(q, k)
 
-        qr2, kr2 = rotary_embeddings.adjusted_qk(q, k, torch.tensor([[i for i in range(4)], [1] + [i for i in range(3)]]))
+        qr2, kr2 = rotary_embeddings.adjusted_qk(
+            q, k, torch.tensor([[i for i in range(4)], [1] + [i for i in range(3)]])
+        )
 
         torch.testing.assert_close(qr[0], qr2[0])
         torch.testing.assert_close(qr[0, :, 1], qr2[1, :, 0])
@@ -138,8 +170,16 @@ class RotaryEmbeddingTests(unittest.TestCase):
         embedding = torch.nn.Embedding(3, 256)
         qw = torch.nn.Linear(256, 256)
         kw = torch.nn.Linear(256, 256)
-        q = qw(embedding(torch.tensor([[0, 1, 2, 0, 1, 2]]))).view(1, 6, 8, 32).transpose(1, 2)  # b h s e
-        k = kw(embedding(torch.tensor([[0, 1, 2, 0, 1, 2]]))).view(1, 6, 8, 32).transpose(1, 2)  # b h s e
+        q = (
+            qw(embedding(torch.tensor([[0, 1, 2, 0, 1, 2]])))
+            .view(1, 6, 8, 32)
+            .transpose(1, 2)
+        )  # b h s e
+        k = (
+            kw(embedding(torch.tensor([[0, 1, 2, 0, 1, 2]])))
+            .view(1, 6, 8, 32)
+            .transpose(1, 2)
+        )  # b h s e
         rotary_embeddings = RotaryEmbedding(32, max_seq_len=128)
 
         qr, kr = rotary_embeddings.adjusted_qk(q, k)
