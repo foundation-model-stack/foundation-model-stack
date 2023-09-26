@@ -1,5 +1,5 @@
 import math
-from typing import Tuple
+from typing import Optional, Tuple
 
 import torch
 from torch import nn
@@ -26,6 +26,7 @@ class PositionEncoder:
         self,
         q: torch.Tensor,
         k: torch.Tensor,
+        position_ids: Optional[torch.LongTensor],
         past_kv_state: torch.Tensor,
         use_cache=False,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -206,7 +207,8 @@ class RotaryEmbedding(PositionEncoder):
         self,
         q: torch.Tensor,
         k: torch.Tensor,
-        past_kv_state: torch.Tensor = None,
+        position_ids: Optional[torch.LongTensor] = None,
+        past_kv_state: Optional[torch.Tensor] = None,
         use_cache=False,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
@@ -216,32 +218,29 @@ class RotaryEmbedding(PositionEncoder):
             Embedded query tensor, expected size is B x H x S x Eh
         k : torch.Tensor
             Embedded query tensor, expected size is B x H x S x Eh
-        past_kv_state : torch.Tensor
-            the k/v cache from the previous forward pass.
+        position_ids : Optional[torch.LongTensor]
+            The position of each of the tokens encoded in q and k. This is important in
+            kv-caching and left-padding situations, for which the rotation to be applied might
+            not always be the pre-cached position 0...S. For kv-caching without dynamic batching
+            position_ids is shared for all the batch.
         """
-        start_pos = 0
-        if use_cache and past_kv_state is not None:
-            # TODO: handle batched start positions?
-            start_pos = past_kv_state[0].shape[-2]
-
+        assert len(q.size()) == 4
+        assert len(k.size()) == 4
+        if position_ids is None:
+            # Compute position_ids based on cache config
+            position_ids = torch.arange(0, q.shape[2], dtype=torch.long, device=q.device).repeat(
+                q.shape[0], 1
+            )
+            if use_cache and past_kv_state is not None:
+                position_ids += past_kv_state[0].shape[2]
+        
         seq_len = q.shape[2]
         q_ = q.float().reshape(*q.shape[:-1], -1, 2)  # B H L D/2 2
         k_ = k.float().reshape(*k.shape[:-1], -1, 2)  # B H L D/2 2
 
-        if isinstance(start_pos, int):
-            alpha = self.compute_freqs_cis(q.device, start_pos + seq_len)
-            cur_freqs = self.cached_freqs[q.device.index]
-            cur_freqs = cur_freqs[alpha]
-            cur_freqs = cur_freqs[start_pos : start_pos + seq_len]
-            freqs = self.reshape_for_broadcast(q_, cur_freqs)
-        else:
-            # TODO: this branch currently unused
-            max_start_pos = torch.max(start_pos).item()
-            alpha = self.compute_freqs_cis(q.device, max_start_pos + seq_len)
-            freqs_idxs = torch.arange(0, seq_len, dtype=torch.long).repeat(
-                start_pos.shape[0]
-            ).view(-1, seq_len) + start_pos.view(-1, 1)
-            freqs = self.cached_freqs[q.device.index][alpha][freqs_idxs].unsqueeze(1)
+        max_start_pos = torch.max(position_ids).item()
+        alpha = self.compute_freqs_cis(q.device, max_start_pos + seq_len)
+        freqs = self.cached_freqs[q.device.index][alpha][position_ids].unsqueeze(1)
 
         freqs = freqs.float()  # 1 1 L D/2 2 2
         q_out = freqs.mul(q_.unsqueeze(-2)).sum(5).flatten(3)
