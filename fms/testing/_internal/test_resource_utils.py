@@ -7,7 +7,7 @@ from _pytest.fixtures import FixtureFunction, FixtureRequest
 
 
 def _case_paths(test_name: str, common_tests_path: str) -> List[str]:
-    abs_path = os.path.join(os.path.dirname(__file__), common_tests_path, test_name)
+    abs_path = os.path.join(common_tests_path, test_name)
 
     return [os.path.join(abs_path, x) for x in os.listdir(abs_path)]
 

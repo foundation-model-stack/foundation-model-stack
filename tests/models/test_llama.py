@@ -1,3 +1,5 @@
+import os.path
+
 from fms.models.llama import LLaMA, LLaMAConfig
 from fms.testing._internal.model_test_suite import (
     ModelAPITestSuite,
@@ -21,6 +23,12 @@ class TestLlama(ModelAPITestSuite, ModelConfigTestSuite, ModelConsistencyTestSui
     _model_class = LLaMA
     _config_class = LLaMAConfig
 
-    @resource_path_fixture(test_name="llama", prefix="model")
+    @resource_path_fixture(
+        test_name="llama",
+        prefix="model",
+        common_tests_path=os.path.join(
+            os.path.dirname(__file__), "..", "resources", "models"
+        ),
+    )
     def resource_path(self, request):
         return request.param
