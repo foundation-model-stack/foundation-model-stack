@@ -18,7 +18,7 @@ This script currently has all models that are being tested in FMS. In order to c
 
 # scaled down version of model
 <specific_model_name>_params = {
-    "src_vocab_size": tokenizer.vocab_size, # we require the vocab size be based on the small tokenizer
+    "src_vocab_size": len(tokenizer), # we require the vocab size be based on the small tokenizer
     ...
 }
 
