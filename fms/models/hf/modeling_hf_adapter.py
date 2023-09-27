@@ -1053,6 +1053,7 @@ class HFDecoderModelArchitecture(HFModelArchitecture):
         past_key_values: Optional[Tuple[Tuple[torch.FloatTensor]]] = None,
         attention_mask: Optional[torch.FloatTensor] = None,
         head_mask: Optional[torch.FloatTensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
         use_cache: Optional[bool] = None,
         output_attentions: Optional[bool] = None,
@@ -1088,6 +1089,9 @@ class HFDecoderModelArchitecture(HFModelArchitecture):
             - 1 indicates the head is **not masked**,
             - 0 indicates the head is **masked**.
             (default to None)
+        position_ids: torch.LongTensor, optional
+            Indices of positions of each input sequence tokens in the position embeddings.
+            Selected in the range [0, config.n_positions - 1].
         inputs_embeds: torch.FloatTensor, optional
             Optionally, instead of passing `input_ids` you can choose to directly pass an embedded representation. This
             is useful if you want more control over how to convert `input_ids` indices into associated vectors than the
@@ -1122,6 +1126,7 @@ class HFDecoderModelArchitecture(HFModelArchitecture):
             past_key_values=past_key_values,
             attention_mask=attention_mask,
             head_mask=head_mask,
+            position_ids=position_ids,
             inputs_embeds=inputs_embeds,
             use_cache=use_cache,
             output_attentions=output_attentions,
@@ -1197,7 +1202,7 @@ class HFDecoderModelArchitecture(HFModelArchitecture):
         model_inputs.update(
             {
                 "past_key_values": past_key_values,
-                "use_cache": kwargs.get("use_cache"),
+                "use_cache": use_cache,
                 "position_ids": position_ids,
                 "attention_mask": attention_mask,
                 "token_type_ids": token_type_ids,

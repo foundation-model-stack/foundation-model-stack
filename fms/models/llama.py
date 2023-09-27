@@ -5,7 +5,7 @@ import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional
 
 import torch
 import torch.nn as nn
@@ -47,7 +47,7 @@ class LLaMAConfig(ModelConfig):
     activation_fn: str = "swish"
     p_dropout: float = 0.0
     max_expected_seq_len: int = 4096
-    ntk_scaling: bool = True
+    ntk_scaling: bool = False
 
 
 class LLaMABlock(nn.Module):
@@ -107,6 +107,7 @@ class LLaMABlock(nn.Module):
         x,
         *,
         mask=None,
+        position_ids=None,
         past_key_value_state=None,
         use_cache=False,
         is_causal_mask=False,
@@ -127,6 +128,7 @@ class LLaMABlock(nn.Module):
             k=x,
             v=x,
             mask=mask,
+            position_ids=position_ids,
             attn_algorithm=attn_algorithm,
             past_key_value_state=self_attn_past_key_value,
             use_cache=use_cache,
@@ -234,6 +236,7 @@ class LLaMA(nn.Module):
         self,
         x_in,
         mask=None,
+        position_ids=None,
         past_key_value_states=None,
         use_cache=False,
         attn_algorithm=None,
@@ -242,7 +245,7 @@ class LLaMA(nn.Module):
         # x_in: batch_size x seq_len
         # mask: batch_size x seq_len x seq_len
         # bias: nheads x seq_len x seq_len
-        if past_key_value_states is None:
+        if past_key_value_states is None or len(past_key_value_states) == 0:
             past_key_value_states = [None for _ in range(len(self.layers))]
 
         qlen = x_in.size(1)
@@ -272,6 +275,7 @@ class LLaMA(nn.Module):
             output = layer(
                 x=x_in,
                 mask=mask,
+                position_ids=position_ids,
                 past_key_value_state=past_key_value_states[i],
                 use_cache=use_cache,
                 is_causal_mask=is_causal_mask,
@@ -296,13 +300,14 @@ class LLaMA(nn.Module):
         self,
         x,
         mask=None,
+        position_ids=None,
         past_key_value_states=None,
         use_cache=False,
         only_last_token=False,
         attn_algorithm=None,
     ):
         output, cache = self._helper(
-            x, mask, past_key_value_states, use_cache, attn_algorithm
+            x, mask, position_ids, past_key_value_states, use_cache, attn_algorithm
         )
 
         if only_last_token:

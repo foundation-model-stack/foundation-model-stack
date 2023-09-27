@@ -21,6 +21,7 @@ class LLaMAHFDecoder(HFDecoder):
         self,
         input_ids: Optional[torch.LongTensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[Tuple[torch.Tensor]] = None,
         use_cache: Optional[bool] = None,
         attn_algorithm: Optional[
@@ -30,8 +31,9 @@ class LLaMAHFDecoder(HFDecoder):
         **kwargs,
     ) -> BaseModelOutputWithPastAndCrossAttentions:
         output = self.model._helper(
-            input_ids,
-            attention_mask,
+            x_in=input_ids,
+            mask=attention_mask,
+            position_ids=position_ids,
             past_key_value_states=past_key_values,
             use_cache=use_cache,
             attn_algorithm=attn_algorithm,
@@ -81,42 +83,24 @@ class LLaMAHF(HFDecoderModelArchitecture):
         **model_kwargs,
     ) -> dict:
         """
-        Overriding _prepare_inputs_for_generation to include start_pos requirements for llama batch processing
+        Overriding _prepare_inputs_for_generation to include position_ids requirements for llama batch processing
         """
-        # this will find the index of the first token to attend to in each sequence in the batch and ignore the rest
-        # this is following huggingface llama position_ids param
-        # there are 3 scenarios:
-        #      (1) if start_pos (position_ids from hf) is provided, we will use this directly
-        #      (2) if attention mask is provided, we will create the start_pos based on the attention_mask first token to attend to for each sequence in the batch
-        #      (3) if neither start_pos or attention_mask are provided, no start_pos will be set to the model and we will just assume the start_pos is the beginning
-        # considering the position_ids name here as it is more standard for hf
-        position_ids = model_kwargs.get("position_ids", None)
-        if position_ids is not None:
-            start_pos = (position_ids == 0).max(1).indices.unsqueeze(1)
-        elif attention_mask is not None:
-            start_pos = attention_mask.long().cumsum(-1) - 1
-            start_pos = (start_pos == 0).max(1).indices.unsqueeze(1)
-        else:
-            start_pos = None
+        position_ids = model_kwargs.pop("position_ids", None)
 
-        # When you are using dynamic batching with left-padding + kv-cache,
-        # the current index in the sentence needs to be computed by
-        # subtracting the current token index in the batch minus
-        # the original starting positions
-        use_cache_loc = self.config.use_cache if use_cache is None else use_cache
-        if (
-            use_cache_loc
-            and past_key_values is not None
-            and isinstance(start_pos, torch.Tensor)
-        ):
-            start_pos = start_pos - past_key_values[0][0].shape[2]
+        if position_ids is None and attention_mask is not None:
+            position_ids = attention_mask.long().cumsum(-1)
+
+        # Add more cached rope freqs if over cached number
+        max_expected_len = input_ids.shape[1] + torch.max(position_ids)
+        if max_expected_len > self.decoder.model.rot_emb.max_seq_len:
+            self.decoder.model.rot_emb.compute_freqs_cis(max_expected_len)
 
         return {
             "input_ids": input_ids,
             "attention_mask": attention_mask,
             "past_key_values": past_key_values,
             "use_cache": use_cache,
-            "start_pos": start_pos,
+            "position_ids": position_ids,
             **model_kwargs,
         }
 
@@ -138,3 +122,8 @@ class LLaMAHFForCausalLM(LMHeadModelLMHeadMixin, LLaMAHF):
             embedding=model.shared.emb,
             lm_head=model.shared.head,
         )
+
+    # overriding this to enable tensor-parallel since it requires a WordEmbedding forward
+    # in the future WordEmbedding should be split up
+    def _lm_head(self, input_ids, *args, **kwargs):
+        return self.decoder.model.shared(input_ids, reverse=True)

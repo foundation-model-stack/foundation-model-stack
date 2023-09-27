@@ -126,25 +126,7 @@
     "<extra_id_123>",
     "<extra_id_124>"
   ],
-  "eos_token": {
-    "content": "</s>",
-    "lstrip": false,
-    "normalized": true,
-    "rstrip": false,
-    "single_word": false
-  },
-  "pad_token": {
-    "content": "<pad>",
-    "lstrip": false,
-    "normalized": true,
-    "rstrip": false,
-    "single_word": false
-  },
-  "unk_token": {
-    "content": "<unk>",
-    "lstrip": false,
-    "normalized": true,
-    "rstrip": false,
-    "single_word": false
-  }
+  "eos_token": "</s>",
+  "pad_token": "<pad>",
+  "unk_token": "<unk>"
 }
