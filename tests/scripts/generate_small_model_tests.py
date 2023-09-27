@@ -95,7 +95,7 @@ test_to_generate = []
 
 # scaled down version of llama2
 mock_llama2_params = {
-    "src_vocab_size": tokenizer.vocab_size,
+    "src_vocab_size": len(tokenizer),
     "emb_dim": 16,
     "multiple_of": 2,
     "nheads": 2,
