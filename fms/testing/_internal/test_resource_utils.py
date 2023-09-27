@@ -12,10 +12,15 @@ def _case_paths(test_name: str, common_tests_path: str) -> List[str]:
     return [os.path.join(abs_path, x) for x in os.listdir(abs_path)]
 
 
+RESOURCE_PATH = os.path.join(
+    os.path.dirname(__file__), "..", "..", "..", "tests", "resources"
+)
+
+
 def resource_path_fixture(
     test_name: str,
     prefix: str,
-    common_tests_path: str = "../../../tests/resources/models",
+    common_tests_path: str = f"{RESOURCE_PATH}/models",
 ) -> FixtureFunction:
     """
     Pytest Fixture which will find all files under the common_tests_path directory within the folder test_name. If
