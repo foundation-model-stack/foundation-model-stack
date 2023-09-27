@@ -238,7 +238,8 @@ class RotaryEmbedding(PositionEncoder):
         q_ = q.float().reshape(*q.shape[:-1], -1, 2)  # B H L D/2 2
         k_ = k.float().reshape(*k.shape[:-1], -1, 2)  # B H L D/2 2
 
-        max_start_pos = torch.max(position_ids).item()
+        # the max start position should be based on the max first position of each sequence
+        max_start_pos = torch.max(position_ids[:, 0]).item()
         alpha = self.compute_freqs_cis(q.device, max_start_pos + seq_len)
         freqs = self.cached_freqs[q.device.index][alpha][position_ids].unsqueeze(1)
 
