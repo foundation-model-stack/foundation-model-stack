@@ -64,7 +64,7 @@ def test_rotary_embeddings_left_padding():
     k = 2 * torch.ones(2, 1, 4, 16, dtype=torch.float)  # b h s e
     rotary_embeddings = RotaryEmbedding(16, 32)
 
-    qr, kr = rotary_embeddings.adjusted_qk(q, k, 0)
+    qr, kr = rotary_embeddings.adjusted_qk(q, k)
     # todo: fix and test calculation of start_pos
     # qr2, kr2 = rotary_embeddings(q, k, torch.tensor([0, 1]))
 
