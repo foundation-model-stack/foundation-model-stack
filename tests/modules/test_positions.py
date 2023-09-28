@@ -90,6 +90,7 @@ class RotaryEmbeddingTests(unittest.TestCase):
         k = 2 * torch.ones(2, 1, 4, 16, dtype=torch.float)  # b h s e
         rotary_embeddings = RotaryEmbedding(16, max_seq_len=32)
 
+        # First test that left-padding works as expected, with all the rotations moved right by one
         qr, kr = rotary_embeddings.adjusted_qk(q, k)
 
         qr2, kr2 = rotary_embeddings.adjusted_qk(
@@ -101,6 +102,26 @@ class RotaryEmbeddingTests(unittest.TestCase):
 
         torch.testing.assert_close(kr[0], kr2[0])
         torch.testing.assert_close(kr[0, :, 1], kr2[1, :, 0])
+
+        # Then test the need for position_ids in the API to ensure semantic correctnes
+        q = torch.normal(0, 1, (2, 1, 8, 16))  # b h s e
+        k = torch.normal(0, 1, (2, 1, 8, 16))  # b h s e
+
+        # First generate a qr, kr that will act as kv-cache and the correct answers given one padding token on second row
+        qr_cache, kr_cache = rotary_embeddings.adjusted_qk(q[:, :, :-1, :], k[:, :, :-1, :], position_ids=torch.tensor([list(range(7)), [1] + list(range(6))]))
+        qr_correct, kr_correct = rotary_embeddings.adjusted_qk(q, k, torch.tensor([list(range(8)), [1] + list(range(7))]))
+
+        # Prove that without position_ids the cached position information is lost and results are incorrect
+        qr_bad, kr_bad = rotary_embeddings.adjusted_qk(q[:, :, -1:, :], k[:, :, -1:, :], past_kv_state=(qr_cache, kr_cache), use_cache=True)
+        qr_good, kr_good = rotary_embeddings.adjusted_qk(q[:, :, -1:, :], k[:, :, -1:, :], past_kv_state=(qr_cache, kr_cache), use_cache=True, position_ids=torch.tensor([[7], [6]]))
+
+        torch.testing.assert_close(qr_good, qr_correct[:, :, -1:, :])
+        torch.testing.assert_close(kr_good, kr_correct[:, :, -1:, :])
+
+        with self.assertRaises(AssertionError):
+            torch.testing.assert_close(qr_bad, qr_correct[:, :, -1:, :])
+            torch.testing.assert_close(kr_bad, kr_correct[:, :, -1:, :])
+
 
     def test_long_sequences(self):
         q = torch.ones(2, 1, 64, 16, dtype=torch.float)  # b h s e
