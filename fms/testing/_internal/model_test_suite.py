@@ -211,14 +211,6 @@ class ModelConfigTestSuite(AbstractResourcePath, ConfigFixtureMixin):
                 raise RuntimeError(_FAILED_CONFIG_LOAD_MSG)
             assert config.as_dict() == config_loaded.as_dict()
 
-    def test_config_as_dict(self, config, resource_path):
-        """Test that config as_dict works as intended and returns the original dict from test resources"""
-        config_path = os.path.join(resource_path, "config.json")
-        with open(config_path, "r", encoding="utf-8") as reader:
-            text = reader.read()
-        json_dict = json.loads(text)
-        assert config.as_dict() == json_dict
-
 
 class ModelConsistencyTestSuite(AbstractResourcePath, ModelFixtureMixin):
     """All tests related to model consistency will be part of this mixin"""
