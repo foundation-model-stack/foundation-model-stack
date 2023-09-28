@@ -171,36 +171,22 @@ class ModelFixtureMixin(metaclass=abc.ABCMeta):
         pass
 
 
-class ModelAPITestSuite(AbstractResourcePath, ConfigFixtureMixin, ModelFixtureMixin):
-    """General model testing class for future use with other models"""
+class ModelConfigTestSuite(AbstractResourcePath, ConfigFixtureMixin, ModelFixtureMixin):
+    """
+    This is a test suite which will test ModelConfigs and how they interact with the specific Model Architecture
 
-    def test_config_params_passed_as_kwargs_to_model(self, model, config):
-        params = config.as_dict()
-        config_from_params = type(config)(**params)
-        model_from_params = type(model)(**params)
-        assert model_from_params.get_config().as_dict() == config_from_params.as_dict()
+    This suite will specifically test:
 
-    def test_config_passed_to_model(self, model, config):
-        model = type(model)(config)
-        assert model.get_config().as_dict() == config.as_dict()
-
-    def test_config_passed_to_model_and_updated(self, model, config):
-        model = type(model)(config=config, pad_id=config.pad_id + 1)
-        # check not same reference
-        assert model.get_config() is not config
-
-        # modify pad_id to the new value expected and check equivalence
-        config.pad_id = config.pad_id + 1
-        assert model.get_config().as_dict() == config.as_dict()
-
-
-class ModelConfigTestSuite(AbstractResourcePath, ConfigFixtureMixin):
-    """General config testing class for future use with other models"""
+    - test failure when a config value isn’t serializable
+    - test model construction with just arguments constructs the proper configuration
+    - test model construction via a configuration
+    - test model constructor appropriately merges any passed kwargs into the config without mutating the original config
+    """
 
     # common tests
 
     def test_config_round_trip(self, config):
-        """Test that the config can save and load properly"""
+        """Test that the config can save and load properly without serialization/deserialization issues"""
 
         with tempfile.TemporaryDirectory() as workdir:
             config_path = f"{workdir}/config.json"
@@ -210,6 +196,28 @@ class ModelConfigTestSuite(AbstractResourcePath, ConfigFixtureMixin):
             except RuntimeError:
                 raise RuntimeError(_FAILED_CONFIG_LOAD_MSG)
             assert config.as_dict() == config_loaded.as_dict()
+
+    def test_config_params_passed_as_kwargs_to_model(self, model, config):
+        """test model construction with just arguments constructs the proper configuration"""
+        params = config.as_dict()
+        config_from_params = type(config)(**params)
+        model_from_params = type(model)(**params)
+        assert model_from_params.get_config().as_dict() == config_from_params.as_dict()
+
+    def test_config_passed_to_model(self, model, config):
+        """test model construction via a configuration"""
+        model = type(model)(config)
+        assert model.get_config().as_dict() == config.as_dict()
+
+    def test_config_passed_to_model_and_updated(self, model, config):
+        """test model constructor appropriately merges any passed kwargs into the config without mutating the original config"""
+        model = type(model)(config=config, pad_id=config.pad_id + 1)
+        # check not same reference
+        assert model.get_config() is not config
+
+        # modify pad_id to the new value expected and check equivalence
+        config.pad_id = config.pad_id + 1
+        assert model.get_config().as_dict() == config.as_dict()
 
 
 class ModelConsistencyTestSuite(

@@ -2,14 +2,13 @@ import os.path
 
 from fms.models.llama import LLaMA, LLaMAConfig
 from fms.testing._internal.model_test_suite import (
-    ModelAPITestSuite,
     ModelConfigTestSuite,
     ModelConsistencyTestSuite,
 )
 from fms.testing._internal.test_resource_utils import resource_path_fixture
 
 
-class TestLlama(ModelAPITestSuite, ModelConfigTestSuite, ModelConsistencyTestSuite):
+class TestLlama(ModelConfigTestSuite, ModelConsistencyTestSuite):
     """
     Model Test Suite for llama
 
