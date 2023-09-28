@@ -3,7 +3,6 @@ import math
 import torch
 
 from fms.modules.embedding import WordEmbedding
-from fms.modules.positions import RotaryEmbedding
 
 
 def test_abs_pos_padding():

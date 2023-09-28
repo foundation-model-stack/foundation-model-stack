@@ -222,7 +222,7 @@ class RotaryEmbedding(PositionEncoder):
             The position of each of the tokens encoded in q and k. This is important in
             kv-caching and left-padding situations, for which the rotation to be applied might
             not always be the pre-cached position 0...S. For kv-caching without dynamic batching
-            position_ids is shared for all the batch.
+            or variable per-row left padding position_ids is shared for all the batch.
         """
         assert len(q.size()) == 4
         assert len(k.size()) == 4

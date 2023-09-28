@@ -23,14 +23,19 @@ class RotaryEmbeddingTests(unittest.TestCase):
 
         # This should not throw
         qr, kr = rotary_embeddings.adjusted_qk(
-            q, k, torch.arange(0, q.size(2), device=q.device, dtype=torch.long).unsqueeze(0), None
+            q,
+            k,
+            torch.arange(0, q.size(2), device=q.device, dtype=torch.long).unsqueeze(0),
+            None,
         )
 
         with self.assertRaises(IndexError):
             qr, kr = rotary_embeddings.adjusted_qk(
                 q,
                 k,
-                torch.arange(0, q.size(2), device=q.device, dtype=torch.float).unsqueeze(0),
+                torch.arange(
+                    0, q.size(2), device=q.device, dtype=torch.float
+                ).unsqueeze(0),
                 None,
             )
 
@@ -108,12 +113,29 @@ class RotaryEmbeddingTests(unittest.TestCase):
         k = torch.normal(0, 1, (2, 1, 8, 16))  # b h s e
 
         # First generate a qr, kr that will act as kv-cache and the correct answers given one padding token on second row
-        qr_cache, kr_cache = rotary_embeddings.adjusted_qk(q[:, :, :-1, :], k[:, :, :-1, :], position_ids=torch.tensor([list(range(7)), [1] + list(range(6))]))
-        qr_correct, kr_correct = rotary_embeddings.adjusted_qk(q, k, torch.tensor([list(range(8)), [1] + list(range(7))]))
+        qr_cache, kr_cache = rotary_embeddings.adjusted_qk(
+            q[:, :, :-1, :],
+            k[:, :, :-1, :],
+            position_ids=torch.tensor([list(range(7)), [1] + list(range(6))]),
+        )
+        qr_correct, kr_correct = rotary_embeddings.adjusted_qk(
+            q, k, torch.tensor([list(range(8)), [1] + list(range(7))])
+        )
 
         # Prove that without position_ids the cached position information is lost and results are incorrect
-        qr_bad, kr_bad = rotary_embeddings.adjusted_qk(q[:, :, -1:, :], k[:, :, -1:, :], past_kv_state=(qr_cache, kr_cache), use_cache=True)
-        qr_good, kr_good = rotary_embeddings.adjusted_qk(q[:, :, -1:, :], k[:, :, -1:, :], past_kv_state=(qr_cache, kr_cache), use_cache=True, position_ids=torch.tensor([[7], [6]]))
+        qr_bad, kr_bad = rotary_embeddings.adjusted_qk(
+            q[:, :, -1:, :],
+            k[:, :, -1:, :],
+            past_kv_state=(qr_cache, kr_cache),
+            use_cache=True,
+        )
+        qr_good, kr_good = rotary_embeddings.adjusted_qk(
+            q[:, :, -1:, :],
+            k[:, :, -1:, :],
+            past_kv_state=(qr_cache, kr_cache),
+            use_cache=True,
+            position_ids=torch.tensor([[7], [6]]),
+        )
 
         torch.testing.assert_close(qr_good, qr_correct[:, :, -1:, :])
         torch.testing.assert_close(kr_good, kr_correct[:, :, -1:, :])
@@ -121,7 +143,6 @@ class RotaryEmbeddingTests(unittest.TestCase):
         with self.assertRaises(AssertionError):
             torch.testing.assert_close(qr_bad, qr_correct[:, :, -1:, :])
             torch.testing.assert_close(kr_bad, kr_correct[:, :, -1:, :])
-
 
     def test_long_sequences(self):
         q = torch.ones(2, 1, 64, 16, dtype=torch.float)  # b h s e
