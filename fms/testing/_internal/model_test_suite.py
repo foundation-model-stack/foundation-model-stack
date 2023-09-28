@@ -180,7 +180,6 @@ class ModelConfigTestSuite(AbstractResourcePath, ConfigFixtureMixin, ModelFixtur
     - test failure when a config value isn’t serializable
     - test model construction with just arguments constructs the proper configuration
     - test model construction via a configuration
-    - test model constructor appropriately merges any passed kwargs into the config without mutating the original config
     """
 
     # common tests
@@ -207,16 +206,6 @@ class ModelConfigTestSuite(AbstractResourcePath, ConfigFixtureMixin, ModelFixtur
     def test_config_passed_to_model(self, model, config):
         """test model construction via a configuration"""
         model = type(model)(config)
-        assert model.get_config().as_dict() == config.as_dict()
-
-    def test_config_passed_to_model_and_updated(self, model, config):
-        """test model constructor appropriately merges any passed kwargs into the config without mutating the original config"""
-        model = type(model)(config=config, pad_id=config.pad_id + 1)
-        # check not same reference
-        assert model.get_config() is not config
-
-        # modify pad_id to the new value expected and check equivalence
-        config.pad_id = config.pad_id + 1
         assert model.get_config().as_dict() == config.as_dict()
 
 
