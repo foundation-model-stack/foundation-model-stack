@@ -212,7 +212,9 @@ class ModelConfigTestSuite(AbstractResourcePath, ConfigFixtureMixin):
             assert config.as_dict() == config_loaded.as_dict()
 
 
-class ModelConsistencyTestSuite(AbstractResourcePath, ModelFixtureMixin):
+class ModelConsistencyTestSuite(
+    AbstractResourcePath, ConfigFixtureMixin, ModelFixtureMixin
+):
     """All tests related to model consistency will be part of this mixin"""
 
     @pytest.fixture(scope="class", autouse=True)
