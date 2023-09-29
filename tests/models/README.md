@@ -52,9 +52,22 @@ The first time you run the test suite, you will notice that the test will fail w
 
 ```txt
 Signature failed to load, please re-run the tests with --capture_expectation
+
+AND
+
+Weights Key file failed to load, please re-run the tests with --capture_expectation
 ```
 
 If you see this message, you will re-run the tests with the extra argument --capture_expectation, which will 
-automatically include a signature resource for your model with the name test_model_output-Test<model_name>
+automatically include a signature resource for your model with the name <test_name>-Test<model_name>. The tests will
+fail again now with the following messages:
+
+```txt
+Signature file has been saved, please re-run the tests without --capture_expectation
+
+AND
+
+Weights Key file has been saved, please re-run the tests without --capture_expectation
+```
 
 The next time you run the test, remove the --capture_expectation flag and the test should pass.
