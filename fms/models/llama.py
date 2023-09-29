@@ -108,6 +108,7 @@ class LLaMABlock(nn.Module):
         x,
         *,
         mask=None,
+        position_ids=None,
         past_key_value_state=None,
         use_cache=False,
         is_causal_mask=False,
@@ -128,6 +129,7 @@ class LLaMABlock(nn.Module):
             k=x,
             v=x,
             mask=mask,
+            position_ids=position_ids,
             attn_algorithm=attn_algorithm,
             past_key_value_state=self_attn_past_key_value,
             use_cache=use_cache,
@@ -235,6 +237,7 @@ class LLaMA(nn.Module):
         self,
         x_in,
         mask=None,
+        position_ids=None,
         past_key_value_states=None,
         use_cache=False,
         attn_algorithm=None,
@@ -273,6 +276,7 @@ class LLaMA(nn.Module):
             output = layer(
                 x=x_in,
                 mask=mask,
+                position_ids=position_ids,
                 past_key_value_state=past_key_value_states[i],
                 use_cache=use_cache,
                 is_causal_mask=is_causal_mask,
@@ -297,13 +301,14 @@ class LLaMA(nn.Module):
         self,
         x,
         mask=None,
+        position_ids=None,
         past_key_value_states=None,
         use_cache=False,
         only_last_token=False,
         attn_algorithm=None,
     ):
         output, cache = self._helper(
-            x, mask, past_key_value_states, use_cache, attn_algorithm
+            x, mask, position_ids, past_key_value_states, use_cache, attn_algorithm
         )
 
         if only_last_token:

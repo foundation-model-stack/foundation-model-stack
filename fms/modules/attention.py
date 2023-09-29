@@ -105,6 +105,7 @@ class MultiHeadAttention(nn.Module):
         k,
         v,
         mask=None,
+        position_ids=None,
         attn_algorithm=None,
         past_key_value_state=None,
         use_cache=False,
@@ -114,6 +115,8 @@ class MultiHeadAttention(nn.Module):
         """
         past_key_value_state: tuple
             the cache to be used in attention of the form (<self/cross>_key, <self/cross>_value)
+        position_ids: Optional[torch.LongTensor]
+            The position of each of the tokens encoded in q and k. Used for RoPE embeddings
         use_cache: bool
             if True, the kv states for self/cross attention will be saved, otherwise they will not be saved
         is_self: bool
@@ -161,7 +164,7 @@ class MultiHeadAttention(nn.Module):
             # You want to apply rotary embeddings pre-cache
             if self.position_encoder is not None:
                 queries, keys = self.position_encoder.adjusted_qk(
-                    queries, keys, past_key_value_state, use_cache
+                    queries, keys, position_ids, past_key_value_state, use_cache
                 )
 
         # if you want to use caching and past_key_value_state is not None meaning you have values in your cache
