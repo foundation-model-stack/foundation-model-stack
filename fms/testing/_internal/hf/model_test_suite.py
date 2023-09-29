@@ -39,7 +39,7 @@ np.random.seed(SEED)  # numpy random seed
 torch.backends.cudnn.deterministic = True
 
 
-class HFConfigFixtureMixin(ConfigFixtureMixin, metaclass=abc.ABCMeta):
+class HFConfigFixtureMixin(metaclass=abc.ABCMeta):
     """Mix this in with another AbstractResourcePath testing class to include the config and config_class fixtures"""
 
     # class specific fixtures
@@ -51,44 +51,27 @@ class HFConfigFixtureMixin(ConfigFixtureMixin, metaclass=abc.ABCMeta):
     @pytest.fixture(scope="class", autouse=True)
     def fms_hf_config(
         self,
-        config: ModelConfig,
-        tokenizer: PreTrainedTokenizer,
+        **kwargs,
     ) -> PretrainedConfig:
+        """this fixture represents and fms hf config"""
         pass
 
 
-class HFModelFixtureMixin(ModelFixtureMixin, metaclass=abc.ABCMeta):
+class HFModelFixtureMixin(metaclass=abc.ABCMeta):
     @abc.abstractmethod
     @pytest.fixture(scope="class", autouse=True)
-    def fms_hf_model(
-        self,
-        fms_hf_config: PretrainedConfig,
-        model: nn.Module,
-    ) -> PreTrainedModel:
-        """create hf_model and load state dict from given pytorch native model then return the fms hf model"""
+    def fms_hf_model(self, **kwargs) -> PreTrainedModel:
+        """this fixture represents an fms hf model"""
         pass
 
     @abc.abstractmethod
-    def _oss_hf_model(self, fms_hf_model: PreTrainedModel) -> PreTrainedModel:
-        """Given an fms hf model, create the equivalent oss hf model"""
-        pass
-
-    @property
-    @abc.abstractmethod
-    def _get_hf_signature_params(self) -> List[str]:
-        pass
-
     @pytest.fixture(scope="class", autouse=True)
     def oss_hf_model(self, fms_hf_model: PreTrainedModel) -> PreTrainedModel:
-        """this fixture is the open source version of the hf model"""
-        return self._oss_hf_model(fms_hf_model)
-
-    @property
-    def _get_signature_params(self):
-        return len(self._get_hf_signature_params) - 1
+        """this fixture is the open source version of the fms hf model"""
+        pass
 
 
-class HFConfigTestSuite(HFConfigFixtureMixin):
+class HFConfigTestSuite(ConfigFixtureMixin, HFConfigFixtureMixin):
     """General huggingface config testing class for future use with other models"""
 
     @property
@@ -124,6 +107,19 @@ class HFConfigTestSuite(HFConfigFixtureMixin):
 class HFModelEquivalenceTestSuite(HFConfigFixtureMixin, HFModelFixtureMixin):
     """General huggingface model testing class for future use with other models"""
 
+    @property
+    @abc.abstractmethod
+    def _get_hf_signature_params(self) -> List[str]:
+        """the value to pass into params in get_signature function for an hf model
+
+        Returns
+        -------
+        List[str]
+            the params to set to the default tensor value (inp) in get_signature. If an integer, will use *args, if a
+            list, will use **kwargs
+        """
+        pass
+
     # common tests
     def test_hf_and_fms_model_equivalence(self, fms_hf_model, model):
         """test model signature equivalence between huggingface model and fms model"""
@@ -131,7 +127,9 @@ class HFModelEquivalenceTestSuite(HFConfigFixtureMixin, HFModelFixtureMixin):
         _fms_hf_model = type(fms_hf_model).from_fms_model(
             model, **fms_hf_model.config.to_dict()
         )
-        fms_signature_params = ModelSignatureParams(model, self._get_signature_params)
+        fms_signature_params = ModelSignatureParams(
+            model, len(self._get_hf_signature_params) - 1
+        )
         fms_hf_signature_params = HFModelSignatureParams(
             _fms_hf_model, self._get_hf_signature_params
         )

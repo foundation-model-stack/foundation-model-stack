@@ -11,7 +11,7 @@ import torch
 
 from fms.models.hf.llama.configuration_llama_hf import LLaMAHFConfig
 from fms.models.hf.llama.modeling_llama_hf import LLaMAHFForCausalLM
-from fms.models.llama import LLaMAConfig, LLaMA
+from fms.models.llama import LLaMA
 from fms.testing._internal.hf.model_test_suite import (
     HFConfigFixtureMixin,
     HFModelFixtureMixin,
@@ -19,15 +19,19 @@ from fms.testing._internal.hf.model_test_suite import (
     HFModelEquivalenceTestSuite,
     HFModelGenerationTestSuite,
 )
-from fms.utils.config import ModelConfig
+from fms.testing._internal.model_test_suite import ModelFixtureMixin
 
 from tests.models.test_llama import LLaMA2Fixtures, LLaMA2GQAFixtures
 
 
-class LLaMA2HFFixtures(HFConfigFixtureMixin, HFModelFixtureMixin):
+class LLaMA2HFFixtures(ModelFixtureMixin, HFConfigFixtureMixin, HFModelFixtureMixin):
+    @pytest.fixture(scope="class", autouse=True)
+    def fms_hf_model(self, model: LLaMA, fms_hf_config: PretrainedConfig, **kwargs):
+        return LLaMAHFForCausalLM.from_fms_model(model, **fms_hf_config.to_dict())
+
     @pytest.fixture(scope="class", autouse=True)
     def fms_hf_config(
-        self, config: LLaMAConfig, tokenizer: PreTrainedTokenizer
+        self, tokenizer: PreTrainedTokenizer, model: LLaMA, **kwargs
     ) -> PretrainedConfig:
         bos_token_id = (
             tokenizer.bos_token_id
@@ -35,16 +39,13 @@ class LLaMA2HFFixtures(HFConfigFixtureMixin, HFModelFixtureMixin):
             else tokenizer.eos_token_id
         )
         return LLaMAHFConfig.from_fms_config(
-            config, eos_token_id=tokenizer.eos_token_id, bos_token_id=bos_token_id
+            model.get_config(),
+            eos_token_id=tokenizer.eos_token_id,
+            bos_token_id=bos_token_id,
         )
 
     @pytest.fixture(scope="class", autouse=True)
-    def fms_hf_model(
-        self, fms_hf_config: PretrainedConfig, model: nn.Module
-    ) -> PreTrainedModel:
-        return LLaMAHFForCausalLM.from_fms_model(model, **fms_hf_config.to_dict())
-
-    def _oss_hf_model(self, fms_hf_model: LLaMAHFConfig) -> PreTrainedModel:
+    def oss_hf_model(self, fms_hf_model: LLaMAHFConfig) -> PreTrainedModel:
         hf_config = fms_hf_model.config
         oss_hf_model = LlamaForCausalLM(
             LlamaConfig(
@@ -129,14 +130,6 @@ class LLaMA2HFFixtures(HFConfigFixtureMixin, HFModelFixtureMixin):
         return oss_hf_model
 
 
-class LLaMA2HFGQAFixtures(LLaMA2HFFixtures):
-
-    # needed to include a config for HF as HF uses configs
-    @pytest.fixture(scope="class", autouse=True)
-    def config(self, model: LLaMA) -> ModelConfig:
-        return model.get_config()
-
-
 class TestLLaMA2HF(
     HFConfigTestSuite,
     HFModelEquivalenceTestSuite,
@@ -152,7 +145,7 @@ class TestLLaMA2GQAHF(
     HFModelEquivalenceTestSuite,
     HFModelGenerationTestSuite,
     LLaMA2GQAFixtures,
-    LLaMA2HFGQAFixtures,
+    LLaMA2HFFixtures,
 ):
     _hf_specific_params = ["eos_token_id", "bos_token_id"]
     _get_hf_signature_params = ["input_ids", "labels"]
