@@ -30,6 +30,15 @@ Failed consistency of signature. This could fail for one of 2 reasons:
 If (2) then please re-run this test with --capture_expectation
 """
 
+_FAILED_MODEL_WEIGHTS_KEYS_MSG = """
+Failed consistency of model weights. This is most likely due to: 
+
+1. a new weight being introduced in the model
+2. a weight's name changing in the model 
+
+If either (1) or (2) was done purposely, please re-run this test with --capture_expectation
+"""
+
 
 class ConfigFixtureMixin(metaclass=abc.ABCMeta):
     """Include this mixin if you would like to have the config fixture"""
@@ -51,7 +60,7 @@ class ModelFixtureMixin(metaclass=abc.ABCMeta):
 
     @pytest.fixture(scope="class", autouse=True)
     def model(self, uninitialized_model: nn.Module):
-        """include this fixture to get a model"""
+        """include this fixture to get a model that is fully initialized"""
         torch.random.manual_seed(5)
         sd = uninitialized_model.state_dict()
         params = sorted(sd.keys())
@@ -163,7 +172,41 @@ class ModelConsistencyTestSuite(ModelFixtureMixin, SignatureFixtureMixin):
             with open(to_write, "w") as signature_file:
                 signature_file.write(",".join(map(str, actual)))
             signature_file.close()
+            pytest.fail(
+                "Signature file has been saved, please re-run the tests without --capture_expectation"
+            )
 
         assert np.allclose(
             np.array(actual), np.array(signature)
         ), _FAILED_MODEL_SIGNATURE_OUTPUT_MSG
+
+    def test_model_weight_keys(self, model, capture_expectation):
+        import inspect
+
+        actual_keys = list(sorted(model.state_dict().keys()))
+
+        weight_keys_path = os.path.join(
+            os.path.dirname(inspect.getfile(self.__class__)),
+            "..",
+            "resources",
+            "expectations",
+            f"test_model_weight_keys-{self.__class__.__module__}.{self.__class__.__name__}",
+        )
+
+        if capture_expectation:
+
+            with open(weight_keys_path, "w") as weight_keys_file:
+                weight_keys_file.write(",".join(map(str, actual_keys)))
+            weight_keys_file.close()
+            pytest.fail(
+                "Weights Key file has been saved, please re-run the tests without --capture_expectation"
+            )
+
+        try:
+            weight_keys_file = open(weight_keys_path)
+            expected_keys = [k for k in weight_keys_file.readline().split(",")]
+            assert actual_keys == expected_keys, _FAILED_MODEL_WEIGHTS_KEYS_MSG
+        except:
+            pytest.fail(
+                "Weights Key file failed to load, please re-run the tests with --capture_expectation"
+            )
