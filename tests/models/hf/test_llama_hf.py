@@ -1,42 +1,56 @@
-from _pytest.fixtures import FixtureRequest
+import pytest
+from torch import nn as nn
 from transformers import (
     PreTrainedModel,
     LlamaForCausalLM,
     LlamaConfig,
+    PretrainedConfig,
+    PreTrainedTokenizer,
 )
 import torch
 
 from fms.models.hf.llama.configuration_llama_hf import LLaMAHFConfig
 from fms.models.hf.llama.modeling_llama_hf import LLaMAHFForCausalLM
-from fms.models.llama import LLaMA, LLaMAConfig
+from fms.models.llama import LLaMAConfig
 from fms.testing._internal.hf.model_test_suite import (
     HFConfigTestSuite,
     HFModelEquivalenceTestSuite,
     HFModelGenerationTestSuite,
 )
-from fms.testing._internal.test_resource_utils import resource_path_fixture
+
+from tests.models.test_llama import LLaMA2Fixtures
 
 
-class TestLlamaHF(
-    HFConfigTestSuite, HFModelEquivalenceTestSuite, HFModelGenerationTestSuite
+class TestLLaMA2HF(
+    HFConfigTestSuite,
+    HFModelEquivalenceTestSuite,
+    HFModelGenerationTestSuite,
+    LLaMA2Fixtures,
 ):
-    """
-    Model Test Suite for llamaHF
-    """
-
-    _model_class = LLaMA
-    _config_class = LLaMAConfig
-    _hf_model_class = LLaMAHFForCausalLM
-    _hf_config_class = LLaMAHFConfig
     _hf_specific_params = ["eos_token_id", "bos_token_id"]
-    _hf_forward_parameters = ["input_ids", "labels"]
+    _get_hf_signature_params = ["input_ids", "labels"]
 
-    @resource_path_fixture(test_name="llama", prefix="model")
-    def resource_path(self, request: FixtureRequest) -> str:
-        return request.param
+    @pytest.fixture(scope="class", autouse=True)
+    def fms_hf_config(
+        self, config: LLaMAConfig, tokenizer: PreTrainedTokenizer
+    ) -> PretrainedConfig:
+        bos_token_id = (
+            tokenizer.bos_token_id
+            if tokenizer.bos_token_id is not None
+            else tokenizer.eos_token_id
+        )
+        return LLaMAHFConfig.from_fms_config(
+            config, eos_token_id=tokenizer.eos_token_id, bos_token_id=bos_token_id
+        )
 
-    def _oss_hf_model(self, hf_model: PreTrainedModel) -> PreTrainedModel:
-        hf_config = hf_model.config
+    @pytest.fixture(scope="class", autouse=True)
+    def fms_hf_model(
+        self, fms_hf_config: PretrainedConfig, model: nn.Module
+    ) -> PreTrainedModel:
+        return LLaMAHFForCausalLM.from_fms_model(model, **fms_hf_config.to_dict())
+
+    def _oss_hf_model(self, fms_hf_model: PreTrainedModel) -> PreTrainedModel:
+        hf_config = fms_hf_model.config
         oss_hf_model = LlamaForCausalLM(
             LlamaConfig(
                 vocab_size=hf_config.vocab_size,
@@ -56,10 +70,10 @@ class TestLlamaHF(
 
         with torch.no_grad():
 
-            oss_hf_model.model.embed_tokens.weight.copy_(hf_model.embedding.weight)
+            oss_hf_model.model.embed_tokens.weight.copy_(fms_hf_model.embedding.weight)
             i = 0
             for oss_hf_layer in oss_hf_model.model.layers:
-                fms_hf_layer = hf_model.decoder.model.layers[i]
+                fms_hf_layer = fms_hf_model.decoder.model.layers[i]
 
                 # self attn
                 oss_hf_layer.self_attn.q_proj.weight.copy_(
@@ -73,7 +87,7 @@ class TestLlamaHF(
                     fms_hf_layer.attn.dense.weight
                 )
                 oss_hf_layer.self_attn.rotary_emb.inv_freqs = (
-                    hf_model.decoder.model.rot_emb.freqs
+                    fms_hf_model.decoder.model.rot_emb.freqs
                 )
 
                 # mlp
@@ -111,7 +125,7 @@ class TestLlamaHF(
                 oss_hf_layer.self_attn.k_proj.weight.copy_(k)
 
                 i = i + 1
-            oss_hf_model.model.norm.weight = hf_model.decoder.model.dec_norm.weight
-            oss_hf_model.lm_head.weight = hf_model.lm_head.weight
+            oss_hf_model.model.norm.weight = fms_hf_model.decoder.model.dec_norm.weight
+            oss_hf_model.lm_head.weight = fms_hf_model.lm_head.weight
 
         return oss_hf_model

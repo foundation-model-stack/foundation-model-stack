@@ -1,36 +1,19 @@
 import abc
-import json
 import os
 import tempfile
-from typing import Type, List
+from typing import List, Union
 
 import numpy as np
 import pytest
 import torch
 import torch.nn as nn
 
-from fms.testing._internal.test_resource_utils import AbstractResourcePath
 from fms.testing.comparison import get_signature
 from fms.utils.config import ModelConfig
 
-_FAILED_MODEL_WEIGHTS_LOAD_MSG = """
-Failed to load the state dict of the model that was stored in the test case resources for the following reason:
-
-1. named parameter change in the underlying architecture. 
-
-If (1), then please re-run fms.tests.models.generate_small_model_tests with --generate_weights --generate_signature
-
-Please provide a justification for re-running the generate_small_model_tests in a PR
-"""
-
 _FAILED_CONFIG_LOAD_MSG = """
-Failed to load the configuration that was stored in the test case resources for the following reason:
-
-1. configuration parameters have changed 
-
-If (1), then please re-run fms.tests.models.generate_small_model_tests with --generate_config
-
-Please provide a justification for re-running the generate_small_model_tests in a PR
+Failed to load the configuration. This could occur if there was a change in the configuration and the implementation of 
+the ModelConfig is not accounting for it.
 """
 
 _FAILED_MODEL_SIGNATURE_OUTPUT_MSG = """
@@ -39,168 +22,94 @@ Failed consistency of signature. This could fail for one of 2 reasons:
 1. either there was a change in the model architecture which caused a difference in model output
 2. a bug was fixed which is causing a different model output and that is expected
 
-If (2) then please re-run fms.tests.models.generate_small_model_tests with --generate_weights --generate_signature
+If (2) then please re-run this test with --capture_expectation
+"""
 
-Please provide a justification for re-running generate_small_model_tests in a PR
+_FAILED_MODEL_WEIGHTS_KEYS_MSG = """
+Failed consistency of model weights. This is most likely due to: 
+
+1. a new weight being introduced in the model
+2. a weight's name changing in the model 
+
+If either (1) or (2) was done purposely, please re-run this test with --capture_expectation
 """
 
 
 class ConfigFixtureMixin(metaclass=abc.ABCMeta):
-    """Mix this in with another AbstractResourcePath testing class to include the config and config_class fixtures"""
+    """Include this mixin if you would like to have the config fixture"""
 
-    @pytest.fixture(autouse=True, scope="class")
-    def config(
-        self, resource_path: str, config_class: Type[ModelConfig]
-    ) -> ModelConfig:
-        """
-        get the config stored in the test case directory
-
-        Parameters
-        ----------
-        resource_path: str
-            path to the specific test case directory specified in resource_path fixture
-        config_class: Type[ModelConfig]
-            the config class type
-
-        Returns
-        -------
-        ModelConfig
-            the config from the test case directory to be tested
-        """
-        config_path = os.path.join(resource_path, "config.json")
-        with open(config_path, "r", encoding="utf-8") as reader:
-            text = reader.read()
-        json_dict = json.loads(text)
-        try:
-            config = config_class(**json_dict)
-        except RuntimeError:
-            raise RuntimeError(_FAILED_CONFIG_LOAD_MSG)
-        return config
-
-    @pytest.fixture(scope="class", autouse=True)
-    def config_class(self) -> Type[ModelConfig]:
-        """
-        Returns
-        -------
-        Type[ModelConfig]
-            the config class type which will be tested
-        """
-        return self._config_class
-
-    @property
     @abc.abstractmethod
-    def _config_class(self) -> Type[ModelConfig]:
-        """
-        Returns
-        -------
-        Type[ModelConfig]
-            the config class type which will be tested
-        """
+    @pytest.fixture(scope="class", autouse=True)
+    def config(self, **kwargs) -> ModelConfig:
+        """include this fixture to get a models config"""
         pass
 
 
 class ModelFixtureMixin(metaclass=abc.ABCMeta):
-    """Mix this in with another AbstractResourcePath testing class to include the model and model_class fixtures"""
+    """Include this mixin if you would like to have the model fixture"""
+
+    @abc.abstractmethod
+    @pytest.fixture(scope="class", autouse=True)
+    def uninitialized_model(self, **kwargs) -> nn.Module:
+        pass
 
     @pytest.fixture(scope="class", autouse=True)
-    def model(
-        self, resource_path: str, config: ModelConfig, model_class: Type[nn.Module]
-    ) -> nn.Module:
-        """
-        get the model stored in the test case directory
+    def model(self, uninitialized_model: nn.Module):
+        """include this fixture to get a model that is fully initialized"""
+        torch.random.manual_seed(5)
+        sd = uninitialized_model.state_dict()
+        params = sorted(sd.keys())
+        for key in params:
+            parameter = sd[key]
+            values = torch.randn_like(parameter)
+            values -= 0.5
+            values /= 20.0
+            parameter.copy_(values)
+        return uninitialized_model
 
-        Parameters
-        ----------
-        resource_path: str
-            path to the specific test case directory specified in resource_path fixture
-        config: ModelConfig
-            the model config associated with this test case
-        model_class: Type[nn.Module]
-            the model class type
 
-        Returns
-        -------
-        nn.Module
-            the model from the test case directory to be tested
-        """
-        model = model_class(config)
+class SignatureFixtureMixin:
+    """Include this mixin if you would like to get the signature fixture for a given model test"""
+
+    @pytest.fixture(scope="class", autouse=True)
+    def signature(self, **kwargs) -> List[float]:
+        """include this fixture to get a models signature (defaults to what is in tests/resources/expectations)"""
+        return self._signature()
+
+    def _signature(self) -> List[float]:
+        import inspect
+
         try:
-            model.load_state_dict(
-                torch.load(os.path.join(resource_path, "model_state.pth"))
+            config_file = open(
+                os.path.join(
+                    os.path.dirname(inspect.getfile(self.__class__)),
+                    "..",
+                    "resources",
+                    "expectations",
+                    f"{self.__class__.__module__}.{self.__class__.__name__}.test_model_output",
+                )
             )
-        except RuntimeError:
-            raise RuntimeError(_FAILED_MODEL_WEIGHTS_LOAD_MSG)
-        return model
-
-    @pytest.fixture(scope="class", autouse=True)
-    def model_class(self) -> Type[nn.Module]:
-        """
-        Returns
-        -------
-        Type[nn.Module]
-            the model class type which will be tested
-        """
-        return self._model_class
-
-    @property
-    @abc.abstractmethod
-    def _model_class(self) -> Type[nn.Module]:
-        """
-        Returns
-        -------
-        Type[nn.Module]
-            the model class type which will be tested
-        """
-        pass
-
-    @property
-    @abc.abstractmethod
-    def _forward_parameters(self) -> int:
-        """get the number of parameters required to run a forward pass
-
-        Note: In most cases with FMS models:
-        decoder-only - 1
-        encoder-only - 1
-        encoder-decoder - 2
-
-        Returns
-        -------
-        int
-            the number of parameters required to run a forward pass.
-        """
-        pass
+            line = config_file.readline()
+            return [float(v) for v in line.split(",")]
+        except FileNotFoundError:
+            print(
+                "Signature failed to load, please re-run the tests with --capture_expectation"
+            )
 
 
-class ModelAPITestSuite(AbstractResourcePath, ConfigFixtureMixin, ModelFixtureMixin):
-    """General model testing class for future use with other models"""
+class ModelConfigTestSuite(ConfigFixtureMixin, ModelFixtureMixin):
+    """
+    This is a test suite which will test ModelConfigs and how they interact with the specific Model Architecture
 
-    def test_config_params_passed_as_kwargs_to_model(self, model, config):
-        params = config.as_dict()
-        config_from_params = type(config)(**params)
-        model_from_params = type(model)(**params)
-        assert model_from_params.get_config().as_dict() == config_from_params.as_dict()
+    This suite will specifically test:
 
-    def test_config_passed_to_model(self, model, config):
-        model = type(model)(config)
-        assert model.get_config().as_dict() == config.as_dict()
-
-    def test_config_passed_to_model_and_updated(self, model, config):
-        model = type(model)(config=config, pad_id=config.pad_id + 1)
-        # check not same reference
-        assert model.get_config() is not config
-
-        # modify pad_id to the new value expected and check equivalence
-        config.pad_id = config.pad_id + 1
-        assert model.get_config().as_dict() == config.as_dict()
-
-
-class ModelConfigTestSuite(AbstractResourcePath, ConfigFixtureMixin):
-    """General config testing class for future use with other models"""
-
-    # common tests
+    - test failure when a config value isn’t serializable
+    - test model construction with just arguments constructs the proper configuration
+    - test model construction via a configuration
+    """
 
     def test_config_round_trip(self, config):
-        """Test that the config can save and load properly"""
+        """Test that the config can save and load properly without serialization/deserialization issues"""
 
         with tempfile.TemporaryDirectory() as workdir:
             config_path = f"{workdir}/config.json"
@@ -211,39 +120,88 @@ class ModelConfigTestSuite(AbstractResourcePath, ConfigFixtureMixin):
                 raise RuntimeError(_FAILED_CONFIG_LOAD_MSG)
             assert config.as_dict() == config_loaded.as_dict()
 
-    def test_config_as_dict(self, config, resource_path):
-        """Test that config as_dict works as intended and returns the original dict from test resources"""
-        config_path = os.path.join(resource_path, "config.json")
-        with open(config_path, "r", encoding="utf-8") as reader:
-            text = reader.read()
-        json_dict = json.loads(text)
-        assert config.as_dict() == json_dict
+    def test_config_params_passed_as_kwargs_to_model(self, model, config):
+        """test model construction with just arguments constructs the proper configuration"""
+        params = config.as_dict()
+        config_from_params = type(config)(**params)
+        model_from_params = type(model)(**params)
+        assert model_from_params.get_config().as_dict() == config_from_params.as_dict()
+
+    def test_config_passed_to_model(self, model, config):
+        """test model construction via a configuration"""
+        model = type(model)(config)
+        assert model.get_config().as_dict() == config.as_dict()
 
 
-class ModelConsistencyTestSuite(AbstractResourcePath, ModelFixtureMixin):
-    """All tests related to model consistency will be part of this mixin"""
+class ModelConsistencyTestSuite(ModelFixtureMixin, SignatureFixtureMixin):
+    """All tests related to model consistency will be part of this test suite"""
 
-    @pytest.fixture(scope="class", autouse=True)
-    def signature(self, resource_path) -> List[float]:
-        """retrieve the signature from the test case directory
-
-        Parameters
-        ----------
-        resource_path: str
-            path to the specific test case directory specified in resource_path fixture
+    @property
+    @abc.abstractmethod
+    def _get_signature_params(self) -> Union[int, List[str]]:
+        """the value to pass into params in get_signature function for this model
 
         Returns
         -------
-        List[float]
-            the signature stored in the test case directory that was created when generate_small_model_tests was called
-            for this specific test model
+        Union[int, List[str]]
+            the params to set to the default tensor value (inp) in get_signature. If an integer, will use *args, if a
+            list, will use **kwargs
         """
-        return torch.load(os.path.join(resource_path, "signature.pth"))
+        pass
 
-    def test_model_output(self, model, signature):
+    def test_model_output(self, model, signature, capture_expectation):
         """test consistency of model output with signature"""
 
-        actual = get_signature(model, params=self._forward_parameters)
+        actual = get_signature(model, params=self._get_signature_params)
+
+        if capture_expectation:
+            import inspect
+
+            to_write = os.path.join(
+                os.path.dirname(inspect.getfile(self.__class__)),
+                "..",
+                "resources",
+                "expectations",
+                f"{self.__class__.__module__}.{self.__class__.__name__}.test_model_output",
+            )
+            with open(to_write, "w") as signature_file:
+                signature_file.write(",".join(map(str, actual)))
+            signature_file.close()
+            pytest.fail(
+                "Signature file has been saved, please re-run the tests without --capture_expectation"
+            )
+
         assert np.allclose(
             np.array(actual), np.array(signature)
         ), _FAILED_MODEL_SIGNATURE_OUTPUT_MSG
+
+    def test_model_weight_keys(self, model, capture_expectation):
+        import inspect
+
+        actual_keys = list(sorted(model.state_dict().keys()))
+
+        weight_keys_path = os.path.join(
+            os.path.dirname(inspect.getfile(self.__class__)),
+            "..",
+            "resources",
+            "expectations",
+            f"{self.__class__.__module__}.{self.__class__.__name__}.test_model_weight_keys",
+        )
+
+        if capture_expectation:
+
+            with open(weight_keys_path, "w") as weight_keys_file:
+                weight_keys_file.write(",".join(map(str, actual_keys)))
+            weight_keys_file.close()
+            pytest.fail(
+                "Weights Key file has been saved, please re-run the tests without --capture_expectation"
+            )
+
+        try:
+            weight_keys_file = open(weight_keys_path)
+            expected_keys = [k for k in weight_keys_file.readline().split(",")]
+            assert actual_keys == expected_keys, _FAILED_MODEL_WEIGHTS_KEYS_MSG
+        except:
+            pytest.fail(
+                "Weights Key file failed to load, please re-run the tests with --capture_expectation"
+            )
