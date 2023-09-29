@@ -4,11 +4,7 @@ from fm_nlp.architecture.llama.modeling_llama_hf import (
     LlamaHFConfig,
     LlamaHFLMHeadModel,
 )
-from transformers import (
-    AutoConfig,
-    AutoModel,
-    AutoModelForCausalLM
-)
+from transformers import AutoConfig, AutoModel, AutoModelForCausalLM
 import torch
 
 
@@ -19,6 +15,7 @@ def register_fms_models():
     AutoConfig.register("llama_hf", LlamaHFConfig)
     AutoModel.register(LlamaHFConfig, LlamaHFLMHeadModel)
     AutoModelForCausalLM.register(LlamaHFConfig, LlamaHFLMHeadModel)
+
 
 def mask_2d_to_3d(inp: torch.Tensor) -> torch.BoolTensor:
     """
@@ -38,6 +35,7 @@ def mask_2d_to_3d(inp: torch.Tensor) -> torch.BoolTensor:
     is_pad = inp == 0
     mask = is_pad.unsqueeze(-1) == is_pad.unsqueeze(-2)
     return mask
+
 
 def mask_2d_to_3d_bidirectional(
     decoder_input: Union[torch.BoolTensor, torch.LongTensor, torch.IntTensor],

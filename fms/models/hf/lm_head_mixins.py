@@ -65,7 +65,9 @@ class LMHeadMixin:
         # if lm head was already given, we do not need to create it, otherwise we create a fresh lm_head
         # lm_head is not None when a subclass of HFModelArchitecture provides a model with an lm_head
         if lm_head is None:
-            lm_head = self._get_empty_lm_head(**({} if _lm_head_params is None else _lm_head_params))
+            lm_head = self._get_empty_lm_head(
+                **({} if _lm_head_params is None else _lm_head_params)
+            )
 
         super().__init__(config=config, lm_head=lm_head, *args, **kwargs)
 
@@ -340,12 +342,17 @@ class SequenceClassificationLMHeadMixin(LMHeadMixin):
             mlp.extend(
                 [
                     nn.Dropout(classifier_dropout),
-                    nn.Linear(self.config.hidden_size, self.config.hidden_size, bias=True),
+                    nn.Linear(
+                        self.config.hidden_size, self.config.hidden_size, bias=True
+                    ),
                     str_to_activation(classifier_activation_fn),
                 ]
             )
 
-        head = [nn.Dropout(classifier_dropout), nn.Linear(width, self.config.num_labels)]
+        head = [
+            nn.Dropout(classifier_dropout),
+            nn.Linear(width, self.config.num_labels),
+        ]
 
         return nn.Sequential(nn.Sequential(*mlp), nn.Sequential(*head))
 
@@ -353,7 +360,9 @@ class SequenceClassificationLMHeadMixin(LMHeadMixin):
         if self.config.problem_type is None:
             if self.config.num_labels == 1:
                 self.config.problem_type = "regression"
-            elif self.config.num_labels > 1 and (labels.dtype == torch.long or labels.dtype == torch.int):
+            elif self.config.num_labels > 1 and (
+                labels.dtype == torch.long or labels.dtype == torch.int
+            ):
                 self.config.problem_type = "single_label_classification"
             else:
                 self.config.problem_type = "multi_label_classification"
@@ -366,7 +375,9 @@ class SequenceClassificationLMHeadMixin(LMHeadMixin):
                 loss = loss_fct(prediction, labels)
         elif self.config.problem_type == "single_label_classification":
             loss_fct = CrossEntropyLoss()
-            loss = loss_fct(prediction.view(-1, self.config.num_labels), labels.view(-1))
+            loss = loss_fct(
+                prediction.view(-1, self.config.num_labels), labels.view(-1)
+            )
         elif self.config.problem_type == "multi_label_classification":
             loss_fct = BCEWithLogitsLoss()
             loss = loss_fct(prediction, labels)
