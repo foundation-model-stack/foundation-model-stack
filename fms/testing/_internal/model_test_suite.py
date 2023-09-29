@@ -64,7 +64,7 @@ class ModelFixtureMixin(metaclass=abc.ABCMeta):
         return uninitialized_model
 
 
-class SignatureFixtureMixin(metaclass=abc.ABCMeta):
+class SignatureFixtureMixin:
     """Include this mixin if you would like to get the signature fixture for a given model test"""
 
     @pytest.fixture(scope="class", autouse=True)
