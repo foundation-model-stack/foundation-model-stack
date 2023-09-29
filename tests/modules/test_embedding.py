@@ -1,3 +1,5 @@
+import math
+
 import torch
 
 from fms.modules.embedding import WordEmbedding

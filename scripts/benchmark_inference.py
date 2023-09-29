@@ -112,10 +112,11 @@ result = torch.cat((ids[:, 1:], next_val), dim=-1)
 # in isolation in a way that's easier to compare, and avoids including the cost
 # of the concatenation operation.
 def one_token(m, use_cache):
-    if use_cache:
-        return m.forward(next_val, past_key_value_states=cache, use_cache=True)
-    else:
-        return m.forward(result)
+    with torch.no_grad():
+        if use_cache:
+            return m.forward(next_val, past_key_value_states=cache, use_cache=True)
+        else:
+            return m.forward(result)
 
 
 iters = 100
