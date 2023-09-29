@@ -1,9 +1,4 @@
 from typing import Union
-
-from fm_nlp.architecture.llama.modeling_llama_hf import (
-    LlamaHFConfig,
-    LlamaHFLMHeadModel,
-)
 from transformers import AutoConfig, AutoModel, AutoModelForCausalLM
 import torch
 
@@ -11,10 +6,14 @@ import torch
 def register_fms_models():
     """Register all FMS models with huggingface AutoModels. This will include Sandstone
     (AutoConfig, AutoModel, AutoModelForSeq2SeqLM) and Granite (AutoConfig, AutoModel, AutoModelForCausalLM)"""
+    from fms.models.hf.llama.modeling_llama_hf import (
+        LLaMAHFConfig,
+        LLaMAHFForCausalLM,
+    )
 
-    AutoConfig.register("llama_hf", LlamaHFConfig)
-    AutoModel.register(LlamaHFConfig, LlamaHFLMHeadModel)
-    AutoModelForCausalLM.register(LlamaHFConfig, LlamaHFLMHeadModel)
+    AutoConfig.register("llama_hf", LLaMAHFConfig)
+    AutoModel.register(LLaMAHFConfig, LLaMAHFForCausalLM)
+    AutoModelForCausalLM.register(LLaMAHFConfig, LLaMAHFForCausalLM)
 
 
 def mask_2d_to_3d(inp: torch.Tensor) -> torch.BoolTensor:
@@ -68,16 +67,24 @@ def mask_2d_to_3d_bidirectional(
     # in a malformed cross attention mask that when provided to SDPA, will produce NaN. In the past,
     # an all false mask would just default to unmasked attention due to softmax shift invariance.
     _is_one_type_enc = mask_encoder.sum(1)
-    _is_one_type_enc = _is_one_type_enc.eq(0) | _is_one_type_enc.eq(mask_encoder.size(1))
+    _is_one_type_enc = _is_one_type_enc.eq(0) | _is_one_type_enc.eq(
+        mask_encoder.size(1)
+    )
     _is_one_type_dec = mask_decoder.sum(1)
-    _is_one_type_dec = _is_one_type_dec.eq(0) | _is_one_type_dec.eq(mask_decoder.size(1))
+    _is_one_type_dec = _is_one_type_dec.eq(0) | _is_one_type_dec.eq(
+        mask_decoder.size(1)
+    )
 
     # we need to correct if:
     #   (1) encoder is all one type and decoder has multiple types, then we need a correction
     #   (2) both encoder and decoder are one type, but those types don't match
     needs_correction_1 = _is_one_type_enc & ~_is_one_type_dec
-    needs_correction_2 = (_is_one_type_enc & _is_one_type_dec) & mask_encoder[:, 0].ne(mask_decoder[:, 0])
+    needs_correction_2 = (_is_one_type_enc & _is_one_type_dec) & mask_encoder[:, 0].ne(
+        mask_decoder[:, 0]
+    )
     needs_correction = needs_correction_1 | needs_correction_2
-    mask_decoder = torch.where(needs_correction.unsqueeze(1), mask_encoder[:, 0].unsqueeze(1), mask_decoder)
+    mask_decoder = torch.where(
+        needs_correction.unsqueeze(1), mask_encoder[:, 0].unsqueeze(1), mask_decoder
+    )
 
     return mask_encoder.unsqueeze(1) == mask_decoder.unsqueeze(2)
