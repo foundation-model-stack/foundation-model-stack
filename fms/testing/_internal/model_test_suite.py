@@ -12,13 +12,8 @@ from fms.testing.comparison import get_signature
 from fms.utils.config import ModelConfig
 
 _FAILED_CONFIG_LOAD_MSG = """
-Failed to load the configuration that was stored in the test case resources for the following reason:
-
-1. configuration parameters have changed 
-
-If (1), then please re-run fms.tests.models.generate_small_model_tests with --generate_config
-
-Please provide a justification for re-running the generate_small_model_tests in a PR
+Failed to load the configuration. This could occur if there was a change in the configuration and the implementation of 
+the ModelConfig is not accounting for it.
 """
 
 _FAILED_MODEL_SIGNATURE_OUTPUT_MSG = """
@@ -91,7 +86,7 @@ class SignatureFixtureMixin:
                     "..",
                     "resources",
                     "expectations",
-                    f"test_model_output-{self.__class__.__module__}.{self.__class__.__name__}",
+                    f"{self.__class__.__module__}.{self.__class__.__name__}.test_model_output",
                 )
             )
             line = config_file.readline()
@@ -167,7 +162,7 @@ class ModelConsistencyTestSuite(ModelFixtureMixin, SignatureFixtureMixin):
                 "..",
                 "resources",
                 "expectations",
-                f"test_model_output-{self.__class__.__module__}.{self.__class__.__name__}",
+                f"{self.__class__.__module__}.{self.__class__.__name__}.test_model_output",
             )
             with open(to_write, "w") as signature_file:
                 signature_file.write(",".join(map(str, actual)))
@@ -190,7 +185,7 @@ class ModelConsistencyTestSuite(ModelFixtureMixin, SignatureFixtureMixin):
             "..",
             "resources",
             "expectations",
-            f"test_model_weight_keys-{self.__class__.__module__}.{self.__class__.__name__}",
+            f"{self.__class__.__module__}.{self.__class__.__name__}.test_model_weight_keys",
         )
 
         if capture_expectation:
