@@ -142,6 +142,7 @@ class RotaryEmbeddingTests(unittest.TestCase):
 
         with self.assertRaises(AssertionError):
             torch.testing.assert_close(qr_bad, qr_correct[:, :, -1:, :])
+        with self.assertRaises(AssertionError):
             torch.testing.assert_close(kr_bad, kr_correct[:, :, -1:, :])
 
     def test_long_sequences(self):
