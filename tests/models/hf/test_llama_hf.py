@@ -20,8 +20,7 @@ from fms.testing._internal.hf.model_test_suite import (
     HFModelGenerationTestSuite,
 )
 from fms.testing._internal.model_test_suite import ModelFixtureMixin
-
-from tests.models.test_llama import LLaMA2Fixtures, LLaMA2GQAFixtures
+from ..test_llama import LLaMA2Fixtures, LLaMA2GQAFixtures
 
 
 class LLaMA2HFFixtures(ModelFixtureMixin, HFConfigFixtureMixin, HFModelFixtureMixin):
