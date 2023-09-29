@@ -1,27 +1,15 @@
 import abc
-import json
 import os
 import tempfile
-from typing import Type, List
+from typing import List, Union
 
 import numpy as np
 import pytest
 import torch
 import torch.nn as nn
 
-from fms.testing._internal.test_resource_utils import AbstractResourcePath
 from fms.testing.comparison import get_signature
 from fms.utils.config import ModelConfig
-
-_FAILED_MODEL_WEIGHTS_LOAD_MSG = """
-Failed to load the state dict of the model that was stored in the test case resources for the following reason:
-
-1. named parameter change in the underlying architecture. 
-
-If (1), then please re-run fms.tests.models.generate_small_model_tests with --generate_weights --generate_signature
-
-Please provide a justification for re-running the generate_small_model_tests in a PR
-"""
 
 _FAILED_CONFIG_LOAD_MSG = """
 Failed to load the configuration that was stored in the test case resources for the following reason:
@@ -39,139 +27,73 @@ Failed consistency of signature. This could fail for one of 2 reasons:
 1. either there was a change in the model architecture which caused a difference in model output
 2. a bug was fixed which is causing a different model output and that is expected
 
-If (2) then please re-run fms.tests.models.generate_small_model_tests with --generate_weights --generate_signature
-
-Please provide a justification for re-running generate_small_model_tests in a PR
+If (2) then please re-run this test with --capture_expectation
 """
 
 
 class ConfigFixtureMixin(metaclass=abc.ABCMeta):
-    """Mix this in with another AbstractResourcePath testing class to include the config and config_class fixtures"""
+    """Include this mixin if you would like to have the config fixture"""
 
-    @pytest.fixture(autouse=True, scope="class")
-    def config(
-        self, resource_path: str, config_class: Type[ModelConfig]
-    ) -> ModelConfig:
-        """
-        get the config stored in the test case directory
-
-        Parameters
-        ----------
-        resource_path: str
-            path to the specific test case directory specified in resource_path fixture
-        config_class: Type[ModelConfig]
-            the config class type
-
-        Returns
-        -------
-        ModelConfig
-            the config from the test case directory to be tested
-        """
-        config_path = os.path.join(resource_path, "config.json")
-        with open(config_path, "r", encoding="utf-8") as reader:
-            text = reader.read()
-        json_dict = json.loads(text)
-        try:
-            config = config_class(**json_dict)
-        except RuntimeError:
-            raise RuntimeError(_FAILED_CONFIG_LOAD_MSG)
-        return config
-
-    @pytest.fixture(scope="class", autouse=True)
-    def config_class(self) -> Type[ModelConfig]:
-        """
-        Returns
-        -------
-        Type[ModelConfig]
-            the config class type which will be tested
-        """
-        return self._config_class
-
-    @property
     @abc.abstractmethod
-    def _config_class(self) -> Type[ModelConfig]:
-        """
-        Returns
-        -------
-        Type[ModelConfig]
-            the config class type which will be tested
-        """
+    @pytest.fixture(scope="class", autouse=True)
+    def config(self, **kwargs) -> ModelConfig:
+        """include this fixture to get a models config"""
         pass
 
 
 class ModelFixtureMixin(metaclass=abc.ABCMeta):
-    """Mix this in with another AbstractResourcePath testing class to include the model and model_class fixtures"""
+    """Include this mixin if you would like to have the model fixture"""
+
+    @abc.abstractmethod
+    @pytest.fixture(scope="class", autouse=True)
+    def uninitialized_model(self, **kwargs) -> nn.Module:
+        pass
 
     @pytest.fixture(scope="class", autouse=True)
-    def model(
-        self, resource_path: str, config: ModelConfig, model_class: Type[nn.Module]
-    ) -> nn.Module:
-        """
-        get the model stored in the test case directory
+    def model(self, uninitialized_model: nn.Module):
+        """include this fixture to get a model"""
+        torch.random.manual_seed(5)
+        sd = uninitialized_model.state_dict()
+        params = sorted(sd.keys())
+        for key in params:
+            parameter = sd[key]
+            values = torch.randn_like(parameter)
+            values -= 0.5
+            values /= 20.0
+            parameter.copy_(values)
+        return uninitialized_model
 
-        Parameters
-        ----------
-        resource_path: str
-            path to the specific test case directory specified in resource_path fixture
-        config: ModelConfig
-            the model config associated with this test case
-        model_class: Type[nn.Module]
-            the model class type
 
-        Returns
-        -------
-        nn.Module
-            the model from the test case directory to be tested
-        """
-        model = model_class(config)
+class SignatureFixtureMixin(metaclass=abc.ABCMeta):
+    """Include this mixin if you would like to get the signature fixture for a given model test"""
+
+    @pytest.fixture(scope="class", autouse=True)
+    def signature(self, **kwargs) -> List[float]:
+        """include this fixture to get a models signature (defaults to what is in tests/resources/expectations)"""
+        return self._signature()
+
+    def _signature(self) -> List[float]:
+        import inspect
+
         try:
-            model.load_state_dict(
-                torch.load(os.path.join(resource_path, "model_state.pth"))
+            config_file = open(
+                os.path.join(
+                    os.path.dirname(inspect.getfile(self.__class__)),
+                    "..",
+                    "resources",
+                    "expectations",
+                    f"test_model_output-{self.__class__.__module__}.{self.__class__.__name__}",
+                )
             )
-        except RuntimeError:
-            raise RuntimeError(_FAILED_MODEL_WEIGHTS_LOAD_MSG)
-        return model
-
-    @pytest.fixture(scope="class", autouse=True)
-    def model_class(self) -> Type[nn.Module]:
-        """
-        Returns
-        -------
-        Type[nn.Module]
-            the model class type which will be tested
-        """
-        return self._model_class
-
-    @property
-    @abc.abstractmethod
-    def _model_class(self) -> Type[nn.Module]:
-        """
-        Returns
-        -------
-        Type[nn.Module]
-            the model class type which will be tested
-        """
-        pass
-
-    @property
-    @abc.abstractmethod
-    def _forward_parameters(self) -> int:
-        """get the number of parameters required to run a forward pass
-
-        Note: In most cases with FMS models:
-        decoder-only - 1
-        encoder-only - 1
-        encoder-decoder - 2
-
-        Returns
-        -------
-        int
-            the number of parameters required to run a forward pass.
-        """
-        pass
+            line = config_file.readline()
+            return [float(v) for v in line.split(",")]
+        except FileNotFoundError:
+            print(
+                "Signature failed to load, please re-run the tests with --capture_expectation"
+            )
 
 
-class ModelConfigTestSuite(AbstractResourcePath, ConfigFixtureMixin, ModelFixtureMixin):
+class ModelConfigTestSuite(ConfigFixtureMixin, ModelFixtureMixin):
     """
     This is a test suite which will test ModelConfigs and how they interact with the specific Model Architecture
 
@@ -181,8 +103,6 @@ class ModelConfigTestSuite(AbstractResourcePath, ConfigFixtureMixin, ModelFixtur
     - test model construction with just arguments constructs the proper configuration
     - test model construction via a configuration
     """
-
-    # common tests
 
     def test_config_round_trip(self, config):
         """Test that the config can save and load properly without serialization/deserialization issues"""
@@ -209,32 +129,41 @@ class ModelConfigTestSuite(AbstractResourcePath, ConfigFixtureMixin, ModelFixtur
         assert model.get_config().as_dict() == config.as_dict()
 
 
-class ModelConsistencyTestSuite(
-    AbstractResourcePath, ConfigFixtureMixin, ModelFixtureMixin
-):
-    """All tests related to model consistency will be part of this mixin"""
+class ModelConsistencyTestSuite(ModelFixtureMixin, SignatureFixtureMixin):
+    """All tests related to model consistency will be part of this test suite"""
 
-    @pytest.fixture(scope="class", autouse=True)
-    def signature(self, resource_path) -> List[float]:
-        """retrieve the signature from the test case directory
-
-        Parameters
-        ----------
-        resource_path: str
-            path to the specific test case directory specified in resource_path fixture
+    @property
+    @abc.abstractmethod
+    def _get_signature_params(self) -> Union[int, List[str]]:
+        """the value to pass into params in get_signature function for this model
 
         Returns
         -------
-        List[float]
-            the signature stored in the test case directory that was created when generate_small_model_tests was called
-            for this specific test model
+        Union[int, List[str]]
+            the params to set to the default tensor value (inp) in get_signature. If an integer, will use *args, if a
+            list, will use **kwargs
         """
-        return torch.load(os.path.join(resource_path, "signature.pth"))
+        pass
 
-    def test_model_output(self, model, signature):
+    def test_model_output(self, model, signature, capture_expectation):
         """test consistency of model output with signature"""
 
-        actual = get_signature(model, params=self._forward_parameters)
+        actual = get_signature(model, params=self._get_signature_params)
+
+        if capture_expectation:
+            import inspect
+
+            to_write = os.path.join(
+                os.path.dirname(inspect.getfile(self.__class__)),
+                "..",
+                "resources",
+                "expectations",
+                f"test_model_output-{self.__class__.__module__}.{self.__class__.__name__}",
+            )
+            with open(to_write, "w") as signature_file:
+                signature_file.write(",".join(map(str, actual)))
+            signature_file.close()
+
         assert np.allclose(
             np.array(actual), np.array(signature)
         ), _FAILED_MODEL_SIGNATURE_OUTPUT_MSG

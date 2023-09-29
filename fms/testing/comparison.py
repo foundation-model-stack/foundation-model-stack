@@ -1,21 +1,8 @@
-import dataclasses
 import inspect
-from typing import Callable, Dict, List, Optional, Union
+from typing import Callable, List, Optional, Union
 
-import numpy as np
 import torch
 import torch.nn as nn
-
-
-@dataclasses.dataclass
-class ModelSignatureParams:
-    """Model Signature params dataclass for readability"""
-
-    model: nn.Module
-    params: Union[int, List[str]]
-    other_params: Optional[Dict] = None
-    logits_getter_fn: Optional[Callable] = None
-    inp: Optional[torch.LongTensor] = None
 
 
 def get_signature(
@@ -36,7 +23,7 @@ def get_signature(
     model: nn.Module
         the model to use to produce a signature
     params: int or list(str), optional
-        the params to set to the default tensor value (inp). If an integer, will use *args, if a dict, will use **kwargs (default is 1)
+        the params to set to the default tensor value (inp). If an integer, will use *args, if a list, will use **kwargs (default is 1)
     inp: torch.LongTensor, optional
         the input to use for params. If not given, torch.arange(0, 16).unsqueeze(0) will be used. (default is None)
     optional_params: dict, optional
@@ -102,42 +89,3 @@ def get_signature(
 
     s = p.max(2)[0] - p.min(2)[0]
     return (s.squeeze() - s.min()).tolist()
-
-
-def compare_model_signatures(
-    model_params_1: ModelSignatureParams,
-    model_params_2: ModelSignatureParams,
-    atol: float = 1e-3,
-):
-    """This utility function will compare the signature between 2 models using np.allclose
-
-    Parameters
-    ----------
-
-    model_params_1: ModelSignatureParam
-        set of params to generate first signature
-
-    model_params_2: ModelSignatureParam
-        set of params to generate second signature
-
-    atol: float, optional
-        The absolute tolerance (default is 1e-3)
-    """
-    model_params_1.model.eval()
-    model_params_2.model.eval()
-    signature = get_signature(
-        model_params_1.model,
-        params=model_params_1.params,
-        optional_params=model_params_1.other_params,
-        logits_getter_fn=model_params_1.logits_getter_fn,
-    )
-    signature2 = get_signature(
-        model_params_2.model,
-        params=model_params_2.params,
-        optional_params=model_params_2.other_params,
-        logits_getter_fn=model_params_2.logits_getter_fn,
-    )
-
-    signature = np.array(signature)
-    signature2 = np.array(signature2)
-    assert np.allclose(signature, signature2, atol=atol)
