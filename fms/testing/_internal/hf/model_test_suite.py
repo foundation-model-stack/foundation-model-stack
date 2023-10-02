@@ -77,7 +77,13 @@ class HFConfigTestSuite(ConfigFixtureMixin, HFConfigFixtureMixin):
     @property
     @abc.abstractmethod
     def _hf_specific_params(self) -> List[str]:
-        return []
+        """
+        Returns
+        -------
+        List[str]
+            a list of all parameters that are exclusive to HF (not part of FMS)
+        """
+        pass
 
     def test_hf_config_from_fms_config(
         self, config: ModelConfig, fms_hf_config: PretrainedConfig
