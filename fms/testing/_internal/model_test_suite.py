@@ -1,5 +1,6 @@
 import abc
 import os
+import platform
 import tempfile
 from typing import List, Union
 
@@ -171,6 +172,17 @@ class ModelConsistencyTestSuite(ModelFixtureMixin, SignatureFixtureMixin):
                 "Signature file has been saved, please re-run the tests without --capture_expectation"
             )
 
+        assert np.allclose(
+            np.array(actual), np.array(signature)
+        ), _FAILED_MODEL_SIGNATURE_OUTPUT_MSG
+
+    @pytest.mark.skipif(
+        platform.system() != "Linux",
+        reason=f"pytorch compile is stable on Linux, skipping as current platform is {platform.platform()}",
+    )
+    def test_model_compile_output(self, model, signature):
+        compiled_model = torch.compile(model)
+        actual = get_signature(compiled_model, params=self._get_signature_params)
         assert np.allclose(
             np.array(actual), np.array(signature)
         ), _FAILED_MODEL_SIGNATURE_OUTPUT_MSG
