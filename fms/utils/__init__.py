@@ -73,6 +73,10 @@ from torch.distributed import ProcessGroup
 
 
 def print0(*args, group: ProcessGroup = None):
+    """
+    Print *args to stdout on rank 0 of the default process group, or an
+    optionally specified process group.
+    """
     if group is not None:
         rank = group.rank()
     else:
@@ -82,6 +86,9 @@ def print0(*args, group: ProcessGroup = None):
 
 
 def has_package(name):
+    """
+    Checks if a package is installed and available.
+    """
     try:
         __import__(name)
     except ImportError:
