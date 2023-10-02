@@ -4,6 +4,8 @@ from typing import List, Union
 import torch
 import torch.nn.functional as F
 
+from fms import utils
+
 
 # constants for common tokenizers
 
@@ -12,17 +14,8 @@ gpt_neox_20b = "EleutherAI/gpt-neox-20b"
 gpt_neox_125m = "EleutherAI/gpt-neox-125M"
 
 
-def has_package(name):
-    try:
-        __import__(name)
-    except ImportError:
-        return False
-    else:
-        return True
-
-
-_has_hf = has_package("transformers")
-_has_sp = has_package("sentencepiece")
+_has_hf = utils.has_package("transformers")
+_has_sp = utils.has_package("sentencepiece")
 
 
 class BaseTokenizer:
@@ -44,7 +37,7 @@ class BaseTokenizer:
     def convert_tokens_to_string(self, tokens: list[str]):
         raise NotImplementedError
 
-    def vocab_size(self):
+    def vocab_size(self) -> int:
         raise NotImplementedError
 
 
