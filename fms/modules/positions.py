@@ -126,7 +126,6 @@ class RotaryEmbedding(PositionEncoder):
         self.max_seq_len_cached = {}
         self.ntk_scaling = ntk_scaling
         self.max_seq_len = max_seq_len
-        self.compute_freqs_cis(torch.device("cpu"), max_seq_len)
 
     def _alpha(self, seq_len) -> int:
         if not self.ntk_scaling:
@@ -178,7 +177,6 @@ class RotaryEmbedding(PositionEncoder):
             ratio
             ** (torch.arange(0, dim, 2, device=device)[: (dim // 2)].float() / dim)
         )
-        self.freqs = freqs
 
         t = torch.arange(max_seq_len, device=device, dtype=freqs.dtype)
         freqs = torch.outer(t, freqs).float()
