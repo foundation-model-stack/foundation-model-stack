@@ -143,6 +143,7 @@ class TestLLaMA2HF(
     - model equivalency tests
     - model generation tests
     """
+
     # implementation of abstract property _hf_specific_params
     _hf_specific_params = ["eos_token_id", "bos_token_id"]
     # implementation of abstract property _get_hf_signature_params
@@ -161,6 +162,7 @@ class TestLLaMA2GQAHF(
     - model equivalency tests
     - model generation tests
     """
+
     # implementation of abstract property _hf_specific_params
     _hf_specific_params = ["eos_token_id", "bos_token_id"]
     # implementation of abstract property _get_hf_signature_params
