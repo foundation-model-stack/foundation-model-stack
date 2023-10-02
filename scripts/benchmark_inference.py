@@ -8,7 +8,7 @@ import torch
 from torch import distributed as dist
 
 from fms.models.llama import load_fms_llama
-from fms.utils import generation
+from fms.utils import generation, print0
 
 
 # Example running llama 7B on one A100:
@@ -88,12 +88,6 @@ BATCH_SIZE = args.batch_size
 ids = torch.randint(
     tokenizer.vocab_size(), (BATCH_SIZE, SEQ_LEN), device=device, dtype=torch.long
 )
-
-
-def print0(*args):
-    if local_rank == 0:
-        print(*args)
-
 
 # This first forward call generates the cache for use in cases where
 # `use_cache=True`.

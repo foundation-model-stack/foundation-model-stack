@@ -65,3 +65,26 @@ def activation_to_str(activation: Union[Type[nn.Module], nn.Module]) -> str:
             f"activation module or activation module type must be one of {__CLS_2_ACT.keys()}"
         )
     return __CLS_2_ACT[activation]
+
+
+import os
+
+from torch.distributed import ProcessGroup
+
+
+def print0(*args, group: ProcessGroup = None):
+    if group is not None:
+        rank = group.rank()
+    else:
+        rank = os.environ.get("LOCAL_RANK", os.environ.get("RANK", 0))
+    if rank == 0:
+        print(*args)
+
+
+def has_package(name):
+    try:
+        __import__(name)
+    except ImportError:
+        return False
+    else:
+        return True
