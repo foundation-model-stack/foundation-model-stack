@@ -1174,6 +1174,12 @@ class HFDecoderModelArchitecture(HFModelArchitecture):
         **kwargs,
     ):
         """handles caching logic required for generation input and calls its base classes method of the same name"""
+
+        # labels is a special parameter which is used for computing loss, and should not be part of generation
+        # so remove it
+        if "labels" in kwargs:
+            kwargs.pop("labels")
+
         token_type_ids = kwargs.get("token_type_ids", None)
         # only last token for inputs_ids if past is defined in kwargs
         if past_key_values:
@@ -1798,6 +1804,12 @@ class HFEncoderDecoderModelArchitecture(
         **kwargs,
     ):
         """includes more parameters required for forward and calls its base classes method of the same name"""
+
+        # labels is a special parameter which is used for computing loss, and should not be part of generation
+        # so remove it
+        if "labels" in kwargs:
+            kwargs.pop("labels")
+
         if past_key_values is not None:
             decoder_input_ids = decoder_input_ids[:, -1:]
         use_cache = use_cache if use_cache is not None else self.config.use_cache
