@@ -138,7 +138,7 @@ class TestLLaMA2HF(
 ):
     # implementation of abstract property _hf_specific_params
     _hf_specific_params = ["eos_token_id", "bos_token_id"]
-    # imlementation of abstract property _get_hf_signature_params
+    # implementation of abstract property _get_hf_signature_params
     _get_hf_signature_params = ["input_ids", "labels"]
 
 
@@ -150,5 +150,5 @@ class TestLLaMA2GQAHF(
 ):
     # implementation of abstract property _hf_specific_params
     _hf_specific_params = ["eos_token_id", "bos_token_id"]
-    # imlementation of abstract property _get_hf_signature_params
+    # implementation of abstract property _get_hf_signature_params
     _get_hf_signature_params = ["input_ids", "labels"]
