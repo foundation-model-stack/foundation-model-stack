@@ -44,7 +44,7 @@ class LLaMA2HFFixtures(ModelFixtureMixin, HFConfigFixtureMixin, HFModelFixtureMi
         )
 
     @pytest.fixture(scope="class", autouse=True)
-    def oss_hf_model(self, fms_hf_model: LLaMAHFConfig) -> PreTrainedModel:
+    def oss_hf_model(self, fms_hf_model: LLaMAHFForCausalLM) -> PreTrainedModel:
         hf_config = fms_hf_model.config
         oss_hf_model = LlamaForCausalLM(
             LlamaConfig(
