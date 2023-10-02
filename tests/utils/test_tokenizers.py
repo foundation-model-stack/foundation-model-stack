@@ -1,5 +1,5 @@
 from fms.utils.tokenizers import get_tokenizer
-
+import pytest
 
 def test_hf_compat():
     try:
@@ -40,3 +40,10 @@ def test_char_tokenizer():
         111,
     ]
     assert char_tokenizer.convert_tokens_to_string(["h", "e", "l", "l", "o"]) == "hello"
+
+def test_out_of_rank_ascii():
+    char_tokenizer = get_tokenizer("char_tokenizer")
+    tokens = char_tokenizer.convert_tokens_to_ids(['你', '好'])
+    # characters out of ascii range are mapped to zero (null)
+    assert tokens[0] == 0
+    assert tokens[1] == 0
