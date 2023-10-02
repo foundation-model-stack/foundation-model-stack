@@ -136,6 +136,13 @@ class TestLLaMA2HF(
     LLaMA2Fixtures,
     LLaMA2HFFixtures,
 ):
+    """
+    LLaMA2 FMS Huggingface Tests for:
+
+    - FMS Huggingface configuration tests
+    - model equivalency tests
+    - model generation tests
+    """
     # implementation of abstract property _hf_specific_params
     _hf_specific_params = ["eos_token_id", "bos_token_id"]
     # implementation of abstract property _get_hf_signature_params
@@ -148,6 +155,12 @@ class TestLLaMA2GQAHF(
     LLaMA2GQAFixtures,
     LLaMA2HFFixtures,
 ):
+    """
+    LLaMA2-GQA FMS Huggingface Tests for:
+
+    - model equivalency tests
+    - model generation tests
+    """
     # implementation of abstract property _hf_specific_params
     _hf_specific_params = ["eos_token_id", "bos_token_id"]
     # implementation of abstract property _get_hf_signature_params
