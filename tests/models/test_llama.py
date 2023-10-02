@@ -64,13 +64,12 @@ class TestLlama2(ModelConfigTestSuite, ModelConsistencyTestSuite, LLaMA2Fixtures
         assert model.get_config().as_dict() == config.as_dict()
 
 
-class TestLlama2GQA(ModelConsistencyTestSuite):
+class LLaMA2GQAFixtures(ModelFixtureMixin):
     """
-    Test LLaMA2-GQA model consistency
-    """
+    Base LLaMA 2 Fixtures that can be re-used for other purposes
 
-    # x is the main parameter for this model which is the input tensor
-    _get_signature_params = ["x"]
+    This will include the config and model signatures
+    """
 
     @pytest.fixture(scope="class", autouse=True)
     def uninitialized_model(self):
@@ -89,3 +88,12 @@ class TestLlama2GQA(ModelConsistencyTestSuite):
             max_expected_seq_len=4096,
             ntk_scaling=False,
         )
+
+
+class TestLlama2GQA(ModelConsistencyTestSuite, LLaMA2GQAFixtures):
+    """
+    Test LLaMA2-GQA model consistency
+    """
+
+    # x is the main parameter for this model which is the input tensor
+    _get_signature_params = ["x"]
