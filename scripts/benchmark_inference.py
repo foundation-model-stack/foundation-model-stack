@@ -1,12 +1,14 @@
 import argparse
 import os
 import statistics
+import time
 import timeit
 
 import torch
 from torch import distributed as dist
 
 from fms.models.llama import load_fms_llama
+from fms.utils import generation
 
 
 # Example running llama 7B on one A100:
@@ -77,6 +79,7 @@ if args.distributed:
 print("loading model")
 model, tokenizer = load_fms_llama(args.model_path, args.tokenizer)
 model.eval()
+torch.set_grad_enabled(False)
 print("loading complete on rank", local_rank)
 
 SEQ_LEN = args.seq_len
@@ -85,6 +88,12 @@ BATCH_SIZE = args.batch_size
 ids = torch.randint(
     tokenizer.vocab_size(), (BATCH_SIZE, SEQ_LEN), device=device, dtype=torch.long
 )
+
+
+def print0(*args):
+    if local_rank == 0:
+        print(*args)
+
 
 # This first forward call generates the cache for use in cases where
 # `use_cache=True`.
@@ -99,7 +108,23 @@ ids = torch.randint(
 logits, cache = model.forward(ids, use_cache=True)
 logits = logits[:, -1, :]
 next_val = torch.argmax(logits, dim=-1).unsqueeze(0).t()
-result = torch.cat((ids[:, 1:], next_val), dim=-1)
+next_input = torch.cat((ids, next_val), dim=-1)
+
+# not still needed
+del logits
+
+expected, _ = model.forward(
+    next_val, past_key_value_states=cache, use_cache=True, only_last_token=True
+)
+expected = torch.argmax(expected, dim=-1)
+
+expected2 = model.forward(next_input, only_last_token=True)
+expected2 = torch.argmax(expected2, dim=-1)
+
+torch.testing.assert_close(expected, expected2)
+
+iters = 25
+repeat = 3
 
 
 # The function we're measuring, with or without caching.
@@ -112,14 +137,31 @@ result = torch.cat((ids[:, 1:], next_val), dim=-1)
 # in isolation in a way that's easier to compare, and avoids including the cost
 # of the concatenation operation.
 def one_token(m, use_cache):
-    with torch.no_grad():
-        if use_cache:
-            return m.forward(next_val, past_key_value_states=cache, use_cache=True)
-        else:
-            return m.forward(result)
+    if use_cache:
+        actual, _ = m.forward(
+            next_val, past_key_value_states=cache, use_cache=True, only_last_token=True
+        )
+        actual = torch.argmax(actual, dim=-1)
+        if local_rank == 0:
+            torch.testing.assert_close(actual, expected)
+    else:
+        actual = m.forward(next_input, only_last_token=True)
+        actual = torch.argmax(actual, dim=-1)
+        if local_rank == 0:
+            torch.testing.assert_close(actual, expected)
 
 
-iters = 100
+def end_to_end(model, use_cache, expected=None):
+    result = generation.generate(
+        model, ids, max_new_tokens=iters, do_sample=False, use_cache=use_cache
+    )
+    if local_rank == 0:
+        assert (
+            result.size()[-1] == SEQ_LEN + iters
+        ), f"{result.size()}, {SEQ_LEN}, {iters}"
+    if expected is not None:
+        torch.testing.assert_close(result, expected)
+    return result
 
 
 def log_result(result):
@@ -130,27 +172,51 @@ def log_result(result):
         print(f"\t{ms:0.2f} ms per token")
 
 
-def print0(*args):
-    if local_rank == 0:
-        print(*args)
+def bench_one(use_cache):
+    print0(f"- with use_cache={use_cache}")
+    log_result(
+        timeit.repeat(lambda: one_token(model, use_cache), number=iters, repeat=repeat)
+    )
+
+
+def bench_end_to_end(use_cache):
+    e2e_expected = end_to_end(model, use_cache)
+    print0(f"- with use_cache={use_cache}")
+    result = timeit.repeat(
+        lambda: end_to_end(model, use_cache, e2e_expected), number=1, repeat=repeat
+    )
+    log_result(result)
 
 
 print0("Uncompiled results:")
-print0("- with use_cache=True, excluding first call")
-log_result(timeit.repeat(lambda: one_token(model, True), number=iters))
-print0("- without cache")
-log_result(timeit.repeat(lambda: one_token(model, False), number=iters))
+
+bench_one(True)
+bench_one(False)
+
+print0("End-to-end sequence generation")
+bench_end_to_end(True)
+bench_end_to_end(False)
 
 print0("Compiling model...")
+
+# Ideally this should be:
+# model = torch.compile(model, mode="reduce-overhead", dynamic=True)
 model = torch.compile(model)
 
-# compiling can make first inference pass slow. warmup:
+# Warmup. Especially with torch.compile, first inference pass can be slow.
 one_token(model, True)
 one_token(model, False)
 
-print0()
 print0("Compiled results:")
-print0("- with use_cache=True, excluding first call")
-log_result(timeit.repeat(lambda: one_token(model, True), number=iters))
-print0("- without cache")
-log_result(timeit.repeat(lambda: one_token(model, False), number=iters))
+
+# These get much better results with mode='reduce-overhead' but can lead to
+# some memory issues
+bench_one(True)
+bench_one(False)
+
+# Each new token changes the sequence length, leading to "guard failures,"
+# making this slow. This should be improved with `dynamic=True`
+# print0()
+# print0("(Compiled) End-to-end sequence generation")
+# bench_end_to_end(True)
+# bench_end_to_end(False)
