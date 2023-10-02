@@ -57,7 +57,7 @@ class CharTokenizer(BaseTokenizer):
         return [chr(i) for i in ids]
 
     def convert_tokens_to_ids(self, tokens: list[str]):
-        return [ord(t) for t in tokens]
+        return [ord(t) if ord(t) < 256 else 0 for t in tokens]
 
     def convert_tokens_to_string(self, tokens: list[str]):
         return "".join(tokens)
