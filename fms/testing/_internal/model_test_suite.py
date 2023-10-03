@@ -35,6 +35,10 @@ Failed consistency of model weights. This is most likely due to:
 If either (1) or (2) was done purposely, please re-run this test with --capture_expectation
 """
 
+_FAILED_MODEL_COMPILE_EQUIVALENCY = """
+Model signature before compile does not match model signature after compile 
+"""
+
 
 class ConfigFixtureMixin(metaclass=abc.ABCMeta):
     """Include this mixin if you would like to have the config fixture"""
@@ -181,11 +185,12 @@ class ModelConsistencyTestSuite(ModelFixtureMixin, SignatureFixtureMixin):
         reason=f"pytorch compile is stable on Linux, skipping as current platform is {platform.platform()}",
     )
     def test_model_compile_output(self, model, signature):
+        expected = get_signature(model, params=self._get_signature_params)
         compiled_model = torch.compile(model)
         actual = get_signature(compiled_model, params=self._get_signature_params)
         assert np.allclose(
-            np.array(actual), np.array(signature)
-        ), _FAILED_MODEL_SIGNATURE_OUTPUT_MSG
+            np.array(actual), np.array(expected)
+        ), _FAILED_MODEL_COMPILE_EQUIVALENCY
 
     def test_model_weight_keys(self, model, capture_expectation):
         import inspect
