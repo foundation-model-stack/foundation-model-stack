@@ -1,3 +1,5 @@
+import platform
+
 import numpy as np
 import torch
 from fms.testing._internal.model_test_suite import ConfigFixtureMixin, ModelFixtureMixin
@@ -198,6 +200,21 @@ class HFModelEquivalenceTestSuite(HFConfigFixtureMixin, HFModelFixtureMixin):
             HFModelSignatureParams(fms_hf_model, self._get_hf_signature_params),
             HFModelSignatureParams(fms_hf_model_loaded, self._get_hf_signature_params),
         )
+
+    @pytest.mark.skipif(
+        platform.system() != "Linux",
+        reason=f"pytorch compile is stable on Linux, skipping as current platform is {platform.platform()}",
+    )
+    def test_hf_model_compile_output(self, fms_hf_model):
+        """Test that an hf adapted FMS model's signature output stays the same while compiled or not compiled"""
+        fms_hf_signature_params = HFModelSignatureParams(
+            fms_hf_model, self._get_hf_signature_params
+        )
+        compiled_fms_hf_model = torch.compile(fms_hf_model)
+        compiled_fms_hf_signature_params = HFModelSignatureParams(
+            compiled_fms_hf_model, self._get_hf_signature_params
+        )
+        compare_model_signatures(fms_hf_signature_params, compiled_fms_hf_signature_params)
 
 
 class HFModelGenerationTestSuite(HFConfigFixtureMixin, HFModelFixtureMixin):

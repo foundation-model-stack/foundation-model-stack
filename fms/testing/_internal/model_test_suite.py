@@ -185,6 +185,7 @@ class ModelConsistencyTestSuite(ModelFixtureMixin, SignatureFixtureMixin):
         reason=f"pytorch compile is stable on Linux, skipping as current platform is {platform.platform()}",
     )
     def test_model_compile_output(self, model, signature):
+        """Test that an FMS model's signature output stays the same while compiled or not compiled"""
         expected = get_signature(model, params=self._get_signature_params)
         compiled_model = torch.compile(model)
         actual = get_signature(compiled_model, params=self._get_signature_params)
