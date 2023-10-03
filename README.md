@@ -30,6 +30,20 @@ The figure below shows the latency improvements as we move from eager mode execu
 
 ![image (21)](https://github.com/ibm-pytorch/foundation-model-stack/assets/8322403/3d9c6a0f-c3ef-454b-806c-271f352afa4d)
 
+## HF Model Support
+
+```python
+# fms model
+llama: LLaMA = LLaMA(config)
+
+# huggingface model backed by fms internals
+llama_hf = LLaMAHFForCausalLM.from_fms_model(llama)
+
+# generate some text
+llama_generator = pipeline(task="text-generation", model=llama_hf, tokenizer=tokenizer)
+llama_generator("""q: how are you? a: I am good. How about you? q: What is the weather like today? a:""")
+```
+
 
 Tensor parallel inference numbers for 13B and 70B models are **coming soon**!
 
