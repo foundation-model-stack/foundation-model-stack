@@ -214,7 +214,9 @@ class HFModelEquivalenceTestSuite(HFConfigFixtureMixin, HFModelFixtureMixin):
         compiled_fms_hf_signature_params = HFModelSignatureParams(
             compiled_fms_hf_model, self._get_hf_signature_params
         )
-        compare_model_signatures(fms_hf_signature_params, compiled_fms_hf_signature_params)
+        compare_model_signatures(
+            fms_hf_signature_params, compiled_fms_hf_signature_params
+        )
 
 
 class HFModelGenerationTestSuite(HFConfigFixtureMixin, HFModelFixtureMixin):
