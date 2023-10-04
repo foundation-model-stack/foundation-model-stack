@@ -7,7 +7,7 @@ Foundation Model Stack is a collection of components for development, inference,
 
 ## Installation
 
-Requires [PyTorch nightlies](https://pytorch.org/get-started/locally/).
+Requires [PyTorch >= 2.1](https://pytorch.org/get-started/locally/).
 
 ```
 pip install -e .
