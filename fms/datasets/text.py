@@ -11,6 +11,7 @@ class FromString(Dataset):
     A pad token if specified, is used only on the final row. i.e.
     `pad_token=None` is similar to drop_last in DataLoader.
     """
+
     def __init__(
         self,
         text: str,
@@ -18,7 +19,7 @@ class FromString(Dataset):
         seq_len: int = 1024,
         pad_token: str = None,
         device: torch.device = "cpu",
-        ignore_index: int = -100
+        ignore_index: int = -100,
     ):
         tokens = tokenizer.tokenize(text)
         ids = tokenizer.convert_tokens_to_ids(tokens)

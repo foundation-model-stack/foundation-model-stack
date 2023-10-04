@@ -5,7 +5,7 @@ from fms.utils import tokenizers
 import json
 import os
 
-_instruction_template="""Below is an instruction that describes a task, paired with an input that provides further context. Write a response that appropriately completes the request.
+_instruction_template = """Below is an instruction that describes a task, paired with an input that provides further context. Write a response that appropriately completes the request.
 
 ### Instruction:
 {instruction}
@@ -33,9 +33,19 @@ class JsonInstructions(Dataset):
     This is the same format as used in the Alpaca dataset:
     https://github.com/tatsu-lab/stanford_alpaca/blob/main/alpaca_data.json
     """
-    def __init__(self, file: str, tokenizer: tokenizers.BaseTokenizer, device='cpu', max_len:int=1024, bos_tok_id=None, eos_tok_id=None, ignore_index=-100):
+
+    def __init__(
+        self,
+        file: str,
+        tokenizer: tokenizers.BaseTokenizer,
+        device="cpu",
+        max_len: int = 1024,
+        bos_tok_id=None,
+        eos_tok_id=None,
+        ignore_index=-100,
+    ):
         self.tokenizer = tokenizer
-        self.ignore_index=ignore_index
+        self.ignore_index = ignore_index
         self.max_len = max_len
         self.device = device
         self.bos_token_id = bos_tok_id
@@ -44,7 +54,7 @@ class JsonInstructions(Dataset):
         with open(file, "r", encoding="utf-8") as reader:
             text = reader.read()
             self.instructions = json.loads(text)
- 
+
     def __len__(self):
         return len(self.instructions)
 
@@ -55,14 +65,13 @@ class JsonInstructions(Dataset):
             prompt = _instruction_nocontext_template.format_map(instruction)
         return prompt
 
-
     def __getitem__(self, index):
         instruction = self.instructions[index]
         prompt = self.make_prompt(instruction)
         prompt = self.tokenizer.tokenize(prompt)
         prompt = self.tokenizer.convert_tokens_to_ids(prompt)
 
-        response = instruction['output']
+        response = instruction["output"]
         response = self.tokenizer.tokenize(response)
         response = self.tokenizer.convert_tokens_to_ids(response)
 
@@ -79,10 +88,10 @@ class JsonInstructions(Dataset):
         input = example[:-1]
 
         label = example[1:].clone()
-        label[:len(prompt)] = self.ignore_index
+        label[: len(prompt)] = self.ignore_index
 
         if input.shape[0] > self.max_len:
-            input = input[-self.max_len:]
-            label = input[-self.max_len:]
+            input = input[-self.max_len :]
+            label = input[-self.max_len :]
 
         return input, label
