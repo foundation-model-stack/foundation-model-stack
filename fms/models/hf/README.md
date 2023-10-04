@@ -73,7 +73,7 @@ def decoder_forward(model: Transformer, tokens: torch.Tensor, start_pos: int):
 
 class LlamaDecoder(HFDecoder):
 
-    def __init__(self, model: nn.Module, config: PretrainedConfig):
+    def __init__(self, model: nn.Module, config: LlamaConfig):
         super().__init__(model, config)
 
     def _adapt(
