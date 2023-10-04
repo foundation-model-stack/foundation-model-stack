@@ -167,3 +167,7 @@ with torch.no_grad():
     )
     print(generator_hf(prompt))
 ```
+
+## Future Tasks
+
+- Automatic on-the-fly wrapping of a model with a single function (no implementation required)
