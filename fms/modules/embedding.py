@@ -118,15 +118,13 @@ class WordEmbedding(nn.Module):
                     pos = self.pos_id[:, : inp.size(1)]
                 else:
                     pos = pos_id
+
                 if self.padding_idx is not None:
                     is_pad = inp == self.padding_idx
-                    pos = pos.sub(is_pad.cumsum(1))
-                    pos = pos.clamp(
-                        min=0
-                    )  # In case of left-padding, prevent negative indices (get zeroed anyways)
-                    out = out.addcmul(self.pos_emb(pos), ~is_pad.unsqueeze(-1))
+                    pos_out = self.pos_emb(pos).mul(~is_pad.unsqueeze(-1))
                 else:
-                    out = out + self.pos_emb(pos)
+                    pos_out = self.pos_emb(pos)
+                out = out + pos_out
             return out
         else:
             if self.debug:

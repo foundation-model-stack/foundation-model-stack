@@ -21,8 +21,13 @@ def test_abs_pos_padding():
             x = list(range(L))
             x = x[:pad_id] + x[pad_id + 1 :]
             x_pad = x[:insert] + [pad_id] + x[insert:]
+            pos_id = torch.IntTensor(
+                list(range(insert)) + [0] + list(range(insert, L - 1))
+            )
             y = m(torch.IntTensor(x).unsqueeze(0)).flatten().tolist()
-            y_pad = m(torch.IntTensor(x_pad).unsqueeze(0)).flatten().tolist()
+            y_pad = (
+                m(torch.IntTensor(x_pad).unsqueeze(0), pos_id=pos_id).flatten().tolist()
+            )
             assert y_pad[insert] == 0, f"Output pad token {y_pad[i]} is non-zero"
             y_ = y_pad[:insert] + y_pad[insert + 1 :]
             for i in range(len(y)):

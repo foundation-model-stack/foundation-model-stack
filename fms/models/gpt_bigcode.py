@@ -181,6 +181,7 @@ class GPTBigCodeHeadless(nn.Module):
             klen += past_key_value_states[0][0].size(-2)
 
         # if mask is none, we need to compute mask
+        is_causal_mask = False
         if mask is None:
             if x is None:
                 raise ValueError("cannot create a mask when x is None")
@@ -193,6 +194,16 @@ class GPTBigCodeHeadless(nn.Module):
                 is_pad: torch.BoolTensor = x == pad_id
                 mask: torch.BoolTensor = is_pad.unsqueeze(-1) == is_pad.unsqueeze(-2)
                 mask = mask.tril(diagonal=0)
+        # if mask is none, we need to specify causal mask
+        # if mask is None:
+        #     # we are caching and can assume all 1s in the mask
+        #     if use_cache and klen != 1 and qlen == 1:
+        #         # b x h x qlen x kvlen
+        #         is_causal_mask = False
+        #     else:
+        #         is_causal_mask = True
+        # else:
+        #     is_causal_mask = False
 
         if x is not None:
             # if position ids is none, we assume this will be a range from 0:qlen then add the past klen => klen:qlen+klen
@@ -203,6 +214,10 @@ class GPTBigCodeHeadless(nn.Module):
                 position_ids = torch.arange(
                     0, qlen, dtype=torch.long, device=x.device
                 ).repeat(x.size(0), 1)
+                if self.config.pad_id is not None and self.config.pad_id >= 0:
+                    is_pad = x == self.config.pad_id
+                    position_ids = position_ids.sub(is_pad.cumsum(1))
+                    position_ids.masked_fill_(is_pad, 1)
                 if use_cache and past_key_value_states[0] is not None:
                     position_ids += past_key_value_states[0][0].shape[2]
             x = self.shared(x, pos_id=position_ids)
@@ -220,6 +235,7 @@ class GPTBigCodeHeadless(nn.Module):
             output = layer(
                 x=x,
                 mask=mask,
+                is_causal_mask=is_causal_mask,
                 past_key_value_state=past_key_value_states[i],
                 use_cache=use_cache,
                 attn_algorithm=attn_algorithm,
@@ -289,6 +305,7 @@ class GPTBigCode(nn.Module):
         inputs_embeds=None,
         past_key_value_states=None,
         use_cache=False,
+        attn_algorithm: Optional[str] = None,
     ):
         output, cache = self.base_model(
             x,
@@ -296,6 +313,7 @@ class GPTBigCode(nn.Module):
             inputs_embeds,
             past_key_value_states=past_key_value_states,
             use_cache=use_cache,
+            attn_algorithm=attn_algorithm,
         )
 
         preds = self.shared(output, reverse=True)
