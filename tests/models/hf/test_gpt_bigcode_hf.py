@@ -20,7 +20,7 @@ from fms.testing._internal.hf.model_test_suite import (
     HFModelGenerationTestSuite,
 )
 from fms.testing._internal.model_test_suite import ModelFixtureMixin
-from tests.models.test_gpt_bigcode import GPTBigCodeFixtures
+from ..test_gpt_bigcode import GPTBigCodeFixtures
 
 
 class GPTBigCodeHFFixtures(

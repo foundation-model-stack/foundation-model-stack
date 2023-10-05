@@ -101,7 +101,7 @@ class WordEmbedding(nn.Module):
         if self.padding_idx is not None:
             self.emb.weight.data[self.padding_idx].zero_()
 
-    def forward(self, inp, pos_id=None, reverse=False):
+    def forward(self, inp, pos_id=None, correct_pads=False, reverse=False):
         # If reverse is False, compute input embeddings. If reverse is True, compute output logits.
         # vocab_idx: b n d if reverse, else b n
         if not reverse:
@@ -119,11 +119,20 @@ class WordEmbedding(nn.Module):
                 else:
                     pos = pos_id
 
+                # if padding_idx exists we want to zero out the associated positions
                 if self.padding_idx is not None:
                     is_pad = inp == self.padding_idx
+                    # if correct_pads is true, rewind count for every pad token
+                    if correct_pads:
+                        pos = pos.sub(is_pad.cumsum(1))
+                        # In case of left-padding, prevent negative indices (get zeroed anyways)
+                        pos = pos.clamp(min=0)
+                    # zero out the associated position embeddings
                     pos_out = self.pos_emb(pos).mul(~is_pad.unsqueeze(-1))
                 else:
+                    # otherwise just look up the position embeddings
                     pos_out = self.pos_emb(pos)
+
                 out = out + pos_out
             return out
         else:

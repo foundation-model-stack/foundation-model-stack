@@ -211,16 +211,14 @@ class GPTBigCodeHeadless(nn.Module):
             # position_ids provided do not require any correction
             if position_ids is None:
                 # Compute position_ids based on cache config
-                position_ids = torch.arange(
+                pos_id = torch.arange(
                     0, qlen, dtype=torch.long, device=x.device
                 ).repeat(x.size(0), 1)
-                if self.config.pad_id is not None and self.config.pad_id >= 0:
-                    is_pad = x == self.config.pad_id
-                    position_ids = position_ids.sub(is_pad.cumsum(1))
-                    position_ids.masked_fill_(is_pad, 1)
                 if use_cache and past_key_value_states[0] is not None:
-                    position_ids += past_key_value_states[0][0].shape[2]
-            x = self.shared(x, pos_id=position_ids)
+                    pos_id += past_key_value_states[0][0].shape[2]
+            else:
+                pos_id = position_ids
+            x = self.shared(x, pos_id=pos_id, correct_pads=position_ids is None)
         else:
             x = inputs_embeds
 
