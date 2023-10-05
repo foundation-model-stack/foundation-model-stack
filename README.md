@@ -7,7 +7,7 @@ Foundation Model Stack is a collection of components for development, inference,
 
 ## Installation
 
-Requires [PyTorch nightlies](https://pytorch.org/get-started/locally/).
+Requires [PyTorch >= 2.1](https://pytorch.org/get-started/locally/).
 
 ```
 pip install -e .
@@ -28,7 +28,7 @@ We initially provide a re-implementation of the LLaMA2 architecture. To enable t
 
 The figure below shows the latency improvements as we move from eager mode execution to adding SDPA, compile, and SDPA+Compile. The measurements are for 7 and 13B models.
 
-![image (21)](https://github.com/ibm-pytorch/foundation-model-stack/assets/8322403/3d9c6a0f-c3ef-454b-806c-271f352afa4d)
+![image (21)](static/optimizations.png)
 
 ## HF Model Support
 
