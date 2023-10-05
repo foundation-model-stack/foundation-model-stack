@@ -17,6 +17,7 @@ from fms.distributed.strategy import (
     TensorParallelStrategy,
     UniformModelParallelStrategy,
 )
+from fms import models
 from fms.modules.attention import MultiHeadAttention
 from fms.modules.embedding import WordEmbedding
 from fms.modules.feedforward import GatedLinearUnit
@@ -319,6 +320,44 @@ class LLaMA(nn.Module):
             return preds, cache
         else:
             return preds
+
+
+# Register common LLaMA variants with the model registration API
+
+# a micro llama model to use with a char-level tokenizer
+_micro_char_config = LLaMAConfig(
+    emb_dim=192, nheads=4, nlayers=5, max_expected_seq_len=1024, src_vocab_size=256
+)
+
+_7b_config = LLaMAConfig()
+_13b_config = LLaMAConfig(emb_dim=5120, nheads=40, nlayers=40)
+# todo: add 35B config
+
+_70b_config = LLaMAConfig(
+    emb_dim=8192,
+    multiple_of=4096,
+    nheads=64,
+    kvheads=8,
+    nlayers=80,
+    hidden_grow_factor=(1.3 * 8 / 3),
+)
+
+_architecture_name = "llama"
+
+
+def _llama_factory_factory(config):
+    def factory(**kwargs):
+        return LLaMA(config, **kwargs)
+
+    return factory
+
+
+models.register_model(
+    _architecture_name, "char_llama", _llama_factory_factory(_micro_char_config)
+)
+models.register_model(_architecture_name, "7b", _llama_factory_factory(_7b_config))
+models.register_model(_architecture_name, "13b", _llama_factory_factory(_13b_config))
+models.register_model(_architecture_name, "70b", _llama_factory_factory(_70b_config))
 
 
 def _rename_weights_to_fms(orig_sd):
