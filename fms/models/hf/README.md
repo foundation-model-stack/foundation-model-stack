@@ -2,43 +2,48 @@
 
 ## What is it?
 
-`HFModelArchitecture` is a set of base classes which provide huggingface functionality to pytorch-native modules. The benefits
+`HFModelArchitecture` is a set of base classes which provide huggingface functionality to pytorch-native modules. The  
+benefits
 you get from using this method are as follows:
 
 - more flexibility of implementation of your underlying pytorch native classes
-- seamless conversions from pytorch native modules to those using a huggingface API (no longer need to write long weight conversion scripts)
-- performance improvements built in lower level modules get propogated up to huggingface scripts
-- A simple interface to implement, which does not require underlying knowledge of the internals of huggingface utility interactions
-- Less code to maintain - these classes act as a wrapper, where very little actual logic exists in their end-user implementations
+- seamless conversions from pytorch native modules to those using a huggingface API (no longer need to write long weight  
+conversion scripts)
+- performance improvements built in lower level modules get propagated up to huggingface scripts
+- a simple interface to implement, which does not require underlying knowledge of the internals of huggingface utility  
+interactions
+- less code to maintain - these classes act as a wrapper, where very little actual logic exists in their end-user  
+implementations
 
 A `HFModelArchitecture` is composed of:
 
 - an embedding which is passed to its other modules if they require them
-- an optional head `lm_head` which will be executed if it exists, if it does not, the `lm_head` will be ignored and
+- an optional head `lm_head` which will be executed if it exists, if it does not, the `lm_head` will be ignored and  
 this will be considered a base model.
 
 There are 3 main implementations of `HFModelArchiture` which can be extended by a user:
 
-- `HFDecoderModelArchitecture` - provides the logic for a decoder model architecture (contains a decoder)
-- `HFEncoderModelArchitecture` - provides the logic for an encoder model architecture (contains an encoder)
-- `HFEncoderDecoderModelArchitecture` - provides the logic for an encoder-decoder model architecture (contains an encoder and a decoder)
+- `HFDecoderModelArchitecture` - abstract class to implement for an adapter of a decoder model architecture
+- `HFEncoderModelArchitecture` - abstract class to implement for an adapter of an encoder model architecture
+- `HFEncoderDecoderModelArchitecture` - abstract class to implement for an adapter of an encoder/decoder model  
+architecture
 
 In the majority of cases, users will be implementing one of the above 3 classes depending on their own model.
 
-Each one of the respective `HFModelArchitecture` above require the input of an `HFEncoder` or `HFDecoder` (or both).
+Each one of the respective `HFModelArchitecture` above require the input of an `HFEncoder` or `HFDecoder` (or both).  
 These classes serve as the mechanism to adapt your underlying models forward arguments to those of huggingface.
 
-Lastly, the above does not take into account implementations of lm heads and computation of loss, for this, we have a
-base utility class `LMHeadMixin`. When mixing in this class to any `HFModelArchitecture`, the implementation will now
+Lastly, the above does not take into account implementations of lm heads and computation of loss, for this, we have a  
+base utility class `LMHeadMixin`. When mixing in this class to any `HFModelArchitecture`, the implementation will now  
 take on that of the base class, plus some lm head. Current implementations of `LMHeadMixin` are as follows:
 
-- `LMHeadModel` - Provides a decoder model with a `language modeling` head
-- `ConditionalGeneration` - Provides an encoder-decoder model with a `language modeling` head
-- `SequenceClassification` - Provides a model with sequence classification/regression head
+- `LMHeadModel` - provides a decoder model with a `language modeling` head
+- `ConditionalGeneration` - provides an encoder-decoder model with a `language modeling` head
+- `SequenceClassification` - provides a model with sequence classification/regression head
 
 ## How to implement
 
-Implementation of an HFModelArchitecture takes a few steps, and is quite minimal. For this section, we will implement
+Implementation of an `HFModelArchitecture` takes a few steps, but is quite minimal. For this section, we will implement  
 Llama from https://github.com/facebookresearch/llama.
 
 ### Adapt your underlying model parameters
@@ -47,9 +52,9 @@ Because Llama is a decoder-only model, the underlying architecture requires only
 
 #### Creating an HFDecoder
 
-HFDecoder requires implementation of a single method `_adapt`. This method will take in all standard parameters from
-huggingface as well as any other parameters specified by the user which are non-standard, and return a huggingface
-dataclass. Because HFModelArchitecture completely decouples the encoders/decoders/lm_heads, this class will only
+HFDecoder requires implementation of a single method `_adapt`. This method will take in all standard parameters from  
+huggingface as well as any other parameters specified by the user which are non-standard, and return a huggingface  
+dataclass. Because HFModelArchitecture completely decouples the encoders/decoders/lm_heads, this class will only  
 focus on producing the output from the decoder. The following is an example using the Llama Transformer class:
 
 ```python
@@ -93,8 +98,8 @@ class LlamaDecoder(HFDecoder):
 
 #### Creating the base model
 
-Once you have implemented the `HFDecoder` for your specific model, it is time to implement your own
-HFModelArchitecture. For the current example, Llama, this will mean implementing the base class 
+Once you have implemented the `HFDecoder` for your specific model, it is time to implement your own  
+HFModelArchitecture. For the current example, Llama, this will mean implementing the base class  
 `HFDecoderModelArchitecture`.
 
 ```python
@@ -121,14 +126,15 @@ class Llama(HFDecoderModelArchitecture):
         super().__init__(LlamaDecoder(decoder, config), embedding, config, *args, **kwargs)
 ```
 
-This model can now be used as a base Huggingface Model without an LM head, but in many cases a user would like to add
+This model can now be used as a base Huggingface Model without an LM head, but in many cases a user would like to add  
 some lm head to this. For this you will use the lm_head_mixins
 
 #### Adding a head to your model
 
-In many cases, a user would like to have an lm head in their model. Adding an lm head will provide a useful mechanism for
-performing certain tasks such as text-generation or sequence-classification. All lm-heads can be easily added to these classes
-by extending the base model with an `LMHeadMixin`. The following is an example of adding a `language modeling` head for Llama:
+In many cases, a user would like to have an lm head in their model. Adding an lm head will provide a useful mechanism  
+for performing certain tasks such as text-generation or sequence-classification. All lm-heads can be easily added to  
+these classes by extending the base model with an `LMHeadMixin`. The following is an example of adding a  
+`language modeling` head for Llama:
 
 ```python
 class LlamaForCausalLM(LMHeadModelLMHeadMixin, Llama):
@@ -170,4 +176,4 @@ with torch.no_grad():
 
 ## Future Tasks
 
-- Automatic on-the-fly wrapping of a model with a single function (no implementation required)
+- automatic on-the-fly wrapping of a model with a single function (no implementation required)
