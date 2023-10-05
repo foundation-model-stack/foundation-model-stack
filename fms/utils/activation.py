@@ -3,11 +3,17 @@ from typing import Dict, Type, Union
 import torch.nn as nn
 
 
+class GELUTanh(nn.GELU):
+    def __init__(self):
+        super().__init__(approximate="tanh")
+
+
 """
 Simple dict which given an activation string, return an activation function class
 """
 __ACT_2_CLS: Dict[str, Type[nn.Module]] = {
     "gelu": nn.GELU,
+    "gelu-tanh": GELUTanh,
     "mish": nn.Mish,
     "relu": nn.ReLU,
     "sigmoid": nn.Sigmoid,

@@ -101,7 +101,7 @@ class WordEmbedding(nn.Module):
         if self.padding_idx is not None:
             self.emb.weight.data[self.padding_idx].zero_()
 
-    def forward(self, inp, reverse=False):
+    def forward(self, inp, pos_id=None, reverse=False):
         # If reverse is False, compute input embeddings. If reverse is True, compute output logits.
         # vocab_idx: b n d if reverse, else b n
         if not reverse:
@@ -114,13 +114,19 @@ class WordEmbedding(nn.Module):
                 ), f"Error: you have requested an out of vocab index: {inp.max().item()}"
             out = self.emb(inp)
             if self.abs_pos:
-                pos = self.pos_id[:, : inp.size(1)]
-                is_pad = inp == self.padding_idx
-                pos = pos.sub(is_pad.cumsum(1))
-                pos = pos.clamp(
-                    min=0
-                )  # In case of left-padding, prevent negative indices (get zeroed anyways)
-                out = out.addcmul(self.pos_emb(pos), ~is_pad.unsqueeze(-1))
+                if pos_id is None:
+                    pos = self.pos_id[:, : inp.size(1)]
+                else:
+                    pos = pos_id
+                if self.padding_idx is not None:
+                    is_pad = inp == self.padding_idx
+                    pos = pos.sub(is_pad.cumsum(1))
+                    pos = pos.clamp(
+                        min=0
+                    )  # In case of left-padding, prevent negative indices (get zeroed anyways)
+                    out = out.addcmul(self.pos_emb(pos), ~is_pad.unsqueeze(-1))
+                else:
+                    out = out + self.pos_emb(pos)
             return out
         else:
             if self.debug:
