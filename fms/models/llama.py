@@ -22,6 +22,7 @@ from fms.modules.embedding import WordEmbedding
 from fms.modules.feedforward import GatedLinearUnit
 from fms.modules.layernorm import LayerNormParameterized
 from fms.modules.positions import RotaryEmbedding
+from fms.utils.activation import str_to_activation
 from fms.utils.config import ModelConfig
 from fms.utils.tokenizers import get_tokenizer, _has_hf
 
@@ -94,7 +95,7 @@ class LLaMABlock(nn.Module):
             self.config.emb_dim,
             hidden_grow_factor=self.config.hidden_grow_factor,
             multiple_of=self.config.multiple_of,
-            activation_fn=fms.utils.str_to_activation(self.config.activation_fn),
+            activation_fn=str_to_activation(self.config.activation_fn),
             p_dropout=self.config.p_dropout,
             use_bias=False,
         )

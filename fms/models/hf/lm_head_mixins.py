@@ -13,7 +13,7 @@ from transformers.modeling_outputs import (
 )
 from transformers.utils import ModelOutput
 
-from fms.utils import str_to_activation
+from fms.utils.activation import str_to_activation
 
 
 class LMHeadMixin:
