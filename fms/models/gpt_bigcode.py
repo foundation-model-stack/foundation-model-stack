@@ -132,12 +132,14 @@ class GPTBigCodeHeadless(nn.Module):
             [GPTBigCodeBlock(self.config) for _ in range(self.config.nlayers)]
         )
 
-        self.embedding = AbsolutePositionEmbedding(
+        self.embedding = nn.Embedding(
             self.config.src_vocab_size,
             self.config.emb_dim,
-            self.config.pad_id,
-            self.config.max_pos,
+            padding_idx=self.config.pad_id,
         )
+        self.position_embedding = nn.Embedding(self.config.max_pos, self.config.emb_dim)
+        self.register_buffer("pos_id", torch.arange(self.config.max_pos).unsqueeze(0))
+
         self.dec_norm = nn.LayerNorm(self.config.emb_dim, eps=self.config.ln_eps)
 
         if self.config.emb_dropout:
@@ -201,21 +203,39 @@ class GPTBigCodeHeadless(nn.Module):
                 mask = mask.tril(diagonal=0)
 
         if x is not None:
-            # if position ids is none, we assume this will be a range from 0:qlen then add the past klen => klen:qlen+klen
-            # when we have left padding in batches, position_ids must be provided in order to account for the the number of pads in each sequence in the batch
-            # position_ids provided do not require any correction
+            x_emb = self.embedding(x)
+
             if position_ids is None:
-                # Compute position_ids based on cache config
                 _position_ids = torch.arange(
                     0, qlen, dtype=torch.long, device=x.device
                 ).repeat(x.size(0), 1)
+                # Compute position_ids based on cache config
                 if use_cache and past_key_value_states[0] is not None:
                     _position_ids += past_key_value_states[0][0].shape[2]
             else:
+                # use the position ids provided by the user directly
                 _position_ids = position_ids
-            x = self.embedding(
-                x, position_ids=_position_ids, correct_pads=position_ids is None
-            )
+
+            if self.config.pad_id is not None:
+                is_pad = x == self.config.pad_id
+
+                # if position_ids were not given by the user, correct for pads
+                # assume position_ids is already corrected for pads if given by the user
+                if position_ids is None:
+                    _position_ids = _position_ids.sub(is_pad.cumsum(1))
+                    # In case of left-padding, prevent negative indices (get zeroed anyway)
+                    _position_ids = _position_ids.clamp(min=0)
+
+                # zero out the associated position embeddings
+                position_out = self.position_embedding(_position_ids).mul(
+                    ~is_pad.unsqueeze(-1)
+                )
+            else:
+                # just look up the position embeddings, no need to zero if no pad_id
+                position_out = self.position_embedding(_position_ids)
+
+            # perform absolute position embedding
+            x = x_emb + position_out
         else:
             x = inputs_embeds
 
@@ -270,7 +290,7 @@ class GPTBigCode(nn.Module):
         )
 
         # this model ties weights, so we tie here
-        self.head.weight = self.base_model.embedding.emb.weight
+        self.head.weight = self.base_model.embedding.weight
 
         self.reset_params()
 

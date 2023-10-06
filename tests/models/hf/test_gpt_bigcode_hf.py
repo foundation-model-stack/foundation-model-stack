@@ -97,10 +97,10 @@ class GPTBigCodeHFFixtures(
         with torch.no_grad():
 
             oss_hf_model.transformer.wte.weight.copy_(
-                fms_hf_model.decoder.model.embedding.emb.weight
+                fms_hf_model.decoder.model.embedding.weight
             )
             oss_hf_model.transformer.wpe.weight.copy_(
-                fms_hf_model.decoder.model.embedding.pos_emb.weight
+                fms_hf_model.decoder.model.position_embedding.weight
             )
             for i, oss_hf_layer in enumerate(oss_hf_model.transformer.h):
                 fms_hf_layer = fms_hf_model.decoder.model.layers[i]

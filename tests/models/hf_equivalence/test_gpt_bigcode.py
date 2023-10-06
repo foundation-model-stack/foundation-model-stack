@@ -106,8 +106,8 @@ def rename_weights_to_fms(orig_sd):
     import re
 
     replacements = [
-        (r"^wte.weight", "base_model.embedding.emb.weight"),
-        (r"^wpe.weight", "base_model.embedding.pos_emb.weight"),
+        (r"^wte.weight", "base_model.embedding.weight"),
+        (r"^wpe.weight", "base_model.position_embedding.weight"),
         (r"^ln_f", "base_model.dec_norm"),
         (r"^h", "base_model.layers"),
         # need to do kqv manually
