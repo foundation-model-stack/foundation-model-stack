@@ -5,7 +5,6 @@ from typing import Optional, Tuple
 import torch
 import torch.nn as nn
 from fms.utils.config import ModelConfig
-from fms.modules.embedding import AbsolutePositionEmbedding
 from fms.modules.feedforward import FeedForwardBlock
 from fms.utils.activation import str_to_activation
 
