@@ -1,127 +1,19 @@
-from typing import Optional
+import math
+from typing import List, Tuple, Union
 
 import torch
 import torch.nn as nn
+from numpy import sign
 from torch.distributed.distributed_c10d import ProcessGroup
 
 from fms.distributed.tensorparallel import (
     all_gather_from_tensor_model_parallel_region,
     apply_colwise_tp,
     apply_embedding_tp,
+    apply_rowwise_tp,
     copy_to_tensor_model_parallel_region,
+    reduce_from_tensor_model_parallel_region,
 )
-
-
-class AbsolutePositionEmbedding(nn.Module):
-    """Special form of embedding that includes a position encoding"""
-
-    def __init__(
-        self,
-        vocab_size: int,
-        emb_dim: int,
-        padding_idx: Optional[int] = None,
-        max_pos: int = 512,
-    ):
-        """
-        Initialize an AbsolutePositionEmbedding
-
-        Parameters
-        ----------
-        vocab_size: int
-            the length of the vocabulary
-        emb_dim: int
-            dimensionality of latent space
-        padding_idx: int, optional
-            Padding token index in the vocabulary. Typically, the token for
-            which positions will be zeroed out. If negative or None, no positions
-            will be zeroed. (default is None)
-        max_pos: int
-            the maximum possible sequence length (default is 512)
-        """
-        super().__init__()
-        self.max_pos = max_pos
-        self.emb_dim = emb_dim
-
-        # if negative padding_idx is given, just set to None
-        if padding_idx is not None:
-            padding_idx = (
-                padding_idx if padding_idx >= 0 and padding_idx < vocab_size else None
-            )
-        self.padding_idx = padding_idx
-
-        if self.padding_idx is None:
-            self.emb = nn.Embedding(vocab_size, self.emb_dim)
-        else:
-            self.emb = nn.Embedding(
-                vocab_size, self.emb_dim, padding_idx=self.padding_idx
-            )
-
-        self.pos_emb = nn.Embedding(max_pos, self.emb_dim)
-        self.register_buffer("pos_id", torch.arange(max_pos).unsqueeze(0))
-
-    def reset_params(self):
-        # Defaults to norm-preserving in reverse op, unit vector in forward op
-        layers = ["emb"]
-        layers.append("pos_emb")
-        for layer in layers:
-            nn.init.trunc_normal_(
-                getattr(self, layer).weight, mean=0.0, std=self.emb_dim**-0.5
-            )
-        # Preserve pad index dummy-hood
-        if self.padding_idx is not None:
-            self.emb.weight.data[self.padding_idx].zero_()
-
-    def forward(
-        self,
-        x: torch.Tensor,
-        position_ids: Optional[torch.LongTensor] = None,
-        correct_pads: bool = False,
-    ):
-        """
-        perform a forward pass of absolute positional embedding
-
-        Parameters
-        ----------
-        x: torch.Tensor
-            the input tensor
-        position_ids: torch.LongTensor, optional
-            a tensor which signifies the positions in the position embedding. If
-            None, will simply be a range from beginning to end of sequence for
-            each sequence in the batch (default is None)
-        correct_pads: bool
-            if True, will assume position_ids has not been corrected for padding
-            and will perform the necessary shifting, otherwise assume
-            position_ids has already been corrected (default is False)
-
-        Returns
-        -------
-        torch.Tensor
-            the output of absolute positional embeddings
-        """
-        x_emb = self.emb(x)
-
-        if position_ids is None:
-            # get the position ids from the shape
-            _position_ids = self.pos_id[:, : x.size(1)]
-        else:
-            # use the position ids provided by the user directly
-            _position_ids = position_ids
-
-        # if padding_idx exists we want to zero out the associated positions
-        if self.padding_idx is not None:
-            is_pad = x == self.padding_idx
-            # if correct_pads is true, rewind count for every pad token
-            if correct_pads:
-                _position_ids = _position_ids.sub(is_pad.cumsum(1))
-                # In case of left-padding, prevent negative indices (get zeroed anyway)
-                _position_ids = _position_ids.clamp(min=0)
-            # zero out the associated position embeddings
-            position_out = self.pos_emb(_position_ids).mul(~is_pad.unsqueeze(-1))
-        else:
-            # otherwise just look up the position embeddings
-            position_out = self.pos_emb(_position_ids)
-
-        return x_emb + position_out
 
 
 class WordEmbedding(nn.Module):
