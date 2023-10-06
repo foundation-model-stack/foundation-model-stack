@@ -5,7 +5,7 @@ from typing import Optional, Tuple
 import torch
 import torch.nn as nn
 from fms.utils.config import ModelConfig
-from fms.modules.embedding import WordEmbedding
+from fms.modules.embedding import WordEmbedding, AbsolutePositionalEmbedding
 from fms.modules.feedforward import FeedForwardBlock
 from fms.utils.activation import str_to_activation
 
@@ -124,7 +124,7 @@ class GPTBigCodeBlock(nn.Module):
 
 
 class GPTBigCodeHeadless(nn.Module):
-    def __init__(self, config: GPTBigCodeConfig, shared_embedding: WordEmbedding):
+    def __init__(self, config: GPTBigCodeConfig):
         super().__init__()
         self.config = config
 
@@ -132,7 +132,12 @@ class GPTBigCodeHeadless(nn.Module):
             [GPTBigCodeBlock(self.config) for _ in range(self.config.nlayers)]
         )
 
-        self.shared = shared_embedding
+        self.embedding = AbsolutePositionalEmbedding(
+            self.config.src_vocab_size,
+            self.config.emb_dim,
+            self.config.pad_id,
+            self.config.max_pos,
+        )
         self.dec_norm = nn.LayerNorm(self.config.emb_dim, eps=self.config.ln_eps)
 
         if self.config.emb_dropout:
@@ -194,16 +199,6 @@ class GPTBigCodeHeadless(nn.Module):
                 is_pad: torch.BoolTensor = x == pad_id
                 mask: torch.BoolTensor = is_pad.unsqueeze(-1) == is_pad.unsqueeze(-2)
                 mask = mask.tril(diagonal=0)
-        # if mask is none, we need to specify causal mask
-        # if mask is None:
-        #     # we are caching and can assume all 1s in the mask
-        #     if use_cache and klen != 1 and qlen == 1:
-        #         # b x h x qlen x kvlen
-        #         is_causal_mask = False
-        #     else:
-        #         is_causal_mask = True
-        # else:
-        #     is_causal_mask = False
 
         if x is not None:
             # if position ids is none, we assume this will be a range from 0:qlen then add the past klen => klen:qlen+klen
@@ -218,7 +213,9 @@ class GPTBigCodeHeadless(nn.Module):
                     pos_id += past_key_value_states[0][0].shape[2]
             else:
                 pos_id = position_ids
-            x = self.shared(x, pos_id=pos_id, correct_pads=position_ids is None)
+            x = self.embedding(
+                x, position_ids=pos_id, correct_pads=position_ids is None
+            )
         else:
             x = inputs_embeds
 
@@ -267,18 +264,13 @@ class GPTBigCode(nn.Module):
             self.config = GPTBigCodeConfig()
         self.config: GPTBigCodeConfig = self.config.updated(**kwargs)
 
-        self.shared = WordEmbedding(
-            self.config.src_vocab_size,
-            self.config.emb_dim,
-            padding_idx=self.config.pad_id,
-            max_pos=self.config.max_pos,
-            abs_pos=True,
-            reversible=True,
-            tie_weights=True,
-            bias=self.config.vocab_bias,
+        self.base_model = GPTBigCodeHeadless(self.config)
+        self.head = nn.Linear(
+            self.config.emb_dim, self.config.src_vocab_size, bias=self.config.vocab_bias
         )
 
-        self.base_model = GPTBigCodeHeadless(self.config, shared_embedding=self.shared)
+        # this model ties weights, so we tie here
+        self.head.weight = self.base_model.embedding.emb.weight
 
         self.reset_params()
 
@@ -292,8 +284,9 @@ class GPTBigCode(nn.Module):
     def reset_params(self):
         # Modules are self-initializing, we're just going to down-scale the final prediction head to be
         # mixed-fan (inputs and gradients scale to the same inverse factors) if it isn't tied
-        self.shared.head.weight.data.normal_(
-            0, 1 / math.sqrt(math.sqrt(self.config.emb_dim * self.shared.vocab_size))
+        self.head.weight.data.normal_(
+            0,
+            1 / math.sqrt(math.sqrt(self.config.emb_dim * self.config.src_vocab_size)),
         )
 
     def forward(
@@ -314,7 +307,7 @@ class GPTBigCode(nn.Module):
             attn_algorithm=attn_algorithm,
         )
 
-        preds = self.shared(output, reverse=True)
+        preds = self.head(output)
 
         if use_cache:
             return preds, cache

@@ -66,7 +66,7 @@ class GPTBigCodeHF(HFDecoderModelArchitecture):
             params["pad_id"] = params.pop("pad_token_id")
             model = GPTBigCode(**params)
             decoder = model.base_model if decoder is None else decoder
-            embedding = model.shared.emb if embedding is None else embedding
+            embedding = model.base_model.embedding if embedding is None else embedding
 
         # these are now huggingface compatible
         decoder = GPTBigCodeHFDecoder(decoder, config)
@@ -112,6 +112,6 @@ class GPTBigCodeHFForCausalLM(LMHeadModelLMHeadMixin, GPTBigCodeHF):
         return cls(
             config=config,
             decoder=model.base_model,
-            embedding=model.shared.emb,
-            lm_head=model.shared.head,
+            embedding=model.base_model.embedding,
+            lm_head=model.head,
         )

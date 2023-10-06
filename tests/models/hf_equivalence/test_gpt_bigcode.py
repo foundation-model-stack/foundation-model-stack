@@ -43,7 +43,7 @@ def test_gptbigcode_equivalence():
             model.base_model.layers[i].attn.key.bias.copy_(k_bias)
             model.base_model.layers[i].attn.value.weight.copy_(v)
             model.base_model.layers[i].attn.value.bias.copy_(v_bias)
-        model.shared.head.weight.copy_(hf_model.lm_head.weight)
+        model.head.weight.copy_(hf_model.lm_head.weight)
     hf_model_fms = GPTBigCodeHFForCausalLM.from_fms_model(
         model=model,
         bos_token_id=hf_model.config.bos_token_id,
@@ -106,8 +106,8 @@ def rename_weights_to_fms(orig_sd):
     import re
 
     replacements = [
-        (r"^wte.weight", "shared.emb.weight"),
-        (r"^wpe.weight", "shared.pos_emb.weight"),
+        (r"^wte.weight", "base_model.embedding.emb.weight"),
+        (r"^wpe.weight", "base_model.embedding.pos_emb.weight"),
         (r"^ln_f", "base_model.dec_norm"),
         (r"^h", "base_model.layers"),
         # need to do kqv manually
