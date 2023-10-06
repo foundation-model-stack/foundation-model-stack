@@ -1,18 +1,14 @@
-import math
-from typing import List, Tuple, Union, Optional
+from typing import Optional
 
 import torch
 import torch.nn as nn
-from numpy import sign
 from torch.distributed.distributed_c10d import ProcessGroup
 
 from fms.distributed.tensorparallel import (
     all_gather_from_tensor_model_parallel_region,
     apply_colwise_tp,
     apply_embedding_tp,
-    apply_rowwise_tp,
     copy_to_tensor_model_parallel_region,
-    reduce_from_tensor_model_parallel_region,
 )
 
 
