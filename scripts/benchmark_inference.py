@@ -8,7 +8,7 @@ import torch
 from torch import distributed as dist
 
 from fms.models.llama import load_fms_llama
-from fms.utils import generation, print0
+from fms.utils import generation, print0, tokenizers
 
 
 # Example running llama 7B on one A100:
@@ -77,7 +77,9 @@ if args.distributed:
     dist.init_process_group()
 
 print("loading model")
-model, tokenizer = load_fms_llama(args.model_path, args.tokenizer)
+model = load_fms_llama(args.model_path)
+tokenizer = tokenizers.get_tokenizer(args.tokenizer)
+
 model.eval()
 torch.set_grad_enabled(False)
 print("loading complete on rank", local_rank)
