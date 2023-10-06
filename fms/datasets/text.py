@@ -4,7 +4,7 @@ import requests
 from fms.utils import tokenizers
 
 
-class FromString(Dataset):
+class CausalTextDatasetFromString(Dataset):
     """
     Creates a dataset from a single text string and tokenizer.
     Since all data comes from a single text, there are no bos/eos tokens used.
@@ -71,7 +71,7 @@ def shakespeare(pad_token=None, tokenizer=tokenizers.char_tokenizer) -> Dataset:
     # TODO: maybe this should cache somewhere?
     text = requests.get(__shakespeare_url)
     text = text.text
-    dataset = FromString(
+    dataset = CausalTextDatasetFromString(
         text,
         pad_token=pad_token,
         tokenizer=tokenizers.get_tokenizer(tokenizer),

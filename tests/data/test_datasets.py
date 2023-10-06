@@ -1,4 +1,4 @@
-from fms.datasets.text import FromString
+from fms.datasets.text import CausalTextDatasetFromString
 from fms.datasets.instructions import JsonInstructions
 from fms.utils import tokenizers
 import tempfile
@@ -28,7 +28,7 @@ def test_instructions_dataset():
 def test_text_dataset():
     text = "a" * 1000
     tokenizer = tokenizers.get_tokenizer(tokenizers.char_tokenizer)
-    ds = FromString(text, tokenizer, seq_len=99, pad_token="b")
+    ds = CausalTextDatasetFromString(text, tokenizer, seq_len=99, pad_token="b")
     assert len(ds) == 11
     first_input, _ = ds[0]
     last_input, last_label = ds[10]
@@ -38,5 +38,5 @@ def test_text_dataset():
         first_input, torch.tensor(tokenizer.convert_tokens_to_ids(["a"] * 99))
     )
 
-    ds = FromString(text, tokenizer, seq_len=99)
+    ds = CausalTextDatasetFromString(text, tokenizer, seq_len=99)
     assert len(ds) == 10
