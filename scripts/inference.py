@@ -1,12 +1,13 @@
 import argparse
 import itertools
 import os
+from fms.utils import tokenizers, generation
 
 import torch
 from torch import distributed as dist
 
 from fms.distributed.strategy import TensorParallelStrategy
-from fms.models.llama import LLaMA, load_fms_llama
+from fms.models.llama import load_fms_llama
 from fms.utils.generation import generate
 
 
@@ -64,7 +65,8 @@ if args.distributed:
     dist.init_process_group()
 
 print("loading model")
-model, tokenizer = load_fms_llama(args.model_path, args.tokenizer)
+model = load_fms_llama(args.model_path)
+tokenizer = tokenizers.get_tokenizer(args.tokenizer)
 model.eval()
 print("loading complete on rank", local_rank)
 
