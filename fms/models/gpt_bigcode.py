@@ -5,7 +5,7 @@ from typing import Optional, Tuple
 import torch
 import torch.nn as nn
 from fms.utils.config import ModelConfig
-from fms.modules.embedding import WordEmbedding, AbsolutePositionalEmbedding
+from fms.modules.embedding import AbsolutePositionalEmbedding
 from fms.modules.feedforward import FeedForwardBlock
 from fms.utils.activation import str_to_activation
 
@@ -206,15 +206,15 @@ class GPTBigCodeHeadless(nn.Module):
             # position_ids provided do not require any correction
             if position_ids is None:
                 # Compute position_ids based on cache config
-                pos_id = torch.arange(
+                _position_ids = torch.arange(
                     0, qlen, dtype=torch.long, device=x.device
                 ).repeat(x.size(0), 1)
                 if use_cache and past_key_value_states[0] is not None:
-                    pos_id += past_key_value_states[0][0].shape[2]
+                    _position_ids += past_key_value_states[0][0].shape[2]
             else:
-                pos_id = position_ids
+                _position_ids = position_ids
             x = self.embedding(
-                x, position_ids=pos_id, correct_pads=position_ids is None
+                x, position_ids=_position_ids, correct_pads=position_ids is None
             )
         else:
             x = inputs_embeds
