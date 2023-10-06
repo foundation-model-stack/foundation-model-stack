@@ -394,7 +394,7 @@ def load_fms_llama(model_path: str, group=None):
         extra_args["kvheads"] = params["n_kv_heads"]
 
     ibm_model = LLaMA(
-        src_vocab_size=tokenizer.vocab_size(),
+        src_vocab_size=32_000,
         emb_dim=params["dim"],
         nheads=params["n_heads"],
         nlayers=params["n_layers"],
