@@ -85,3 +85,15 @@ def generate(
     if not batched:
         result = result[0]
     return result
+
+
+def truncate_after_eos(result, eos_token_id):
+    if eos_token_id is None:
+        return result
+
+    eos_idx = torch.where(result == eos_token_id)
+    eos_idx = eos_idx[0]
+    if eos_idx.shape[0] >= 1:
+        eos_idx = eos_idx[0].item()
+        result = result[: eos_idx + 1]
+    return result
