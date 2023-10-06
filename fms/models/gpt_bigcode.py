@@ -5,7 +5,7 @@ from typing import Optional, Tuple
 import torch
 import torch.nn as nn
 from fms.utils.config import ModelConfig
-from fms.modules.embedding import AbsolutePositionalEmbedding
+from fms.modules.embedding import AbsolutePositionEmbedding
 from fms.modules.feedforward import FeedForwardBlock
 from fms.utils.activation import str_to_activation
 
@@ -132,7 +132,7 @@ class GPTBigCodeHeadless(nn.Module):
             [GPTBigCodeBlock(self.config) for _ in range(self.config.nlayers)]
         )
 
-        self.embedding = AbsolutePositionalEmbedding(
+        self.embedding = AbsolutePositionEmbedding(
             self.config.src_vocab_size,
             self.config.emb_dim,
             self.config.pad_id,

@@ -1,22 +1,18 @@
-import math
-from typing import List, Tuple, Union, Optional
+from typing import Optional
 
 import torch
 import torch.nn as nn
-from numpy import sign
 from torch.distributed.distributed_c10d import ProcessGroup
 
 from fms.distributed.tensorparallel import (
     all_gather_from_tensor_model_parallel_region,
     apply_colwise_tp,
     apply_embedding_tp,
-    apply_rowwise_tp,
     copy_to_tensor_model_parallel_region,
-    reduce_from_tensor_model_parallel_region,
 )
 
 
-class AbsolutePositionalEmbedding(nn.Module):
+class AbsolutePositionEmbedding(nn.Module):
     """Special form of embedding that includes a position encoding"""
 
     def __init__(
@@ -27,7 +23,7 @@ class AbsolutePositionalEmbedding(nn.Module):
         max_pos: int = 512,
     ):
         """
-        Initialize an AbsolutePositionalEmbedding
+        Initialize an AbsolutePositionEmbedding
 
         Parameters
         ----------
@@ -36,9 +32,9 @@ class AbsolutePositionalEmbedding(nn.Module):
         emb_dim: int
             dimensionality of latent space
         padding_idx: int, optional
-            Padding token index in the vocabulary. Typically the token for which
-            positions will be zeroed out. If negative or None, no positions will
-            be zeroed. (default is None)
+            Padding token index in the vocabulary. Typically, the token for
+            which positions will be zeroed out. If negative or None, no positions
+            will be zeroed. (default is None)
         max_pos: int
             the maximum possible sequence length (default is 512)
         """

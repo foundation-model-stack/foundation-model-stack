@@ -1,5 +1,4 @@
 import pytest
-from torch import nn as nn
 from transformers import (
     PreTrainedModel,
     GPTBigCodeForCausalLM,
