@@ -182,7 +182,6 @@ class LLaMA(nn.Module):
             self.config.src_vocab_size,
             self.config.emb_dim,
             padding_idx=self.config.pad_id,
-            abs_pos=False,
             reversible=True,
             tie_weights=False,
             bias=False,

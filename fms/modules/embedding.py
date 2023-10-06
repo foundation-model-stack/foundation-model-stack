@@ -138,10 +138,6 @@ class WordEmbedding(nn.Module):
         Dimensionality of latent space
     padding_idx : int|None
         Padding token index in the vocabulary. Sets embedding for this token to zero since it is functionally inert.
-    max_pos : int
-        Maximum sequence length the model can handle. Sequences of shorter length are allowed and handled gracefully.
-    abs_pos : bool
-        Include absolute positional encodings?
     reversible : bool
         Include support for output logit prediction?
     tie_weights : bool
@@ -153,8 +149,6 @@ class WordEmbedding(nn.Module):
         vocab_size,
         emb_dim,
         padding_idx=None,
-        max_pos=512,
-        abs_pos=False,
         reversible=True,
         tie_weights=True,
         bias=False,
@@ -168,12 +162,10 @@ class WordEmbedding(nn.Module):
                 padding_idx if padding_idx >= 0 and padding_idx < vocab_size else None
             )
         self.padding_idx = padding_idx
-        self.abs_pos = abs_pos
         self.reversible = reversible
         self.debug = debug
         self.tie_weights = tie_weights
         self.bias = bias
-        self.max_pos = max_pos
         assert (
             reversible or not tie_weights
         ), "Error: weights cannot be tied when there is no output head!"
@@ -183,9 +175,6 @@ class WordEmbedding(nn.Module):
             self.emb = nn.Embedding(
                 self.vocab_size, self.emb_dim, padding_idx=self.padding_idx
             )
-        if abs_pos:
-            self.pos_emb = nn.Embedding(max_pos, self.emb_dim)
-            self.register_buffer("pos_id", torch.arange(max_pos).unsqueeze(0))
         if reversible:
             self.head = nn.Linear(self.emb_dim, self.vocab_size, bias=bias)
             if tie_weights:
@@ -195,8 +184,6 @@ class WordEmbedding(nn.Module):
     def reset_params(self):
         # Defaults to norm-preserving in reverse op, unit vector in forward op
         layers = ["emb"]
-        if self.abs_pos:
-            layers.append("pos_emb")
         if self.reversible and not self.tie_weights:
             layers.append("head")
         for layer in layers:
@@ -220,16 +207,7 @@ class WordEmbedding(nn.Module):
                 assert (
                     inp.max().item() < self.vocab_size
                 ), f"Error: you have requested an out of vocab index: {inp.max().item()}"
-            out = self.emb(inp)
-            if self.abs_pos:
-                pos = self.pos_id[:, : inp.size(1)]
-                is_pad = inp == self.padding_idx
-                pos = pos.sub(is_pad.cumsum(1))
-                pos = pos.clamp(
-                    min=0
-                )  # In case of left-padding, prevent negative indices (get zeroed anyways)
-                out = out.addcmul(self.pos_emb(pos), ~is_pad.unsqueeze(-1))
-            return out
+            return self.emb(inp)
         else:
             if self.debug:
                 assert (
@@ -259,8 +237,6 @@ class TPWordEmbedding(WordEmbedding):
         vocab_size,
         emb_dim,
         padding_idx=None,
-        max_pos=512,
-        abs_pos=False,
         reversible=True,
         tie_weights=True,
         bias=False,
@@ -287,8 +263,6 @@ class TPWordEmbedding(WordEmbedding):
                 padding_idx if (padding_idx >= 0 and padding_idx < vocab_size) else None
             )
         self.padding_idx = padding_idx
-        self.max_pos = max_pos
-        self.abs_pos = abs_pos
         self.reversible = reversible
         self.debug = debug
         self.tie_weights = tie_weights
@@ -305,9 +279,6 @@ class TPWordEmbedding(WordEmbedding):
                 self.emb_dim // world_size,
                 padding_idx=self.padding_idx,
             )
-        if abs_pos:
-            self.pos_emb = nn.Embedding(max_pos, self.emb_dim // world_size)
-            self.register_buffer("pos_id", torch.arange(max_pos).unsqueeze(0))
         if reversible:
             assert (
                 self.vocab_size % world_size == 0
@@ -327,8 +298,6 @@ class TPWordEmbedding(WordEmbedding):
             vocab_size=we.vocab_size,
             emb_dim=we.emb_dim,
             padding_idx=we.padding_idx,
-            max_pos=we.max_pos,
-            abs_pos=we.abs_pos,
             reversible=we.reversible,
             tie_weights=we.tie_weights,
             bias=we.bias,
