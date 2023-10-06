@@ -41,12 +41,6 @@ class AbsolutePositionEmbedding(nn.Module):
         super().__init__()
         self.max_pos = max_pos
         self.emb_dim = emb_dim
-
-        # if negative padding_idx is given, just set to None
-        if padding_idx is not None:
-            padding_idx = (
-                padding_idx if padding_idx >= 0 and padding_idx < vocab_size else None
-            )
         self.padding_idx = padding_idx
 
         if self.padding_idx is None:
