@@ -12,7 +12,7 @@ from fms.distributed.tensorparallel import (
 )
 
 
-class AbsolutePositionalEmbedding(nn.Module):
+class AbsolutePositionEmbedding(nn.Module):
     """Special form of embedding that includes a position encoding"""
 
     def __init__(
@@ -23,7 +23,7 @@ class AbsolutePositionalEmbedding(nn.Module):
         max_pos: int = 512,
     ):
         """
-        Initialize an AbsolutePositionalEmbedding
+        Initialize an AbsolutePositionEmbedding
 
         Parameters
         ----------
@@ -32,9 +32,9 @@ class AbsolutePositionalEmbedding(nn.Module):
         emb_dim: int
             dimensionality of latent space
         padding_idx: int, optional
-            Padding token index in the vocabulary. Typically the token for which
-            positions will be zeroed out. If negative or None, no positions will
-            be zeroed. (default is None)
+            Padding token index in the vocabulary. Typically, the token for
+            which positions will be zeroed out. If negative or None, no positions
+            will be zeroed. (default is None)
         max_pos: int
             the maximum possible sequence length (default is 512)
         """
