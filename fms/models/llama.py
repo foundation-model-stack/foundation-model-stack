@@ -348,7 +348,7 @@ def _rename_weights_to_fms(orig_sd):
     return new_sd
 
 
-def load_fms_llama(model_path: str, tokenizer_path: str, group=None):
+def load_fms_llama(model_path: str, group=None):
     if torch.distributed.is_initialized() and group is None:
         group = torch.distributed.GroupMember.WORLD
 
@@ -360,10 +360,6 @@ def load_fms_llama(model_path: str, tokenizer_path: str, group=None):
         rank = group.rank()
     # from llama.tokenizer import Tokenizer
     model_path = os.path.expanduser(model_path)
-    tokenizer_path = os.path.expanduser(tokenizer_path)
-
-    # Load tokenizer
-    tokenizer = get_tokenizer(tokenizer_path)
 
     # Load Llama model from Meta's weights
     checkpoints = sorted(Path(model_path).glob("*.pth"))
@@ -398,7 +394,7 @@ def load_fms_llama(model_path: str, tokenizer_path: str, group=None):
         extra_args["kvheads"] = params["n_kv_heads"]
 
     ibm_model = LLaMA(
-        src_vocab_size=tokenizer.vocab_size(),
+        src_vocab_size=32_000,
         emb_dim=params["dim"],
         nheads=params["n_heads"],
         nlayers=params["n_layers"],
@@ -412,7 +408,7 @@ def load_fms_llama(model_path: str, tokenizer_path: str, group=None):
         fms_sd, strict=False
     )  # the meta weights have some extra stuff
 
-    return ibm_model, tokenizer
+    return ibm_model
 
 
 def convert_hf_llama(hf_model: "LlamaForCausalLM") -> LLaMA:
