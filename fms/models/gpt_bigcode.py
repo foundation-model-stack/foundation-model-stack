@@ -149,16 +149,15 @@ class GPTBigCodeHeadless(nn.Module):
 
     def forward(
         self,
-        x: Optional[torch.LongTensor] = None,
+        x: torch.LongTensor,
         mask: Optional[torch.Tensor] = None,
-        inputs_embeds: Optional[torch.FloatTensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_value_states: Optional[
             Tuple[
                 torch.FloatTensor,
             ]
         ] = None,
-        use_cache: bool = True,
+        use_cache: bool = False,
         attn_algorithm: Optional[str] = None,
     ):
         # Embed the given vocabulary indices using the given attention mask, with pre-/post-norm and dropout as specified
@@ -166,18 +165,8 @@ class GPTBigCodeHeadless(nn.Module):
         # mask: batch_size x seq_len x seq_len
         # bias: nheads x seq_len x seq_len
 
-        if x is not None and inputs_embeds is not None:
-            raise ValueError(
-                f"You cannot specify both x_in and inputs_embeds at the same time"
-            )
-        elif x is not None:
-            qlen = x.size(1)
-            klen = x.size(1)
-        elif inputs_embeds is not None:
-            qlen = inputs_embeds.size(1)
-            klen = inputs_embeds.size(1)
-        elif x is None and inputs_embeds is None:
-            raise ValueError(f"You have to specify either x_in or inputs_embeds")
+        qlen = x.size(1)
+        klen = x.size(1)
 
         if past_key_value_states is None or len(past_key_value_states) == 0:
             past_key_value_states = [None for _ in range(len(self.layers))]
@@ -201,42 +190,39 @@ class GPTBigCodeHeadless(nn.Module):
                 mask: torch.BoolTensor = is_pad.unsqueeze(-1) == is_pad.unsqueeze(-2)
                 mask = mask.tril(diagonal=0)
 
-        if x is not None:
-            x_emb = self.embedding(x)
+        x_emb = self.embedding(x)
 
-            if position_ids is None:
-                _position_ids = torch.arange(
-                    0, qlen, dtype=torch.long, device=x.device
-                ).repeat(x.size(0), 1)
-                # Compute position_ids based on cache config
-                if use_cache and past_key_value_states[0] is not None:
-                    _position_ids += past_key_value_states[0][0].shape[2]
-            else:
-                # use the position ids provided by the user directly
-                _position_ids = position_ids
-
-            if self.config.pad_id is not None:
-                is_pad = x == self.config.pad_id
-
-                # if position_ids were not given by the user, correct for pads
-                # assume position_ids is already corrected for pads if given by the user
-                if position_ids is None:
-                    _position_ids = _position_ids.sub(is_pad.cumsum(1))
-                    # In case of left-padding, prevent negative indices (get zeroed anyway)
-                    _position_ids = _position_ids.clamp(min=0)
-
-                # zero out the associated position embeddings
-                position_out = self.position_embedding(_position_ids).mul(
-                    ~is_pad.unsqueeze(-1)
-                )
-            else:
-                # just look up the position embeddings, no need to zero if no pad_id
-                position_out = self.position_embedding(_position_ids)
-
-            # perform absolute position embedding
-            x = x_emb + position_out
+        if position_ids is None:
+            _position_ids = torch.arange(
+                0, qlen, dtype=torch.long, device=x.device
+            ).repeat(x.size(0), 1)
+            # Compute position_ids based on cache config
+            if use_cache and past_key_value_states[0] is not None:
+                _position_ids += past_key_value_states[0][0].shape[2]
         else:
-            x = inputs_embeds
+            # use the position ids provided by the user directly
+            _position_ids = position_ids
+
+        if self.config.pad_id is not None:
+            is_pad = x == self.config.pad_id
+
+            # if position_ids were not given by the user, correct for pads
+            # assume position_ids is already corrected for pads if given by the user
+            if position_ids is None:
+                _position_ids = _position_ids.sub(is_pad.cumsum(1))
+                # In case of left-padding, prevent negative indices (get zeroed anyway)
+                _position_ids = _position_ids.clamp(min=0)
+
+            # zero out the associated position embeddings
+            position_out = self.position_embedding(_position_ids).mul(
+                ~is_pad.unsqueeze(-1)
+            )
+        else:
+            # just look up the position embeddings, no need to zero if no pad_id
+            position_out = self.position_embedding(_position_ids)
+
+        # perform absolute position embedding
+        x = x_emb + position_out
 
         # apply dropout to embeddings
         if self.config.emb_dropout:
@@ -310,17 +296,19 @@ class GPTBigCode(nn.Module):
 
     def forward(
         self,
-        x=None,
-        mask=None,
-        inputs_embeds=None,
-        past_key_value_states=None,
-        use_cache=False,
+        x: Optional[torch.LongTensor] = None,
+        mask: Optional[torch.Tensor] = None,
+        past_key_value_states: Optional[
+            Tuple[
+                torch.FloatTensor,
+            ]
+        ] = None,
+        use_cache: bool = False,
         attn_algorithm: Optional[str] = None,
     ):
         output, cache = self.base_model(
             x,
             mask,
-            inputs_embeds,
             past_key_value_states=past_key_value_states,
             use_cache=use_cache,
             attn_algorithm=attn_algorithm,
