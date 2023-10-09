@@ -194,9 +194,16 @@ class LLaMA(nn.Module):
             ntk_scaling=self.config.ntk_scaling,
             max_seq_len=self.config.max_expected_seq_len,
         )
-        self._update_cached_freqs_cis(
-            self.config.max_expected_seq_len, self.shared.emb.weight.device
-        )
+        if isinstance(self.distributed_strategy, UniformModelParallelStrategy):
+            for dev_idx in set(self.distributed_strategy.layer_to_device.values()):
+                self.rot_emb.compute_freqs_cis(
+                    torch.device("cuda", dev_idx), self.config.max_expected_seq_len
+                )
+        else:
+            self.rot_emb.compute_freqs_cis(
+                self.shared.emb.weight.device,
+                self.config.max_expected_seq_len
+            )
 
         self.layers = []
         for i in range(self.config.nlayers):
@@ -235,28 +242,6 @@ class LLaMA(nn.Module):
         self.shared.head.weight.data.normal_(
             0, 1 / math.sqrt(math.sqrt(self.width * self.shared.vocab_size))
         )
-
-    def update_cacheable_data(
-        self,
-        x,
-        mask=None,
-        position_ids=None,
-        past_key_value_states=None,
-        use_cache=False,
-    ):
-        seq_len = x.shape[1]
-        # the max start position should be based on the max first position of each sequence
-        max_start_pos = torch.max(position_ids[:, 0]) if position_ids is not None else 0
-        self._update_cached_freqs_cis(max_start_pos + seq_len, x.device)
-
-    def _update_cached_freqs_cis(self, max_seq_len, device=None):
-        if isinstance(self.distributed_strategy, UniformModelParallelStrategy):
-            for dev_idx in set(self.distributed_strategy.layer_to_device.values()):
-                self.rot_emb.compute_freqs_cis(
-                    torch.device("cuda", dev_idx), max_seq_len
-                )
-        else:
-            self.rot_emb.compute_freqs_cis(device, max_seq_len)
 
     def _helper(
         self,

@@ -65,7 +65,7 @@ if args.distributed:
     dist.init_process_group()
 
 print("loading model")
-model = load_fms_llama(args.model_path, ntk_scaling=False)
+model = load_fms_llama(args.model_path)
 tokenizer = tokenizers.get_tokenizer(args.tokenizer)
 model.eval()
 torch.set_grad_enabled(False)

@@ -160,7 +160,13 @@ class RotaryEmbedding(PositionEncoder):
         if dev_idx not in self.max_seq_len_cached:
             self.max_seq_len_cached[dev_idx] = 0
 
-        max_seq_len = max(max_seq_len, self.max_seq_len * alpha)
+        # This condition can be combined with the model using Rotary calling this method 
+        # on model init when device is known to avoid a graph break (see llama.py)
+        if self.ntk_scaling:
+            max_seq_len = max(max_seq_len, self.max_seq_len * alpha)
+        else:
+            if self.max_seq_len_cached[dev_idx] > 0:
+                return alpha
 
         if (
             alpha in self.cached_freqs[dev_idx]
@@ -241,7 +247,7 @@ class RotaryEmbedding(PositionEncoder):
 
         # the max start position should be based on the max first position of each sequence
         max_start_pos = torch.max(position_ids[:, 0])
-        alpha = self._alpha(max_start_pos + seq_len)
+        alpha = self.compute_freqs_cis(q.device, max_start_pos + seq_len)
         freqs = self.cached_freqs[q.device.index][alpha][position_ids].unsqueeze(1)
 
         freqs = freqs.float()  # 1 1 L D/2 2 2
