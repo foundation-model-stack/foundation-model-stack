@@ -24,7 +24,7 @@ from fms.modules.layernorm import LayerNormParameterized
 from fms.modules.positions import RotaryEmbedding
 from fms.utils.activation import str_to_activation
 from fms.utils.config import ModelConfig
-from fms.utils.tokenizers import get_tokenizer, _has_hf
+from fms.utils.tokenizers import _has_hf, get_tokenizer
 
 
 # params emb_dim heads layers lr
@@ -232,6 +232,25 @@ class LLaMA(nn.Module):
         self.shared.head.weight.data.normal_(
             0, 1 / math.sqrt(math.sqrt(self.width * self.shared.vocab_size))
         )
+
+    def update_cacheable_data(
+        self,
+        x,
+        mask=None,
+        position_ids=None,
+        past_key_value_states=None,
+        use_cache=False,
+    ):
+        seq_len = x.shape[1]
+        # the max start position should be based on the max first position of each sequence
+        max_start_pos = torch.max(position_ids[:, 0]) if position_ids is not None else 0
+        if isinstance(self.distributed_strategy, UniformModelParallelStrategy):
+            for dev_idx in set(self.distributed_strategy.layer_to_device.values()):
+                self.rot_emb.compute_freqs_cis(
+                    torch.device("cuda", dev_idx), max_start_pos + seq_len
+                )
+        else:
+            self.rot_emb.compute_freqs_cis(x.device, max_start_pos + seq_len)
 
     def _helper(
         self,

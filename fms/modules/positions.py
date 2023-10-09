@@ -2,6 +2,7 @@ import math
 from typing import Optional, Tuple
 
 import torch
+from functorch.experimental.control_flow import cond
 from torch import nn
 
 
@@ -239,8 +240,8 @@ class RotaryEmbedding(PositionEncoder):
         k_ = k.float().reshape(*k.shape[:-1], -1, 2)  # B H L D/2 2
 
         # the max start position should be based on the max first position of each sequence
-        max_start_pos = torch.max(position_ids[:, 0]).item()
-        alpha = self.compute_freqs_cis(q.device, max_start_pos + seq_len)
+        max_start_pos = torch.max(position_ids[:, 0])
+        alpha = self._alpha(max_start_pos + seq_len)
         freqs = self.cached_freqs[q.device.index][alpha][position_ids].unsqueeze(1)
 
         freqs = freqs.float()  # 1 1 L D/2 2 2
