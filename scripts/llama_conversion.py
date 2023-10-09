@@ -35,7 +35,7 @@ def main():
     
     parser.add_argument(
         "--output_dir",
-        help="Target location for FMS LLaMa weights"
+        help="Target location for FMS LLaMa weights",
         required=True
     )
     
