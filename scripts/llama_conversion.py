@@ -15,7 +15,7 @@ def convert_from_hf_to_fms(path_to_hf_model, path_to_fms_model):
         path_to_fms_model (_type_): Path to save the FMS checkpoint including the tokenizer
     """
     # load the HF model and the tokenizer
-    model = LLaMAHFForCausalLM.from_pretrained(path_to_hf_model)
+    model = LlamaForCausalLM.from_pretrained(path_to_hf_model)
     tokenizer = LlamaTokenizer.from_pretrained(path_to_hf_model)
     
     # convert to FMS HF
@@ -40,6 +40,7 @@ def main():
     )
     
     args = parser.parse_args()
+    
     convert_from_hf_to_fms(args.input_dir, args.output_dir)
     
 if __name__ == "__main__":
