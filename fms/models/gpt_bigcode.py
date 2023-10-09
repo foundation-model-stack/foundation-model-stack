@@ -296,8 +296,9 @@ class GPTBigCode(nn.Module):
 
     def forward(
         self,
-        x: Optional[torch.LongTensor] = None,
+        x: torch.LongTensor,
         mask: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
         past_key_value_states: Optional[
             Tuple[
                 torch.FloatTensor,
@@ -309,6 +310,7 @@ class GPTBigCode(nn.Module):
         output, cache = self.base_model(
             x,
             mask,
+            position_ids=position_ids,
             past_key_value_states=past_key_value_states,
             use_cache=use_cache,
             attn_algorithm=attn_algorithm,
