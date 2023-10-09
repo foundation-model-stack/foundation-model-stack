@@ -173,4 +173,5 @@ use_cache = [
     False
 ]  # True/False are identical with greedy iff `torch.use_deterministic_algorithms(True)`
 for sample, cache in itertools.product(do_sample, use_cache):
-    infer(cache, sample)
+    with torch.no_grad():
+        infer(cache, sample)

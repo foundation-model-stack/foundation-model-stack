@@ -101,11 +101,11 @@ def _all_gather(input_: torch.Tensor) -> torch.Tensor:
     last_dim = input_.dim() - 1
     return (
         _all_gather_tensor(
-            input_.transpose_(0, last_dim).contiguous(),
-            last_dim,
+            input_.transpose(0, last_dim).contiguous(),
+            0,
             list(range(world_size)),
         )
-        .transpose_(0, last_dim)
+        .transpose(0, last_dim)
         .contiguous()
     )
 

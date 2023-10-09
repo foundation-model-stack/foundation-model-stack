@@ -348,7 +348,7 @@ def _rename_weights_to_fms(orig_sd):
     return new_sd
 
 
-def load_fms_llama(model_path: str, group=None):
+def load_fms_llama(model_path: str, group=None, **kwargs):
     if torch.distributed.is_initialized() and group is None:
         group = torch.distributed.GroupMember.WORLD
 
@@ -379,7 +379,7 @@ def load_fms_llama(model_path: str, group=None):
     # IBM LLaMa
     fms_sd = _rename_weights_to_fms(checkpoint_sd)
 
-    extra_args = {}
+    extra_args = kwargs
     if world_size > 1:
         print("using tensor parallel")
         extra_args["distributed_strategy"] = TensorParallelStrategy()
