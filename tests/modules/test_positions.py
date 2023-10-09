@@ -11,6 +11,7 @@ class RotaryEmbeddingTests(unittest.TestCase):
         q = torch.ones(2, 1, 4, 16, dtype=torch.float)  # b h s e
         k = 2 * torch.ones(2, 1, 4, 16, dtype=torch.float)  # b h s e
         rotary_embeddings = RotaryEmbedding(16, max_seq_len=32)
+        rotary_embeddings.compute_freqs_cis(torch.device("cpu"))
 
         with self.assertRaises(AssertionError):
             qr, kr = rotary_embeddings.adjusted_qk(q.squeeze(), k)
@@ -49,6 +50,7 @@ class RotaryEmbeddingTests(unittest.TestCase):
             0
         )  # b h s e
         rotary_embeddings = RotaryEmbedding(2, ratio=1, max_seq_len=2)
+        rotary_embeddings.compute_freqs_cis(torch.device("cpu"))
 
         qr, kr = rotary_embeddings.adjusted_qk(q, k)
 
@@ -80,6 +82,7 @@ class RotaryEmbeddingTests(unittest.TestCase):
             .unsqueeze(0)
         )  # b h s e
         rotary_embeddings = RotaryEmbedding(4, max_seq_len=2)
+        rotary_embeddings.compute_freqs_cis(torch.device("cpu"))
         qr, kr = rotary_embeddings.adjusted_qk(q, k)
         orig_dotp = q @ k.transpose(2, 3)
         rotated_dotp = qr @ kr.transpose(2, 3)
@@ -94,6 +97,7 @@ class RotaryEmbeddingTests(unittest.TestCase):
         q = torch.ones(2, 1, 4, 16, dtype=torch.float)  # b h s e
         k = 2 * torch.ones(2, 1, 4, 16, dtype=torch.float)  # b h s e
         rotary_embeddings = RotaryEmbedding(16, max_seq_len=32)
+        rotary_embeddings.compute_freqs_cis(torch.device("cpu"))
 
         # First test that left-padding works as expected, with all the rotations moved right by one
         qr, kr = rotary_embeddings.adjusted_qk(q, k)
@@ -149,6 +153,7 @@ class RotaryEmbeddingTests(unittest.TestCase):
         q = torch.ones(2, 1, 64, 16, dtype=torch.float)  # b h s e
         k = 2 * torch.ones(2, 1, 64, 16, dtype=torch.float)  # b h s e
         rotary_embeddings = RotaryEmbedding(16, max_seq_len=32)
+        rotary_embeddings.compute_freqs_cis(torch.device("cpu"))
 
         # This should not throw, as we're within length
         qr, kr = rotary_embeddings.adjusted_qk(q[:, :, 0:31, :], k[:, :, 0:31, :])
@@ -165,6 +170,7 @@ class RotaryEmbeddingTests(unittest.TestCase):
         q = torch.normal(0, 1, (4, 8, 100, 128))  # b h s e
         k = torch.normal(0, 1, (4, 8, 100, 128))  # b h s e
         rotary_embeddings = RotaryEmbedding(128, max_seq_len=256)
+        rotary_embeddings.compute_freqs_cis(torch.device("cpu"))
 
         qr, kr = rotary_embeddings.adjusted_qk(q, k)
 
@@ -197,6 +203,7 @@ class RotaryEmbeddingTests(unittest.TestCase):
             .transpose(1, 2)
         )  # b h s e
         rotary_embeddings = RotaryEmbedding(32, max_seq_len=128)
+        rotary_embeddings.compute_freqs_cis(torch.device("cpu"))
 
         qr, kr = rotary_embeddings.adjusted_qk(q, k)
         rotated_dotp = qr @ kr.transpose(2, 3)
@@ -219,11 +226,13 @@ class RotaryEmbeddingTests(unittest.TestCase):
         k = torch.randn((B, H, S, DIM))
 
         e = RotaryEmbedding(DIM, max_seq_len=S, ntk_scaling=False)
+        e.compute_freqs_cis(torch.device("cpu"))
         (
             adj_q,
             adj_k,
         ) = e.adjusted_qk(q, k)
         ntk = RotaryEmbedding(DIM, max_seq_len=S, ntk_scaling=True)
+        ntk.compute_freqs_cis(torch.device("cpu"))
         ntk_q, ntk_k = ntk.adjusted_qk(q, k)
 
         # <= max_seq_len, results should be the same with ntk_scaling.
