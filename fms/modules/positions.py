@@ -159,7 +159,7 @@ class RotaryEmbedding(PositionEncoder):
         if dev_idx not in self.max_seq_len_cached:
             self.max_seq_len_cached[dev_idx] = 0
 
-        # This condition can be combined with the model using Rotary calling this method 
+        # This condition can be combined with the model using Rotary calling this method
         # on model init when device is known to avoid a graph break (see llama.py)
         if self.ntk_scaling:
             max_seq_len = max(max_seq_len, self.max_seq_len * alpha)

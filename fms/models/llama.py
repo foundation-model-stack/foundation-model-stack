@@ -201,8 +201,7 @@ class LLaMA(nn.Module):
                 )
         else:
             self.rot_emb.compute_freqs_cis(
-                self.shared.emb.weight.device,
-                self.config.max_expected_seq_len
+                self.shared.emb.weight.device, self.config.max_expected_seq_len
             )
 
         self.layers = []
