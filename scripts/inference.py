@@ -130,12 +130,7 @@ def print_result(result):
     if local_rank != 0:
         return
     # stop at EOS token if present
-    eos_idx = torch.where(result == tokenizer.convert_tokens_to_ids("</s>"))
-    eos_idx = eos_idx[0]
-    if eos_idx.shape[0] >= 1:
-        eos_idx = eos_idx[0].item()
-        result = result[: eos_idx + 1]
-
+    result = generation.truncate_after_eos(result, tokenizer.convert_tokens_to_ids("</s>"))
     # print(result)
     # print(tokenizer.convert_ids_to_tokens(result))
     print(tokenizer.convert_tokens_to_string(tokenizer.convert_ids_to_tokens(result)))
