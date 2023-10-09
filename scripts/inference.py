@@ -68,6 +68,7 @@ print("loading model")
 model = load_fms_llama(args.model_path)
 tokenizer = tokenizers.get_tokenizer(args.tokenizer)
 model.eval()
+torch.set_grad_enabled(False)
 print("loading complete on rank", local_rank)
 
 if args.compile:
@@ -170,5 +171,4 @@ use_cache = [
     False
 ]  # True/False are identical with greedy iff `torch.use_deterministic_algorithms(True)`
 for sample, cache in itertools.product(do_sample, use_cache):
-    with torch.no_grad():
-        infer(cache, sample)
+    infer(cache, sample)
