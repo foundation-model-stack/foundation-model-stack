@@ -1,7 +1,7 @@
 import torch
 import torch.nn.functional as F
 
-from fms.utils.generation import generate
+from fms.utils.generation import generate, truncate_after_eos
 from fms.utils.tokenizers import get_tokenizer
 
 
@@ -62,3 +62,12 @@ def test_batched():
         tokenizer.convert_ids_to_tokens(result[0])
     )
     assert result == "ABCDEFGHIJ"
+
+
+def test_truncate():
+    result = torch.ones(20)
+    result[10] = 5
+    result = truncate_after_eos(result, 5)
+    expected = torch.ones(11)
+    expected[10] = 5
+    torch.testing.assert_close(result, expected)
