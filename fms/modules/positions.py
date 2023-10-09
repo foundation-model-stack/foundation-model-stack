@@ -2,7 +2,6 @@ import math
 from typing import Optional, Tuple
 
 import torch
-from functorch.experimental.control_flow import cond
 from torch import nn
 
 

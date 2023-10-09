@@ -12,9 +12,6 @@ class ModelMock:
             results.append(self.forward_one(inputs[i], **kwargs))
         return torch.stack(results, 0)
 
-    def update_cacheable_data(self, x, **kwargs):
-        pass
-
     def forward_one(self, inputs, **kwargs):
         inputs = inputs.view(inputs.numel())
         inputs = torch.cat((inputs[1:], torch.tensor([inputs[-1] + 1])), -1)
