@@ -22,8 +22,9 @@ def convert_from_hf_to_fms(path_to_hf_model, path_to_fms_model):
     fms_llama = llama.convert_hf_llama(model)
     fms_hf_llama = LLaMAHFForCausalLM.from_fms_model(fms_llama)
     
-    # save checkpoint
+    # save checkpoint and tokenizer
     fms_hf_llama.save_pretrained(path_to_fms_model)
+    tokenizer.save_pretrained(path_to_fms_model)
     
 def main():
     parser = argparse.ArgumentParser()
