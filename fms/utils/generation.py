@@ -88,6 +88,11 @@ def generate(
 
 
 def truncate_after_eos(result, eos_token_id):
+    """
+    Helper function to return a truncated sequence of token IDs stopping at
+    (and including) the 'end of sentence' token.
+    Currently only handles unbatched sequences.
+    """
     if eos_token_id is None:
         return result
 
