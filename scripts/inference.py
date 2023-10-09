@@ -68,6 +68,7 @@ print("loading model")
 model = load_fms_llama(args.model_path)
 tokenizer = tokenizers.get_tokenizer(args.tokenizer)
 model.eval()
+torch.set_grad_enabled(False)
 print("loading complete on rank", local_rank)
 
 if args.compile:
