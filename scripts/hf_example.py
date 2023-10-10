@@ -24,17 +24,19 @@ parser.add_argument(
 args = parser.parse_args()
 
 # Create an instance of the huggingface model using huggingface weights
-model = transformers.LlamaForCausalLM.from_pretrained(args.model_path)
+model = transformers.LlamaForCausalLM.from_pretrained(args.model_path, use_safetensors=True)
 # Convert to an instance of the FMS implementation of LLaMA, which supports
 # `torch.compile`
 model = llama.convert_hf_llama(model)
-# compile the model
-model = torch.compile(model)
+
 # Adapt the FMS implementation back to the HF API, so it can be used in
 # the huggingface ecosystem. Under the hood this is still the FMS
 # implementation.
 model = modeling_llama_hf.LLaMAHFForCausalLM.from_fms_model(model)
 register_fms_models()
+
+# compile the model
+model.decoder = torch.compile(model.decoder)
 
 # Use the compiled model as-usual in the HF ecosystem
 tokenizer = transformers.LlamaTokenizer.from_pretrained(args.model_path)
