@@ -183,7 +183,7 @@ def main():
     loss_fn = get_loss_fn()
 
     # todo, should batch these.
-    sample_prompt = {"instruction" : "What is the meaning of life?"}
+    sample_prompt = {"instruction" : "Explain the meaning of life."}
     sample_prompt = dataset.make_prompt(sample_prompt)
     sample_prompt2 = {"instruction" : "Please provide a recipe for chicken soup."}
     sample_prompt2 = dataset.make_prompt(sample_prompt2)

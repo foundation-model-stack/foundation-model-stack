@@ -62,7 +62,7 @@ class InferenceValidator(TrainerPlugin):
             if step is not None:
                 prefix = prefix + f":{step:04d}"
 
-            result = generation.generate(model, self.input_ids)
+            result = generation.generate(model, self.input_ids, use_cache=True)
             result = generation.truncate_after_eos(result, self.eos_token_id)
             result = self.tokenizer.convert_ids_to_tokens(result)
             result = self.tokenizer.convert_tokens_to_string(result)
@@ -77,6 +77,7 @@ class MetricReporter(TrainerPlugin):
     # TODO: add `writer` functions that handles logging metrics to experiment
     # tracking tools such as aimstack/wandb/neptune (or add alternate plugin?)
     def __init__(self, seconds=3, writer=print0):
+        super().__init__(1)
         self.seconds = seconds
         self.last_reported_time = datetime.now()
         self.tokens_seen = 0
