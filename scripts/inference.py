@@ -1,13 +1,13 @@
 import argparse
 import itertools
 import os
-from fms.utils import tokenizers, generation
 
 import torch
 from torch import distributed as dist
 
 from fms.distributed.strategy import TensorParallelStrategy
 from fms.models.llama import load_fms_llama
+from fms.utils import generation, tokenizers
 from fms.utils.generation import generate
 
 
@@ -73,6 +73,8 @@ print("loading complete on rank", local_rank)
 
 if args.compile:
     print("compiling model")
+    # Bug with kv-cache in PT2.1
+    torch._inductor.config.joint_graph_constant_folding = False
     # compiling can make first inference pass slow
     model = torch.compile(model)
 

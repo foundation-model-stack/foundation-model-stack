@@ -1,4 +1,3 @@
-import copy
 import json
 import math
 import os
@@ -10,7 +9,6 @@ from typing import Optional
 import torch
 import torch.nn as nn
 
-import fms.utils
 from fms.distributed.strategy import (
     DistributedStrategy,
     NoOpStrategy,
@@ -24,7 +22,7 @@ from fms.modules.layernorm import LayerNormParameterized
 from fms.modules.positions import RotaryEmbedding
 from fms.utils.activation import str_to_activation
 from fms.utils.config import ModelConfig
-from fms.utils.tokenizers import get_tokenizer, _has_hf
+from fms.utils.tokenizers import _has_hf, get_tokenizer
 
 
 # params emb_dim heads layers lr
@@ -194,6 +192,15 @@ class LLaMA(nn.Module):
             ntk_scaling=self.config.ntk_scaling,
             max_seq_len=self.config.max_expected_seq_len,
         )
+        if isinstance(self.distributed_strategy, UniformModelParallelStrategy):
+            for dev_idx in set(self.distributed_strategy.layer_to_device.values()):
+                self.rot_emb.compute_freqs_cis(
+                    torch.device("cuda", dev_idx), self.config.max_expected_seq_len
+                )
+        else:
+            self.rot_emb.compute_freqs_cis(
+                self.shared.emb.weight.device, self.config.max_expected_seq_len
+            )
 
         self.layers = []
         for i in range(self.config.nlayers):
