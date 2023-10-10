@@ -153,13 +153,11 @@ class RotaryEmbeddingTests(unittest.TestCase):
         # This should not throw, as we're within length
         qr, kr = rotary_embeddings.adjusted_qk(q[:, :, 0:31, :], k[:, :, 0:31, :])
 
-        # With this codebase we never hit the out of bounds error
-        qr, kr = rotary_embeddings.adjusted_qk(q, k)
-
-        # rotary_embeddings.compute_freqs_cis(64)
-
-        # # This should not throw, as we're within length
-        # qr, kr = rotary_embeddings(q, k)
+        # With this codebase we should hit an out-of-bounds error
+        # Without ntk-scaling, the max_seq_len is fixed and asking
+        # for more should give an error
+        with self.assertRaises(IndexError):
+            qr, kr = rotary_embeddings.adjusted_qk(q, k)
 
     def test_invariant_dotp(self):
         q = torch.normal(0, 1, (4, 8, 100, 128))  # b h s e

@@ -1,4 +1,3 @@
-import copy
 import json
 import math
 import os
@@ -10,7 +9,6 @@ from typing import Optional
 import torch
 import torch.nn as nn
 
-import fms.utils
 from fms.distributed.strategy import (
     DistributedStrategy,
     NoOpStrategy,

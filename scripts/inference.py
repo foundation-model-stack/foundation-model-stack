@@ -73,6 +73,8 @@ print("loading complete on rank", local_rank)
 
 if args.compile:
     print("compiling model")
+    # Bug with kv-cache in PT2.1
+    torch._inductor.config.joint_graph_constant_folding = False
     # compiling can make first inference pass slow
     model = torch.compile(model)
 
