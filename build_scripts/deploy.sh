@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
 
+rm -rf dist || true
 python setup.py bdist_wheel
-twine upload -u ${ARTIFACTORY_USERNAME} -p ${ARTIFACTORY_API_KEY} dist/*
+twine upload dist/*
