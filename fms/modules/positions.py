@@ -159,7 +159,14 @@ class RotaryEmbedding(PositionEncoder):
         if dev_idx not in self.max_seq_len_cached:
             self.max_seq_len_cached[dev_idx] = 0
 
-        max_seq_len = max(max_seq_len, self.max_seq_len * alpha)
+        # This condition can be combined with the model using Rotary calling this method
+        # on model init when device is known to avoid a graph break (see llama.py)
+        if self.ntk_scaling:
+            max_seq_len = max(max_seq_len, self.max_seq_len * alpha)
+        else:
+            if self.max_seq_len_cached[dev_idx] > 0:
+                return alpha
+            max_seq_len = max(max_seq_len, self.max_seq_len)
 
         if (
             alpha in self.cached_freqs[dev_idx]
@@ -189,18 +196,18 @@ class RotaryEmbedding(PositionEncoder):
                 torch.cos(freqs),
             ],
             dim=2,
-        ).view(*freqs.shape, 2, 2)
+        ).view(*freqs.size(), 2, 2)
 
         return alpha
 
     def reshape_for_broadcast(self, x: torch.Tensor, cur_freqs):
         ndim = x.ndim
         assert 1 < ndim, ndim
-        assert cur_freqs.shape[:2] == (
-            x.shape[2],
-            x.shape[-2],
-        ), f"for {cur_freqs.shape} and {x.shape}"
-        shape = [d if i == 2 or i >= ndim - 2 else 1 for i, d in enumerate(x.shape)]
+        assert cur_freqs.size()[:2] == (
+            x.size(2),
+            x.size(-2),
+        ), f"for {cur_freqs.size()} and {x.size()}"
+        shape = [d if i == 2 or i >= ndim - 2 else 1 for i, d in enumerate(x.size())]
         return cur_freqs.view(*shape, 2)
 
     def adjusted_qk(
@@ -229,17 +236,17 @@ class RotaryEmbedding(PositionEncoder):
         if position_ids is None:
             # Compute position_ids based on cache config
             position_ids = torch.arange(
-                0, q.shape[2], dtype=torch.long, device=q.device
-            ).repeat(q.shape[0], 1)
+                0, q.size(2), dtype=torch.long, device=q.device
+            ).repeat(q.size(0), 1)
             if use_cache and past_kv_state is not None:
-                position_ids += past_kv_state[0].shape[2]
+                position_ids += past_kv_state[0].size(2)
 
-        seq_len = q.shape[2]
-        q_ = q.float().reshape(*q.shape[:-1], -1, 2)  # B H L D/2 2
-        k_ = k.float().reshape(*k.shape[:-1], -1, 2)  # B H L D/2 2
+        seq_len = q.size(2)
+        q_ = q.float().reshape(*q.size()[:-1], -1, 2)  # B H L D/2 2
+        k_ = k.float().reshape(*k.size()[:-1], -1, 2)  # B H L D/2 2
 
         # the max start position should be based on the max first position of each sequence
-        max_start_pos = torch.max(position_ids[:, 0]).item()
+        max_start_pos = torch.max(position_ids[:, 0])
         alpha = self.compute_freqs_cis(q.device, max_start_pos + seq_len)
         freqs = self.cached_freqs[q.device.index][alpha][position_ids].unsqueeze(1)
 

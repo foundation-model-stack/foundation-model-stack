@@ -1,3 +1,4 @@
+import logging
 import dataclasses
 import os.path
 import tempfile
@@ -34,3 +35,13 @@ def test_updated():
     assert config is not config_updated
     assert config_updated.required_a == 2
     assert config_updated.default_b == "other_default"
+
+
+def test_updated_unknown_params_message(caplog):
+    caplog.set_level(logging.INFO)
+    config = MockModelConfig(required_a=1, default_b="other_default")
+    config.updated(required_a=2, unknown_param_1=3, unknown_param_2=4)
+    assert (
+        """Found the following unknown parameters while cloning and updating the configuration: ['unknown_param_1', 'unknown_param_2']"""
+        in caplog.text.strip()
+    )

@@ -57,9 +57,15 @@ class DeviceMover(nn.Module):
 
     def forward(self, *args, **kwargs):
         device = self.device
-        args = [arg.to(device) if type(arg) == torch.Tensor else arg for arg in args]
+        args = [
+            arg.to(device) if isinstance(arg, torch.Tensor) else arg for arg in args
+        ]
         kwargs = {
-            k: (kwargs[k].to(device) if type(kwargs[k]) == torch.Tensor else kwargs[k])
+            k: (
+                kwargs[k].to(device)
+                if isinstance(kwargs[k], torch.Tensor)
+                else kwargs[k]
+            )
             for k in kwargs
         }
         return self.module(*args, **kwargs)
