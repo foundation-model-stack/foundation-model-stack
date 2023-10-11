@@ -52,9 +52,8 @@ model = model.to(torch.half)
 
 # make sure we always call generate the same way when comparing implementations.
 def generate(model: nn.Module, new_tokens=25):
-    max_length = input_ids.shape[1] + new_tokens
     return model.generate(
-        input_ids=input_ids, use_cache=True, max_length=max_length, do_sample=False
+        input_ids=input_ids, use_cache=True, max_new_tokens=new_tokens, do_sample=False
     )
 
 
