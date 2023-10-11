@@ -58,7 +58,19 @@ def generate(
         output = model.forward(input_ids, **kwargs)
         if use_cache:
             logits, past_key_value_states = output
-            kwargs["past_key_value_states"] = past_key_value_states
+            # kv updates are required for torch.compile with
+            # mode='reduce-overhead'
+            n_kv_s = []
+            for layer_idx in range(len(past_key_value_states)):
+                n_kv_s.append([])
+                for tensor_idx in range(len(past_key_value_states[layer_idx])):
+                    n_kv_s[layer_idx].append(
+                        past_key_value_states[layer_idx][tensor_idx]
+                        .clone(memory_format=torch.contiguous_format)
+                        .detach()
+                    )
+                    # torch._dynamo.mark_dynamic(n_kv_s[layer_idx][tensor_idx], 2)
+            kwargs["past_key_value_states"] = n_kv_s
         else:
             logits = output
         logits = logits[:, -1, :]
