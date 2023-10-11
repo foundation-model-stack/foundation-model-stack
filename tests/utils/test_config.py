@@ -38,7 +38,7 @@ def test_updated():
 
 
 def test_updated_unknown_params_message(caplog):
-    caplog.set_level(logging.DEBUG)
+    caplog.set_level(logging.INFO)
     config = MockModelConfig(required_a=1, default_b="other_default")
     config.updated(required_a=2, unknown_param_1=3, unknown_param_2=4)
     assert (

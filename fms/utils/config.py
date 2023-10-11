@@ -56,7 +56,7 @@ class ModelConfig:
             else:
                 unknown_params.append(k)
         if len(unknown_params) > 0:
-            logger.debug(
+            logger.info(
                 f"""Found the following unknown parameters while cloning and updating the configuration: {unknown_params}"""
             )
         return copied_config
