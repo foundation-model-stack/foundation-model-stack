@@ -73,11 +73,10 @@ class _SentencePieceTokenizer(BaseTokenizer):
 
     def __init__(self, path: str):
         super().__init__()
-        try:
-            from sentencepiece import SentencePieceProcessor
-        except ImportError:
+        if not _has_sp():
             print("You need to install sentencepiece for this tokenizer to work.")
-            raise
+            raise ImportError
+        from sentencepiece import SentencePieceProcessor
 
         self.sp_model = SentencePieceProcessor(model_file=path)
 
@@ -106,11 +105,11 @@ class _HFTokenizer(BaseTokenizer):
 
     def __init__(self, name: str):
         super().__init__()
-        try:
-            from transformers import AutoTokenizer
-        except ImportError:
+        if not _has_sp():
             print("You need to install transformers for this tokenizer to work.")
-            raise
+            raise ImportError
+        from transformers import AutoTokenizer
+
 
         self.tokenizer = AutoTokenizer.from_pretrained(name)
 

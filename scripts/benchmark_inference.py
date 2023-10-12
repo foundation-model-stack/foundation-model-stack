@@ -92,30 +92,30 @@ parser.add_argument(
     choices=["default", "reduce-overhead"],
 )
 parser.add_argument(
-    "--skip_eager_runs", action="store_false", help="Do not run the eager benchmarks"
+    "--skip_eager_runs", action="store_true", help="Do not run the eager benchmarks"
 )
 parser.add_argument(
     "--skip_compile_runs",
-    action="store_false",
+    action="store_true",
     help="Do not run the compiled benchmarks",
 )
 parser.add_argument(
     "--skip_kvcache_runs",
-    action="store_false",
+    action="store_true",
     help="Do not run the kv-cache benchmarks",
 )
 parser.add_argument(
     "--skip_nokvcache_runs",
-    action="store_false",
+    action="store_true",
     help="Do not run the no kv-cache benchmarks",
 )
 parser.add_argument(
     "--skip_single_token_runs",
-    action="store_false",
+    action="store_true",
     help="Do not run the single token benchmarks",
 )
 parser.add_argument(
-    "--skip_e2e_runs", action="store_false", help="Do not run the e2e benchmarks"
+    "--skip_e2e_runs", action="store_true", help="Do not run the e2e benchmarks"
 )
 
 args = parser.parse_args()
