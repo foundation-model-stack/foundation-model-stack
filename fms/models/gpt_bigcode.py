@@ -13,7 +13,7 @@ from fms.modules.attention import MultiHeadAttention
 
 @dataclass
 class GPTBigCodeConfig(ModelConfig):
-    src_vocab_size: int = 49280
+    src_vocab_size: int = 49157  # original is 49152, this is based on len(tokenizer)
     emb_dim: int = 2048
     emb_kq: Optional[int] = None
     emb_v: Optional[int] = None
@@ -22,8 +22,6 @@ class GPTBigCodeConfig(ModelConfig):
     nlayers: int = 12
     pad_id: int = 0
     max_pos: int = 512
-    vocab_bias: bool = False
-    use_bias: bool = True
     hidden_grow_factor: float = 4.0
     activation_fn: str = "gelu-tanh"
     p_dropout: float = 0.0
@@ -54,7 +52,7 @@ class GPTBigCodeBlock(nn.Module):
             self.config.nheads,
             kvheads,
             p_dropout=self.config.p_dropout,
-            use_bias=self.config.use_bias,
+            use_bias=True,
         )
 
         self.ff_sub_layer = FeedForwardBlock(
@@ -62,7 +60,7 @@ class GPTBigCodeBlock(nn.Module):
             hidden_grow_factor=self.config.hidden_grow_factor,
             activation_fn=str_to_activation(self.config.activation_fn),
             p_dropout=self.config.p_dropout,
-            use_bias=self.config.use_bias,
+            use_bias=True,
         )
 
         if self.config.p_dropout != 0:
@@ -275,7 +273,7 @@ class GPTBigCode(nn.Module):
 
         self.base_model = GPTBigCodeHeadless(self.config)
         self.head = nn.Linear(
-            self.config.emb_dim, self.config.src_vocab_size, bias=self.config.vocab_bias
+            self.config.emb_dim, self.config.src_vocab_size, bias=False
         )
 
         # this model ties weights, so we tie here
