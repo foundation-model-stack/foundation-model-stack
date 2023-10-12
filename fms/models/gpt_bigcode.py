@@ -193,34 +193,33 @@ class GPTBigCodeHeadless(nn.Module):
 
         x_emb = self.embedding(x)
 
+        # if pad_id exists
+        #   is_pad will be a BoolTensor
+        #   otherwise pad_id will not be taken into account
+        is_pad: Optional[torch.BoolTensor] = (
+            None if self.config.pad_id is None else x == self.config.pad_id
+        )
+
         if position_ids is None:
-            _position_ids = torch.arange(
+            position_ids = torch.arange(
                 0, qlen, dtype=torch.long, device=x.device
             ).repeat(x.size(0), 1)
             # Compute position_ids based on cache config
             if use_cache and past_key_value_states[0] is not None:
-                _position_ids += past_key_value_states[0][0].shape[2]
-        else:
-            # use the position ids provided by the user directly
-            _position_ids = position_ids
+                position_ids += past_key_value_states[0][0].shape[2]
 
-        if self.config.pad_id is not None:
-            is_pad = x == self.config.pad_id
-
-            # if position_ids were not given by the user, correct for pads
-            # assume position_ids is already corrected for pads if given by the user
-            if position_ids is None:
-                _position_ids = _position_ids.sub(is_pad.cumsum(1))
+            # correct for pads if a pad_id exists
+            if is_pad is not None:
+                position_ids = position_ids.sub(is_pad.cumsum(1))
                 # In case of left-padding, prevent negative indices (get zeroed anyway)
-                _position_ids = _position_ids.clamp(min=0)
+                position_ids = position_ids.clamp(min=0)
 
-            # zero out the associated position embeddings
-            position_out = self.position_embedding(_position_ids).mul(
-                ~is_pad.unsqueeze(-1)
-            )
-        else:
-            # just look up the position embeddings, no need to zero if no pad_id
-            position_out = self.position_embedding(_position_ids)
+        # look up position embeddings
+        position_out = self.position_embedding(position_ids)
+
+        # zero out the associated position embeddings
+        if is_pad is not None:
+            position_out = position_out.mul(~is_pad.unsqueeze(-1))
 
         # perform absolute position embedding
         x = x_emb + position_out
