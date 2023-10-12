@@ -1,7 +1,6 @@
 import abc
 import os
 import platform
-import re
 import tempfile
 from typing import List, Union
 
@@ -10,7 +9,7 @@ import pytest
 import torch
 import torch.nn as nn
 from torch._dynamo.exc import TorchDynamoException
-from torch._dynamo.testing import CompileCounter, CompileCounterWithBackend
+from torch._dynamo.testing import CompileCounterWithBackend
 
 from fms.testing.comparison import get_signature
 from fms.utils.config import ModelConfig

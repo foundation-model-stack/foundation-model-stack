@@ -5,7 +5,7 @@ import torch
 from torch._dynamo.exc import TorchDynamoException
 from torch._dynamo.testing import CompileCounterWithBackend
 
-from fms.testing._internal.model_test_suite import ConfigFixtureMixin, ModelFixtureMixin
+from fms.testing._internal.model_test_suite import ConfigFixtureMixin
 
 SEED = 42
 torch.manual_seed(SEED)  # pytorch random seed
