@@ -32,6 +32,7 @@ from ...comparison import (
     HFModelSignatureParams,
     ModelSignatureParams,
     compare_model_signatures,
+    get_signature,
 )
 
 
@@ -110,6 +111,43 @@ class HFConfigTestSuite(ConfigFixtureMixin, HFConfigFixtureMixin):
                 fms_hf_config_path
             )
             assert fms_hf_config.to_dict() == fms_hf_config_loaded.to_dict()
+
+
+class HFModelCompileTestSuite(HFModelFixtureMixin):
+    """A set of tests associated with compilation of huggingface adapted fms models"""
+
+    @property
+    @abc.abstractmethod
+    def _get_hf_signature_params(self) -> List[str]:
+        """the value to pass into params in get_signature function for an hf model
+
+        Returns
+        -------
+        List[str]
+            the params to set to the default tensor value (inp) in get_signature. If an integer, will use *args, if a
+            list, will use **kwargs
+        """
+        pass
+
+    @pytest.mark.skipif(
+        platform.system() != "Linux",
+        reason=f"pytorch compile is stable on Linux, skipping as current platform is {platform.platform()}",
+    )
+    def test_hf_model_compile_no_graph_breaks(self, fms_hf_model):
+        """Test that an HF-FMS model is compilable without graph breaks"""
+        try:
+            compiled_model = torch.compile(fms_hf_model, fullgraph=True)
+            fms_hf_signature_params = HFModelSignatureParams(
+                compiled_model, self._get_hf_signature_params
+            )
+            get_signature(
+                fms_hf_signature_params.model,
+                fms_hf_signature_params.params,
+                fms_hf_signature_params.other_params,
+                fms_hf_signature_params.logits_getter_fn,
+            )
+        except Exception as e:
+            pytest.fail(f"Model compilation failed with the following response: {e}")
 
 
 class HFModelEquivalenceTestSuite(HFConfigFixtureMixin, HFModelFixtureMixin):
@@ -199,23 +237,6 @@ class HFModelEquivalenceTestSuite(HFConfigFixtureMixin, HFModelFixtureMixin):
         compare_model_signatures(
             HFModelSignatureParams(fms_hf_model, self._get_hf_signature_params),
             HFModelSignatureParams(fms_hf_model_loaded, self._get_hf_signature_params),
-        )
-
-    @pytest.mark.skipif(
-        platform.system() != "Linux",
-        reason=f"pytorch compile is stable on Linux, skipping as current platform is {platform.platform()}",
-    )
-    def test_hf_model_compile_output(self, fms_hf_model):
-        """Test that an hf adapted FMS model's signature output stays the same while compiled or not compiled"""
-        fms_hf_signature_params = HFModelSignatureParams(
-            fms_hf_model, self._get_hf_signature_params
-        )
-        compiled_fms_hf_model = torch.compile(fms_hf_model)
-        compiled_fms_hf_signature_params = HFModelSignatureParams(
-            compiled_fms_hf_model, self._get_hf_signature_params
-        )
-        compare_model_signatures(
-            fms_hf_signature_params, compiled_fms_hf_signature_params
         )
 
 

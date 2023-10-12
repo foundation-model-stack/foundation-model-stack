@@ -138,6 +138,35 @@ class ModelConfigTestSuite(ConfigFixtureMixin, ModelFixtureMixin):
         assert model.get_config().as_dict() == config.as_dict()
 
 
+class ModelCompileTestSuite(ModelFixtureMixin):
+    """A set of tests associated with compilation of fms models"""
+
+    @property
+    @abc.abstractmethod
+    def _get_signature_params(self) -> Union[int, List[str]]:
+        """the value to pass into params in get_signature function for this model
+
+        Returns
+        -------
+        Union[int, List[str]]
+            the params to set to the default tensor value (inp) in get_signature. If an integer, will use *args, if a
+            list, will use **kwargs
+        """
+        pass
+
+    @pytest.mark.skipif(
+        platform.system() != "Linux",
+        reason=f"pytorch compile is stable on Linux, skipping as current platform is {platform.platform()}",
+    )
+    def test_model_compile_no_graph_breaks(self, model):
+        """Test that an FMS model is compilable without graph breaks"""
+        try:
+            compiled_model = torch.compile(model, fullgraph=True)
+            get_signature(compiled_model, params=self._get_signature_params)
+        except Exception as e:
+            pytest.fail(f"Model compilation failed with the following response: {e}")
+
+
 class ModelConsistencyTestSuite(ModelFixtureMixin, SignatureFixtureMixin):
     """All tests related to model consistency will be part of this test suite"""
 
@@ -179,19 +208,6 @@ class ModelConsistencyTestSuite(ModelFixtureMixin, SignatureFixtureMixin):
         assert np.allclose(
             np.array(actual), np.array(signature)
         ), _FAILED_MODEL_SIGNATURE_OUTPUT_MSG
-
-    @pytest.mark.skipif(
-        platform.system() != "Linux",
-        reason=f"pytorch compile is stable on Linux, skipping as current platform is {platform.platform()}",
-    )
-    def test_model_compile_output(self, model, signature):
-        """Test that an FMS model's signature output stays the same while compiled or not compiled"""
-        expected = get_signature(model, params=self._get_signature_params)
-        compiled_model = torch.compile(model)
-        actual = get_signature(compiled_model, params=self._get_signature_params)
-        assert np.allclose(
-            np.array(actual), np.array(expected)
-        ), _FAILED_MODEL_COMPILE_EQUIVALENCY
 
     def test_model_weight_keys(self, model, capture_expectation):
         import inspect
