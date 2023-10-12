@@ -145,16 +145,16 @@ repeat = 3
 # and batch size. This means we're measuring the cost of the forward pass
 # in isolation in a way that's easier to compare, and avoids including the cost
 # of the concatenation operation.
-def one_token(m, use_cache):
+def one_token(model, use_cache):
     if use_cache:
-        actual, _ = m.forward(
+        actual, _ = model.forward(
             next_val, past_key_value_states=cache, use_cache=True, only_last_token=True
         )
         actual = torch.argmax(actual, dim=-1)
         if local_rank == 0:
             torch.testing.assert_close(actual, expected)
     else:
-        actual = m.forward(next_input, only_last_token=True)
+        actual = model.forward(next_input, only_last_token=True)
         actual = torch.argmax(actual, dim=-1)
         if local_rank == 0:
             torch.testing.assert_close(actual, expected)
@@ -172,6 +172,7 @@ def end_to_end(model, use_cache, expected=None):
         torch.testing.assert_close(result, expected)
     return result
 
+e2e_expected = end_to_end(model, True)
 
 def log_result(result):
     if local_rank == 0:
@@ -189,7 +190,6 @@ def bench_one(use_cache):
 
 
 def bench_end_to_end(use_cache):
-    e2e_expected = end_to_end(model, use_cache)
     print0(f"- with use_cache={use_cache}")
     result = timeit.repeat(
         lambda: end_to_end(model, use_cache, e2e_expected), number=1, repeat=repeat
@@ -217,14 +217,13 @@ torch._inductor.config.joint_graph_constant_folding = False
 model = torch.compile(model, dynamic=True, mode=args.compile_mode)
 
 # Warmup. Especially with torch.compile, first inference pass can be slow.
-print0("Warming up the compiled model")
+print(f"Warming up the compiled model in rank {local_rank}")
 torch._logging.set_logs(dynamo=logging.INFO)
 one_token(model, True)
 one_token(model, False)
-bench_end_to_end(True)
-bench_end_to_end(False)
-print0("Model has warmed up")
+print(f"Model has warmed up in rank {local_rank}")
 
+print0()
 print0("Compiled results:")
 print0("==========")
 
@@ -235,6 +234,11 @@ bench_one(True)
 bench_one(False)
 
 print0()
+print(f"Warming up the compiled model e2e in rank {local_rank}")
+end_to_end(model, True, e2e_expected)
+end_to_end(model, False, e2e_expected)
+print(f"Model has warmed up e2e in rank {local_rank}")
+
 print0("(Compiled) End-to-end sequence generation")
 bench_end_to_end(True)
 bench_end_to_end(False)
