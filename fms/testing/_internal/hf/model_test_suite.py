@@ -142,6 +142,8 @@ class HFModelCompileTestSuite(HFModelFixtureMixin):
             fms_hf_signature_params = HFModelSignatureParams(
                 compiled_model,
                 self._get_hf_signature_params,
+                # default attn_algorithm won't compile on CPU
+                # todo: add non-mmath attn_algorithm when we have GPUs to run unit tests
                 other_params={"return_dict": True, "attn_algorithm": "math"},
             )
             get_signature(

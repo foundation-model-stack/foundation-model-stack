@@ -166,6 +166,8 @@ class ModelCompileTestSuite(ModelFixtureMixin):
             get_signature(
                 compiled_model,
                 params=self._get_signature_params,
+                # default attn_algorithm won't compile on CPU
+                # todo: add non-mmath attn_algorithm when we have GPUs to run unit tests
                 optional_params={"attn_algorithm": "math"},
             )
         except TorchDynamoException as e:
