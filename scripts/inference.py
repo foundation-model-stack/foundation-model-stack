@@ -33,6 +33,11 @@ parser.add_argument(
     help="Path to the tokenizer (e.g. ~/tokenizer.model)",
 )
 parser.add_argument(
+    "--no_use_cache",
+    action="store_false",
+    help="Disable the kv-cache (on by default)",
+)
+parser.add_argument(
     "--compile",
     action="store_true",
     help="Use torch.compile (slow for first inference pass)",
@@ -170,7 +175,7 @@ def infer(use_cache, do_sample):
 print("generating output", local_rank)
 do_sample = [False]
 use_cache = [
-    False
+    args.no_use_cache
 ]  # True/False are identical with greedy iff `torch.use_deterministic_algorithms(True)`
 for sample, cache in itertools.product(do_sample, use_cache):
     infer(cache, sample)
