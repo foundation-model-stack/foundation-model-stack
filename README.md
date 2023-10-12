@@ -40,7 +40,7 @@ The figure below shows the latency improvements as we move from eager mode execu
 
 ![image (21)](static/optimizations.png)
 
-For more information on reproducing the benchmarks and running some examples, see ![here](scripts/README.md)
+For more information on reproducing the benchmarks and running some examples, see [here](scripts/README.md)
 
 ## HF Model Support
 
