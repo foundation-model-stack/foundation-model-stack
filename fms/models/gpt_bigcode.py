@@ -70,14 +70,18 @@ class GPTBigCodeBlock(nn.Module):
 
     def forward(
         self,
-        x,
+        x: torch.LongTensor,
         *,
-        mask=None,
-        position_ids=None,
-        past_key_value_state=None,
-        use_cache=False,
-        is_causal_mask=False,
-        attn_algorithm=None,
+        mask: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
+        past_key_value_state: Optional[
+            Tuple[
+                torch.FloatTensor,
+            ]
+        ] = None,
+        use_cache: bool = False,
+        is_causal_mask: bool = False,
+        attn_algorithm: Optional[str] = None,
     ):
 
         self_attn_past_key_value = past_key_value_state
