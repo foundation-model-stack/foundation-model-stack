@@ -133,11 +133,7 @@ class GPTBigCodeHeadless(nn.Module):
             [GPTBigCodeBlock(self.config) for _ in range(self.config.nlayers)]
         )
 
-        self.embedding = nn.Embedding(
-            self.config.src_vocab_size,
-            self.config.emb_dim,
-            padding_idx=self.config.pad_id,
-        )
+        self.embedding = nn.Embedding(self.config.src_vocab_size, self.config.emb_dim)
         self.position_embedding = nn.Embedding(self.config.max_pos, self.config.emb_dim)
 
         self.dec_norm = nn.LayerNorm(self.config.emb_dim, eps=self.config.ln_eps)
