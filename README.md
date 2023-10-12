@@ -7,6 +7,14 @@ Foundation Model Stack is a collection of components for development, inference,
 
 ## Installation
 
+### Pypi
+
+```
+pip install ibm-fms
+```
+
+### Local
+
 Requires [PyTorch >= 2.1](https://pytorch.org/get-started/locally/).
 
 ```
