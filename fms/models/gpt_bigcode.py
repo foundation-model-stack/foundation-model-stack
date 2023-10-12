@@ -192,20 +192,20 @@ class GPTBigCodeHeadless(nn.Module):
         # if pad_id exists
         #   is_pad will be a BoolTensor
         #   otherwise pad_id will not be taken into account
-        is_pad: Optional[torch.BoolTensor] = (
-            None if self.config.pad_id is None else x == self.config.pad_id
-        )
+        if self.config.pad_id is None:
+            is_pad = torch.zeros_like(x, dtype=bool, device=x.device)
+        else:
+            is_pad = x == self.config.pad_id
 
         if position_ids is None:
-            position_ids = torch.arange(
-                0, qlen, dtype=torch.long, device=x.device
-            ).repeat(x.size(0), 1)
+            position_ids = (~is_pad).cumsum(1)
+
             # Compute position_ids based on cache config
             if use_cache and past_key_value_states[0] is not None:
                 position_ids += past_key_value_states[0][0].size(-2)
 
             # correct for pads if a pad_id exists
-            if is_pad is not None:
+            if self.config.pad_id is not None:
                 position_ids = position_ids.sub(is_pad.cumsum(1))
                 # In case of left-padding, prevent negative indices (get zeroed anyway)
                 position_ids = position_ids.clamp(min=0)
@@ -214,7 +214,7 @@ class GPTBigCodeHeadless(nn.Module):
         position_out = self.position_embedding(position_ids)
 
         # zero out the associated position embeddings
-        if is_pad is not None:
+        if self.config.pad_id is not None:
             position_out = position_out.mul(~is_pad.unsqueeze(-1))
 
         # perform absolute position embedding
