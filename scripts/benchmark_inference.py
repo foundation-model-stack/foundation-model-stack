@@ -15,7 +15,8 @@ from fms.utils import generation, print0, tokenizers
 
 # Example running llama 7B on one A100:
 #
-# $ srun -N 1 --gres=gpu:1 torchrun --nproc_per_node=1 ./scripts/benchmark_inference.py --model_path=~/models/7B-F/ --tokenizer=~/models/tokenizer.model --batch_size=2 --seq_len=500
+# (bare metal) $ CUDA_VISIBLE_DEVICES=0 torchrun --nproc_per_node=1 ./scripts/benchmark_inference.py --model_path=~/models/7B-F/ --tokenizer=~/models/tokenizer.model
+# (slurm) $ srun -N 1 --gres=gpu:1 torchrun --nproc_per_node=1 ./scripts/benchmark_inference.py --model_path=~/models/7B-F/ --tokenizer=~/models/tokenizer.model
 # loading model
 # loading complete on rank 0
 # Uncompiled results:
