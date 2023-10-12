@@ -73,7 +73,7 @@ class _SentencePieceTokenizer(BaseTokenizer):
 
     def __init__(self, path: str):
         super().__init__()
-        if not _has_sp():
+        if not _has_sp:
             print("You need to install sentencepiece for this tokenizer to work.")
             raise ImportError
         from sentencepiece import SentencePieceProcessor
@@ -105,7 +105,7 @@ class _HFTokenizer(BaseTokenizer):
 
     def __init__(self, name: str):
         super().__init__()
-        if not _has_sp():
+        if not _has_hf:
             print("You need to install transformers for this tokenizer to work.")
             raise ImportError
         from transformers import AutoTokenizer
