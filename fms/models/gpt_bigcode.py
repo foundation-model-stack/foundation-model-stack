@@ -13,8 +13,8 @@ from fms.modules.attention import MultiHeadAttention
 
 @dataclass
 class GPTBigCodeConfig(ModelConfig):
-    src_vocab_size: int = 49157  # original is 49152, this is based on len(tokenizer)
-    emb_dim: int = 2048
+    src_vocab_size: int = 49157  # This param default is based on https://huggingface.co/bigcode/gpt_bigcode-santacoder
+    emb_dim: int = 2048  # This param default is based on https://huggingface.co/bigcode/gpt_bigcode-santacoder
     emb_kq: Optional[int] = None
     emb_v: Optional[int] = None
     nheads: int = 12
