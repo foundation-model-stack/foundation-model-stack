@@ -110,7 +110,6 @@ class _HFTokenizer(BaseTokenizer):
             raise ImportError
         from transformers import AutoTokenizer
 
-
         self.tokenizer = AutoTokenizer.from_pretrained(name)
 
     def tokenize(self, text: str):
