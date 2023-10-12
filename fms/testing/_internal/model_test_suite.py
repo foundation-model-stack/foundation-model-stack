@@ -168,8 +168,8 @@ class ModelCompileTestSuite(ModelFixtureMixin):
                 params=self._get_signature_params,
                 optional_params={"attn_algorithm": "math"},
             )
-        except TorchDynamoException:
-            pytest.fail(f"Failed to get signature of full-graph compiled model")
+        except TorchDynamoException as e:
+            pytest.fail(f"Failed to get signature of full-graph compiled model:\n{e}")
 
 
 class ModelConsistencyTestSuite(ModelFixtureMixin, SignatureFixtureMixin):
