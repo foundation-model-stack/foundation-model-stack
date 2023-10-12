@@ -85,13 +85,6 @@ parser.add_argument(
     help="Test correctness of outputs vs just timing",
 )
 parser.add_argument(
-    "--compile_mode",
-    type=str,
-    help="Mode for compilation",
-    default="default",
-    choices=["default", "reduce-overhead"],
-)
-parser.add_argument(
     "--skip_eager_runs", action="store_true", help="Do not run the eager benchmarks"
 )
 parser.add_argument(

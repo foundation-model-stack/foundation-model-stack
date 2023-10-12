@@ -18,6 +18,12 @@ An example command to run a 70B test with expected maximum performance would be:
 torchrun --nnodes=1 --nproc-per-node=8 --standalone scripts/benchmark_inference.py --model_path="~/llama_weights/70B-F" --tokenizer="~/llama_weights/tokenizer.model" --distributed --compile_mode="reduce-overhead"
 ```
 
+And to get the end to end generation numbers, you would do:
+
+```
+torchrun --nnodes=1 --nproc-per-node=8 --standalone scripts/benchmark_inference.py --model_path="~/llama_weights/70B-F" --tokenizer="~/llama_weights/tokenizer.model" --distributed --compile_mode="reduce-overhead" --skip_eager_runs --skip_single_token_runs --skip_nokvcache_runs
+```
+
 While running a single GPU 7B test would be:
 ```
 CUDA_VISIBLE_DEVICES=0 python scripts/benchmark_inference.py --model_path="~/llama_weights/7B-F" --tokenizer="~/llama_weights/tokenizer.model"
