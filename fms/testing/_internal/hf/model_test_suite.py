@@ -143,10 +143,10 @@ class HFModelCompileTestSuite(HFModelFixtureMixin):
                 compiled_model, self._get_hf_signature_params
             )
             get_signature(
-                fms_hf_signature_params.model,
-                fms_hf_signature_params.params,
-                fms_hf_signature_params.other_params,
-                fms_hf_signature_params.logits_getter_fn,
+                model=fms_hf_signature_params.model,
+                params=fms_hf_signature_params.params,
+                optional_params=fms_hf_signature_params.other_params,
+                logits_getter_fn=fms_hf_signature_params.logits_getter_fn,
             )
         except TorchDynamoException as e:
             pytest.fail(f"Failed to get signature of full-graph compiled model")
