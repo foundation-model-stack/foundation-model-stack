@@ -37,10 +37,6 @@ Failed consistency of model weights. This is most likely due to:
 If either (1) or (2) was done purposely, please re-run this test with --capture_expectation
 """
 
-_FAILED_MODEL_COMPILE_EQUIVALENCY = """
-Model signature before compile does not match model signature after compile 
-"""
-
 
 class ConfigFixtureMixin(metaclass=abc.ABCMeta):
     """Include this mixin if you would like to have the config fixture"""
