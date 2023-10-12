@@ -7,6 +7,7 @@ import timeit
 
 import torch
 from torch import distributed as dist
+from torch._dynamo.eval_frame import OptimizedModule
 
 from fms.models.llama import load_fms_llama
 from fms.utils import generation, print0, tokenizers
@@ -162,7 +163,12 @@ def one_token(model, use_cache):
 
 def end_to_end(model, use_cache, expected=None):
     result = generation.generate(
-        model, ids, max_new_tokens=MAX_NEW_TOKENS, do_sample=False, use_cache=use_cache
+        model,
+        ids,
+        max_new_tokens=MAX_NEW_TOKENS,
+        do_sample=False,
+        use_cache=use_cache,
+        contiguous_cache=args.compile_mode == "reduce-overhead" and isinstance(model, OptimizedModule)
     )
     if local_rank == 0:
         assert (
@@ -172,7 +178,8 @@ def end_to_end(model, use_cache, expected=None):
         torch.testing.assert_close(result, expected)
     return result
 
-e2e_expected = end_to_end(model, True)
+e2e_expected_cache = end_to_end(model, True)
+e2e_expected_nocache = end_to_end(model, True)
 
 def log_result(result):
     if local_rank == 0:
@@ -189,10 +196,10 @@ def bench_one(use_cache):
     )
 
 
-def bench_end_to_end(use_cache):
+def bench_end_to_end(use_cache, expected):
     print0(f"- with use_cache={use_cache}")
     result = timeit.repeat(
-        lambda: end_to_end(model, use_cache, e2e_expected), number=1, repeat=repeat
+        lambda: end_to_end(model, use_cache, expected), number=1, repeat=repeat
     )
     log_result(result)
 
@@ -205,8 +212,8 @@ bench_one(True)
 bench_one(False)
 
 print0("End-to-end sequence generation")
-bench_end_to_end(True)
-bench_end_to_end(False)
+bench_end_to_end(True, e2e_expected_cache)
+bench_end_to_end(False, e2e_expected_nocache)
 
 print0("Compiling model...")
 
@@ -235,10 +242,10 @@ bench_one(False)
 
 print0()
 print(f"Warming up the compiled model e2e in rank {local_rank}")
-end_to_end(model, True, e2e_expected)
-end_to_end(model, False, e2e_expected)
+end_to_end(model, True, e2e_expected_cache)
+end_to_end(model, False, e2e_expected_nocache)
 print(f"Model has warmed up e2e in rank {local_rank}")
 
 print0("(Compiled) End-to-end sequence generation")
-bench_end_to_end(True)
-bench_end_to_end(False)
+bench_end_to_end(True, e2e_expected_cache)
+bench_end_to_end(False, e2e_expected_nocache)
