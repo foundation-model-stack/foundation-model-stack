@@ -6,6 +6,7 @@ from fms.testing._internal.model_test_suite import (
     ModelFixtureMixin,
     ModelConfigTestSuite,
     ModelConsistencyTestSuite,
+    ModelCompileTestSuite,
 )
 
 
@@ -34,7 +35,10 @@ class GPTBigCodeFixtures(ConfigFixtureMixin, ModelFixtureMixin):
 
 
 class TestGPTBigCode(
-    ModelConfigTestSuite, ModelConsistencyTestSuite, GPTBigCodeFixtures
+    ModelConfigTestSuite,
+    ModelConsistencyTestSuite,
+    ModelCompileTestSuite,
+    GPTBigCodeFixtures,
 ):
     """
     Model Test Suite for GPT-BigCode
