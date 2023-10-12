@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 import torch
 import torch.nn as nn
+from torch._dynamo.exc import TorchDynamoException
 
 from fms.testing.comparison import get_signature
 from fms.utils.config import ModelConfig
@@ -163,8 +164,8 @@ class ModelCompileTestSuite(ModelFixtureMixin):
         try:
             compiled_model = torch.compile(model, fullgraph=True)
             get_signature(compiled_model, params=self._get_signature_params)
-        except Exception as e:
-            pytest.fail(f"Model compilation failed with the following response: {e}")
+        except TorchDynamoException as e:
+            pytest.fail(f"Failed to get signature of full-graph compiled model")
 
 
 class ModelConsistencyTestSuite(ModelFixtureMixin, SignatureFixtureMixin):

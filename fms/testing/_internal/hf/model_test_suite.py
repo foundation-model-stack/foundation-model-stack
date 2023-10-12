@@ -2,6 +2,8 @@ import platform
 
 import numpy as np
 import torch
+from torch._dynamo.exc import TorchDynamoException
+
 from fms.testing._internal.model_test_suite import ConfigFixtureMixin, ModelFixtureMixin
 
 SEED = 42
@@ -146,8 +148,8 @@ class HFModelCompileTestSuite(HFModelFixtureMixin):
                 fms_hf_signature_params.other_params,
                 fms_hf_signature_params.logits_getter_fn,
             )
-        except Exception as e:
-            pytest.fail(f"Model compilation failed with the following response: {e}")
+        except TorchDynamoException as e:
+            pytest.fail(f"Failed to get signature of full-graph compiled model")
 
 
 class HFModelEquivalenceTestSuite(HFConfigFixtureMixin, HFModelFixtureMixin):
