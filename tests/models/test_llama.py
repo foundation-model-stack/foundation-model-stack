@@ -6,6 +6,7 @@ from fms.testing._internal.model_test_suite import (
     ModelConsistencyTestSuite,
     ConfigFixtureMixin,
     ModelFixtureMixin,
+    ModelCompileTestSuite,
 )
 from fms.utils.config import ModelConfig
 
@@ -40,7 +41,12 @@ class LLaMA2Fixtures(ConfigFixtureMixin, ModelFixtureMixin):
         )
 
 
-class TestLlama2(ModelConfigTestSuite, ModelConsistencyTestSuite, LLaMA2Fixtures):
+class TestLlama2(
+    ModelConfigTestSuite,
+    ModelConsistencyTestSuite,
+    ModelCompileTestSuite,
+    LLaMA2Fixtures,
+):
     """
     Model Test Suite for llama
 
@@ -90,7 +96,9 @@ class LLaMA2GQAFixtures(ModelFixtureMixin):
         )
 
 
-class TestLlama2GQA(ModelConsistencyTestSuite, LLaMA2GQAFixtures):
+class TestLlama2GQA(
+    ModelConsistencyTestSuite, ModelCompileTestSuite, LLaMA2GQAFixtures
+):
     """
     Test LLaMA2-GQA model consistency
     """

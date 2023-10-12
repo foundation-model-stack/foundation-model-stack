@@ -1,6 +1,11 @@
+import platform
+
 import numpy as np
 import torch
-from fms.testing._internal.model_test_suite import ConfigFixtureMixin, ModelFixtureMixin
+from torch._dynamo.exc import TorchDynamoException
+from torch._dynamo.testing import CompileCounterWithBackend
+
+from fms.testing._internal.model_test_suite import ConfigFixtureMixin
 
 SEED = 42
 torch.manual_seed(SEED)  # pytorch random seed
@@ -30,6 +35,7 @@ from ...comparison import (
     HFModelSignatureParams,
     ModelSignatureParams,
     compare_model_signatures,
+    get_signature,
 )
 
 
@@ -108,6 +114,53 @@ class HFConfigTestSuite(ConfigFixtureMixin, HFConfigFixtureMixin):
                 fms_hf_config_path
             )
             assert fms_hf_config.to_dict() == fms_hf_config_loaded.to_dict()
+
+
+class HFModelCompileTestSuite(HFModelFixtureMixin):
+    """A set of tests associated with compilation of huggingface adapted fms models"""
+
+    @property
+    @abc.abstractmethod
+    def _get_hf_signature_params(self) -> List[str]:
+        """the value to pass into params in get_signature function for an hf model
+
+        Returns
+        -------
+        List[str]
+            the params to set to the default tensor value (inp) in get_signature. If an integer, will use *args, if a
+            list, will use **kwargs
+        """
+        pass
+
+    @pytest.mark.skipif(
+        platform.system() != "Linux",
+        reason=f"pytorch compile is more stable on Linux, skipping as current platform is {platform.platform()}",
+    )
+    def test_hf_model_compile_no_graph_breaks(self, fms_hf_model):
+        """Test that an HF-FMS model is compilable without graph breaks"""
+        try:
+            torch._dynamo.reset()
+            cnt = CompileCounterWithBackend("inductor")
+            compiled_model = torch.compile(
+                model=fms_hf_model, backend=cnt, fullgraph=True
+            )
+            fms_hf_signature_params = HFModelSignatureParams(
+                compiled_model,
+                self._get_hf_signature_params,
+                # default attn_algorithm won't compile on CPU
+                # TODO: add non-mmath attn_algorithm when we have GPUs to run unit tests
+                other_params={"return_dict": True, "attn_algorithm": "math"},
+            )
+            assert cnt.frame_count == 0
+            get_signature(
+                model=fms_hf_signature_params.model,
+                params=fms_hf_signature_params.params,
+                optional_params=fms_hf_signature_params.other_params,
+                logits_getter_fn=fms_hf_signature_params.logits_getter_fn,
+            )
+            assert cnt.frame_count == 1
+        except TorchDynamoException as e:
+            pytest.fail(f"Failed to get signature of full-graph compiled model:\n{e}")
 
 
 class HFModelEquivalenceTestSuite(HFConfigFixtureMixin, HFModelFixtureMixin):
