@@ -186,7 +186,7 @@ def one_token(model, use_cache):
     else:
         actual = model.forward(next_input, only_last_token=True)
     actual = torch.argmax(actual, dim=-1)
-    if local_rank == 0 and args.test_correctness:
+    if local_rank == 0 and args.check_correctness:
         torch.testing.assert_close(actual, expected)
     else:
         torch.cuda.synchronize()
@@ -208,7 +208,7 @@ def end_to_end(model, use_cache, expected=None):
         assert (
             result.size()[-1] == SEQ_LEN + MAX_NEW_TOKENS
         ), f"{result.size()}, {SEQ_LEN}, {MAX_NEW_TOKENS}"
-    if expected is not None and args.test_correctness:
+    if expected is not None and args.check_correctness:
         torch.testing.assert_close(result, expected)
     else:
         torch.cuda.synchronize()
