@@ -156,7 +156,7 @@ class ModelCompileTestSuite(ModelFixtureMixin):
 
     @pytest.mark.skipif(
         platform.system() != "Linux",
-        reason=f"pytorch compile is stable on Linux, skipping as current platform is {platform.platform()}",
+        reason=f"pytorch compile is more stable on Linux, skipping as current platform is {platform.platform()}",
     )
     def test_model_compile_no_graph_breaks(self, model):
         """Test that an FMS model is compilable without graph breaks"""

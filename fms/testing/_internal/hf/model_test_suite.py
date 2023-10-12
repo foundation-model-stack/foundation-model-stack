@@ -131,7 +131,7 @@ class HFModelCompileTestSuite(HFModelFixtureMixin):
 
     @pytest.mark.skipif(
         platform.system() != "Linux",
-        reason=f"pytorch compile is stable on Linux, skipping as current platform is {platform.platform()}",
+        reason=f"pytorch compile is more stable on Linux, skipping as current platform is {platform.platform()}",
     )
     def test_hf_model_compile_no_graph_breaks(self, fms_hf_model):
         """Test that an HF-FMS model is compilable without graph breaks"""
