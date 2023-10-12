@@ -1,6 +1,7 @@
 import abc
 import os
 import platform
+import re
 import tempfile
 from typing import List, Union
 
@@ -9,6 +10,7 @@ import pytest
 import torch
 import torch.nn as nn
 from torch._dynamo.exc import TorchDynamoException
+from torch._dynamo.testing import CompileCounter, CompileCounterWithBackend
 
 from fms.testing.comparison import get_signature
 from fms.utils.config import ModelConfig
@@ -162,14 +164,18 @@ class ModelCompileTestSuite(ModelFixtureMixin):
     def test_model_compile_no_graph_breaks(self, model):
         """Test that an FMS model is compilable without graph breaks"""
         try:
-            compiled_model = torch.compile(model, fullgraph=True)
+            torch._dynamo.reset()
+            cnt = CompileCounterWithBackend("inductor")
+            compiled_model = torch.compile(model=model, backend=cnt, fullgraph=True)
+            assert cnt.frame_count == 0
             get_signature(
                 compiled_model,
                 params=self._get_signature_params,
                 # default attn_algorithm won't compile on CPU
-                # todo: add non-mmath attn_algorithm when we have GPUs to run unit tests
+                # TODO: add non-mmath attn_algorithm when we have GPUs to run unit tests
                 optional_params={"attn_algorithm": "math"},
             )
+            assert cnt.frame_count == 1
         except TorchDynamoException as e:
             pytest.fail(f"Failed to get signature of full-graph compiled model:\n{e}")
 

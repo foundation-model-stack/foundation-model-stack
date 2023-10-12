@@ -3,6 +3,7 @@ import platform
 import numpy as np
 import torch
 from torch._dynamo.exc import TorchDynamoException
+from torch._dynamo.testing import CompileCounterWithBackend
 
 from fms.testing._internal.model_test_suite import ConfigFixtureMixin, ModelFixtureMixin
 
@@ -138,20 +139,26 @@ class HFModelCompileTestSuite(HFModelFixtureMixin):
     def test_hf_model_compile_no_graph_breaks(self, fms_hf_model):
         """Test that an HF-FMS model is compilable without graph breaks"""
         try:
-            compiled_model = torch.compile(fms_hf_model, fullgraph=True)
+            torch._dynamo.reset()
+            cnt = CompileCounterWithBackend("inductor")
+            compiled_model = torch.compile(
+                model=fms_hf_model, backend=cnt, fullgraph=True
+            )
             fms_hf_signature_params = HFModelSignatureParams(
                 compiled_model,
                 self._get_hf_signature_params,
                 # default attn_algorithm won't compile on CPU
-                # todo: add non-mmath attn_algorithm when we have GPUs to run unit tests
+                # TODO: add non-mmath attn_algorithm when we have GPUs to run unit tests
                 other_params={"return_dict": True, "attn_algorithm": "math"},
             )
+            assert cnt.frame_count == 0
             get_signature(
                 model=fms_hf_signature_params.model,
                 params=fms_hf_signature_params.params,
                 optional_params=fms_hf_signature_params.other_params,
                 logits_getter_fn=fms_hf_signature_params.logits_getter_fn,
             )
+            assert cnt.frame_count == 1
         except TorchDynamoException as e:
             pytest.fail(f"Failed to get signature of full-graph compiled model:\n{e}")
 
