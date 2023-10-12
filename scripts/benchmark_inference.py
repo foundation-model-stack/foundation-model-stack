@@ -72,12 +72,50 @@ parser.add_argument(
     type=str,
     help="Mode for compilation",
     default="default",
-    choices=["default", "reduce-overhead"]
+    choices=["default", "reduce-overhead"],
 )
 parser.add_argument(
     "--distributed",
     action="store_true",
     help="This is a distributed job (multiple instances run with RANK+WORLD_SIZE)",
+)
+parser.add_argument(
+    "--check_correctness",
+    action="store_true",
+    help="Test correctness of outputs vs just timing",
+)
+parser.add_argument(
+    "--compile_mode",
+    type=str,
+    help="Mode for compilation",
+    default="default",
+    choices=["default", "reduce-overhead"],
+)
+parser.add_argument(
+    "--skip_eager_runs", action="store_false", help="Do not run the eager benchmarks"
+)
+parser.add_argument(
+    "--skip_compile_runs",
+    action="store_false",
+    help="Do not run the compiled benchmarks",
+)
+parser.add_argument(
+    "--skip_kvcache_runs",
+    action="store_false",
+    help="Do not run the kv-cache benchmarks",
+)
+parser.add_argument(
+    "--skip_nokvcache_runs",
+    action="store_false",
+    help="Do not run the no kv-cache benchmarks",
+)
+parser.add_argument(
+    "--skip_single_token_runs",
+    action="store_false",
+    help="Do not run the single token benchmarks",
+)
+parser.add_argument(
+    "--skip_e2e_runs", action="store_false", help="Do not run the e2e benchmarks"
 )
 
 args = parser.parse_args()
@@ -152,14 +190,13 @@ def one_token(model, use_cache):
         actual, _ = model.forward(
             next_val, past_key_value_states=cache, use_cache=True, only_last_token=True
         )
-        actual = torch.argmax(actual, dim=-1)
-        if local_rank == 0:
-            torch.testing.assert_close(actual, expected)
     else:
         actual = model.forward(next_input, only_last_token=True)
-        actual = torch.argmax(actual, dim=-1)
-        if local_rank == 0:
-            torch.testing.assert_close(actual, expected)
+    actual = torch.argmax(actual, dim=-1)
+    if local_rank == 0 and args.test_correctness:
+        torch.testing.assert_close(actual, expected)
+    else:
+        torch.cuda.synchronize()
 
 
 def end_to_end(model, use_cache, expected=None):
@@ -169,18 +206,25 @@ def end_to_end(model, use_cache, expected=None):
         max_new_tokens=MAX_NEW_TOKENS,
         do_sample=False,
         use_cache=use_cache,
-        contiguous_cache=args.compile_mode == "reduce-overhead" and isinstance(model, OptimizedModule)
+        contiguous_cache=args.compile_mode == "reduce-overhead"
+        and isinstance(
+            model, OptimizedModule
+        ),  # this is needed for reduce-overhead to work correctly for now
     )
     if local_rank == 0:
         assert (
             result.size()[-1] == SEQ_LEN + MAX_NEW_TOKENS
         ), f"{result.size()}, {SEQ_LEN}, {MAX_NEW_TOKENS}"
-    if expected is not None:
+    if expected is not None and args.test_correctness:
         torch.testing.assert_close(result, expected)
+    else:
+        torch.cuda.synchronize()
     return result
+
 
 e2e_expected_cache = end_to_end(model, True)
 e2e_expected_nocache = end_to_end(model, True)
+
 
 def log_result(result):
     if local_rank == 0:
@@ -193,7 +237,9 @@ def log_result(result):
 def bench_one(use_cache):
     print0(f"- with use_cache={use_cache}")
     log_result(
-        timeit.repeat(lambda: one_token(model, use_cache), number=MAX_NEW_TOKENS, repeat=repeat)
+        timeit.repeat(
+            lambda: one_token(model, use_cache), number=MAX_NEW_TOKENS, repeat=repeat
+        )
     )
 
 
@@ -205,48 +251,70 @@ def bench_end_to_end(use_cache, expected):
     log_result(result)
 
 
-print0(f"Results for batch size {BATCH_SIZE}, sequence length {SEQ_LEN}, new tokens generated {MAX_NEW_TOKENS}")
-print0("Uncompiled results:")
-print0("==========")
-print0("Single token generation")
-bench_one(True)
-bench_one(False)
+print0(
+    f"Results for batch size {BATCH_SIZE}, sequence length {SEQ_LEN}, new tokens generated {MAX_NEW_TOKENS}"
+)
+if not args.skip_eager_runs:
+    print0("Uncompiled results:")
+    print0("==========")
+    if not args.skip_single_token_runs:
+        print0("Single token generation")
+        if not args.skip_kvcache_runs:
+            bench_one(True)
+        if not args.skip_nokvcache_runs:
+            bench_one(False)
 
-print0("End-to-end sequence generation")
-bench_end_to_end(True, e2e_expected_cache)
-bench_end_to_end(False, e2e_expected_nocache)
+    if not args.skip_e2e_runs:
+        print0("End-to-end sequence generation")
+        if not args.skip_kvcache_runs:
+            bench_end_to_end(True, e2e_expected_cache)
+        if not args.skip_nokvcache_runs:
+            bench_end_to_end(False, e2e_expected_nocache)
 
-print0("Compiling model...")
+if not args.skip_compile_runs:
+    print0("Compiling model...")
 
-torch._inductor.config.joint_graph_constant_folding = False
-# with mode='reduce-overhead' we see better performance but on multi-GPU models
-# hit an error on the end-to-end test below:
-# `RuntimeError: Expected curr_block->ptr == block_state.ptr to be true, but got false.`
-model = torch.compile(model, dynamic=True, mode=args.compile_mode)
+    torch._inductor.config.joint_graph_constant_folding = False
+    # with mode='reduce-overhead' we see better performance but on multi-GPU models
+    # hit an error on the end-to-end test below when run after other tests (if it's
+    # run first it works, confirming a memory leak):
+    # `RuntimeError: Expected curr_block->ptr == block_state.ptr to be true, but got false.`
+    model = torch.compile(model, dynamic=True, mode=args.compile_mode)
 
-# Warmup. Especially with torch.compile, first inference pass can be slow.
-print(f"Warming up the compiled model in rank {local_rank}")
-torch._logging.set_logs(dynamo=logging.INFO)
-one_token(model, True)
-one_token(model, False)
-print(f"Model has warmed up in rank {local_rank}")
+    print0()
+    print0("Compiled results:")
+    print0("==========")
 
-print0()
-print0("Compiled results:")
-print0("==========")
+    if not args.skip_single_token_runs:
+        # Warmup. Especially with torch.compile, first inference pass can be slow.
+        print(f"Warming up the compiled model for single token in rank {local_rank}")
+        # Activate dynamo logs to ensure some output during compilation
+        torch._logging.set_logs(dynamo=logging.INFO)
+        if not args.skip_kvcache_runs:
+            one_token(model, True)
+        if not args.skip_nokvcache_runs:
+            one_token(model, False)
+        print(f"Model has warmed up in rank {local_rank}")
 
-# These get much better results with mode='reduce-overhead' but can lead to
-# some memory issues
-print0("(Compiled) Single token generation")
-bench_one(True)
-bench_one(False)
+        # These get much better results with mode='reduce-overhead' but can lead to
+        # some memory issues
+        print0("(Compiled) Single token generation")
+        if not args.skip_kvcache_runs:
+            bench_one(True)
+        if not args.skip_nokvcache_runs:
+            bench_one(False)
 
-print0()
-print(f"Warming up the compiled model e2e in rank {local_rank}")
-end_to_end(model, True, e2e_expected_cache)
-end_to_end(model, False, e2e_expected_nocache)
-print(f"Model has warmed up e2e in rank {local_rank}")
+    if not args.skip_e2e_runs:
+        print0()
+        print(f"Warming up the compiled model e2e in rank {local_rank}")
+        if not args.skip_kvcache_runs:
+            end_to_end(model, True, e2e_expected_cache)
+        if not args.skip_nokvcache_runs:
+            end_to_end(model, False, e2e_expected_nocache)
+        print(f"Model has warmed up e2e in rank {local_rank}")
 
-print0("(Compiled) End-to-end sequence generation")
-bench_end_to_end(True, e2e_expected_cache)
-bench_end_to_end(False, e2e_expected_nocache)
+        print0("(Compiled) End-to-end sequence generation")
+        if not args.skip_kvcache_runs:
+            bench_end_to_end(True, e2e_expected_cache)
+        if not args.skip_nokvcache_runs:
+            bench_end_to_end(False, e2e_expected_nocache)

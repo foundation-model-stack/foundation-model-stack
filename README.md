@@ -7,6 +7,8 @@ Foundation Model Stack is a collection of components for development, inference,
 
 ## Installation
 
+We recommend running this on Python 3.11 and CUDA 12.1 for best performance, as the CPU overheads of the models are reduced significantly.
+
 Requires [PyTorch >= 2.1](https://pytorch.org/get-started/locally/).
 
 ```

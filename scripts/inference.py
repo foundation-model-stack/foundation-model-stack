@@ -47,7 +47,7 @@ parser.add_argument(
     type=str,
     help="Mode for compilation",
     default="default",
-    choices=["default", "reduce-overhead"]
+    choices=["default", "reduce-overhead"],
 )
 parser.add_argument(
     "--deterministic",
