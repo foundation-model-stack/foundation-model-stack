@@ -8,7 +8,7 @@ import torch
 from torch import distributed as dist
 
 from fms.models.llama import load_fms_llama
-from fms.utils import generation, print0
+from fms.utils import generation, print0, tokenizers
 
 
 # Example running llama 7B on one A100:
@@ -77,7 +77,9 @@ if args.distributed:
     dist.init_process_group()
 
 print("loading model")
-model, tokenizer = load_fms_llama(args.model_path, args.tokenizer)
+model = load_fms_llama(args.model_path)
+tokenizer = tokenizers.get_tokenizer(args.tokenizer)
+
 model.eval()
 torch.set_grad_enabled(False)
 print("loading complete on rank", local_rank)
@@ -193,9 +195,11 @@ bench_end_to_end(False)
 
 print0("Compiling model...")
 
-# Ideally this should be:
-# model = torch.compile(model, mode="reduce-overhead", dynamic=True)
-model = torch.compile(model)
+torch._inductor.config.joint_graph_constant_folding = False
+# with mode='reduce-overhead' we see better performance but on multi-GPU models
+# hit an error on the end-to-end test below:
+# `RuntimeError: Expected curr_block->ptr == block_state.ptr to be true, but got false.`
+model = torch.compile(model, dynamic=True)
 
 # Warmup. Especially with torch.compile, first inference pass can be slow.
 one_token(model, True)
@@ -208,9 +212,7 @@ print0("Compiled results:")
 bench_one(True)
 bench_one(False)
 
-# Each new token changes the sequence length, leading to "guard failures,"
-# making this slow. This should be improved with `dynamic=True`
-# print0()
-# print0("(Compiled) End-to-end sequence generation")
-# bench_end_to_end(True)
-# bench_end_to_end(False)
+print0()
+print0("(Compiled) End-to-end sequence generation")
+bench_end_to_end(True)
+bench_end_to_end(False)

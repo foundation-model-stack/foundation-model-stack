@@ -1,4 +1,3 @@
-import copy
 import json
 import math
 import os
@@ -10,7 +9,6 @@ from typing import Optional
 import torch
 import torch.nn as nn
 
-import fms.utils
 from fms.distributed.strategy import (
     DistributedStrategy,
     NoOpStrategy,
@@ -22,8 +20,9 @@ from fms.modules.embedding import WordEmbedding
 from fms.modules.feedforward import GatedLinearUnit
 from fms.modules.layernorm import LayerNormParameterized
 from fms.modules.positions import RotaryEmbedding
+from fms.utils.activation import str_to_activation
 from fms.utils.config import ModelConfig
-from fms.utils.tokenizers import get_tokenizer, _has_hf
+from fms.utils.tokenizers import _has_hf, get_tokenizer
 
 
 # params emb_dim heads layers lr
@@ -94,7 +93,7 @@ class LLaMABlock(nn.Module):
             self.config.emb_dim,
             hidden_grow_factor=self.config.hidden_grow_factor,
             multiple_of=self.config.multiple_of,
-            activation_fn=fms.utils.str_to_activation(self.config.activation_fn),
+            activation_fn=str_to_activation(self.config.activation_fn),
             p_dropout=self.config.p_dropout,
             use_bias=False,
         )
@@ -193,6 +192,15 @@ class LLaMA(nn.Module):
             ntk_scaling=self.config.ntk_scaling,
             max_seq_len=self.config.max_expected_seq_len,
         )
+        if isinstance(self.distributed_strategy, UniformModelParallelStrategy):
+            for dev_idx in set(self.distributed_strategy.layer_to_device.values()):
+                self.rot_emb.compute_freqs_cis(
+                    torch.device("cuda", dev_idx), self.config.max_expected_seq_len
+                )
+        else:
+            self.rot_emb.compute_freqs_cis(
+                self.shared.emb.weight.device, self.config.max_expected_seq_len
+            )
 
         self.layers = []
         for i in range(self.config.nlayers):
@@ -347,7 +355,7 @@ def _rename_weights_to_fms(orig_sd):
     return new_sd
 
 
-def load_fms_llama(model_path: str, tokenizer_path: str, group=None):
+def load_fms_llama(model_path: str, group=None, **kwargs):
     if torch.distributed.is_initialized() and group is None:
         group = torch.distributed.GroupMember.WORLD
 
@@ -359,10 +367,6 @@ def load_fms_llama(model_path: str, tokenizer_path: str, group=None):
         rank = group.rank()
     # from llama.tokenizer import Tokenizer
     model_path = os.path.expanduser(model_path)
-    tokenizer_path = os.path.expanduser(tokenizer_path)
-
-    # Load tokenizer
-    tokenizer = get_tokenizer(tokenizer_path)
 
     # Load Llama model from Meta's weights
     checkpoints = sorted(Path(model_path).glob("*.pth"))
@@ -382,7 +386,7 @@ def load_fms_llama(model_path: str, tokenizer_path: str, group=None):
     # IBM LLaMa
     fms_sd = _rename_weights_to_fms(checkpoint_sd)
 
-    extra_args = {}
+    extra_args = kwargs
     if world_size > 1:
         print("using tensor parallel")
         extra_args["distributed_strategy"] = TensorParallelStrategy()
@@ -397,7 +401,7 @@ def load_fms_llama(model_path: str, tokenizer_path: str, group=None):
         extra_args["kvheads"] = params["n_kv_heads"]
 
     ibm_model = LLaMA(
-        src_vocab_size=tokenizer.vocab_size(),
+        src_vocab_size=32_000,
         emb_dim=params["dim"],
         nheads=params["n_heads"],
         nlayers=params["n_layers"],
@@ -411,7 +415,7 @@ def load_fms_llama(model_path: str, tokenizer_path: str, group=None):
         fms_sd, strict=False
     )  # the meta weights have some extra stuff
 
-    return ibm_model, tokenizer
+    return ibm_model
 
 
 def convert_hf_llama(hf_model: "LlamaForCausalLM") -> LLaMA:
