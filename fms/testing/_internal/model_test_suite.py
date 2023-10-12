@@ -163,8 +163,12 @@ class ModelCompileTestSuite(ModelFixtureMixin):
         """Test that an FMS model is compilable without graph breaks"""
         try:
             compiled_model = torch.compile(model, fullgraph=True)
-            get_signature(compiled_model, params=self._get_signature_params)
-        except TorchDynamoException as e:
+            get_signature(
+                compiled_model,
+                params=self._get_signature_params,
+                optional_params={"attn_algorithm": "math"},
+            )
+        except TorchDynamoException:
             pytest.fail(f"Failed to get signature of full-graph compiled model")
 
 
