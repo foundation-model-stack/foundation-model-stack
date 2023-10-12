@@ -43,6 +43,13 @@ parser.add_argument(
     help="Use torch.compile (slow for first inference pass)",
 )
 parser.add_argument(
+    "--compile_mode",
+    type=str,
+    help="Mode for compilation",
+    default="default",
+    choices=["default", "reduce-overhead"]
+)
+parser.add_argument(
     "--deterministic",
     action="store_true",
     help="Set torch.use_deterministic_algorithms? Requires env variable `CUBLAS_WORKSPACE_CONFIG=:4096:8`",
@@ -81,7 +88,7 @@ if args.compile:
     # Bug with kv-cache in PT2.1
     torch._inductor.config.joint_graph_constant_folding = False
     # compiling can make first inference pass slow
-    model = torch.compile(model)
+    model = torch.compile(model, mode=args.compile_mode)
 
 
 def ids_for_prompt(prompt):

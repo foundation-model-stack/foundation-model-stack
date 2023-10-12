@@ -1,4 +1,5 @@
 import argparse
+import logging
 import os
 import statistics
 import time
@@ -49,7 +50,7 @@ parser.add_argument(
 parser.add_argument(
     "--seq_len",
     type=int,
-    default=100,
+    default=512,
     help="Sequence length of mock input",
 )
 parser.add_argument(
@@ -58,7 +59,19 @@ parser.add_argument(
     default=2,
     help="Batch size of mock input",
 )
-
+parser.add_argument(
+    "--max_new_tokens",
+    type=int,
+    default=256,
+    help="Batch size of mock input",
+)
+parser.add_argument(
+    "--compile_mode",
+    type=str,
+    help="Mode for compilation",
+    default="default",
+    choices=["default", "reduce-overhead"]
+)
 parser.add_argument(
     "--distributed",
     action="store_true",
@@ -86,6 +99,7 @@ print("loading complete on rank", local_rank)
 
 SEQ_LEN = args.seq_len
 BATCH_SIZE = args.batch_size
+MAX_NEW_TOKENS = args.max_new_tokens
 
 ids = torch.randint(
     tokenizer.vocab_size(), (BATCH_SIZE, SEQ_LEN), device=device, dtype=torch.long
@@ -119,7 +133,6 @@ expected2 = torch.argmax(expected2, dim=-1)
 
 torch.testing.assert_close(expected, expected2)
 
-iters = 25
 repeat = 3
 
 
@@ -149,12 +162,12 @@ def one_token(m, use_cache):
 
 def end_to_end(model, use_cache, expected=None):
     result = generation.generate(
-        model, ids, max_new_tokens=iters, do_sample=False, use_cache=use_cache
+        model, ids, max_new_tokens=MAX_NEW_TOKENS, do_sample=False, use_cache=use_cache
     )
     if local_rank == 0:
         assert (
-            result.size()[-1] == SEQ_LEN + iters
-        ), f"{result.size()}, {SEQ_LEN}, {iters}"
+            result.size()[-1] == SEQ_LEN + MAX_NEW_TOKENS
+        ), f"{result.size()}, {SEQ_LEN}, {MAX_NEW_TOKENS}"
     if expected is not None:
         torch.testing.assert_close(result, expected)
     return result
@@ -163,7 +176,7 @@ def end_to_end(model, use_cache, expected=None):
 def log_result(result):
     if local_rank == 0:
         median = statistics.median(result)
-        per_token = median / iters
+        per_token = median / MAX_NEW_TOKENS
         ms = per_token * 1000
         print(f"\t{ms:0.2f} ms per token")
 
@@ -171,7 +184,7 @@ def log_result(result):
 def bench_one(use_cache):
     print0(f"- with use_cache={use_cache}")
     log_result(
-        timeit.repeat(lambda: one_token(model, use_cache), number=iters, repeat=repeat)
+        timeit.repeat(lambda: one_token(model, use_cache), number=MAX_NEW_TOKENS, repeat=repeat)
     )
 
 
@@ -184,8 +197,10 @@ def bench_end_to_end(use_cache):
     log_result(result)
 
 
+print0(f"Results for batch size {BATCH_SIZE}, sequence length {SEQ_LEN}, new tokens generated {MAX_NEW_TOKENS}")
 print0("Uncompiled results:")
-
+print0("==========")
+print0("Single token generation")
 bench_one(True)
 bench_one(False)
 
@@ -199,16 +214,23 @@ torch._inductor.config.joint_graph_constant_folding = False
 # with mode='reduce-overhead' we see better performance but on multi-GPU models
 # hit an error on the end-to-end test below:
 # `RuntimeError: Expected curr_block->ptr == block_state.ptr to be true, but got false.`
-model = torch.compile(model, dynamic=True)
+model = torch.compile(model, dynamic=True, mode=args.compile_mode)
 
 # Warmup. Especially with torch.compile, first inference pass can be slow.
+print0("Warming up the compiled model")
+torch._logging.set_logs(dynamo=logging.INFO)
 one_token(model, True)
 one_token(model, False)
+bench_end_to_end(True)
+bench_end_to_end(False)
+print0("Model has warmed up")
 
 print0("Compiled results:")
+print0("==========")
 
 # These get much better results with mode='reduce-overhead' but can lead to
 # some memory issues
+print0("(Compiled) Single token generation")
 bench_one(True)
 bench_one(False)
 
