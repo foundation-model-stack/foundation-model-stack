@@ -139,7 +139,6 @@ class GPTBigCodeHeadless(nn.Module):
             padding_idx=self.config.pad_id,
         )
         self.position_embedding = nn.Embedding(self.config.max_pos, self.config.emb_dim)
-        self.register_buffer("pos_id", torch.arange(self.config.max_pos).unsqueeze(0))
 
         self.dec_norm = nn.LayerNorm(self.config.emb_dim, eps=self.config.ln_eps)
 
