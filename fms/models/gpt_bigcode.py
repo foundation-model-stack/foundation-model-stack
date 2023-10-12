@@ -206,7 +206,7 @@ class GPTBigCodeHeadless(nn.Module):
             ).repeat(x.size(0), 1)
             # Compute position_ids based on cache config
             if use_cache and past_key_value_states[0] is not None:
-                position_ids += past_key_value_states[0][0].shape[2]
+                position_ids += past_key_value_states[0][0].size(-2)
 
             # correct for pads if a pad_id exists
             if is_pad is not None:
