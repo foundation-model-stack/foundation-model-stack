@@ -144,6 +144,25 @@ class GPTBigCodeHeadless(nn.Module):
         if self.config.p_dropout:
             self.dropout = nn.Dropout(self.config.p_dropout)
 
+    def _compute_position_ids(
+        self,
+        is_pad: torch.BoolTensor,
+        use_cache: bool,
+        past_key_value_states: Optional[
+            Tuple[
+                torch.FloatTensor,
+            ]
+        ] = None,
+    ):
+        """compute the position ids if the use happened not to give any"""
+        position_ids = ((~is_pad).cumsum(1) - 1).clamp(min=0)
+
+        # Compute position_ids based on cache config
+        if use_cache and past_key_value_states[0] is not None:
+            position_ids += past_key_value_states[0][0].size(-2)
+
+        return position_ids
+
     def forward(
         self,
         x: torch.LongTensor,
@@ -198,17 +217,9 @@ class GPTBigCodeHeadless(nn.Module):
             is_pad = x == self.config.pad_id
 
         if position_ids is None:
-            position_ids = (~is_pad).cumsum(1)
-
-            # Compute position_ids based on cache config
-            if use_cache and past_key_value_states[0] is not None:
-                position_ids += past_key_value_states[0][0].size(-2)
-
-            # correct for pads if a pad_id exists
-            if self.config.pad_id is not None:
-                position_ids = position_ids.sub(is_pad.cumsum(1))
-                # In case of left-padding, prevent negative indices (get zeroed anyway)
-                position_ids = position_ids.clamp(min=0)
+            position_ids = self._compute_position_ids(
+                is_pad, use_cache, past_key_value_states
+            )
 
         # look up position embeddings
         position_out = self.position_embedding(position_ids)
