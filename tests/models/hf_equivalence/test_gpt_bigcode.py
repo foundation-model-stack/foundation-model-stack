@@ -13,7 +13,6 @@ from fms.testing.comparison import (
 def test_gptbigcode_equivalence():
     """Tests GPT BigCode equivalence with a known implementation. Takes approximately 1:11 on an mbp with M1 chip"""
     import torch
-    import torch.nn as nn
     from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
 
     tokenizer = AutoTokenizer.from_pretrained("bigcode/gpt_bigcode-santacoder")
@@ -21,6 +20,7 @@ def test_gptbigcode_equivalence():
     hf_model.config.scale_attention_softmax_in_fp32 = False
 
     model = GPTBigCode(
+        src_vocab_size=hf_model.config.vocab_size,
         nheads=16,
         nlayers=24,
         pad_id=-1,
