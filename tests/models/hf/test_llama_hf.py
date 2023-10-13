@@ -18,6 +18,7 @@ from fms.testing._internal.hf.model_test_suite import (
     HFConfigTestSuite,
     HFModelEquivalenceTestSuite,
     HFModelGenerationTestSuite,
+    HFModelCompileTestSuite,
 )
 from fms.testing._internal.model_test_suite import ModelFixtureMixin
 from ..test_llama import LLaMA2Fixtures, LLaMA2GQAFixtures
@@ -141,6 +142,7 @@ class TestLLaMA2HF(
     HFConfigTestSuite,
     HFModelEquivalenceTestSuite,
     HFModelGenerationTestSuite,
+    HFModelCompileTestSuite,
     LLaMA2Fixtures,
     LLaMA2HFFixtures,
 ):
@@ -161,6 +163,7 @@ class TestLLaMA2HF(
 class TestLLaMA2GQAHF(
     HFModelEquivalenceTestSuite,
     HFModelGenerationTestSuite,
+    HFModelCompileTestSuite,
     LLaMA2GQAFixtures,
     LLaMA2HFFixtures,
 ):

@@ -58,7 +58,19 @@ def generate(
         output = model.forward(input_ids, **kwargs)
         if use_cache:
             logits, past_key_value_states = output
-            kwargs["past_key_value_states"] = past_key_value_states
+            # kv updates are required for torch.compile with
+            # mode='reduce-overhead'
+            n_kv_s = []
+            for layer_idx in range(len(past_key_value_states)):
+                n_kv_s.append([])
+                for tensor_idx in range(len(past_key_value_states[layer_idx])):
+                    n_kv_s[layer_idx].append(
+                        past_key_value_states[layer_idx][tensor_idx]
+                        .clone(memory_format=torch.contiguous_format)
+                        .detach()
+                    )
+                    # torch._dynamo.mark_dynamic(n_kv_s[layer_idx][tensor_idx], 2)
+            kwargs["past_key_value_states"] = n_kv_s
         else:
             logits = output
         logits = logits[:, -1, :]
@@ -84,4 +96,21 @@ def generate(
 
     if not batched:
         result = result[0]
+    return result
+
+
+def truncate_after_eos(result, eos_token_id):
+    """
+    Helper function to return a truncated sequence of token IDs stopping at
+    (and including) the 'end of sentence' token.
+    Currently only handles unbatched sequences.
+    """
+    if eos_token_id is None:
+        return result
+
+    eos_idx = torch.where(result == eos_token_id)
+    eos_idx = eos_idx[0]
+    if eos_idx.shape[0] >= 1:
+        eos_idx = eos_idx[0].item()
+        result = result[: eos_idx + 1]
     return result

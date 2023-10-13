@@ -13,8 +13,8 @@ from fms.modules.attention import MultiHeadAttention
 
 @dataclass
 class GPTBigCodeConfig(ModelConfig):
-    src_vocab_size: int = 49280
-    emb_dim: int = 2048
+    src_vocab_size: int = 49157  # This param default is based on https://huggingface.co/bigcode/gpt_bigcode-santacoder
+    emb_dim: int = 2048  # This param default is based on https://huggingface.co/bigcode/gpt_bigcode-santacoder
     emb_kq: Optional[int] = None
     emb_v: Optional[int] = None
     nheads: int = 12
@@ -22,8 +22,6 @@ class GPTBigCodeConfig(ModelConfig):
     nlayers: int = 12
     pad_id: int = 0
     max_pos: int = 512
-    vocab_bias: bool = False
-    use_bias: bool = True
     hidden_grow_factor: float = 4.0
     activation_fn: str = "gelu-tanh"
     p_dropout: float = 0.0
@@ -54,7 +52,7 @@ class GPTBigCodeBlock(nn.Module):
             self.config.nheads,
             kvheads,
             p_dropout=self.config.p_dropout,
-            use_bias=self.config.use_bias,
+            use_bias=True,
         )
 
         self.ff_sub_layer = FeedForwardBlock(
@@ -62,7 +60,7 @@ class GPTBigCodeBlock(nn.Module):
             hidden_grow_factor=self.config.hidden_grow_factor,
             activation_fn=str_to_activation(self.config.activation_fn),
             p_dropout=self.config.p_dropout,
-            use_bias=self.config.use_bias,
+            use_bias=True,
         )
 
         if self.config.p_dropout != 0:
@@ -70,14 +68,18 @@ class GPTBigCodeBlock(nn.Module):
 
     def forward(
         self,
-        x,
+        x: torch.LongTensor,
         *,
-        mask=None,
-        position_ids=None,
-        past_key_value_state=None,
-        use_cache=False,
-        is_causal_mask=False,
-        attn_algorithm=None,
+        mask: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
+        past_key_value_state: Optional[
+            Tuple[
+                torch.FloatTensor,
+            ]
+        ] = None,
+        use_cache: bool = False,
+        is_causal_mask: bool = False,
+        attn_algorithm: Optional[str] = None,
     ):
 
         self_attn_past_key_value = past_key_value_state
@@ -131,13 +133,8 @@ class GPTBigCodeHeadless(nn.Module):
             [GPTBigCodeBlock(self.config) for _ in range(self.config.nlayers)]
         )
 
-        self.embedding = nn.Embedding(
-            self.config.src_vocab_size,
-            self.config.emb_dim,
-            padding_idx=self.config.pad_id,
-        )
+        self.embedding = nn.Embedding(self.config.src_vocab_size, self.config.emb_dim)
         self.position_embedding = nn.Embedding(self.config.max_pos, self.config.emb_dim)
-        self.register_buffer("pos_id", torch.arange(self.config.max_pos).unsqueeze(0))
 
         self.dec_norm = nn.LayerNorm(self.config.emb_dim, eps=self.config.ln_eps)
 
@@ -146,6 +143,25 @@ class GPTBigCodeHeadless(nn.Module):
 
         if self.config.p_dropout:
             self.dropout = nn.Dropout(self.config.p_dropout)
+
+    def _compute_position_ids(
+        self,
+        is_pad: torch.BoolTensor,
+        use_cache: bool,
+        past_key_value_states: Optional[
+            Tuple[
+                torch.FloatTensor,
+            ]
+        ] = None,
+    ):
+        """compute the position ids if the use happened not to give any"""
+        position_ids = ((~is_pad).cumsum(1) - 1).clamp(min=0)
+
+        # Compute position_ids based on cache config
+        if use_cache and past_key_value_states[0] is not None:
+            position_ids += past_key_value_states[0][0].size(-2)
+
+        return position_ids
 
     def forward(
         self,
@@ -192,34 +208,25 @@ class GPTBigCodeHeadless(nn.Module):
 
         x_emb = self.embedding(x)
 
-        if position_ids is None:
-            _position_ids = torch.arange(
-                0, qlen, dtype=torch.long, device=x.device
-            ).repeat(x.size(0), 1)
-            # Compute position_ids based on cache config
-            if use_cache and past_key_value_states[0] is not None:
-                _position_ids += past_key_value_states[0][0].shape[2]
+        # if pad_id exists
+        #   is_pad will be a BoolTensor
+        #   otherwise pad_id will not be taken into account
+        if self.config.pad_id is None:
+            is_pad = torch.zeros_like(x, dtype=bool, device=x.device)
         else:
-            # use the position ids provided by the user directly
-            _position_ids = position_ids
-
-        if self.config.pad_id is not None:
             is_pad = x == self.config.pad_id
 
-            # if position_ids were not given by the user, correct for pads
-            # assume position_ids is already corrected for pads if given by the user
-            if position_ids is None:
-                _position_ids = _position_ids.sub(is_pad.cumsum(1))
-                # In case of left-padding, prevent negative indices (get zeroed anyway)
-                _position_ids = _position_ids.clamp(min=0)
-
-            # zero out the associated position embeddings
-            position_out = self.position_embedding(_position_ids).mul(
-                ~is_pad.unsqueeze(-1)
+        if position_ids is None:
+            position_ids = self._compute_position_ids(
+                is_pad, use_cache, past_key_value_states
             )
-        else:
-            # just look up the position embeddings, no need to zero if no pad_id
-            position_out = self.position_embedding(_position_ids)
+
+        # look up position embeddings
+        position_out = self.position_embedding(position_ids)
+
+        # zero out the associated position embeddings
+        if self.config.pad_id is not None:
+            position_out = position_out.mul(~is_pad.unsqueeze(-1))
 
         # perform absolute position embedding
         x = x_emb + position_out
@@ -271,7 +278,7 @@ class GPTBigCode(nn.Module):
 
         self.base_model = GPTBigCodeHeadless(self.config)
         self.head = nn.Linear(
-            self.config.emb_dim, self.config.src_vocab_size, bias=self.config.vocab_bias
+            self.config.emb_dim, self.config.src_vocab_size, bias=False
         )
 
         # this model ties weights, so we tie here

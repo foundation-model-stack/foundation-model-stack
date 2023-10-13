@@ -17,6 +17,7 @@ from fms.testing._internal.hf.model_test_suite import (
     HFConfigTestSuite,
     HFModelEquivalenceTestSuite,
     HFModelGenerationTestSuite,
+    HFModelCompileTestSuite,
 )
 from fms.testing._internal.model_test_suite import ModelFixtureMixin
 from ..test_gpt_bigcode import GPTBigCodeFixtures
@@ -64,35 +65,6 @@ class GPTBigCodeHFFixtures(
                 scale_attention_softmax_in_fp32=False,
             )
         )
-        """
-        GPTBigCodeForCausalLM(
-          (transformer): GPTBigCodeModel(
-            (wte): Embedding(384, 16)
-            (wpe): Embedding(512, 16)
-            (drop): Dropout(p=0.1, inplace=False)
-            (h): ModuleList(
-              (0-1): 2 x GPTBigCodeBlock(
-                (ln_1): LayerNorm((16,), eps=1e-05, elementwise_affine=True)
-                (attn): GPTBigCodeAttention(
-                  (c_attn): Linear(in_features=16, out_features=20, bias=True)
-                  (c_proj): Linear(in_features=16, out_features=16, bias=True)
-                  (attn_dropout): Dropout(p=0.1, inplace=False)
-                  (resid_dropout): Dropout(p=0.1, inplace=False)
-                )
-                (ln_2): LayerNorm((16,), eps=1e-05, elementwise_affine=True)
-                (mlp): GPTBigCodeMLP(
-                  (c_fc): Linear(in_features=16, out_features=32, bias=True)
-                  (c_proj): Linear(in_features=32, out_features=16, bias=True)
-                  (act): PytorchGELUTanh()
-                  (dropout): Dropout(p=0.1, inplace=False)
-                )
-              )
-            )
-            (ln_f): LayerNorm((16,), eps=1e-05, elementwise_affine=True)
-          )
-          (lm_head): Linear(in_features=16, out_features=384, bias=False)
-        )
-        """
 
         with torch.no_grad():
 
@@ -156,6 +128,7 @@ class TestGPTBigCodeHF(
     HFConfigTestSuite,
     HFModelEquivalenceTestSuite,
     HFModelGenerationTestSuite,
+    HFModelCompileTestSuite,
     GPTBigCodeFixtures,
     GPTBigCodeHFFixtures,
 ):

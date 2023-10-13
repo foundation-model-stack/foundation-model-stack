@@ -6,7 +6,8 @@ import torch
 from torch import distributed as dist
 
 from fms.distributed.strategy import TensorParallelStrategy
-from fms.models.llama import LLaMA, load_fms_llama
+from fms.models.llama import load_fms_llama
+from fms.utils import generation, tokenizers
 from fms.utils.generation import generate
 
 
@@ -64,12 +65,16 @@ if args.distributed:
     dist.init_process_group()
 
 print("loading model")
-model, tokenizer = load_fms_llama(args.model_path, args.tokenizer)
+model = load_fms_llama(args.model_path)
+tokenizer = tokenizers.get_tokenizer(args.tokenizer)
 model.eval()
+torch.set_grad_enabled(False)
 print("loading complete on rank", local_rank)
 
 if args.compile:
     print("compiling model")
+    # Bug with kv-cache in PT2.1
+    torch._inductor.config.joint_graph_constant_folding = False
     # compiling can make first inference pass slow
     model = torch.compile(model)
 
@@ -128,12 +133,9 @@ def print_result(result):
     if local_rank != 0:
         return
     # stop at EOS token if present
-    eos_idx = torch.where(result == tokenizer.convert_tokens_to_ids("</s>"))
-    eos_idx = eos_idx[0]
-    if eos_idx.shape[0] >= 1:
-        eos_idx = eos_idx[0].item()
-        result = result[: eos_idx + 1]
-
+    result = generation.truncate_after_eos(
+        result, tokenizer.convert_tokens_to_ids("</s>")
+    )
     # print(result)
     # print(tokenizer.convert_ids_to_tokens(result))
     print(tokenizer.convert_tokens_to_string(tokenizer.convert_ids_to_tokens(result)))
