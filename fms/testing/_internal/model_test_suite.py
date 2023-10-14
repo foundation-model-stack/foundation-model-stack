@@ -213,9 +213,13 @@ class ModelConsistencyTestSuite(ModelFixtureMixin, SignatureFixtureMixin):
                 "Signature file has been saved, please re-run the tests without --capture_expectation"
             )
 
-        assert np.allclose(
-            np.array(actual), np.array(signature)
-        ), _FAILED_MODEL_SIGNATURE_OUTPUT_MSG
+        assertion_msg = f"""
+        difference: {np.mean(np.abs(np.array(actual) - np.array(signature)))}
+        
+        {_FAILED_MODEL_SIGNATURE_OUTPUT_MSG}
+        """
+
+        assert np.allclose(np.array(actual), np.array(signature)), assertion_msg
 
     def test_model_weight_keys(self, model, capture_expectation):
         import inspect

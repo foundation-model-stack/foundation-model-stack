@@ -270,7 +270,7 @@ class HFModelGenerationTestSuite(HFConfigFixtureMixin, HFModelFixtureMixin):
                 repetition_penalty=2.5,
                 length_penalty=1.0,
                 early_stopping=True,
-                pad_token_id=model.config.eos_token_id,
+                pad_token_id=model.config.pad_token_id,
             )
         generated_texts = tokenizer.batch_decode(
             generated_ids, skip_special_tokens=True

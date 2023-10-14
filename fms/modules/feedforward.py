@@ -19,7 +19,7 @@ class FeedForwardBlock(nn.Module):
     ----
     emb_dim : int
         Dimensionality of input and output vectors.
-    hidden_grow_factor : int
+    hidden_grow_factor : float
         Sets dimensionality of inner latent space (emb_dim * hidden_grow_factor)
     multiple_of : Optional[int]
         Ensure inner latent space is a multiple of this parameter if defined (useful for
@@ -35,7 +35,7 @@ class FeedForwardBlock(nn.Module):
     def __init__(
         self,
         emb_dim,
-        hidden_grow_factor=4,
+        hidden_grow_factor=4.0,
         multiple_of=None,
         activation_fn=nn.ReLU(),
         p_dropout=0.1,
