@@ -57,7 +57,7 @@ llama: LLaMA = LLaMA(config)
 llama_hf = LLaMAHFForCausalLM.from_fms_model(llama)
 
 # compile the model -- in HF, the decoder only
-model.decoder = torch.compile(model.decoder)
+llama_hf.decoder = torch.compile(llama_hf.decoder)
 
 # generate some text -- the first time will be slow since the model needs to be compiled, but subsequent generations should be faster.
 llama_generator = pipeline(task="text-generation", model=llama_hf, tokenizer=tokenizer)
