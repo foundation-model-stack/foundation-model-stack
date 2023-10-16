@@ -36,7 +36,7 @@ Our approach for inference optimization is to use PyTorch compile, accelerated t
 We provide a re-implementation of the Llama architecture. To enable the model to compile, we reimplement `RoPE` encodings without complex numbers. We have verified that the `forward` pass compiles (there is work that needs to be done for `backward` to work with FSDP).
 
 #### Inference latency
-We measured inference latencies with 1024 token prompt and generation of 256 tokens on AWS P4DN instance nodes with 8 80G A100 GPUs and report the median latency in the below table.
+We measured inference latencies with 1024 token prompt and generation of 256 tokens on AWS P4de instance nodes with 8 80G A100 GPUs and report the median latency in the below table.
 | Model | # GPUs | Median latency (ms) |
 | ----- | ----------- | ----- |
 | 7B | 1 | 14ms |
@@ -73,7 +73,6 @@ A detailed example is provided [here](./notebooks/hf_llama_generation_example.ip
 ## Open Issues
 There are open issues that we are tracking to improve the stability and memory footprint of the inference latencies.
 
-* https://github.com/pytorch/pytorch/issues/108780 requires adding graph breaks to preserve accuracy.
 * https://github.com/pytorch/pytorch/issues/107824 prevents training/finetuning from working
 
 ## References
