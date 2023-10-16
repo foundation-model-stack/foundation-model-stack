@@ -1,6 +1,6 @@
 import pytest
 
-from fms.models.hf.llama.modeling_llama_hf import LLaMAHFForCausalLM
+from fms.models.hf.llama.modeling_llama_hf import HFAdaptedLLaMAForCausalLM
 from fms.models.llama import convert_hf_llama
 import torch
 
@@ -25,7 +25,7 @@ def test_llama_7b_equivalence():
     # convert the hf model to fms
     model = convert_hf_llama(hf_model)
 
-    hf_model_fms = LLaMAHFForCausalLM.from_fms_model(
+    hf_model_fms = HFAdaptedLLaMAForCausalLM.from_fms_model(
         model,
         bos_token_id=hf_model.config.bos_token_id,
         eos_token_id=hf_model.config.eos_token_id,
