@@ -47,7 +47,7 @@ If you would like to reproduce the latencies, you can run the `scripts/benchmark
 
 ## HF Model Support
 
-You can experience the models from Hugging Face APIs using our HF model adapter. The speedups obtained were measured using the Meta checkpoints for the models. One can also obtain similar speedups using the HF adapter with our implementation of the Llama architecture as follows:
+The support for HF models is provided by our HF model adapter. One can obtain similar latencies as tabulated above with HF models using our HF model adapter:
 
 ```python
 # fms model
