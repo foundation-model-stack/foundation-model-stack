@@ -71,10 +71,10 @@ A detailed example is provided [here](./notebooks/hf_llama_generation_example.ip
 ## Training (Coming Soon!!)
 
 ## Open Issues
-There are open issues that we are tracking to improve the stability and memory footprint of the inference latencies.
 
 * https://github.com/pytorch/pytorch/issues/107824 prevents training/finetuning from working
-
+* In addition, there are several open issues we are tracking to improve stability and memory footprint of inference
+  
 ## References
 
 * Huggingface TGI: https://github.com/huggingface/text-generation-inference
