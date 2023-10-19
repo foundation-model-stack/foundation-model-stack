@@ -54,7 +54,7 @@ The support for HF models is provided by our HF model adapter. One can obtain si
 llama: LLaMA = LLaMA(config)
 
 # huggingface model backed by fms internals
-llama_hf = LLaMAHFForCausalLM.from_fms_model(llama)
+llama_hf = HFAdaptedLLaMAForCausalLM.from_fms_model(llama)
 
 # compile the model -- in HF, the decoder only
 llama_hf.decoder = torch.compile(llama_hf.decoder)

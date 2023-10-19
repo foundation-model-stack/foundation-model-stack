@@ -1,9 +1,9 @@
 import os
 from typing import Union
-from fms.models.hf.llama.modeling_llama_hf import LLaMAHFForCausalLM
+from fms.models.hf.llama.modeling_llama_hf import HFAdaptedLLaMAForCausalLM
 
 
-def get_model(model_name_or_path: Union[str, os.PathLike]) -> LLaMAHFForCausalLM:
+def get_model(model_name_or_path: Union[str, os.PathLike]) -> HFAdaptedLLaMAForCausalLM:
     """
     Get a Huggingface adapted FMS model from an equivalent HF model
 
@@ -15,7 +15,7 @@ def get_model(model_name_or_path: Union[str, os.PathLike]) -> LLaMAHFForCausalLM
 
     Returns
     -------
-    LLaMAHFForCausalLM
+    HFAdaptedLLaMAForCausalLM
         A Huggingface adapted FMS implementation of LLaMA
     """
     import torch
@@ -26,7 +26,7 @@ def get_model(model_name_or_path: Union[str, os.PathLike]) -> LLaMAHFForCausalLM
     register_fms_models()
     hf_model = LlamaForCausalLM.from_pretrained(model_name_or_path)
     fms_model = convert_hf_llama(hf_model).half()
-    result_model: LLaMAHFForCausalLM = LLaMAHFForCausalLM.from_fms_model(
+    result_model: HFAdaptedLLaMAForCausalLM = HFAdaptedLLaMAForCausalLM.from_fms_model(
         fms_model, torch_dtype=torch.float16
     )
     return result_model
