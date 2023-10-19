@@ -36,7 +36,6 @@ from fms.utils.from_closed import (
     maybe_profile,
     trace_handler,
     setup_distributed,
-    str_to_activation,
     pcount,
     human_readable,
 )
