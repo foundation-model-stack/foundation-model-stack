@@ -15,7 +15,7 @@ A `HFModelArchitecture` is composed of:
 - an embedding which is passed to its other modules if they require them
 - an optional head `lm_head` which will be executed if it exists, if it does not, the `lm_head` will be ignored and this will be considered a base model.
 
-There are 3 main implementations of `HFModelArchiture` which can be extended by a user:
+There are 3 main implementations of `HFModelArchitecture` which can be extended by a user:
 
 - `HFDecoderModelArchitecture` - abstract class to implement for an adapter of a decoder model architecture
 - `HFEncoderModelArchitecture` - abstract class to implement for an adapter of an encoder model architecture
