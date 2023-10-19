@@ -46,21 +46,21 @@ HFDecoder requires implementation of a single method `_adapt`. This method will 
 ```python
 # https://github.com/facebookresearch/llama/blob/7e1b864d574fe6f5ff75fa1d028feb269f7152d2/llama/model.py#L457
 def decoder_forward(model: Transformer, tokens: torch.Tensor, start_pos: int):
-        _bsz, seqlen = tokens.shape
-        h = model.tok_embeddings(tokens)
-        freqs_cis = model.freqs_cis[start_pos : start_pos + seqlen]
+    _bsz, seqlen = tokens.shape
+    h = model.tok_embeddings(tokens)
+    freqs_cis = model.freqs_cis[start_pos: start_pos + seqlen]
 
-        mask = None
-        if seqlen > 1:
-            mask = torch.full(
-                (1, 1, seqlen, seqlen), float("-inf"), device=tokens.device
-            )
-            mask = torch.triu(mask, diagonal=start_pos + 1).type_as(h)
+    mask = None
+    if seqlen > 1:
+        mask = torch.full(
+            (1, 1, seqlen, seqlen), float("-inf"), device=tokens.device
+        )
+        mask = torch.triu(mask, diagonal=start_pos + 1).type_as(h)
 
-        for layer in model.layers:
-            h = layer(h, start_pos, freqs_cis, mask)
-        h = model.norm(h)
-        return h
+    for layer in model.layers:
+        h = layer(h, start_pos, freqs_cis, mask)
+    h = model.norm(h)
+    return h
 
 class LlamaDecoder(HFDecoder):
 
@@ -70,13 +70,13 @@ class LlamaDecoder(HFDecoder):
     def _adapt(
         self,
         input_ids: Optional[torch.LongTensor] = None,
-        # this is a llama specific param, but we can get access to it here by  
+        # this is a llama specific param, but we can get access to it here by
         # simply adding it to the _adapt signature
         start_pos: int = 0,
         *args,
         **kwargs,
     ) -> BaseModelOutputWithPastAndCrossAttentions:
-        # caching is part of the state of the TransformerBlock, therefore not  
+        # caching is part of the state of the TransformerBlock, therefore not
         # required here
         output = decoder_forward(self.model, input_ids, start_pos)
         return BaseModelOutputWithPastAndCrossAttentions(last_hidden_state=output)
@@ -98,18 +98,11 @@ class Llama(HFDecoderModelArchitecture):
     def __init__(
         self,
         config: LlamaConfig,
-        decoder: Transformer = None,
-        embedding: Optional[nn.Module] = None,
+        model: Transformer,
         *args,
         **kwargs,
     ):
-        # if we have not yet received the decoder/embedding, initialize it here
-        if decoder is None or embedding is None:
-            model = Transformer(...)
-            decoder = model if decoder is None else decoder
-            embedding = model.tok_embeddings
-
-        super().__init__(LlamaDecoder(decoder, config), embedding, config, *args, **kwargs)
+        super().__init__(LlamaDecoder(model, config), model.tok_embeddings, config, *args, **kwargs)
 ```
 
 This model can now be used as a base Huggingface Model without an LM head, but in many cases a user would like to add some lm head to this. For this you will use the lm_head_mixins
@@ -121,17 +114,8 @@ In many cases, a user would like to have an lm head in their model. Adding an lm
 ```python
 class LlamaForCausalLM(LMHeadModelLMHeadMixin, Llama):
 
-    def __init__(self, config: LlamaConfig, *args, **kwargs):
-        super().__init__(config=config, bias=False, *args, **kwargs)
-
-    @classmethod
-    def _hf_model_from_fms(cls, model: Transformer, config: LlamaConfig) -> "LlamaForCausalLM":
-        return cls(
-            config=config,
-            decoder=model.decoder,
-            embedding=model.emb,
-            lm_head=model.output,
-        )
+    def __init__(self, model: Transformer, config: LlamaConfig, *args, **kwargs):
+        super().__init__(model=model, config=config, bias=False, lm_head=model.output, *args, **kwargs)
 ```
 
 ## Use your Huggingface model
@@ -139,19 +123,20 @@ class LlamaForCausalLM(LMHeadModelLMHeadMixin, Llama):
 Perform simple text-generation task:
 
 ```python
-model: Transformer = Transformer(...)
+transformer: Transformer = Transformer(...)
+config: LlamaConfig = LlamaConfig(...)
 
-hf_model: LlamaForCausalLM = LlamaForCausalLM.from_fms_model(model)
+hf_model: LlamaForCausalLM = LlamaForCausalLM(model=transformer, config=config)
 
 prompt = "I believe the meaning of life is"
 
 with torch.no_grad():
     generator_hf = pipeline(
-        task="text-generation", 
-        model=hf_model, 
-        tokenizer=tokenizer, 
-        num_beams=3, 
-        max_new_tokens=50
+        task="text-generation",
+        model=hf_model,
+        tokenizer=tokenizer,
+        max_new_tokens=50,
+        device="cuda",
     )
     print(generator_hf(prompt))
 ```
