@@ -27,6 +27,8 @@ def human_readable(x, n_digits=1):
     """
     assert n_digits >= 0, "n_digits must be a non-negative integer"
     assert n_digits <= 3, "n_digits > 3 is not very human-readable!"
+    if x == 0:
+        return "0"
     is_neg = abs(x) != x
     if is_neg:
         x *= -1
@@ -39,6 +41,34 @@ def human_readable(x, n_digits=1):
     if is_neg:
         x *= -1
     return out.format(x / val) + suf
+
+
+def human_readable_time(inp):
+    """
+    Parse given second count into human-readable string interpretation (e.g. 35586.4 -> "9 hours 53 minutes")
+    """
+    assert inp > 0, "Second count must be positive nonzero value"
+    x = round(inp)
+    factor = [1, 60, 60 * 60, 60 * 60 * 24]
+    i = 1
+    while i < 4 and x // factor[i] != 0:
+        i += 1
+    i -= 1
+    pref = int(x // factor[i])
+    suff = round((x % factor[i]) / factor[i - 1])
+    if suff == factor[i]:
+        pref += 1
+        suff = 0
+    pref_plural = "s" if pref != 1 else ""
+    suff_plural = "s" if suff != 1 else ""
+    if i == 0:
+        return "{:.2f} seconds".format(inp)
+    elif i == 1:
+        return f"{pref} minute{pref_plural} {suff} second{suff_plural}"
+    elif i == 2:
+        return f"{pref} hour{pref_plural} {suff} minute{suff_plural}"
+    else:
+        return f"{pref} day{pref_plural} {suff} hour{suff_plural}"
 
 
 def get_latest(targdir, qualifier=lambda x: True):

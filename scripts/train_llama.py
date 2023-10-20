@@ -40,7 +40,7 @@ from fms.utils.from_closed import (
     human_readable,
 )
 from fms.utils.io_ops_closed import(
-    report_and_log,
+    human_readable_report_and_log,
     Llama_Checkpointer,
 )
 
@@ -90,7 +90,7 @@ args = parser.parse_args()
 # Define reporting fns
 
 run_rank_n(os.makedirs)(args.log_path, exist_ok=True)
-report = functools.partial(report_and_log, args.log_path)
+report = functools.partial(human_readable_report_and_log, args.log_path)
 
 
 def sync_report(*args, **kwargs):
@@ -392,7 +392,7 @@ def train_func(args):
                     percentclip=cliptracker / trackertracker,
                     trainloss=trainloss,
                     speed=(time.time() - start) / trackertracker,
-                    elapsed_time_hrs=elapsed_time / 3600,
+                    elapsed_time=elapsed_time,
                     tok_per_sec_per_gpu=int((elapsed_tokens) / world_size / elapsed_time),
                     tok_per_day=int((elapsed_tokens / elapsed_time) * 3600 * 24),
                 )

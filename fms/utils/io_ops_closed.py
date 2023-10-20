@@ -21,7 +21,7 @@ from torch.distributed.fsdp import FullStateDictConfig
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.distributed.fsdp import StateDictType
 
-from fms.utils.from_closed import get_local_rank, get_rank, run_rank_n, get_latest, get_oldest, human_readable
+from fms.utils.from_closed import get_local_rank, get_rank, run_rank_n, get_latest, get_oldest, human_readable, human_readable_time
 
 
 @run_rank_n
@@ -40,10 +40,10 @@ def report(*args, **kwargs):
 
 
 @run_rank_n
-def report_and_log(logdir, *args, **kwargs):
-    """Report, but also save all kwargs to log json in logdir"""
-    report(*args, **kwargs)
-
+def log(logdir, *args, **kwargs):
+    """
+    Drop args, write kwargs to log json in logdir
+    """
     if len(kwargs) > 0:
         log_path = os.path.join(logdir, "log_main.json")
         if not os.path.exists(log_path):
@@ -55,6 +55,33 @@ def report_and_log(logdir, *args, **kwargs):
                 loaded_results = json.load(f)
                 f.seek(0)
                 json.dump(loaded_results + [kwargs], f)
+
+
+@run_rank_n
+def report_and_log(logdir, *args, **kwargs):
+    report(*args, **kwargs)
+    log(logdir, *args, **kwargs)
+
+
+@run_rank_n
+def human_readable_report_and_log(logdir, *args, **kwargs):
+    """
+    Report and log, but massage numerical report values to be more human-readable. Relies on field name heuristics.
+    """
+    new_kwargs = {}
+    for key in kwargs:
+        if isinstance(kwargs[key], str):
+            new_kwargs[key] = kwargs[key]
+        elif "speed" in key or "time" in key:
+            new_kwargs[key] = human_readable_time(kwargs[key])
+        elif "tok" in key or "param" in key:
+            new_kwargs[key] = human_readable(kwargs[key], 1)
+        elif "loss" in key or "norm" in key:
+            new_kwargs[key] = human_readable(kwargs[key], 3)
+        else:
+            new_kwargs[key] = kwargs[key]
+    report(*args, **new_kwargs)
+    log(logdir, *args, **kwargs)
 
 
 class Checkpointer:
