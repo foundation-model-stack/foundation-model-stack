@@ -5,8 +5,8 @@ from transformers import PretrainedConfig
 from fms.models.gpt_bigcode import GPTBigCodeConfig
 
 
-class GPTBigCodeHFConfig(PretrainedConfig):
-    model_type = "gpt_bigcode_hf"
+class HFAdaptedGPTBigCodeConfig(PretrainedConfig):
+    model_type = "hf_adapted_gpt_bigcode"
 
     attribute_map = {
         "vocab_size": "src_vocab_size",

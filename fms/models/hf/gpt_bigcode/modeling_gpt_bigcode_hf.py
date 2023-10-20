@@ -6,12 +6,14 @@ from transformers import PretrainedConfig
 from transformers.modeling_outputs import BaseModelOutputWithPastAndCrossAttentions
 
 from fms.models.gpt_bigcode import GPTBigCode, GPTBigCodeHeadless
-from fms.models.hf.gpt_bigcode.configuration_gpt_bigcode_hf import GPTBigCodeHFConfig
+from fms.models.hf.gpt_bigcode.configuration_gpt_bigcode_hf import (
+    HFAdaptedGPTBigCodeConfig,
+)
 from fms.models.hf.lm_head_mixins import LMHeadModelLMHeadMixin
 from fms.models.hf.modeling_hf_adapter import HFDecoder, HFDecoderModelArchitecture
 
 
-class GPTBigCodeHFDecoder(HFDecoder):
+class HFAdaptedGPTBigCodeDecoder(HFDecoder):
     """Adapter for the GPTBigCodeDecoder"""
 
     def __init__(self, model: nn.Module, config: PretrainedConfig):
@@ -44,12 +46,12 @@ class GPTBigCodeHFDecoder(HFDecoder):
         )
 
 
-class GPTBigCodeHF(HFDecoderModelArchitecture):
+class HFAdaptedGPTBigCodeHeadless(HFDecoderModelArchitecture):
     """This is the Adapter for the base granite architecture"""
 
     # attributes required by HF
-    config_class = GPTBigCodeHFConfig
-    base_model_prefix = "gpt_bigcode_hf"
+    config_class = HFAdaptedGPTBigCodeConfig
+    base_model_prefix = "hf_adapted_gpt_bigcode"
 
     def __init__(
         self,
@@ -69,7 +71,7 @@ class GPTBigCodeHF(HFDecoderModelArchitecture):
             embedding = model.base_model.embedding if embedding is None else embedding
 
         # these are now huggingface compatible
-        decoder = GPTBigCodeHFDecoder(decoder, config)
+        decoder = HFAdaptedGPTBigCodeDecoder(decoder, config)
         super().__init__(decoder, embedding, config, *args, **kwargs)
 
     def _prepare_inputs_for_generation(
@@ -98,17 +100,19 @@ class GPTBigCodeHF(HFDecoderModelArchitecture):
         }
 
 
-class GPTBigCodeHFForCausalLM(LMHeadModelLMHeadMixin, GPTBigCodeHF):
+class HFAdaptedGPTBigCodeForCausalLM(
+    LMHeadModelLMHeadMixin, HFAdaptedGPTBigCodeHeadless
+):
     _keys_to_ignore_on_load_missing = [r"lm_head.weight"]
     _tied_weights_keys = ["embedding.weight", "lm_head.weight"]
 
-    def __init__(self, config: GPTBigCodeHFConfig, *args, **kwargs):
+    def __init__(self, config: HFAdaptedGPTBigCodeConfig, *args, **kwargs):
         super().__init__(config=config, bias=False, *args, **kwargs)
 
     @classmethod
     def _hf_model_from_fms(
-        cls, model: nn.Module, config: GPTBigCodeHFConfig
-    ) -> "GPTBigCodeHFForCausalLM":
+        cls, model: nn.Module, config: HFAdaptedGPTBigCodeConfig
+    ) -> "HFAdaptedGPTBigCodeForCausalLM":
         return cls(
             config=config,
             decoder=model.base_model,

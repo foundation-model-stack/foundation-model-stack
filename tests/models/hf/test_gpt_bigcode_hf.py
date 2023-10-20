@@ -9,8 +9,12 @@ from transformers import (
 import torch
 
 from fms.models.gpt_bigcode import GPTBigCode
-from fms.models.hf.gpt_bigcode.configuration_gpt_bigcode_hf import GPTBigCodeHFConfig
-from fms.models.hf.gpt_bigcode.modeling_gpt_bigcode_hf import GPTBigCodeHFForCausalLM
+from fms.models.hf.gpt_bigcode.configuration_gpt_bigcode_hf import (
+    HFAdaptedGPTBigCodeConfig,
+)
+from fms.models.hf.gpt_bigcode.modeling_gpt_bigcode_hf import (
+    HFAdaptedGPTBigCodeForCausalLM,
+)
 from fms.testing._internal.hf.model_test_suite import (
     HFConfigFixtureMixin,
     HFModelFixtureMixin,
@@ -23,14 +27,16 @@ from fms.testing._internal.model_test_suite import ModelFixtureMixin
 from ..test_gpt_bigcode import GPTBigCodeFixtures
 
 
-class GPTBigCodeHFFixtures(
+class HFAdaptedGPTBigCodeFixtures(
     ModelFixtureMixin, HFConfigFixtureMixin, HFModelFixtureMixin
 ):
     @pytest.fixture(scope="class", autouse=True)
     def fms_hf_model(
         self, model: GPTBigCode, fms_hf_config: PretrainedConfig, **kwargs
     ):
-        return GPTBigCodeHFForCausalLM.from_fms_model(model, **fms_hf_config.to_dict())
+        return HFAdaptedGPTBigCodeForCausalLM.from_fms_model(
+            model, **fms_hf_config.to_dict()
+        )
 
     @pytest.fixture(scope="class", autouse=True)
     def fms_hf_config(
@@ -41,14 +47,16 @@ class GPTBigCodeHFFixtures(
             if tokenizer.bos_token_id is not None
             else tokenizer.eos_token_id
         )
-        return GPTBigCodeHFConfig.from_fms_config(
+        return HFAdaptedGPTBigCodeConfig.from_fms_config(
             model.get_config(),
             eos_token_id=tokenizer.eos_token_id,
             bos_token_id=bos_token_id,
         )
 
     @pytest.fixture(scope="class", autouse=True)
-    def oss_hf_model(self, fms_hf_model: GPTBigCodeHFForCausalLM) -> PreTrainedModel:
+    def oss_hf_model(
+        self, fms_hf_model: HFAdaptedGPTBigCodeForCausalLM
+    ) -> PreTrainedModel:
         hf_config = fms_hf_model.config
         oss_hf_model = GPTBigCodeForCausalLM(
             GPTBigCodeConfig(
@@ -124,13 +132,13 @@ class GPTBigCodeHFFixtures(
         return oss_hf_model
 
 
-class TestGPTBigCodeHF(
+class TestHFAdaptedGPTBigCode(
     HFConfigTestSuite,
     HFModelEquivalenceTestSuite,
     HFModelGenerationTestSuite,
     HFModelCompileTestSuite,
     GPTBigCodeFixtures,
-    GPTBigCodeHFFixtures,
+    HFAdaptedGPTBigCodeFixtures,
 ):
     """
     LLaMA2 FMS Huggingface Tests for:

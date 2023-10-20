@@ -1,7 +1,9 @@
 import pytest
 
 from fms.models.gpt_bigcode import GPTBigCode
-from fms.models.hf.gpt_bigcode.modeling_gpt_bigcode_hf import GPTBigCodeHFForCausalLM
+from fms.models.hf.gpt_bigcode.modeling_gpt_bigcode_hf import (
+    HFAdaptedGPTBigCodeForCausalLM,
+)
 from fms.testing.comparison import (
     ModelSignatureParams,
     HFModelSignatureParams,
@@ -44,7 +46,7 @@ def test_gptbigcode_equivalence():
             model.base_model.layers[i].attn.value.weight.copy_(v)
             model.base_model.layers[i].attn.value.bias.copy_(v_bias)
         model.head.weight.copy_(hf_model.lm_head.weight)
-    hf_model_fms = GPTBigCodeHFForCausalLM.from_fms_model(
+    hf_model_fms = HFAdaptedGPTBigCodeForCausalLM.from_fms_model(
         model=model,
         bos_token_id=hf_model.config.bos_token_id,
         eos_token_id=hf_model.config.eos_token_id,
