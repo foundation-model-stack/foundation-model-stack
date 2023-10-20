@@ -193,7 +193,8 @@ class HFAutoModelTestSuite(HFModelFixtureMixin):
                 isinstance(fms_hf_model, type(new_model)) and new_model.lm_head is None
             )
 
-    def test_hf_automodel_text_generation(self, fms_hf_model: PreTrainedModel):
+    def test_hf_automodel_language_modeling_head(self, fms_hf_model: PreTrainedModel):
+        """test that the language modeling head model can be loaded with automodel"""
         if isinstance(fms_hf_model, HFEncoderDecoderModelArchitecture):
             automodel_class = AutoModelForSeq2SeqLM
         elif isinstance(fms_hf_model, HFDecoderModelArchitecture):
