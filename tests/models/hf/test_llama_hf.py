@@ -9,8 +9,8 @@ from transformers import (
 )
 import torch
 
-from fms.models.hf.llama.configuration_llama_hf import LLaMAHFConfig
-from fms.models.hf.llama.modeling_llama_hf import LLaMAHFForCausalLM
+from fms.models.hf.llama.configuration_llama_hf import HFAdaptedLLaMAConfig
+from fms.models.hf.llama.modeling_llama_hf import HFAdaptedLLaMAForCausalLM
 from fms.models.llama import LLaMA
 from fms.testing._internal.hf.model_test_suite import (
     HFConfigFixtureMixin,
@@ -27,7 +27,9 @@ from ..test_llama import LLaMA2Fixtures, LLaMA2GQAFixtures
 class LLaMA2HFFixtures(ModelFixtureMixin, HFConfigFixtureMixin, HFModelFixtureMixin):
     @pytest.fixture(scope="class", autouse=True)
     def fms_hf_model(self, model: LLaMA, fms_hf_config: PretrainedConfig, **kwargs):
-        return LLaMAHFForCausalLM.from_fms_model(model, **fms_hf_config.to_dict())
+        return HFAdaptedLLaMAForCausalLM.from_fms_model(
+            model, **fms_hf_config.to_dict()
+        )
 
     @pytest.fixture(scope="class", autouse=True)
     def fms_hf_config(
@@ -38,14 +40,14 @@ class LLaMA2HFFixtures(ModelFixtureMixin, HFConfigFixtureMixin, HFModelFixtureMi
             if tokenizer.bos_token_id is not None
             else tokenizer.eos_token_id
         )
-        return LLaMAHFConfig.from_fms_config(
+        return HFAdaptedLLaMAConfig.from_fms_config(
             model.get_config(),
             eos_token_id=tokenizer.eos_token_id,
             bos_token_id=bos_token_id,
         )
 
     @pytest.fixture(scope="class", autouse=True)
-    def oss_hf_model(self, fms_hf_model: LLaMAHFForCausalLM) -> PreTrainedModel:
+    def oss_hf_model(self, fms_hf_model: HFAdaptedLLaMAForCausalLM) -> PreTrainedModel:
         hf_config = fms_hf_model.config
         oss_hf_model = LlamaForCausalLM(
             LlamaConfig(
