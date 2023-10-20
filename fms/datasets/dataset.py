@@ -877,7 +877,6 @@ class Sampling_Dataset(_Stateful_Dataset):
         return out
 
     def load_state_dict(self, state_dicts, sharded_input=False):
-        assert self.load_worldsize == self.worldsize, "Sampling_Dataset does not support rescaling"
         # Load stats
         sharded_dicts = super().load_state_dict(state_dicts, sharded_input)
         # Load sub-iterator states

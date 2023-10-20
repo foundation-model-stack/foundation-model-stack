@@ -286,7 +286,7 @@ def train_func(args):
 
     # Load from checkpoint
     report("Loading checkpoint...")
-    model, optimizer, train_loader, start_step, tokens_seen = checkpointer.load(
+    model, optimizer_, train_loader_, start_step, tokens_seen = checkpointer.load(
         model,
         None if args.drop_optimizer else optimizer,
         None if args.drop_dataset else train_loader,
@@ -294,6 +294,10 @@ def train_func(args):
         reset_stepcount=args.reset_stepcount,
         strict=not args.flexible_load,
     )
+    if not args.drop_optimizer:
+        optimizer = optimizer_
+    if not args.drop_dataset:
+        train_loader = train_loader_
     signature = None
     report("Checkpoint loaded!", signature=signature)
 
