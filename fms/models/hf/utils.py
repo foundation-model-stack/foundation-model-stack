@@ -8,11 +8,12 @@ def register_fms_models():
     (AutoConfig, AutoModel, AutoModelForSeq2SeqLM) and Granite (AutoConfig, AutoModel, AutoModelForCausalLM)"""
     from fms.models.hf.llama.modeling_llama_hf import (
         HFAdaptedLLaMAConfig,
+        HFAdaptedLLaMAHeadless,
         HFAdaptedLLaMAForCausalLM,
     )
 
     AutoConfig.register("hf_adapted_llama", HFAdaptedLLaMAConfig)
-    AutoModel.register(HFAdaptedLLaMAConfig, HFAdaptedLLaMAForCausalLM)
+    AutoModel.register(HFAdaptedLLaMAConfig, HFAdaptedLLaMAHeadless)
     AutoModelForCausalLM.register(HFAdaptedLLaMAConfig, HFAdaptedLLaMAForCausalLM)
 
 

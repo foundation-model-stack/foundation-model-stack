@@ -1,5 +1,4 @@
 import pytest
-from torch import nn as nn
 from transformers import (
     PreTrainedModel,
     LlamaForCausalLM,
@@ -19,6 +18,7 @@ from fms.testing._internal.hf.model_test_suite import (
     HFModelEquivalenceTestSuite,
     HFModelGenerationTestSuite,
     HFModelCompileTestSuite,
+    HFAutoModelTestSuite,
 )
 from fms.testing._internal.model_test_suite import ModelFixtureMixin
 from ..test_llama import LLaMA2Fixtures, LLaMA2GQAFixtures
@@ -145,6 +145,7 @@ class TestLLaMA2HF(
     HFModelEquivalenceTestSuite,
     HFModelGenerationTestSuite,
     HFModelCompileTestSuite,
+    HFAutoModelTestSuite,
     LLaMA2Fixtures,
     LLaMA2HFFixtures,
 ):
@@ -166,6 +167,7 @@ class TestLLaMA2GQAHF(
     HFModelEquivalenceTestSuite,
     HFModelGenerationTestSuite,
     HFModelCompileTestSuite,
+    HFAutoModelTestSuite,
     LLaMA2GQAFixtures,
     LLaMA2HFFixtures,
 ):
