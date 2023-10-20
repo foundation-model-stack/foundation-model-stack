@@ -190,6 +190,17 @@ class MultiHeadAttention(nn.Module):
         else:
             attn_mask = mask
 
+        # If doing generative decoding on cache, right-align diagonal in causal mask (for speculative decoding)
+        if past_key_value_state is not None and use_cache and is_causal_mask and is_self:
+            is_causal_mask = False
+            if attn_mask is None:
+                causal = torch.ones(batch_size, 1, q_len, keys.size(2), device=queries.device)
+                causal = causal.tril(diagonal=causal.size(-1)-causal.size(-2))
+                attn_mask = causal.log()
+            else:
+                causal = torch.ones_like(attn_mask).tril(diagonal=attn_mask.size(-1)-attn_mask.size(-2))
+                attn_mask = attn_mask.add(causal.log())
+
         # Expand kv so black-box attn will work
         expansion = self.nheads // self.kvheads
         # k/v: b h l d
