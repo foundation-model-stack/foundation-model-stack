@@ -64,7 +64,7 @@ llama_generator = pipeline(task="text-generation", model=llama_hf, tokenizer=tok
 llama_generator("""q: how are you? a: I am good. How about you? q: What is the weather like today? a:""")
 ```
 
-A detailed example is provided [here](./notebooks/hf_llama_generation_example.ipynb).
+A detailed example is provided [here](./notebooks/hf_adapted_llama_inference.ipynb).
 
 ## Tuning (Coming Soon!!)
 
