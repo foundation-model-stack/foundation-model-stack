@@ -49,12 +49,11 @@ class DynamicKVCacheUnit(KVCacheUnit):
             return self.cache[0].size(2)
 
     def contiguous(self) -> "DynamicKVCacheUnit":
-        result = DynamicKVCacheUnit()
-        result.cache = (
+        self.cache = (
             self.cache[0].clone(memory_format=torch.contiguous_format).detach(),
             self.cache[1].clone(memory_format=torch.contiguous_format).detach(),
         )
-        return result
+        return self
 
 
 class PreAllocatedKVCacheUnit(KVCacheUnit):
@@ -70,11 +69,19 @@ class PreAllocatedKVCacheUnit(KVCacheUnit):
         self.cache = (
             # k
             torch.empty(
-                batch_size, num_heads, max_length, emb_dim // num_heads, device=device
+                batch_size,
+                num_heads,
+                max_length,
+                emb_dim // num_heads,
+                device=device
             ),
             # v
             torch.empty(
-                batch_size, num_heads, max_length, emb_dim // num_heads, device=device
+                batch_size,
+                num_heads,
+                max_length,
+                emb_dim // num_heads,
+                device=device
             ),
         )
 
