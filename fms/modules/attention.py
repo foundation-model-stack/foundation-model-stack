@@ -168,12 +168,12 @@ class MultiHeadAttention(nn.Module):
                     queries, keys, position_ids, None, use_cache
                 )
 
-        # if you want to use caching and past_key_value_state is not None meaning you have values in your cache
-        if use_cache and len(past_key_value_state) != 0:
+        # if you want to use caching
+        if use_cache:
             if is_self:
                 past_key_value_state.append(keys, values)
-            else:
-                keys, values = past_key_value_state.get_cache_unit()
+
+            keys, values = past_key_value_state.get_cache_unit()
 
         # Merge rel pos bias and mask into single float mask
         if mask is not None:

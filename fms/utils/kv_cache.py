@@ -19,6 +19,10 @@ class KVCacheUnit(metaclass=abc.ABCMeta):
     def __len__(self) -> int:
         pass
 
+    @abc.abstractmethod
+    def contiguous(self) -> "KVCacheUnit":
+        pass
+
 
 class DynamicKVCacheUnit(KVCacheUnit):
     def __init__(self):
@@ -42,7 +46,15 @@ class DynamicKVCacheUnit(KVCacheUnit):
         if self.cache is None:
             return 0
         else:
-            return self.cache[0][0].size(-2)
+            return self.cache[0].size(-2)
+
+    def contiguous(self) -> "DynamicKVCacheUnit":
+        result = DynamicKVCacheUnit()
+        result.cache = (
+            self.cache[0].clone(memory_format=torch.contiguous_format).detach(),
+            self.cache[1].clone(memory_format=torch.contiguous_format).detach(),
+        )
+        return result
 
 
 class PreAllocatedKVCacheUnit(KVCacheUnit):
@@ -84,11 +96,13 @@ class PreAllocatedKVCacheUnit(KVCacheUnit):
     def __len__(self):
         return self.len
 
+    def contiguous(self) -> "PreAllocatedKVCacheUnit":
+        batch_size, num_heads, max_length, emb_dim_over_num_heads = self.cache[0].size()
+        result = PreAllocatedKVCacheUnit(emb_dim_over_num_heads * num_heads, num_heads, batch_size, max_length)
 
-cache = PreAllocatedKVCacheUnit(10, 2, 1, 15)
-
-print(cache.get_cache_unit())
-for i in range(15):
-    cache.append(torch.zeros(1, 2, 1, 5) + i, torch.zeros(1, 2, 1, 5) + i + 1)
-
-print(cache.get_cache_unit())
+        result.cache = (
+            self.cache[0].clone(memory_format=torch.contiguous_format).detach(),
+            self.cache[1].clone(memory_format=torch.contiguous_format).detach(),
+        )
+        result.len = self.len
+        return result

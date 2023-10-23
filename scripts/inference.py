@@ -170,7 +170,7 @@ def infer(use_cache, do_sample):
 print("generating output", local_rank)
 do_sample = [False]
 use_cache = [
-    False
+    True
 ]  # True/False are identical with greedy iff `torch.use_deterministic_algorithms(True)`
 for sample, cache in itertools.product(do_sample, use_cache):
     infer(cache, sample)

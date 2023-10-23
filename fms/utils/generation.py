@@ -62,14 +62,7 @@ def generate(
             # mode='reduce-overhead'
             n_kv_s = []
             for layer_idx in range(len(past_key_value_states)):
-                n_kv_s.append([])
-                for tensor_idx in range(len(past_key_value_states[layer_idx])):
-                    n_kv_s[layer_idx].append(
-                        past_key_value_states[layer_idx][tensor_idx]
-                        .clone(memory_format=torch.contiguous_format)
-                        .detach()
-                    )
-                    # torch._dynamo.mark_dynamic(n_kv_s[layer_idx][tensor_idx], 2)
+                n_kv_s.append(past_key_value_states[layer_idx].contiguous())
             kwargs["past_key_value_states"] = n_kv_s
         else:
             logits = output
