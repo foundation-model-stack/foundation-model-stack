@@ -75,7 +75,7 @@ def human_readable_report_and_log(logdir, *args, **kwargs):
         elif "speed" in key or "time" in key:
             new_kwargs[key] = human_readable_time(kwargs[key])
         elif "tok" in key or "param" in key:
-            new_kwargs[key] = human_readable(kwargs[key], 1)
+            new_kwargs[key] = human_readable(kwargs[key], 2)
         elif "loss" in key or "norm" in key:
             new_kwargs[key] = human_readable(kwargs[key], 3)
         else:
