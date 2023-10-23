@@ -434,6 +434,7 @@ def convert_hf_llama(hf_model: "LlamaForCausalLM") -> LLaMA:
     import re
 
     config = LLaMAConfig(
+        kvheads=hf_model.config.num_attention_heads if hf_model.config.num_key_value_heads is None else hf_model.config.num_key_value_heads,
         src_vocab_size=hf_model.config.vocab_size,
         emb_dim=hf_model.config.hidden_size,
         norm_eps=hf_model.config.rms_norm_eps,
