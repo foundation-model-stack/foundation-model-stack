@@ -9,7 +9,7 @@ def get_model(model_name_or_path: Union[str, os.PathLike]) -> HFAdaptedLLaMAForC
 
     Parameters
     ----------
-    model_path_or_name: Union[str, os.PathLike]
+    model_name_or_path: Union[str, os.PathLike]
         Either the name of the model in huggingface hub or the absolute path to
         the huggingface model
 
