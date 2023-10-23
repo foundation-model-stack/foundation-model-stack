@@ -12,6 +12,7 @@ from fms.distributed.tensorparallel import (
     reduce_from_tensor_model_parallel_region,
 )
 from fms.modules.positions import PositionEncoder
+from fms.utils.kv_cache import KVCacheUnit
 
 
 class MultiHeadAttention(nn.Module):
@@ -107,7 +108,7 @@ class MultiHeadAttention(nn.Module):
         mask=None,
         position_ids=None,
         attn_algorithm=None,
-        past_key_value_state=None,
+        past_key_value_state: KVCacheUnit = None,
         use_cache=False,
         is_self=True,
         is_causal_mask=False,
@@ -150,7 +151,7 @@ class MultiHeadAttention(nn.Module):
         # b x kvlen x d
         # b x kvlen x h x ds
         # b x h x kvlen x ds
-        if is_self or past_key_value_state is None:
+        if is_self or len(past_key_value_state) == 0:
             keys = self.key(k).view(
                 batch_size, kv_len, self.kvheads, self.emb_kq_per_head
             )
@@ -164,17 +165,15 @@ class MultiHeadAttention(nn.Module):
             # You want to apply rotary embeddings pre-cache
             if self.position_encoder is not None:
                 queries, keys = self.position_encoder.adjusted_qk(
-                    queries, keys, position_ids, past_key_value_state, use_cache
+                    queries, keys, position_ids, None, use_cache
                 )
 
         # if you want to use caching and past_key_value_state is not None meaning you have values in your cache
-        if use_cache and past_key_value_state is not None:
+        if use_cache and len(past_key_value_state) != 0:
             if is_self:
-                keys = torch.cat((past_key_value_state[0], keys), dim=2)
-                values = torch.cat((past_key_value_state[1], values), dim=2)
+                past_key_value_state.append(keys, values)
             else:
-                keys = past_key_value_state[0]
-                values = past_key_value_state[1]
+                keys, values = past_key_value_state.get_cache_unit()
 
         # Merge rel pos bias and mask into single float mask
         if mask is not None:
@@ -239,7 +238,7 @@ class MultiHeadAttention(nn.Module):
 
         # if use_cache=True, we return the hidden_state as well as the kv cache
         if use_cache:
-            return out, (keys, values)
+            return out, past_key_value_state
         else:
             return out
 

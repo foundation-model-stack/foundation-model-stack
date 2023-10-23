@@ -22,6 +22,10 @@ from fms.modules.layernorm import LayerNormParameterized
 from fms.modules.positions import RotaryEmbedding
 from fms.utils.activation import str_to_activation
 from fms.utils.config import ModelConfig
+from fms.utils.kv_cache import (
+    PreAllocatedKVCacheUnit,
+    DynamicKVCacheUnit,
+)
 from fms.utils.tokenizers import _has_hf, get_tokenizer
 
 
@@ -162,6 +166,7 @@ class LLaMA(nn.Module):
         self,
         config: Optional[LLaMAConfig] = None,
         distributed_strategy: DistributedStrategy = NoOpStrategy,
+        cache_allocation: str = "dynamic",
         **kwargs,
     ):
         super(LLaMA, self).__init__()
@@ -171,6 +176,7 @@ class LLaMA(nn.Module):
             self.config = LLaMAConfig()
         self.config = self.config.updated(**kwargs)
         self.distributed_strategy = distributed_strategy
+        self.cache_allocation = cache_allocation
 
         self.width = self.config.emb_dim
         self.pad_id = self.config.pad_id
@@ -253,15 +259,28 @@ class LLaMA(nn.Module):
         # x_in: batch_size x seq_len
         # mask: batch_size x seq_len x seq_len
         # bias: nheads x seq_len x seq_len
-        if past_key_value_states is None or len(past_key_value_states) == 0:
+        if use_cache and past_key_value_states is None:
+            past_key_value_states = []
+            for _ in range(len(self.layers)):
+                if self.cache_allocation == "static":
+                    cache_unit = PreAllocatedKVCacheUnit(
+                        self.config.emb_dim,
+                        self.config.nheads,
+                        x_in.size(0),
+                        self.config.max_pos,
+                    )
+                else:
+                    cache_unit = DynamicKVCacheUnit()
+                past_key_value_states.append(cache_unit)
+        elif not use_cache:
             past_key_value_states = [None for _ in range(len(self.layers))]
 
         qlen = x_in.size(1)
         klen = x_in.size(1)
 
         # if we are using the cache, the key length needs to be extended with the past keys length
-        if use_cache and past_key_value_states[0] is not None:
-            klen += past_key_value_states[0][0].size(-2)
+        if use_cache:
+            klen += len(past_key_value_states[0])
 
         # if mask is none, we need to specify causal mask
         if mask is None:
@@ -293,7 +312,6 @@ class LLaMA(nn.Module):
             if use_cache:
                 x_in, present_key_value_state = output
                 present_key_value_states.append(present_key_value_state)
-
             else:
                 x_in = output
 

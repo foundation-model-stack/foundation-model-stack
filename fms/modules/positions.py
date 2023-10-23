@@ -4,6 +4,8 @@ from typing import Optional, Tuple
 import torch
 from torch import nn
 
+from fms.utils.kv_cache import KVCacheUnit
+
 
 class PositionEncoder:
     """
@@ -16,7 +18,7 @@ class PositionEncoder:
         mask: torch.Tensor,
         q: torch.Tensor,
         k: torch.Tensor,
-        past_kv_state: torch.Tensor,
+        past_kv_state: Optional[KVCacheUnit],
         use_cache=False,
     ) -> torch.Tensor:
         return mask
@@ -27,7 +29,7 @@ class PositionEncoder:
         q: torch.Tensor,
         k: torch.Tensor,
         position_ids: Optional[torch.LongTensor],
-        past_kv_state: torch.Tensor,
+        past_kv_state: Optional[KVCacheUnit],
         use_cache=False,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         return q, k
@@ -64,16 +66,16 @@ class Alibi(PositionEncoder):
         mask: torch.Tensor,
         q: torch.Tensor,
         k: torch.Tensor,
-        past_kv_state: torch.Tensor,
+        past_kv_state: Optional[KVCacheUnit],
         use_cache=False,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         qlen = q.size(1)
         klen = k.size(1)
 
         # if we are using the cache, the key length needs to be extended with the past keys length
-        if use_cache and past_kv_state is not None and past_kv_state[0] is not None:
-            klen += past_kv_state[0][0].size(-2)
-            qlen += past_kv_state[0][1].size(-2)
+        if use_cache and past_kv_state is not None:
+            klen += len(past_kv_state)
+            qlen += len(past_kv_state)
 
         # Automatically allocates on chosen cuda
         device = self.scales.device
@@ -215,7 +217,7 @@ class RotaryEmbedding(PositionEncoder):
         q: torch.Tensor,
         k: torch.Tensor,
         position_ids: Optional[torch.LongTensor] = None,
-        past_kv_state: Optional[torch.Tensor] = None,
+        past_kv_state: Optional[KVCacheUnit] = None,
         use_cache=False,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
@@ -239,7 +241,7 @@ class RotaryEmbedding(PositionEncoder):
                 0, q.size(2), dtype=torch.long, device=q.device
             ).repeat(q.size(0), 1)
             if use_cache and past_kv_state is not None:
-                position_ids += past_kv_state[0].size(2)
+                position_ids += len(past_kv_state)
 
         seq_len = q.size(2)
         q_ = q.float().reshape(*q.size()[:-1], -1, 2)  # B H L D/2 2
