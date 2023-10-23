@@ -268,7 +268,7 @@ class LLaMA(nn.Module):
                         self.config.nheads,
                         x_in.size(0),
                         self.config.max_expected_seq_len,
-                        device=x_in.device
+                        device=x_in.device,
                     )
                 else:
                     cache_unit = DynamicKVCacheUnit()

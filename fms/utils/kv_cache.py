@@ -70,19 +70,11 @@ class PreAllocatedKVCacheUnit(KVCacheUnit):
         self.cache = (
             # k
             torch.empty(
-                batch_size,
-                num_heads,
-                max_length,
-                emb_dim // num_heads,
-                device=device
+                batch_size, num_heads, max_length, emb_dim // num_heads, device=device
             ),
             # v
             torch.empty(
-                batch_size,
-                num_heads,
-                max_length,
-                emb_dim // num_heads,
-                device=device
+                batch_size, num_heads, max_length, emb_dim // num_heads, device=device
             ),
         )
 
