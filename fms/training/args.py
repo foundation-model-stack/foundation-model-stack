@@ -108,6 +108,12 @@ def add_ckp_args(arg_group: _ArgumentGroup):
         default="",
         help="Checkpoint file or directory for initial load. If directory, loads latest.",
     )
+    arg_group.add_argument(
+        "--num_ckps",
+        type=int,
+        default=3,
+        help="Number of checkpoints to maintain (n most recent)",
+    )
     arg_group.add_argument("--save_interval", type=int, default=1000, help="Permanent checkpoint interval")
     arg_group.add_argument("--report_interval", type=int, default=100, help="Reporting interval")
     arg_group.add_argument(
