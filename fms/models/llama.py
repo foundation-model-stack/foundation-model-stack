@@ -446,7 +446,10 @@ def convert_hf_llama(hf_model: "LlamaForCausalLM") -> LLaMA:
         activation_fn=hf_model.config.hidden_act,
         max_expected_seq_len=hf_model.config.max_position_embeddings,
     )
-    model = LLaMA(config)
+    with torch.device("meta"):
+        model = LLaMA(config)
+    if hf_model.device == torch.device("meta"):
+        return model
     count_parameters = lambda m: sum(p.numel() for p in m.parameters())
     assert count_parameters(model) == count_parameters(hf_model)
 
@@ -473,7 +476,7 @@ def convert_hf_llama(hf_model: "LlamaForCausalLM") -> LLaMA:
             new_name = re.sub(pattern, repl, new_name)
         new_sd[new_name] = param
 
-    model.load_state_dict(new_sd, strict=False)
+    model.load_state_dict(new_sd, assign=True, strict=False)
     model.shared.head.weight = hf_model.lm_head.weight
     model.rot_emb.freqs = hf_model.model.layers[0].self_attn.rotary_emb.inv_freq
     for layer in model.layers:
