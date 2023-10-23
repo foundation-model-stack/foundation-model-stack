@@ -56,7 +56,7 @@ class JsonInstructions(Dataset):
             self.instructions = json.loads(text)
 
     def __len__(self):
-        return len(self.instructions)
+        return 100000000
 
     def make_prompt(self, instruction: Dict) -> str:
         if "input" in instruction:
@@ -66,6 +66,7 @@ class JsonInstructions(Dataset):
         return prompt
 
     def __getitem__(self, index):
+        index = index % len(self.instructions)
         instruction = self.instructions[index]
         prompt = self.make_prompt(instruction)
         prompt = self.tokenizer.tokenize(prompt)
@@ -84,6 +85,9 @@ class JsonInstructions(Dataset):
             example = example + [self.eos_token_id]
 
         example = torch.tensor(example, dtype=torch.long, device=self.device)
+
+        if len(example) < self.max_len:
+            example = torch.nn.functional.pad(example, (0, self.max_len - len(example)), value=0)
 
         input = example[:-1]
 
