@@ -267,7 +267,8 @@ class LLaMA(nn.Module):
                         self.config.emb_dim,
                         self.config.nheads,
                         x_in.size(0),
-                        self.config.max_pos,
+                        self.config.max_expected_seq_len,
+                        device=x_in.device
                     )
                 else:
                     cache_unit = DynamicKVCacheUnit()
@@ -410,10 +411,10 @@ def load_fms_llama(model_path: str, group=None, **kwargs):
         extra_args["distributed_strategy"] = TensorParallelStrategy()
     elif torch.cuda.device_count() > 1:
         print("using model parallel")
-        devices = [i for i in range(torch.cuda.device_count())]
-        extra_args["distributed_strategy"] = UniformModelParallelStrategy(
-            devices, params["n_layers"]
-        )
+        # devices = [i for i in range(torch.cuda.device_count())]
+        # extra_args["distributed_strategy"] = UniformModelParallelStrategy(
+        #     devices, params["n_layers"]
+        # )
 
     if "n_kv_heads" in params:
         extra_args["kvheads"] = params["n_kv_heads"]

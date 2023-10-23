@@ -165,14 +165,16 @@ class MultiHeadAttention(nn.Module):
             # You want to apply rotary embeddings pre-cache
             if self.position_encoder is not None:
                 queries, keys = self.position_encoder.adjusted_qk(
-                    queries, keys, position_ids, None, use_cache
+                    queries, keys, position_ids, past_key_value_state, use_cache
                 )
 
         # if you want to use caching
         if use_cache:
-            if is_self:
+            # we want to add to cache if it is the first time or self is true
+            if is_self or len(past_key_value_state) == 0:
                 past_key_value_state.append(keys, values)
 
+            # get the current k, v
             keys, values = past_key_value_state.get_cache_unit()
 
         # Merge rel pos bias and mask into single float mask
