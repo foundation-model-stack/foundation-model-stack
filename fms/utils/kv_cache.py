@@ -46,7 +46,7 @@ class DynamicKVCacheUnit(KVCacheUnit):
         if self.cache is None:
             return 0
         else:
-            return self.cache[0].size(-2)
+            return self.cache[0].size(2)
 
     def contiguous(self) -> "DynamicKVCacheUnit":
         result = DynamicKVCacheUnit()
@@ -64,6 +64,7 @@ class PreAllocatedKVCacheUnit(KVCacheUnit):
         num_heads: int,
         batch_size: int,
         max_length: int,
+        device: str = "cpu",
     ):
         self.len = 0
         self.cache = (
@@ -73,6 +74,7 @@ class PreAllocatedKVCacheUnit(KVCacheUnit):
                 num_heads,
                 max_length,
                 emb_dim // num_heads,
+                device=device
             ),
             # v
             torch.empty(
@@ -80,18 +82,19 @@ class PreAllocatedKVCacheUnit(KVCacheUnit):
                 num_heads,
                 max_length,
                 emb_dim // num_heads,
+                device=device
             ),
         )
 
     def append(self, k: torch.Tensor, v: torch.Tensor):
-        self.cache[0][:, :, self.len : self.len + 1, :].copy_(k)
-        self.cache[1][:, :, self.len : self.len + 1, :].copy_(v)
-        self.len += k.size(-2)
+        self.cache[0][:, :, self.len : self.len + k.size(2), :].copy_(k)
+        self.cache[1][:, :, self.len : self.len + v.size(2), :].copy_(v)
+        self.len += k.size(2)
 
     def get_cache_unit(
         self,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        return self.cache[0][:, : self.len, :], self.cache[1][:, : self.len, :]
+        return self.cache[0][:, :, : self.len, :], self.cache[1][:, :, : self.len, :]
 
     def __len__(self):
         return self.len
