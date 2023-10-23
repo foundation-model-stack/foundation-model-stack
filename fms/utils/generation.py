@@ -63,7 +63,7 @@ def generate(
             n_kv_s = []
             for layer_idx in range(len(past_key_value_states)):
                 n_kv_s.append(past_key_value_states[layer_idx].contiguous())
-            kwargs["past_key_value_states"] = past_key_value_states
+            kwargs["past_key_value_states"] = n_kv_s
         else:
             logits = output
         logits = logits[:, -1, :]

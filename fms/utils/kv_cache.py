@@ -100,12 +100,4 @@ class PreAllocatedKVCacheUnit(KVCacheUnit):
         return self.len
 
     def contiguous(self) -> "PreAllocatedKVCacheUnit":
-        batch_size, num_heads, max_length, emb_dim_over_num_heads = self.cache[0].size()
-        result = PreAllocatedKVCacheUnit(emb_dim_over_num_heads * num_heads, num_heads, batch_size, max_length)
-
-        result.cache = (
-            self.cache[0].clone(memory_format=torch.contiguous_format).detach(),
-            self.cache[1].clone(memory_format=torch.contiguous_format).detach(),
-        )
-        result.len = self.len
-        return result
+        return self
