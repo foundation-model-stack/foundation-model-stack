@@ -45,6 +45,12 @@ def add_config_args(arg_group: _ArgumentGroup):
     arg_group.add_argument(
         "--logical_shards", type=int, default=0, help="Number of logical data shards (upper bound on job scaling)"
     )
+    arg_group.add_argument(
+        "--disable_streaming",
+        default=False,
+        action="store_true",
+        help="Cache all training data up-front? (warning: increases memory demand and setup time substantially)",
+    )
 
 
 def add_profiler_args(arg_group: _ArgumentGroup):
