@@ -64,11 +64,10 @@ class ModelFixtureMixin(metaclass=abc.ABCMeta):
         params = sorted(sd.keys())
         for key in params:
             parameter = sd[key]
-            if not isinstance(parameter, torch.LongTensor):
-                values = torch.randn_like(parameter)
-                values -= 0.5
-                values /= 20.0
-                parameter.copy_(values)
+            values = torch.randn_like(parameter)
+            values -= 0.5
+            values /= 20.0
+            parameter.copy_(values)
         return uninitialized_model
 
 
