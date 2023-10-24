@@ -1,3 +1,4 @@
+import math
 from typing import Optional
 
 import torch
@@ -12,6 +13,7 @@ from fms.distributed.tensorparallel import (
     reduce_from_tensor_model_parallel_region,
 )
 from fms.modules.positions import PositionEncoder
+from fms.utils.tensors import ExpandableTensor
 
 
 class MultiHeadAttention(nn.Module):
@@ -168,13 +170,24 @@ class MultiHeadAttention(nn.Module):
                 )
 
         # if you want to use caching and past_key_value_state is not None meaning you have values in your cache
-        if use_cache and past_key_value_state is not None:
-            if is_self:
-                keys = torch.cat((past_key_value_state[0], keys), dim=2)
-                values = torch.cat((past_key_value_state[1], values), dim=2)
+        if use_cache:
+            # we already have a cache so add to it or get it
+            if past_key_value_state is not None:
+                if is_self:
+                    keys = torch.cat((past_key_value_state[0], keys), dim=2)
+                    values = torch.cat((past_key_value_state[1], values), dim=2)
+                else:
+                    keys = past_key_value_state[0]
+                    values = past_key_value_state[1]
+            # we do not have a cache so must initialize it
             else:
-                keys = past_key_value_state[0]
-                values = past_key_value_state[1]
+                preallocate_length = int(math.pow(2, int(math.log2(keys.size(2))) + 1))
+                keys = ExpandableTensor(
+                    keys, dim=2, preallocate_length=preallocate_length
+                )
+                values = ExpandableTensor(
+                    values, dim=2, preallocate_length=preallocate_length
+                )
 
         # Merge rel pos bias and mask into single float mask
         if mask is not None:
