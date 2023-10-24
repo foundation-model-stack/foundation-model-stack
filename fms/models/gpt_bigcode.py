@@ -37,8 +37,16 @@ class GPTBigCodeBlock(nn.Module):
         self.ln = nn.LayerNorm(self.config.emb_dim, self.config.ln_eps)
         self.ff_ln = nn.LayerNorm(self.config.emb_dim, self.config.ln_eps)
 
-        emb_kq = self.config.emb_dim // self.config.nheads
-        emb_v = self.config.emb_dim // self.config.nheads
+        emb_kq = (
+            self.config.emb_dim // self.config.nheads
+            if self.config.emb_kq is None
+            else self.config.emb_kq
+        )
+        emb_v = (
+            self.config.emb_dim // self.config.nheads
+            if self.config.emb_v is None
+            else self.config.emb_v
+        )
         if self.config.kvheads == 0:
             kvheads = self.config.nheads
         else:
