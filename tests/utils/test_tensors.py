@@ -15,15 +15,15 @@ def test_expandable_tensor():
     # 8 + 3*4 == 20
     for i in range(4):
         expected = torch.cat((expected, to_append), dim=2)
-        expandable = expandable.append(to_append)
+        expandable = expandable._append(to_append)
 
     torch.testing.assert_close(expandable, expected)
 
     # the "preallocated length" began at 10, then would have expanded 1x and is now exactly full.
-    assert expandable._tensor.shape[2] == 20
+    assert expandable._underlying_tensor.shape[2] == 20
     # expand again doubles it
-    expandable = expandable.append(to_append)
-    assert expandable._tensor.shape[2] == 40
+    expandable = expandable._append(to_append)
+    assert expandable._underlying_tensor.shape[2] == 40
 
 
 def test_expandable_tensor_ops():
@@ -52,7 +52,7 @@ def test_cat():
     torch.testing.assert_close(expandable, expected)
     assert type(expected) != ExpandableTensor
     assert type(expandable) == ExpandableTensor
-    assert expandable._tensor.shape[2] == 20
+    assert expandable._underlying_tensor.shape[2] == 20
 
 
 def test_perf():

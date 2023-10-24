@@ -38,39 +38,39 @@ class ExpandableTensor(torch.Tensor):
         super().__init__()
         self._dim = dim
         self._dim_length = tensor.shape[dim]
-        self._tensor = tensor
+        self._underlying_tensor = tensor
         if preallocate_length is not None and preallocate_length > self._dim_length:
             sizes = list(tensor.size())
             sizes[dim] = preallocate_length
-            self._tensor = torch.empty(
+            self._underlying_tensor = torch.empty(
                 size=sizes, dtype=tensor.dtype, device=tensor.device
             )
-            self.tensor().copy_(tensor)
+            self._tensor().copy_(tensor)
 
     def __new__(cls, tensor, dim=0, preallocate_length=None):
         return super().__new__(cls)
 
     def size(self):
-        return self.tensor().size()
+        return self._tensor().size()
 
-    def append(self, tensor):
+    def _append(self, tensor):
         """
         Returns a tensor equivalent to the result of
         `torch.cat( (self, tensor), dim=self._dim)`, possibly modifying `self`
         in-place to make use of preallocated space.
         """
         dim = self._dim
-        expected = list(self._tensor.size())
+        expected = list(self._underlying_tensor.size())
         tensor_sizes = list(tensor.size())
         for i in range(len(expected)):
             if i != dim:
                 assert expected[i] == tensor_sizes[i]
-        if self.size()[dim] + tensor.size()[dim] <= self._tensor.size()[dim]:
+        if self.size()[dim] + tensor.size()[dim] <= self._underlying_tensor.size()[dim]:
             # copy into tail of _tensor
-            view = self._tensor
+            view = self._underlying_tensor
             sizes = list(view.size())
             sizes[self._dim] = tensor.size()[dim]
-            strides = self._tensor.stride()
+            strides = self._underlying_tensor.stride()
             offset = self._dim_length * strides[self._dim]
             view = view.as_strided(size=sizes, stride=strides, storage_offset=offset)
             view.copy_(tensor)
@@ -79,37 +79,37 @@ class ExpandableTensor(torch.Tensor):
         else:
             # create new expandable tensor
             expanded = ExpandableTensor(
-                self.tensor(), self._dim, self._tensor.shape[dim] * 2
+                self._tensor(), self._dim, self._underlying_tensor.shape[dim] * 2
             )
-            return expanded.append(tensor)
+            return expanded._append(tensor)
 
-    def tensor(self):
+    def _tensor(self):
         """
         Returns a view of the tensor excluding preallocated space
         """
-        view = self._tensor
+        view = self._underlying_tensor
         sizes = list(view.size())
         sizes[self._dim] = self._dim_length
         view = view.as_strided(size=sizes, stride=view.stride())
         return view
 
     def __repr__(self):
-        return self.tensor().__repr__()
+        return self._tensor().__repr__()
 
     @_implements(torch.cat)
     def cat(tensors, dim=0, *, out=None):
         if (
             len(tensors)
-            and type(tensors[0] == ExpandableTensor)
+            and type(tensors[0]) == ExpandableTensor
             and tensors[0]._dim == dim
         ):
             result = tensors[0]
             for tensor in tensors[1:]:
-                result = result.append(tensor)
+                result = result._append(tensor)
             return result
         else:
             tensors = [
-                tensor.tensor() if type(tensor) == ExpandableTensor else tensor
+                tensor._tensor() if type(tensor) == ExpandableTensor else tensor
                 for tensor in tensors
             ]
             return torch.cat(tensors, dim, out=out)
@@ -121,6 +121,6 @@ class ExpandableTensor(torch.Tensor):
         if func not in _HANDLED_FUNCTIONS or not all(
             issubclass(t, (torch.Tensor, ExpandableTensor)) for t in types
         ):
-            args = [a.tensor() if hasattr(a, "tensor") else a for a in args]
+            args = [a._tensor() if type(a) == ExpandableTensor else a for a in args]
             return func(*args, **kwargs)
         return _HANDLED_FUNCTIONS[func](*args, **kwargs)
