@@ -1,3 +1,4 @@
+import math
 import os
 
 from torch.distributed import ProcessGroup
@@ -26,3 +27,20 @@ def has_package(name):
         return False
     else:
         return True
+
+
+def smallest_power_greater_than(greater_than_num: int) -> int:
+    """
+    Gets the smallest integer power of 2 strictly greater than a number
+
+    Parameters
+    ----------
+    greater_than_num: int
+        the number that the power computation must be strictly greater than
+
+    Returns
+    -------
+    int
+        smallest integer power strictly greater than the given greater_than_num
+    """
+    return int(math.pow(2, int(math.log2(greater_than_num)) + 1))

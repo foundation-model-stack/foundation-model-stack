@@ -13,6 +13,7 @@ from fms.distributed.tensorparallel import (
     reduce_from_tensor_model_parallel_region,
 )
 from fms.modules.positions import PositionEncoder
+from fms.utils import smallest_power_greater_than
 from fms.utils.tensors import ExpandableTensor
 
 
@@ -181,7 +182,7 @@ class MultiHeadAttention(nn.Module):
                     values = past_key_value_state[1]
             # we do not have a cache so must initialize it
             else:
-                preallocate_length = int(math.pow(2, int(math.log2(keys.size(2))) + 1))
+                preallocate_length = smallest_power_greater_than(keys.size(2))
                 keys = ExpandableTensor(
                     keys, dim=2, preallocate_length=preallocate_length
                 )
