@@ -26,7 +26,6 @@ class HFAdaptedGPTBigCodeConfig(PretrainedConfig):
         emb_kq: Optional[int] = None,
         emb_v: Optional[int] = None,
         nheads: int = 12,
-        kvheads: int = 1,
         nlayers: int = 12,
         pad_token_id: int = 0,
         max_pos: int = 512,
@@ -34,6 +33,7 @@ class HFAdaptedGPTBigCodeConfig(PretrainedConfig):
         activation_fn: str = "gelu-tanh",
         p_dropout: float = 0.0,
         emb_dropout: float = 0.0,
+        multiquery_attn: bool = True,
         ln_eps: float = 1e-5,
         use_cache: bool = True,
         eos_token_id: int = 49152,
@@ -46,7 +46,7 @@ class HFAdaptedGPTBigCodeConfig(PretrainedConfig):
         self.emb_kq = emb_kq
         self.emb_v = emb_v
         self.nheads = nheads
-        self.kvheads = kvheads
+        self.multiquery_attn = multiquery_attn
         self.nlayers = nlayers
         self.max_pos = max_pos
         self.hidden_grow_factor = hidden_grow_factor

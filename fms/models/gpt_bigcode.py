@@ -18,7 +18,6 @@ class GPTBigCodeConfig(ModelConfig):
     emb_kq: Optional[int] = None
     emb_v: Optional[int] = None
     nheads: int = 12
-    kvheads: int = 1
     nlayers: int = 12
     pad_id: int = 0
     max_pos: int = 512
@@ -26,6 +25,7 @@ class GPTBigCodeConfig(ModelConfig):
     activation_fn: str = "gelu-tanh"
     p_dropout: float = 0.0
     emb_dropout: float = 0.0
+    multiquery_attn: bool = True
     ln_eps: float = 1e-5
 
 
@@ -47,18 +47,13 @@ class GPTBigCodeBlock(nn.Module):
             if self.config.emb_v is None
             else self.config.emb_v
         )
-        if self.config.kvheads == 0:
-            kvheads = self.config.nheads
-        else:
-            kvheads = self.config.kvheads
-            assert self.config.nheads % self.config.kvheads == 0
 
         self.attn = MultiHeadAttention(
             self.config.emb_dim,
             emb_kq,
             emb_v,
             self.config.nheads,
-            kvheads,
+            kvheads=1 if self.config.multiquery_attn else self.config.nheads,
             p_dropout=self.config.p_dropout,
             use_bias=True,
         )
