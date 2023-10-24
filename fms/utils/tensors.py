@@ -47,7 +47,7 @@ class ExpandableTensor(torch.Tensor):
             )
             self.tensor().copy_(tensor)
 
-    def __new__(cls, tensor, dim, preallocate_length):
+    def __new__(cls, tensor, dim=0, preallocate_length=None):
         return super().__new__(cls)
 
     def size(self):
@@ -112,7 +112,7 @@ class ExpandableTensor(torch.Tensor):
                 tensor.tensor() if type(tensor) == ExpandableTensor else tensor
                 for tensor in tensors
             ]
-            torch.cat(tensors, dim, out=out)
+            return torch.cat(tensors, dim, out=out)
 
     @classmethod
     def __torch_function__(cls, func, types, args=(), kwargs=None):

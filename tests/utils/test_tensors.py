@@ -1,4 +1,5 @@
 import pytest
+import time
 import torch
 
 from fms.utils.tensors import ExpandableTensor
@@ -49,5 +50,29 @@ def test_cat():
         expandable = torch.cat((expandable, to_append), dim=2)
 
     torch.testing.assert_close(expandable, expected)
+    assert type(expected) != ExpandableTensor
     assert type(expandable) == ExpandableTensor
     assert expandable._tensor.shape[2] == 20
+
+
+def test_perf():
+    iters = 100
+    # not a serious benchmark but confirm that behavior correctly offers
+    # some perf benefit, otherwise implementation must be incorrect.
+
+    t = torch.randn((10, 1000, 500))
+    next_val = torch.randn((10, 1000, 1))
+    result = t
+    start = time.time()
+    for _ in range(iters):
+        result = torch.cat((result, next_val), dim=2)
+    regular_time = time.time() - start
+
+    t = ExpandableTensor(t)
+    result = t
+    start = time.time()
+    for _ in range(iters):
+        result = torch.cat((result, next_val), dim=2)
+    expandable_time = time.time() - start
+    # requires that expandable tensor be at least 2x faster
+    assert expandable_time < (regular_time / 2)
