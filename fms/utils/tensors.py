@@ -50,8 +50,12 @@ class ExpandableTensor(torch.Tensor):
     def __new__(cls, tensor, dim=0, preallocate_length=None):
         return super().__new__(cls)
 
-    def size(self):
-        return self._tensor().size()
+    def size(self, dim=None):
+        # https://github.com/pytorch/pytorch/issues/111944
+        if dim is None:
+            return self._tensor().size()
+        else:
+            return self._tensor().size(dim=dim)
 
     def _append(self, tensor):
         """
