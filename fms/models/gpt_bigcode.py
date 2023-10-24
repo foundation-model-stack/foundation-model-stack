@@ -15,8 +15,6 @@ from fms.modules.attention import MultiHeadAttention
 class GPTBigCodeConfig(ModelConfig):
     src_vocab_size: int = 49157  # This param default is based on https://huggingface.co/bigcode/gpt_bigcode-santacoder
     emb_dim: int = 2048  # This param default is based on https://huggingface.co/bigcode/gpt_bigcode-santacoder
-    emb_kq: Optional[int] = None
-    emb_v: Optional[int] = None
     nheads: int = 12
     nlayers: int = 12
     pad_id: int = 0
@@ -37,21 +35,10 @@ class GPTBigCodeBlock(nn.Module):
         self.ln = nn.LayerNorm(self.config.emb_dim, self.config.ln_eps)
         self.ff_ln = nn.LayerNorm(self.config.emb_dim, self.config.ln_eps)
 
-        emb_kq = (
-            self.config.emb_dim // self.config.nheads
-            if self.config.emb_kq is None
-            else self.config.emb_kq
-        )
-        emb_v = (
-            self.config.emb_dim // self.config.nheads
-            if self.config.emb_v is None
-            else self.config.emb_v
-        )
-
         self.attn = MultiHeadAttention(
             self.config.emb_dim,
-            emb_kq,
-            emb_v,
+            self.config.emb_dim // self.config.nheads,
+            self.config.emb_dim // self.config.nheads,
             self.config.nheads,
             kvheads=1 if self.config.multiquery_attn else self.config.nheads,
             p_dropout=self.config.p_dropout,

@@ -23,8 +23,6 @@ class HFAdaptedGPTBigCodeConfig(PretrainedConfig):
         emb_dim: Optional[
             int
         ] = 2048,  # This param default is based on https://huggingface.co/bigcode/gpt_bigcode-santacoder
-        emb_kq: Optional[int] = None,
-        emb_v: Optional[int] = None,
         nheads: int = 12,
         nlayers: int = 12,
         pad_token_id: int = 0,
@@ -43,8 +41,6 @@ class HFAdaptedGPTBigCodeConfig(PretrainedConfig):
     ):
         self.src_vocab_size = src_vocab_size
         self.emb_dim = emb_dim
-        self.emb_kq = emb_kq
-        self.emb_v = emb_v
         self.nheads = nheads
         self.multiquery_attn = multiquery_attn
         self.nlayers = nlayers
