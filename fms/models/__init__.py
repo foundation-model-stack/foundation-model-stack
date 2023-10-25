@@ -1,3 +1,4 @@
+from contextlib import nullcontext
 import os
 from pathlib import Path
 import re
@@ -24,7 +25,9 @@ def list_variants(architecture: str):
     return list(__models[architecture].keys())
 
 
-def get_model(architecture: str, variant: str, extra_args: dict = {}) -> nn.Module:
+def get_model(
+    architecture: str, variant: str, *, dtype=None, device=None, extra_args: dict = {}
+) -> nn.Module:
     """
     Args:
     architecture: one of the architectures from list_models(). E.g. llama.
@@ -32,8 +35,16 @@ def get_model(architecture: str, variant: str, extra_args: dict = {}) -> nn.Modu
     extra_args: kwargs to be passed to the model factory.
     """
     model_factory = __models[architecture][variant]
-    model = model_factory(**extra_args)
-    return model
+
+    orig = torch.get_default_dtype()
+
+    try:
+        if dtype is not None:
+            torch.set_default_dtype(dtype)
+        with device if device is not None else nullcontext():
+            return model_factory(**extra_args)
+    finally:
+        torch.set_default_dtype(orig)
 
 
 from fms.models import llama
