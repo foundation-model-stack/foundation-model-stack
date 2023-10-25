@@ -90,11 +90,11 @@ args = parser.parse_args()
 # Define reporting fns
 
 run_rank_n(os.makedirs)(args.log_path, exist_ok=True)
-report = functools.partial(human_readable_report_and_log, args.log_path)
+report = functools.partial(human_readable_report_and_log, None)
 
 
 def sync_report(*args, **kwargs):
-    dist.barrier()
+    # dist.barrier()
     report(*args, **kwargs)
 
 
@@ -199,7 +199,7 @@ def train_func(args):
         sharding_strategy=model_sharding_strategy,
         device_id=local_rank,
         limit_all_gathers=True,
-        use_orig_params=True,
+        use_orig_params=False,
     )
     model.to(local_rank)
     signature = None
@@ -348,12 +348,12 @@ def train_func(args):
                     sync_report("Collected data")
                 inp = inp.to(local_rank)
                 labels = labels.to(local_rank).long()  # long needed for loss fn (6/2/23)
-                dist.barrier()
+                # dist.barrier()
                 pred = model(inp)
                 loss = loss_fn(pred.view(-1, args.vocab), labels.view(-1)).div(emu_factor)
                 #             z_loss = .001*pred.pow(2).mean() # Naive implementation of PaLM Z-loss
                 losstracker += loss.item()
-                dist.barrier()
+                # dist.barrier()
 
                 if verbose and ministep == 0:
                     sync_report("Got through forward pass", ntok=inp.size(1))

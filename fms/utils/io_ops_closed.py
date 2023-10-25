@@ -62,7 +62,7 @@ def report_and_log(logdir, *args, **kwargs):
     report(*args, **kwargs)
     log(logdir, *args, **kwargs)
 
-
+ 
 @run_rank_n
 def human_readable_report_and_log(logdir, *args, **kwargs):
     """
@@ -81,7 +81,8 @@ def human_readable_report_and_log(logdir, *args, **kwargs):
         else:
             new_kwargs[key] = kwargs[key]
     report(*args, **new_kwargs)
-    log(logdir, *args, **kwargs)
+    if logdir is not None:
+        log(logdir, *args, **kwargs)
 
 
 class Checkpointer:
