@@ -27,6 +27,11 @@ class ExpandableTensor(torch.Tensor):
     All operations performed on this tensor use a view that truncates the
     un-utilized preallocated space.
 
+    This class overrides and deviates from the contract of `torch.cat` such
+    that in some cases the result of a `torch.cat( (expandable, other) )` will
+    be an in-place modified `expandable`. This could cause bugs in cases where
+    the original tensor is modified in-place.
+
     Args:
         tensor: the initial values to hold in this tensor.
         dim: the expandable dimension
@@ -78,8 +83,9 @@ class ExpandableTensor(torch.Tensor):
             offset = self._dim_length * strides[self._dim]
             view = view.as_strided(size=sizes, stride=strides, storage_offset=offset)
             view.copy_(tensor)
-            self._dim_length += tensor.shape[dim]
-            return self
+            result = ExpandableTensor(self._underlying_tensor, dim=self._dim)
+            result._dim_length = self._dim_length + tensor.shape[dim]
+            return result
         else:
             # create new expandable tensor
             expanded = ExpandableTensor(
