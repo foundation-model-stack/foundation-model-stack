@@ -4,8 +4,9 @@ Foundation Model Stack is a collection of components for development, inference,
 
 ## Models Supported
 | Model family | Inference | Tuning | Training |
-| ----------- | ---------- | -------- | ----- |
-| Llama | :heavy_check_mark: | :x: | :x: |
+|--------------| ---------- | -------- | ----- |
+| Llama        | :heavy_check_mark: | :x: | :x: |
+| GPT-BigCode  | :heavy_check_mark: | :x: | :x: |
 
 ## Installation
 
