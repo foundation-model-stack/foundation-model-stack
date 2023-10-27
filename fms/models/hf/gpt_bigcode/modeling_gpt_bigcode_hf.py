@@ -74,31 +74,6 @@ class HFAdaptedGPTBigCodeHeadless(HFDecoderModelArchitecture):
         decoder = HFAdaptedGPTBigCodeDecoder(decoder, config)
         super().__init__(decoder, embedding, config, *args, **kwargs)
 
-    def _prepare_inputs_for_generation(
-        self,
-        input_ids: torch.Tensor,
-        attention_mask: Optional[torch.Tensor] = None,
-        past_key_values: Optional[Tuple[torch.Tensor]] = None,
-        use_cache: Optional[bool] = None,
-        **model_kwargs,
-    ) -> dict:
-        """
-        Overriding _prepare_inputs_for_generation to include start_pos requirements for llama batch processing
-        """
-        position_ids = model_kwargs.pop("position_ids", None)
-
-        if position_ids is None and attention_mask is not None:
-            position_ids = attention_mask.long().cumsum(-1)
-
-        return {
-            "input_ids": input_ids,
-            "attention_mask": attention_mask,
-            "past_key_values": past_key_values,
-            "use_cache": use_cache,
-            "position_ids": position_ids,
-            **model_kwargs,
-        }
-
 
 class HFAdaptedGPTBigCodeForCausalLM(
     LMHeadModelLMHeadMixin, HFAdaptedGPTBigCodeHeadless
