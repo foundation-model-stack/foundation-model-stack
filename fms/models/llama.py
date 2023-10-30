@@ -88,6 +88,7 @@ class LLaMABlock(nn.Module):
             p_dropout=self.config.p_dropout,
             use_bias=False,
             position_encoder=rotary_emb,
+            gain=(self.config.nlayers*2)**-.5,
         )
         self.ff_sub_layer = GatedLinearUnit(
             self.config.emb_dim,
@@ -96,6 +97,7 @@ class LLaMABlock(nn.Module):
             activation_fn=str_to_activation(self.config.activation_fn),
             p_dropout=self.config.p_dropout,
             use_bias=False,
+            gain=(self.config.nlayers*2)**-.5,
         )
 
         if self.config.p_dropout != 0:
@@ -235,10 +237,13 @@ class LLaMA(nn.Module):
 
     def reset_params(self):
         # Modules are self-initializing, we're just going to down-scale the final prediction head to be
-        # mixed-fan (inputs and gradients scale to the same inverse factors) if it isn't tied
+        # mixed-fan (inputs and gradients scale to the same inverse factors)
         self.shared.head.weight.data.normal_(
             0, 1 / math.sqrt(math.sqrt(self.width * self.shared.vocab_size))
         )
+        # Also upscale initial embedding to match depth-scaling (standard normal). Relies on adaptive LRs 
+        # in optimizer for steady training updates to different layers 
+        self.shared.emb.weight.data.mul_(math.sqrt(self.width))
 
     def _helper(
         self,
