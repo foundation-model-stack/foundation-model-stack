@@ -241,9 +241,6 @@ class LLaMA(nn.Module):
         self.shared.head.weight.data.normal_(
             0, 1 / math.sqrt(math.sqrt(self.width * self.shared.vocab_size))
         )
-        # Also upscale initial embedding to match depth-scaling (standard normal). Relies on adaptive LRs 
-        # in optimizer for steady training updates to different layers 
-        self.shared.emb.weight.data.mul_(math.sqrt(self.width))
 
     def _helper(
         self,
@@ -280,6 +277,9 @@ class LLaMA(nn.Module):
             is_causal_mask = False
 
         x_in = self.shared(x_in)
+
+        # HF T5-style scale-correction: set to standard normal so that LN defaults to no-op
+        x_in = x_in.mul(self.width**.5)
 
         # this is the output cache for all the decoder layers
         present_key_value_states = []
