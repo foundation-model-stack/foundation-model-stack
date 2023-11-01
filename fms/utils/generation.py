@@ -39,7 +39,7 @@ def generate(
     batched = False
     if num_beams != 1:
         raise NotImplementedError("generate() does yet not support beam search")
-    if type(input_ids) == torch.Tensor:
+    if isinstance(input_ids, torch.Tensor):
         if input_ids.dim() != 1:
             batched = True
     else:
@@ -55,7 +55,7 @@ def generate(
     kwargs["use_cache"] = use_cache
 
     for _ in range(max_new_tokens):
-        input_ids = next_input[:, -max_seq_len:]
+        # input_ids = next_input[:, -max_seq_len:]
         output = model.forward(input_ids, **kwargs)
         if use_cache:
             logits, past_key_value_states = output

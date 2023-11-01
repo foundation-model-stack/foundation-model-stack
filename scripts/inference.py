@@ -50,6 +50,11 @@ parser.add_argument(
     choices=["default", "reduce-overhead"],
 )
 parser.add_argument(
+    "--nested",
+    action="store_true",
+    help="Whether to use nested tensors for batched inference",
+)
+parser.add_argument(
     "--deterministic",
     action="store_true",
     help="Set torch.use_deterministic_algorithms? Requires env variable `CUBLAS_WORKSPACE_CONFIG=:4096:8`",
@@ -140,6 +145,8 @@ max_len = max([len(prompt) for prompt in [prompt1, prompt2]])
 
 ids = prompt1.unsqueeze(0)
 
+if args.nested:
+    ids = torch.nested.nested_tensor([prompt1, prompt2], layout=torch.jagged)
 
 def print_result(result):
     if local_rank != 0:
