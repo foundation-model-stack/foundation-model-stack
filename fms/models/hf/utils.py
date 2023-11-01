@@ -7,13 +7,26 @@ def register_fms_models():
     """Register all FMS models with huggingface AutoModels. This will include Sandstone
     (AutoConfig, AutoModel, AutoModelForSeq2SeqLM) and Granite (AutoConfig, AutoModel, AutoModelForCausalLM)"""
     from fms.models.hf.llama.modeling_llama_hf import (
-        LLaMAHFConfig,
-        LLaMAHFForCausalLM,
+        HFAdaptedLLaMAConfig,
+        HFAdaptedLLaMAHeadless,
+        HFAdaptedLLaMAForCausalLM,
     )
 
-    AutoConfig.register("llama_hf", LLaMAHFConfig)
-    AutoModel.register(LLaMAHFConfig, LLaMAHFForCausalLM)
-    AutoModelForCausalLM.register(LLaMAHFConfig, LLaMAHFForCausalLM)
+    AutoConfig.register("hf_adapted_llama", HFAdaptedLLaMAConfig)
+    AutoModel.register(HFAdaptedLLaMAConfig, HFAdaptedLLaMAHeadless)
+    AutoModelForCausalLM.register(HFAdaptedLLaMAConfig, HFAdaptedLLaMAForCausalLM)
+
+    from fms.models.hf.gpt_bigcode.modeling_gpt_bigcode_hf import (
+        HFAdaptedGPTBigCodeConfig,
+        HFAdaptedGPTBigCodeHeadless,
+        HFAdaptedGPTBigCodeForCausalLM,
+    )
+
+    AutoConfig.register("hf_adapted_gpt_bigcode", HFAdaptedGPTBigCodeConfig)
+    AutoModel.register(HFAdaptedGPTBigCodeConfig, HFAdaptedGPTBigCodeHeadless)
+    AutoModelForCausalLM.register(
+        HFAdaptedGPTBigCodeConfig, HFAdaptedGPTBigCodeForCausalLM
+    )
 
 
 def mask_2d_to_3d(inp: torch.Tensor) -> torch.BoolTensor:
