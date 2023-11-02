@@ -43,6 +43,10 @@ def list_variants(architecture: str):
     Args:
     architecture: one of the registered architectures returned by `list_models()`.
     """
+    if architecture not in __models:
+        raise KeyError(
+            f"{architecture} is not registered. See `models.list_models()` for available architectures"
+        )
     return list(__models[architecture].keys())
 
 

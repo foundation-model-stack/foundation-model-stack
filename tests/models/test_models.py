@@ -12,6 +12,8 @@ def test_getmodel():
         models.get_model("foo", "foo")
     with pytest.raises(KeyError):
         models.get_model("llama", "foo")
+    with pytest.raises(KeyError):
+        models.list_variants("foo")
 
     micro = models.get_model("llama", "micro")
     assert micro.config.nlayers == 5
