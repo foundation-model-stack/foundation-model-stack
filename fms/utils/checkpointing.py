@@ -44,7 +44,7 @@ def get_oldest(targdir, qualifier=lambda x: True):
     return None
 
 
-class Llama_Checkpointer:
+class Checkpointer:
     """
     Manages the checkpoint directory. Saves new checkpoints and deletes old ones after the specified number are written.
     Also handles loading and saving of checkpoints in sharded and unsharded formats.
