@@ -1,11 +1,12 @@
 # Foundation Model Stack
 
-Foundation Model Stack is a collection of components for development, inference, training, and tuning of foundation models leveraging PyTorch native components. For inference optimizations we aim to support PyTorch compile, accelerated transformers, and tensor parallelism. At training time we aim to support FSDP, accelerated transformers, and PyTorch compile.
+Foundation Model Stack is a collection of components for development, inference, training, and tuning of foundation models leveraging PyTorch native components. For inference optimizations we aim to support PyTorch compile, accelerated transformers, and tensor parallelism. At training time we aim to support FSDP, accelerated transformers, and PyTorch compile. To enable these optimizations, we will provide reimplementations of several popular model architectures starting with Llama and GPT-BigCode. 
 
 ## Models Supported
 | Model family | Inference | Tuning | Training |
-| ----------- | ---------- | -------- | ----- |
-| Llama | :heavy_check_mark: | :x: | :x: |
+|--------------| ---------- | -------- | ----- |
+| Llama        | :heavy_check_mark: | :x: | :x: |
+| GPT-BigCode  | :heavy_check_mark: | :x: | :x: |
 
 ## Installation
 
@@ -33,7 +34,7 @@ python setup.py install
 #### Approach
 Our approach for inference optimization is to use PyTorch compile, accelerated transformers, and tensor parallelism. PyTorch compile compiles the code into optimized kernels, accelerated transformers leverages `scaled_dot_product_attention` (SDPA) for accelerating attention computation while saving memory, and tensor parallelism is necessary for larger models.
 
-We provide a re-implementation of the Llama architecture. To enable the model to compile, we reimplement `RoPE` encodings without complex numbers. We have verified that the `forward` pass compiles (there is work that needs to be done for `backward` to work with FSDP).
+To enable the Llama models to compile, we had to reimplement `RoPE` encodings without complex numbers. With this change, Llama model inference is able to leverage model compilation for latency reduction.
 
 #### Inference latency
 We measured inference latencies with 1024 token prompt and generation of 256 tokens on AWS P4de instance nodes with 8 80G A100 GPUs and report the median latency in the below table.
@@ -64,7 +65,7 @@ llama_generator = pipeline(task="text-generation", model=llama_hf, tokenizer=tok
 llama_generator("""q: how are you? a: I am good. How about you? q: What is the weather like today? a:""")
 ```
 
-A detailed example is provided [here](./notebooks/hf_llama_generation_example.ipynb).
+A detailed example is provided [here](./notebooks/hf_adapted_llama_inference.ipynb).
 
 ## Tuning (Coming Soon!!)
 

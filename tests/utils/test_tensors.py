@@ -40,6 +40,7 @@ def test_expandable_tensor_ops():
 def test_cat():
     t = torch.randn((4, 5, 8, 7))
     expandable = ExpandableTensor(t, 2, 10)
+    original = expandable
 
     to_append = torch.randn((4, 5, 3, 7))
 
@@ -53,6 +54,9 @@ def test_cat():
     assert type(expected) != ExpandableTensor
     assert type(expandable) == ExpandableTensor
     assert expandable._underlying_tensor.shape[2] == 20
+
+    # original should not have changed
+    assert original.shape == (4, 5, 8, 7)
 
 
 def test_perf():

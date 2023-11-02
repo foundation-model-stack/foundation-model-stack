@@ -16,6 +16,18 @@ def register_fms_models():
     AutoModel.register(HFAdaptedLLaMAConfig, HFAdaptedLLaMAHeadless)
     AutoModelForCausalLM.register(HFAdaptedLLaMAConfig, HFAdaptedLLaMAForCausalLM)
 
+    from fms.models.hf.gpt_bigcode.modeling_gpt_bigcode_hf import (
+        HFAdaptedGPTBigCodeConfig,
+        HFAdaptedGPTBigCodeHeadless,
+        HFAdaptedGPTBigCodeForCausalLM,
+    )
+
+    AutoConfig.register("hf_adapted_gpt_bigcode", HFAdaptedGPTBigCodeConfig)
+    AutoModel.register(HFAdaptedGPTBigCodeConfig, HFAdaptedGPTBigCodeHeadless)
+    AutoModelForCausalLM.register(
+        HFAdaptedGPTBigCodeConfig, HFAdaptedGPTBigCodeForCausalLM
+    )
+
 
 def mask_2d_to_3d(inp: torch.Tensor) -> torch.BoolTensor:
     """
