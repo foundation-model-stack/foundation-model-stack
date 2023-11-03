@@ -1,3 +1,4 @@
+from collections import OrderedDict
 import json
 import math
 import os
@@ -15,12 +16,13 @@ from fms.distributed.strategy import (
     TensorParallelStrategy,
     UniformModelParallelStrategy,
 )
-from fms import models
+from fms import distributed, models
 from fms.modules.attention import MultiHeadAttention
 from fms.modules.embedding import WordEmbedding
 from fms.modules.feedforward import GatedLinearUnit
 from fms.modules.layernorm import LayerNormParameterized
 from fms.modules.positions import RotaryEmbedding
+from fms.utils import serialization
 from fms.utils.activation import str_to_activation
 from fms.utils.config import ModelConfig
 from fms.utils.tokenizers import _has_hf, get_tokenizer
@@ -394,16 +396,18 @@ def _rename_weights_to_fms(orig_sd):
     return new_sd
 
 
-def load_fms_llama(model_path: str, group=None, **kwargs):
-    if torch.distributed.is_initialized() and group is None:
-        group = torch.distributed.GroupMember.WORLD
+# TODO: add an adapter to adapt from an HF state dict (as an alternative to
+# `convert_hf_llama`)
 
-    if group is None:
-        world_size = 1
-        rank = 0
-    else:
-        world_size = group.size()
-        rank = group.rank()
+serialization.register_adapter("llama", "meta", _rename_weights_to_fms)
+
+
+def load_fms_llama(model_path: str, group=None, **kwargs):
+    """
+    Deprecated in favor of `models.load_model`
+    """
+    rank, world_size = distributed.rank_and_group(group)
+
     # from llama.tokenizer import Tokenizer
     model_path = os.path.expanduser(model_path)
 
