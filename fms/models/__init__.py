@@ -211,15 +211,16 @@ def load_model(
         fms_sd = {}
 
     extra_args = kwargs
-    if distributed_strategy == "tp":
-        print("using tensor parallel")
-        extra_args["distributed_strategy"] = TensorParallelStrategy()
-    elif distributed_strategy == "mp":
-        print("using model parallel")
-        devices = [i for i in range(torch.cuda.device_count())]
-        extra_args["distributed_strategy"] = UniformModelParallelStrategy(
-            devices, _guess_num_layers(fms_sd)
-        )
+    if "distributed_strategy" not in extra_args:
+        if distributed_strategy == "tp":
+            print("using tensor parallel")
+            extra_args["distributed_strategy"] = TensorParallelStrategy()
+        elif distributed_strategy == "mp":
+            print("using model parallel")
+            devices = [i for i in range(torch.cuda.device_count())]
+            extra_args["distributed_strategy"] = UniformModelParallelStrategy(
+                devices, _guess_num_layers(fms_sd)
+            )
 
     fms_model = get_model(
         architecture, variant, device=initial_device, extra_args=extra_args
