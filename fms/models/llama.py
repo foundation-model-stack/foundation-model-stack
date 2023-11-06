@@ -164,6 +164,7 @@ class LLaMA(nn.Module):
         self,
         config: Optional[LLaMAConfig] = None,
         distributed_strategy: DistributedStrategy = NoOpStrategy,
+        orig_init: bool = False,
         **kwargs,
     ):
         super(LLaMA, self).__init__()
@@ -177,6 +178,7 @@ class LLaMA(nn.Module):
         self.width = self.config.emb_dim
         self.pad_id = self.config.pad_id
         self.max_expected_seq_len = self.config.max_expected_seq_len
+        self.orig_init = orig_init
 
         shared = WordEmbedding(
             self.config.src_vocab_size,
@@ -226,7 +228,7 @@ class LLaMA(nn.Module):
         if self.config.p_dropout:
             self.dropout = nn.Dropout(config.p_dropout)
 
-        self.reset_params()
+        self.reset_params(orig_init)
 
     def get_config(self) -> LLaMAConfig:
         return self.config
@@ -235,12 +237,17 @@ class LLaMA(nn.Module):
     def from_config(cls, config: LLaMAConfig) -> "LLaMA":
         return cls(config)
 
-    def reset_params(self):
-        # Modules are self-initializing, we're just going to down-scale the final prediction head to be
-        # mixed-fan (inputs and gradients scale to the same inverse factors)
-        self.shared.head.weight.data.normal_(
-            0, 1 / math.sqrt(math.sqrt(self.width * self.shared.vocab_size))
-        )
+    def reset_params(self, orig_init):
+        if not orig_init:
+            # Modules are self-initializing, we're just going to down-scale the final prediction head to be
+            # mixed-fan (inputs and gradients scale to the same inverse factors)
+            self.shared.head.weight.data.normal_(
+                0, 1 / math.sqrt(math.sqrt(self.width * self.shared.vocab_size))
+            )
+        else:
+            for m in self.modules():
+                if isinstance(m, nn.Linear) or isinstance(m, nn.Embedding):
+                    m.weight.data.normal_(0, 0.02)
 
     def _helper(
         self,
@@ -279,7 +286,8 @@ class LLaMA(nn.Module):
         x_in = self.shared(x_in)
 
         # HF T5-style scale-correction: set to standard normal so that LN defaults to no-op
-        x_in = x_in.mul(self.width**.5)
+        if not self.orig_init:
+            x_in = x_in.mul(self.width**.5)
 
         # this is the output cache for all the decoder layers
         present_key_value_states = []
