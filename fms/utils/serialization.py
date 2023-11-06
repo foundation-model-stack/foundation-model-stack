@@ -1,13 +1,13 @@
 from collections import ChainMap, OrderedDict
 import os
 from pathlib import Path
-from typing import Any, List
+from typing import Any, Callable, List, Optional
 import torch
 
 __adapters = {}
 
 
-def register_adapter(architecture: str, source: str, adapter: type):
+def register_adapter(architecture: str, source: str, adapter: Callable[[dict], dict]):
     """
     Registers a state dict adapter to be available to the (de) serialization
     API.
@@ -74,14 +74,14 @@ from fms import models
 
 def load_state_dict(
     model_path: str,
-    distributed_strategy: str = None,
-    checkpoint_sharding: str = None,
-    initial_device: str = None,
-    rank: int = 0,
-    world_size: int = 1,
-):
+    distributed_strategy: Optional[str] = None,
+    checkpoint_sharding: Optional[str] = None,
+    initial_device: torch.device = torch.device("cpu"),
+    rank: Optional[int] = 0,
+    world_size: Optional[int] = 1,
+) -> Optional[OrderedDict]:
     """
-    Validates that the file(s) found at a checkpoint path are copmatible with
+    Validates that the file(s) found at a checkpoint path are compatible with
     the intended (possibly distributed) use-case, and returns the state dict
     if needed.
 
@@ -94,14 +94,14 @@ def load_state_dict(
             E.g. layer, tp, fsdp.
     initial_device: where the state dict will be loaded. if meta, return None.
     """
-    if model_path is None or initial_device is "meta":
+    if model_path is None or initial_device.type == "meta":
         return None
     # TODO: Add support for tp-sharding a non-sharded state dict.
     if (
         distributed_strategy == "tp" or checkpoint_sharding == "tp"
     ) and distributed_strategy != checkpoint_sharding:
         raise ValueError(
-            f"TP-sharded models are currently only compatible TP-sharded checkpoints. Attempting to load {checkpoint_sharding} to {distributed_strategy}"
+            f"TP-sharded models are currently only compatible with TP-sharded checkpoints. Attempting to load {checkpoint_sharding} to {distributed_strategy}"
         )
     if checkpoint_sharding == "fsdp" and distributed_strategy not in ["fsdp", "hsdp"]:
         raise ValueError(f"FSDP checkpoints can only be loaded into an FSDP model")

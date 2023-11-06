@@ -1,5 +1,5 @@
 from contextlib import nullcontext
-from typing import Callable
+from typing import Callable, Optional
 import torch
 from torch import nn
 from fms import distributed
@@ -96,7 +96,7 @@ def _guess_num_layers(state_dict):
     # really we wouldn't be training a model from scratch with MP, so
     # I think it's OK to use an arbitrary value. We don't have a config
     # at this point.
-    if state_dict is None:
+    if state_dict is None or len(state_dict) == 0:
         return 20
 
     layers = set()
@@ -150,12 +150,12 @@ def _is_dp(distributed_strategy):
 def load_model(
     architecture: str,
     variant: str,
-    model_path: str = None,
+    model_path: Optional[str] = None,
     source: str = None,
     device_type: str = "cpu",
-    distributed_strategy: str = None,
-    checkpoint_sharding: str = None,
-    group: ProcessGroup = None,
+    distributed_strategy: Optional[str] = None,
+    checkpoint_sharding: Optional[str] = None,
+    group: Optional[ProcessGroup] = None,
     **kwargs,
 ):
     """
@@ -166,7 +166,7 @@ def load_model(
                 `models.list_models()`.
     variant: the configuration of the model, e.g. 7b. See
                 `models.list_variants(architecture)`
-    model_path: the path to the state_dict of weights
+    model_path: the path to the state_dict of weights. If None, don't load.
     device_type: where to load the model
     distributed_strategy: None, 'fsdp', 'hsdp', 'tp', or 'mp'.
     checkpoint_sharding: how the checkpoint files are sharded: None, 'tp',
@@ -174,7 +174,7 @@ def load_model(
     source: If the weights in the state dict didn't come from an FMS model,
                 `source` specifies which conversion function might be needed.
                 See `serialization.list_sources(architecture)`
-    group: ProcessGroup
+    group: ProcessGroup The PG to use for any model distribution
     """
     local_rank, world_size = distributed.rank_and_world(group)
 
@@ -185,23 +185,30 @@ def load_model(
             distributed_strategy = "mp"
 
     device = torch.device(device_type, local_rank)
-    initial_device = device
+
     if (
         _is_dp(distributed_strategy)
         and local_rank != 0
         and checkpoint_sharding != "fsdp"
     ):
-        initial_device = "meta"
+        initial_device = torch.device("meta")
+    elif distributed_strategy == "mp":
+        initial_device = torch.device("cpu")
+    else:
+        initial_device = device
 
-    fms_sd = serialization.load_state_dict(
-        model_path,
-        distributed_strategy,
-        checkpoint_sharding,
-        initial_device,
-        local_rank,
-        world_size,
-    )
-    fms_sd = serialization.get_adapted(architecture, source, fms_sd)
+    if model_path is not None:
+        fms_sd = serialization.load_state_dict(
+            model_path,
+            distributed_strategy,
+            checkpoint_sharding,
+            initial_device,
+            local_rank,
+            world_size,
+        )
+        fms_sd = serialization.get_adapted(architecture, source, fms_sd)
+    else:
+        fms_sd = {}
 
     extra_args = kwargs
     if distributed_strategy == "tp":
@@ -214,7 +221,7 @@ def load_model(
             devices, _guess_num_layers(fms_sd)
         )
 
-    ibm_model = get_model(
+    fms_model = get_model(
         architecture, variant, device=initial_device, extra_args=extra_args
     )
 
@@ -228,16 +235,16 @@ def load_model(
     )
 
     if pre_load and local_rank == 0 and fms_sd is not None:
-        ibm_model.load_state_dict(fms_sd, strict=False)
+        fms_model.load_state_dict(fms_sd, strict=False)
 
     # post-init distribution
     if _is_dp(distributed_strategy):
         model = _fsdp_wrap(model, distributed_strategy, local_rank, pre_load)
 
     if not pre_load:
-        ibm_model.load_state_dict(fms_sd, strict=False)
+        fms_model.load_state_dict(fms_sd, strict=False)
 
-    return ibm_model
+    return fms_model
 
 
 from fms.models import llama
