@@ -1,5 +1,5 @@
 import os
-from typing import List, Union
+from typing import List, Optional, Union
 
 import torch
 import torch.nn.functional as F
@@ -25,7 +25,11 @@ class BaseTokenizer:
     cases where we'd like to write tests that don't depend on HF.
     """
 
-    def __init__(self, bos_id, eos_id):
+    def __init__(self, bos_id: int, eos_id: int):
+        """
+        bos_id: the ID representing the beginning-of-sentence token
+        eos_id: the ID representing the end-of-sentence token
+        """
         self.bos_token_id = bos_id
         self.eos_token_id = eos_id
 
@@ -127,7 +131,7 @@ class _HFTokenizer(BaseTokenizer):
         return self.tokenizer.get_vocab_size()
 
 
-def get_tokenizer(name: str, style=None) -> BaseTokenizer:
+def get_tokenizer(name: str, style: Optional[str] = None) -> BaseTokenizer:
     """
     Hack to get an instance of a tokenizer by name or path.
 
