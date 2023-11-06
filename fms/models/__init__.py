@@ -151,7 +151,7 @@ def load_model(
     architecture: str,
     variant: str,
     model_path: Optional[str] = None,
-    source: str = None,
+    source: Optional[str] = None,
     device_type: str = "cpu",
     distributed_strategy: Optional[str] = None,
     checkpoint_sharding: Optional[str] = None,
