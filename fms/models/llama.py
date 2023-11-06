@@ -431,7 +431,7 @@ def load_fms_llama(model_path: str, group=None, **kwargs):
     return ibm_model
 
 
-def convert_hf_llama(hf_model: "LlamaForCausalLM") -> LLaMA:
+def convert_hf_llama(hf_model: "LlamaForCausalLM", ignore_weights=False, orig_init=False) -> LLaMA:
     """
     Convert a Llama huggingface model to an fms model
 
@@ -439,12 +439,18 @@ def convert_hf_llama(hf_model: "LlamaForCausalLM") -> LLaMA:
     ----------
     hf_model: LlamaForCausalLM
         a Llama Huggingface model
+    ignore_weights: bool
+        If True, load config but use random weights
+    orig_init: bool
+        If True, use original Llama init scheme when re-initializing. 
 
     Returns
     -------
     LLaMA
         an FMS LLaMA model
     """
+
+    assert ignore_weights or not orig_init, "Cannot use orig_init if not re-initializing"
 
     if not _has_hf:
         raise ImportError(
@@ -465,9 +471,12 @@ def convert_hf_llama(hf_model: "LlamaForCausalLM") -> LLaMA:
         activation_fn=hf_model.config.hidden_act,
         max_expected_seq_len=hf_model.config.max_position_embeddings,
     )
-    model = LLaMA(config)
+    model = LLaMA(config, orig_init=orig_init and ignore_weights)
     count_parameters = lambda m: sum(p.numel() for p in m.parameters())
     assert count_parameters(model) == count_parameters(hf_model)
+
+    if ignore_weights:
+        return model
 
     hf_sd = hf_model.model.state_dict()
 
