@@ -1,6 +1,16 @@
+import platform
+
 import numpy as np
 import torch
-from fms.testing._internal.model_test_suite import ConfigFixtureMixin, ModelFixtureMixin
+from torch._dynamo.exc import TorchDynamoException
+from torch._dynamo.testing import CompileCounterWithBackend
+
+from fms.models.hf.modeling_hf_adapter import (
+    HFEncoderDecoderModelArchitecture,
+    HFDecoderModelArchitecture,
+)
+from fms.models.hf.utils import register_fms_models
+from fms.testing._internal.model_test_suite import ConfigFixtureMixin
 
 SEED = 42
 torch.manual_seed(SEED)  # pytorch random seed
@@ -23,6 +33,10 @@ from transformers import (
     AutoTokenizer,
     PreTrainedTokenizer,
     PretrainedConfig,
+    AutoConfig,
+    AutoModel,
+    AutoModelForSeq2SeqLM,
+    AutoModelForCausalLM,
 )
 
 from fms.utils.config import ModelConfig
@@ -30,6 +44,7 @@ from ...comparison import (
     HFModelSignatureParams,
     ModelSignatureParams,
     compare_model_signatures,
+    get_signature,
 )
 
 
@@ -108,6 +123,92 @@ class HFConfigTestSuite(ConfigFixtureMixin, HFConfigFixtureMixin):
                 fms_hf_config_path
             )
             assert fms_hf_config.to_dict() == fms_hf_config_loaded.to_dict()
+
+    def test_hf_autoconfig(self, fms_hf_config: PretrainedConfig):
+        """test that the config can be loaded with autoconfig after registration"""
+        register_fms_models()
+        with tempfile.TemporaryDirectory() as workdir:
+            fms_hf_config_path = f"{workdir}/hf_config.json"
+            fms_hf_config.save_pretrained(fms_hf_config_path)
+            new_config = AutoConfig.from_pretrained(fms_hf_config_path)
+            assert isinstance(new_config, type(fms_hf_config))
+
+
+class HFModelCompileTestSuite(HFModelFixtureMixin):
+    """A set of tests associated with compilation of huggingface adapted fms models"""
+
+    @property
+    @abc.abstractmethod
+    def _get_hf_signature_params(self) -> List[str]:
+        """the value to pass into params in get_signature function for an hf model
+
+        Returns
+        -------
+        List[str]
+            the params to set to the default tensor value (inp) in get_signature. If an integer, will use *args, if a
+            list, will use **kwargs
+        """
+        pass
+
+    @pytest.mark.skipif(
+        platform.system() != "Linux",
+        reason=f"pytorch compile is more stable on Linux, skipping as current platform is {platform.platform()}",
+    )
+    def test_hf_model_compile_no_graph_breaks(self, fms_hf_model):
+        """Test that an HF-FMS model is compilable without graph breaks"""
+        try:
+            torch._dynamo.reset()
+            cnt = CompileCounterWithBackend("inductor")
+            compiled_model = torch.compile(
+                model=fms_hf_model, backend=cnt, fullgraph=True
+            )
+            fms_hf_signature_params = HFModelSignatureParams(
+                compiled_model,
+                self._get_hf_signature_params,
+                # default attn_algorithm won't compile on CPU
+                # TODO: add non-mmath attn_algorithm when we have GPUs to run unit tests
+                other_params={"return_dict": True, "attn_algorithm": "math"},
+            )
+            assert cnt.frame_count == 0
+            get_signature(
+                model=fms_hf_signature_params.model,
+                params=fms_hf_signature_params.params,
+                optional_params=fms_hf_signature_params.other_params,
+                logits_getter_fn=fms_hf_signature_params.logits_getter_fn,
+            )
+            assert cnt.frame_count == 1
+        except TorchDynamoException as e:
+            pytest.fail(f"Failed to get signature of full-graph compiled model:\n{e}")
+
+
+class HFAutoModelTestSuite(HFModelFixtureMixin):
+    def test_hf_automodel_headless(self, fms_hf_model: PreTrainedModel):
+        """test that the headless model can be loaded with automodel after registration"""
+        register_fms_models()
+        with tempfile.TemporaryDirectory() as workdir:
+            fms_hf_model_path = f"{workdir}/hf_model"
+            fms_hf_model.save_pretrained(fms_hf_model_path)
+            new_model = AutoModel.from_pretrained(fms_hf_model_path)
+            assert (
+                isinstance(fms_hf_model, type(new_model)) and new_model.lm_head is None
+            )
+
+    def test_hf_automodel_language_modeling_head(self, fms_hf_model: PreTrainedModel):
+        """test that the language modeling head model can be loaded with automodel"""
+        if isinstance(fms_hf_model, HFEncoderDecoderModelArchitecture):
+            automodel_class = AutoModelForSeq2SeqLM
+        elif isinstance(fms_hf_model, HFDecoderModelArchitecture):
+            automodel_class = AutoModelForCausalLM
+        else:
+            pytest.skip(
+                "encoder-only models do not perform text generation and therefore do not use AutoModelForCausalLM or AutoModelForSeq2SeqLM"
+            )
+        register_fms_models()
+        with tempfile.TemporaryDirectory() as workdir:
+            fms_hf_model_path = f"{workdir}/hf_model"
+            fms_hf_model.save_pretrained(fms_hf_model_path)
+            new_model = automodel_class.from_pretrained(fms_hf_model_path)
+            assert isinstance(new_model, type(fms_hf_model))
 
 
 class HFModelEquivalenceTestSuite(HFConfigFixtureMixin, HFModelFixtureMixin):
@@ -217,7 +318,7 @@ class HFModelGenerationTestSuite(HFConfigFixtureMixin, HFModelFixtureMixin):
                 repetition_penalty=2.5,
                 length_penalty=1.0,
                 early_stopping=True,
-                pad_token_id=model.config.eos_token_id,
+                pad_token_id=model.config.pad_token_id,
             )
         generated_texts = tokenizer.batch_decode(
             generated_ids, skip_special_tokens=True

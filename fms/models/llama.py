@@ -1,3 +1,4 @@
+from collections import OrderedDict
 import json
 import math
 import os
@@ -15,11 +16,13 @@ from fms.distributed.strategy import (
     TensorParallelStrategy,
     UniformModelParallelStrategy,
 )
+from fms import distributed, models
 from fms.modules.attention import MultiHeadAttention
 from fms.modules.embedding import WordEmbedding
 from fms.modules.feedforward import GatedLinearUnit
 from fms.modules.layernorm import LayerNormParameterized
 from fms.modules.positions import RotaryEmbedding
+from fms.utils import serialization
 from fms.utils.activation import str_to_activation
 from fms.utils.config import ModelConfig
 from fms.utils.tokenizers import _has_hf, get_tokenizer
@@ -328,6 +331,44 @@ class LLaMA(nn.Module):
             return preds
 
 
+# Register common LLaMA variants with the model registration API
+
+# a micro llama model to use with a char-level tokenizer
+_micro_char_config = LLaMAConfig(
+    emb_dim=192, nheads=4, nlayers=5, max_expected_seq_len=1024, src_vocab_size=256
+)
+
+_7b_config = LLaMAConfig()
+_13b_config = LLaMAConfig(emb_dim=5120, nheads=40, nlayers=40)
+# todo: add 35B config
+
+_70b_config = LLaMAConfig(
+    emb_dim=8192,
+    multiple_of=4096,
+    nheads=64,
+    kvheads=8,
+    nlayers=80,
+    hidden_grow_factor=(1.3 * 8 / 3),
+)
+
+_architecture_name = "llama"
+
+
+def _llama_factory_factory(config):
+    def factory(**kwargs):
+        return LLaMA(config, **kwargs)
+
+    return factory
+
+
+models.register_model(
+    _architecture_name, "micro", _llama_factory_factory(_micro_char_config)
+)
+models.register_model(_architecture_name, "7b", _llama_factory_factory(_7b_config))
+models.register_model(_architecture_name, "13b", _llama_factory_factory(_13b_config))
+models.register_model(_architecture_name, "70b", _llama_factory_factory(_70b_config))
+
+
 def _rename_weights_to_fms(orig_sd):
     replacements = [
         (r"^tok_embeddings", "shared.emb"),
@@ -355,16 +396,18 @@ def _rename_weights_to_fms(orig_sd):
     return new_sd
 
 
-def load_fms_llama(model_path: str, group=None, **kwargs):
-    if torch.distributed.is_initialized() and group is None:
-        group = torch.distributed.GroupMember.WORLD
+# TODO: add an adapter to adapt from an HF state dict (as an alternative to
+# `convert_hf_llama`)
 
-    if group is None:
-        world_size = 1
-        rank = 0
-    else:
-        world_size = group.size()
-        rank = group.rank()
+serialization.register_adapter("llama", "meta", _rename_weights_to_fms)
+
+
+def load_fms_llama(model_path: str, group=None, **kwargs):
+    """
+    Deprecated in favor of `models.load_model`
+    """
+    rank, world_size = distributed.rank_and_group(group)
+
     # from llama.tokenizer import Tokenizer
     model_path = os.path.expanduser(model_path)
 
