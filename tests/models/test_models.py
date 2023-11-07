@@ -14,13 +14,13 @@ def test_register():
 
 def test_getmodel():
     with pytest.raises(KeyError):
-        models.get_model("foo", "foo")
+        models._get_model_instance("foo", "foo")
     with pytest.raises(KeyError):
-        models.get_model("llama", "foo")
+        models._get_model_instance("llama", "foo")
     with pytest.raises(KeyError):
         models.list_variants("foo")
 
-    micro = models.get_model("llama", "micro")
+    micro = models._get_model_instance("llama", "micro")
     assert micro.config.nlayers == 5
 
 
@@ -30,12 +30,12 @@ def test_list():
 
 
 def test_load():
-    m = models.get_model("llama", "micro")
+    m = models._get_model_instance("llama", "micro")
     sd = m.state_dict()
 
     with tempfile.NamedTemporaryFile() as f:
         torch.save(sd, f.name)
-        loaded = models.load_model("llama", "micro", f.name)
+        loaded = models.get_model("llama", "micro", f.name)
 
         keys = loaded.state_dict().keys()
         first = next(iter(keys))
@@ -58,7 +58,7 @@ def test_load():
             path = Path(d) / f"{i}.pth"
             torch.save(dicts[i], path)
         newsd = serialization.load_state_dict(d)
-        as_loaded = models.load_model("llama", "micro", d).state_dict()
+        as_loaded = models.get_model("llama", "micro", d).state_dict()
         # this style load, layer-sharded, has to stitch together the state dicts.
         assert type(newsd) == ChainMap
         for key in keys:
@@ -67,6 +67,6 @@ def test_load():
 
 
 def test_guess_numlayers():
-    model = models.get_model("llama", "micro")
+    model = models._get_model_instance("llama", "micro")
     sd = model.state_dict()
     assert models._guess_num_layers(sd) == 5

@@ -55,11 +55,13 @@ def list_variants(architecture: str):
     return list(__models[architecture].keys())
 
 
-def get_model(
+def _get_model_instance(
     architecture: str, variant: str, *, dtype=None, device=None, extra_args: dict = {}
 ) -> nn.Module:
     """
     Gets a model by name and variant, e.g. `models.get_model('llama', '7b')`
+    Does not load weights.
+    See public API `models.get_model()`
     Args:
     architecture: one of the architectures from list_models(). E.g. llama.
     variant: one of the variants from list_variants(architecture). E.g. '7b'
@@ -147,7 +149,7 @@ def _is_dp(distributed_strategy):
     return distributed_strategy in {"fsdp", "hsdp", "ddp"}
 
 
-def load_model(
+def get_model(
     architecture: str,
     variant: str,
     model_path: Optional[str] = None,
@@ -222,7 +224,7 @@ def load_model(
                 devices, _guess_num_layers(fms_sd)
             )
 
-    fms_model = get_model(
+    fms_model = _get_model_instance(
         architecture, variant, device=initial_device, extra_args=extra_args
     )
 
