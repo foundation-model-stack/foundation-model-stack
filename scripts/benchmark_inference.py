@@ -74,25 +74,20 @@ parser.add_argument(
     help="Batch size of mock input",
 )
 
-parser.add_argument(
-    "--distributed",
-    action="store_true",
-    help="This is a distributed job (multiple instances run with RANK+WORLD_SIZE)",
-)
-
 args = parser.parse_args()
 
 local_rank = int(os.getenv("LOCAL_RANK", 0))
+world_size = int(os.getenv("WORLD_SIZE", 1))
 device = torch.device(args.device_type, local_rank)
 
 torch.set_default_device(device)
 torch.set_default_dtype(torch.half)
 
-if args.distributed:
+if world_size > 1:
     dist.init_process_group()
 
 print("loading model")
-model = models.get_model(args.architecture, args.variant)
+model = models.get_model(args.architecture, args.variant, device_type=args.device_type)
 tokenizer = tokenizers.get_tokenizer(args.tokenizer)
 
 model.eval()
