@@ -396,10 +396,63 @@ def _rename_weights_to_fms(orig_sd):
     return new_sd
 
 
+def _hf_sd_to_fms_sd(hf_sd: OrderedDict):
+    replacements = [
+        (r"^lm_head.weight", "shared.head.weight"),
+        (r"^model.embed_tokens.weight", "shared.emb.weight"),
+        (r"^model.norm", "dec_norm"),
+        (r"^model.layers", "layers"),
+        (r"self_attn\.k_proj", "attn.key"),
+        (r"self_attn\.v_proj", "attn.value"),
+        (r"self_attn\.q_proj", "attn.query"),
+        (r"self_attn\.o_proj", "attn.dense"),
+        (r"mlp\.gate_proj", "ff_sub_layer.wg"),
+        (r"mlp\.up_proj", "ff_sub_layer.w1"),
+        (r"mlp\.down_proj", "ff_sub_layer.w2"),
+        (r"input_layernorm", "ln"),
+        (r"post_attention_layernorm", "ff_ln"),
+    ]
+    new_sd = {}
+    for name, param in hf_sd.items():
+        new_name = name
+        for pattern, repl in replacements:
+            new_name = re.sub(pattern, repl, new_name)
+        new_sd[new_name] = param
+
+    layer_exist = True
+    layer_i = 0
+    rotary_inv_freq_size = hf_sd["model.layers.0.self_attn.rotary_emb.inv_freq"].size(0)
+    while layer_exist:
+        query = f"layers.{layer_i}.attn.query.weight"
+        key = f"layers.{layer_i}.attn.key.weight"
+        if query in new_sd:
+            q = new_sd[query].data
+            q = (
+                q.view(-1, 2, rotary_inv_freq_size, q.size(1))
+                .transpose(1, 2)
+                .reshape(*q.size())
+            )
+            new_sd[query].data = q
+
+            k = new_sd[key].data
+            k = (
+                k.view(-1, 2, rotary_inv_freq_size, k.size(1))
+                .transpose(1, 2)
+                .reshape(*k.size())
+            )
+            new_sd[key].data = k
+            layer_i += 1
+        else:
+            layer_exist = False
+
+    return new_sd
+
+
 # TODO: add an adapter to adapt from an HF state dict (as an alternative to
 # `convert_hf_llama`)
 
 serialization.register_adapter("llama", "meta", _rename_weights_to_fms)
+serialization.register_adapter("llama", "hf", _hf_sd_to_fms_sd)
 
 
 def load_fms_llama(model_path: str, group=None, **kwargs):
