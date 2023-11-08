@@ -1,6 +1,7 @@
 from typing import Union
 from transformers import AutoConfig, AutoModel, AutoModelForCausalLM
 import torch
+import torch.nn as nn
 
 
 def register_fms_models():
@@ -101,3 +102,36 @@ def mask_2d_to_3d_bidirectional(
     )
 
     return mask_encoder.unsqueeze(1) == mask_decoder.unsqueeze(2)
+
+
+def wrap(model: nn.Module, **override_config_kwargs) -> "HFModelArchitecture":
+    """Wrap an FMS model, converting its API to one of and Huggingface model
+
+    Parameters
+    ----------
+    model: nn.Module
+        The FMS model to wrap (currently one of LLaMA or GPTBigCode)
+    override_config_kwargs
+        configuration parameters to override as a set of keyword arguments
+
+    Returns
+    -------
+    HFModelArchitecture
+        an HF adapted FMS model
+    """
+    from fms.models.hf.gpt_bigcode.modeling_gpt_bigcode_hf import (
+        HFAdaptedGPTBigCodeForCausalLM,
+    )
+    from fms.models.hf.llama.modeling_llama_hf import HFAdaptedLLaMAForCausalLM
+
+    __fms_to_hf_adapt_map = {
+        "LLaMA": HFAdaptedLLaMAForCausalLM,
+        "GPTBigCode": HFAdaptedGPTBigCodeForCausalLM,
+    }
+
+    model_name = model.__class__.__name__
+    if model_name not in __fms_to_hf_adapt_map:
+        raise ValueError(f"{model_name} is not one of {__fms_to_hf_adapt_map.keys()}")
+
+    hf_adapted_cls = __fms_to_hf_adapt_map[model_name]
+    return hf_adapted_cls.from_fms_model(model, **override_config_kwargs)
