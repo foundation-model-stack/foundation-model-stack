@@ -165,7 +165,7 @@ def _all_gather(input_: torch.Tensor) -> torch.Tensor:
     # specializing the dimension where the all_gather is happening
     last_dim = input_.dim() - 1
     return (
-        distfunc.all_gather_tensor(
+        _all_gather_tensor(
             input_.transpose(0, last_dim).contiguous(),
             0,
             list(range(world_size)),
