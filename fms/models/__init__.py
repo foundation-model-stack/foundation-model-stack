@@ -183,7 +183,7 @@ def get_model(
     if distributed_strategy is None or distributed_strategy == "":
         if world_size > 1:
             distributed_strategy = "tp"
-        elif torch.cuda.device_count() > 1:
+        elif torch.cuda.device_count() > 1 and device_type == "cuda":
             distributed_strategy = "mp"
 
     device = torch.device(device_type, local_rank)
@@ -242,9 +242,9 @@ def get_model(
 
     # post-init distribution
     if _is_dp(distributed_strategy):
-        model = _fsdp_wrap(model, distributed_strategy, local_rank, pre_load)
+        fms_model = _fsdp_wrap(fms_model, distributed_strategy, local_rank, pre_load)
 
-    if not pre_load:
+    if not pre_load and len(fms_sd):
         fms_model.load_state_dict(fms_sd, strict=False)
 
     return fms_model
