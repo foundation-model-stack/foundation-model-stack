@@ -124,6 +124,8 @@ def wrap(model: nn.Module, **override_config_kwargs) -> "HFModelArchitecture":
     )
     from fms.models.hf.llama.modeling_llama_hf import HFAdaptedLLaMAForCausalLM
 
+    register_fms_models()
+
     __fms_to_hf_adapt_map = {
         "LLaMA": HFAdaptedLLaMAForCausalLM,
         "GPTBigCode": HFAdaptedGPTBigCodeForCausalLM,
