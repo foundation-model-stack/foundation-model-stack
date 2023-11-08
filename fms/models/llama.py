@@ -425,7 +425,8 @@ def _hf_sd_to_fms_sd(hf_sd: OrderedDict):
         if bool(trans_required_pattern.match(new_name)):
             temp = new_sd[new_name]
             # nheads is used in the transformation required for hf->fms
-            # here we are using 128 as this value fits with all popular models 7B, 13B, 70B to recover the number of heads
+            # here we are using 128 as this value fits with all popular models
+            #   7B, 13B, 70B to recover the number of heads
             nheads = int(temp.size(0) / 128)
             temp = (
                 temp.view(nheads, 2, -1, temp.size(1))
