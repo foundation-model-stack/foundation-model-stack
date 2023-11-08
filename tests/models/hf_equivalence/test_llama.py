@@ -2,6 +2,7 @@ import pytest
 
 from fms.models.hf.llama.modeling_llama_hf import HFAdaptedLLaMAForCausalLM
 from fms.models.llama import convert_hf_llama
+from fms.models import get_model
 import torch
 
 from fms.testing.comparison import (
@@ -23,7 +24,7 @@ def test_llama_7b_equivalence():
     hf_model = AutoModelForCausalLM.from_pretrained(llama_model_path)
 
     # convert the hf model to fms
-    model = convert_hf_llama(hf_model)
+    model = get_model("llama", "7b", llama_model_path, "hf")
 
     hf_model_fms = HFAdaptedLLaMAForCausalLM.from_fms_model(
         model,
