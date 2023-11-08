@@ -413,37 +413,23 @@ def _hf_sd_to_fms_sd(hf_sd: OrderedDict):
         (r"post_attention_layernorm", "ff_ln"),
     ]
     new_sd = {}
+    rotary_inv_freq_size = hf_sd["model.layers.0.self_attn.rotary_emb.inv_freq"].size(0)
+    trans_required_pattern = re.compile("layers.[0-9]+.attn.(query|key).weight")
     for name, param in hf_sd.items():
         new_name = name
         for pattern, repl in replacements:
             new_name = re.sub(pattern, repl, new_name)
         new_sd[new_name] = param
 
-    layer_exist = True
-    layer_i = 0
-    rotary_inv_freq_size = hf_sd["model.layers.0.self_attn.rotary_emb.inv_freq"].size(0)
-    while layer_exist:
-        query = f"layers.{layer_i}.attn.query.weight"
-        key = f"layers.{layer_i}.attn.key.weight"
-        if query in new_sd:
-            q = new_sd[query].data
-            q = (
-                q.view(-1, 2, rotary_inv_freq_size, q.size(1))
+        # hf -> fms requires a transpose operation for the query and key
+        if bool(trans_required_pattern.match(new_name)):
+            temp = new_sd[new_name].data
+            temp = (
+                temp.view(-1, 2, rotary_inv_freq_size, temp.size(1))
                 .transpose(1, 2)
-                .reshape(*q.size())
+                .reshape(*temp.size())
             )
-            new_sd[query].data = q
-
-            k = new_sd[key].data
-            k = (
-                k.view(-1, 2, rotary_inv_freq_size, k.size(1))
-                .transpose(1, 2)
-                .reshape(*k.size())
-            )
-            new_sd[key].data = k
-            layer_i += 1
-        else:
-            layer_exist = False
+            new_sd[new_name].data = temp
 
     return new_sd
 
