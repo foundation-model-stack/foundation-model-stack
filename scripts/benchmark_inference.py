@@ -95,7 +95,7 @@ parser.add_argument(
     help="This is a distributed job (multiple instances run with RANK+WORLD_SIZE)",
 )
 parser.add_argument(
-    "--skip_check_correctness",
+    "--skip_correctness_check",
     action="store_true",
     help="Do not test correctness of outputs vs just timing",
 )
@@ -144,7 +144,7 @@ tokenizer = tokenizers.get_tokenizer(args.tokenizer)
 
 model.eval()
 torch.set_grad_enabled(False)
-print("loading complete on rank", local_rank)
+print(f"loading complete on rank {local_rank}")
 
 SEQ_LEN = args.seq_len
 BATCH_SIZE = args.batch_size
@@ -202,7 +202,7 @@ def one_token(model, use_cache):
     else:
         actual = model.forward(next_input, only_last_token=True)
     actual = torch.argmax(actual, dim=-1)
-    if local_rank == 0 and not args.skip_check_correctness:
+    if local_rank == 0 and not args.skip_correctness_check:
         torch.testing.assert_close(actual, expected)
     else:
         torch.cuda.synchronize()
@@ -224,7 +224,7 @@ def end_to_end(model, use_cache, expected=None):
         assert (
             result.size()[-1] == SEQ_LEN + MAX_NEW_TOKENS
         ), f"{result.size()}, {SEQ_LEN}, {MAX_NEW_TOKENS}"
-    if expected is not None and not args.skip_check_correctness:
+    if expected is not None and not args.skip_correctness_check:
         torch.testing.assert_close(result, expected)
     else:
         torch.cuda.synchronize()
