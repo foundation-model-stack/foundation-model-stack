@@ -18,7 +18,7 @@ class HFAdaptedLLaMAConfig(PretrainedConfig):
         self,
         src_vocab_size: Optional[int] = 32000,
         emb_dim: Optional[int] = 4096,
-        norm_eps: float = 1e-6,
+        norm_eps: float = 1e-5,
         nheads: int = 32,
         kvheads: int = 0,
         nlayers: int = 32,
