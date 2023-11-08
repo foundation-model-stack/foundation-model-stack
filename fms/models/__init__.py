@@ -183,8 +183,6 @@ def get_model(
     if distributed_strategy is None or distributed_strategy == "":
         if world_size > 1:
             distributed_strategy = "tp"
-        elif torch.cuda.device_count() > 1 and device_type == "cuda":
-            distributed_strategy = "mp"
 
     device = torch.device(device_type, local_rank)
 
