@@ -1,5 +1,5 @@
 import os
-from typing import List, Union
+from typing import List, Optional, Union
 
 import torch
 import torch.nn.functional as F
@@ -25,6 +25,14 @@ class BaseTokenizer:
     cases where we'd like to write tests that don't depend on HF.
     """
 
+    def __init__(self, bos_id: int, eos_id: int):
+        """
+        bos_id: the ID representing the beginning-of-sentence token
+        eos_id: the ID representing the end-of-sentence token
+        """
+        self.bos_token_id = bos_id
+        self.eos_token_id = eos_id
+
     def tokenize(self, text: str):
         raise NotImplementedError
 
@@ -48,7 +56,8 @@ class CharTokenizer(BaseTokenizer):
     """
 
     def __init__(self):
-        super().__init__()
+        # 2, 3 from ascii tables are "start of text" and "end of text"
+        super().__init__(2, 3)
 
     def tokenize(self, text: str):
         return list(text)
@@ -72,13 +81,10 @@ class _SentencePieceTokenizer(BaseTokenizer):
     """
 
     def __init__(self, path: str):
-        super().__init__()
-        if not _has_sp:
-            print("You need to install sentencepiece for this tokenizer to work.")
-            raise ImportError
         from sentencepiece import SentencePieceProcessor
 
         self.sp_model = SentencePieceProcessor(model_file=path)
+        super().__init__(self.sp_model.bos_id(), self.sp_model.eos_id())
 
     def tokenize(self, text: str):
         return self.sp_model.encode_as_pieces(text)
@@ -104,13 +110,10 @@ class _HFTokenizer(BaseTokenizer):
     """
 
     def __init__(self, name: str):
-        super().__init__()
-        if not _has_hf:
-            print("You need to install transformers for this tokenizer to work.")
-            raise ImportError
         from transformers import AutoTokenizer
 
         self.tokenizer = AutoTokenizer.from_pretrained(name)
+        super().__init__(self.tokenizer.bos_token_id, self.tokenizer.eos_token_id)
 
     def tokenize(self, text: str):
         return self.tokenizer.tokenize(text)
@@ -128,19 +131,26 @@ class _HFTokenizer(BaseTokenizer):
         return self.tokenizer.get_vocab_size()
 
 
-def get_tokenizer(name: str) -> BaseTokenizer:
+def get_tokenizer(name: str, style: Optional[str] = None) -> BaseTokenizer:
     """
     Hack to get an instance of a tokenizer by name or path.
 
-    Tries to derive whether the name refers to a custom tokenizer, a
-    sentencepiece model file, or a HuggingFace tokenizer.
+    Args:
+
+    style: 'hf', 'sentencepiece', or 'fms'. If not specified, attempt to derive
+            the type based on the name.
     """
-    if name == "char_tokenizer":
+    if name == "char_tokenizer" and (style is None or style == "fms"):
         return CharTokenizer()
+
     # SentencePiece saves models as .model files.
     # It would be better to identify the type of the file accurately, e.g. using protobuf:
     # https://github.com/google/sentencepiece/issues/121
-    elif len(name) >= len(".model") and name[-len(".model") :] == ".model":
+    if style == "sentencepiece" or (
+        style is None
+        and len(name) >= len(".model")
+        and name[-len(".model") :] == ".model"
+    ):
         name = os.path.expanduser(name)
         if not os.path.exists(name):
             raise RuntimeError(f"Could not find SentencePiece model at '{name}'")
@@ -153,4 +163,9 @@ def get_tokenizer(name: str) -> BaseTokenizer:
         raise RuntimeError(
             f"Could not find tokenizer '{name}' and HuggingFace transformers is not installed"
         )
-    return _HFTokenizer(name)
+    if style is None or style == "hf":
+        return _HFTokenizer(name)
+    if style is None:
+        raise RuntimeError(f"Could not find a tokenzier {name}")
+    else:
+        raise RuntimeError(f"Could not find a {style} tokenizer with name {name}")

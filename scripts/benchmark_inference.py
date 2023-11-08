@@ -2,35 +2,44 @@ import argparse
 import logging
 import os
 import statistics
-import time
 import timeit
 
 import torch
 from torch import distributed as dist
-from torch._dynamo.eval_frame import OptimizedModule
+from torch._dynamo import OptimizedModule
+from fms import models
 
-from fms.models.llama import load_fms_llama
 from fms.utils import generation, print0, tokenizers
 
 
 # Example running llama 7B on one A100:
 #
-# (bare metal) $ CUDA_VISIBLE_DEVICES=0 torchrun --nproc_per_node=1 ./scripts/benchmark_inference.py --model_path=~/models/7B-F/ --tokenizer=~/models/tokenizer.model
-# (slurm) $ srun -N 1 --gres=gpu:1 torchrun --nproc_per_node=1 ./scripts/benchmark_inference.py --model_path=~/models/7B-F/ --tokenizer=~/models/tokenizer.model
+# (bare metal) $ CUDA_VISIBLE_DEVICES=0 torchrun --nproc_per_node=1 ./scripts/benchmark_inference.py --architecture=llama --variant=7b --tokenizer=~/models/tokenizer.model --batch_size=2 --seq_len=500
+# (slurm) $ srun -N 1 --gres=gpu:1 torchrun --nproc_per_node=1 ./scripts/benchmark_inference.py --architecture=llama --variant=7b --tokenizer=~/models/tokenizer.model --batch_size=2 --seq_len=500
 # loading model
 # loading complete on rank 0
 # Uncompiled results:
-# - with use_cache=True, excluding first call
-#         35.20 ms per token
-# - without cache
-#         91.87 ms per token
+# - with use_cache=True
+#         34.86 ms per token
+# - with use_cache=False
+#         86.39 ms per token
+# End-to-end sequence generation
+# - with use_cache=True
+#         37.04 ms per token
+# - with use_cache=False
+#         90.68 ms per token
 # Compiling model...
-#
 # Compiled results:
-# - with use_cache=True, excluding first call
-#         21.31 ms per token
-# - without cache
-#         72.23 ms per token
+# - with use_cache=True
+#         18.66 ms per token
+# - with use_cache=False
+#         67.66 ms per token
+
+# (Compiled) End-to-end sequence generation
+# - with use_cache=True
+#         20.61 ms per token
+# - with use_cache=False
+#         71.45 ms per token
 
 
 parser = argparse.ArgumentParser(
@@ -38,10 +47,16 @@ parser = argparse.ArgumentParser(
 )
 parser.add_argument("--device_type", type=str, default="cuda")
 parser.add_argument(
-    "--model_path",
+    "--architecture",
     type=str,
-    required=True,
-    help="Path to the directory containing LLaMa weights (.pth files sharded by tensor parallel rank, not HF weights)",
+    default="llama",
+    help="The model architecture to benchmark",
+)
+parser.add_argument(
+    "--variant",
+    type=str,
+    default="7b",
+    help="The model variant (configuration) to benchmark. E.g. 7b, 13b, 70b.",
 )
 parser.add_argument(
     "--tokenizer",
@@ -65,7 +80,7 @@ parser.add_argument(
     "--max_new_tokens",
     type=int,
     default=256,
-    help="Batch size of mock input",
+    help="Max number of tokens to generate",
 )
 parser.add_argument(
     "--compile_mode",
@@ -114,16 +129,17 @@ parser.add_argument(
 args = parser.parse_args()
 
 local_rank = int(os.getenv("LOCAL_RANK", 0))
+world_size = int(os.getenv("WORLD_SIZE", 1))
 device = torch.device(args.device_type, local_rank)
 
 torch.set_default_device(device)
 torch.set_default_dtype(torch.half)
 
-if args.distributed:
+if world_size > 1:
     dist.init_process_group()
 
 print("loading model")
-model = load_fms_llama(args.model_path)
+model = models.get_model(args.architecture, args.variant, device_type=args.device_type)
 tokenizer = tokenizers.get_tokenizer(args.tokenizer)
 
 model.eval()
