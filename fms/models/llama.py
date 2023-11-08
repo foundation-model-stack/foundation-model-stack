@@ -39,7 +39,7 @@ from fms.utils.tokenizers import _has_hf, get_tokenizer
 class LLaMAConfig(ModelConfig):
     src_vocab_size: int = 32_000  # can be set by tokenizer
     emb_dim: int = 4096
-    norm_eps: float = 1e-6
+    norm_eps: float = 1e-5
     nheads: int = 32
     kvheads: int = 0
     nlayers: int = 32
