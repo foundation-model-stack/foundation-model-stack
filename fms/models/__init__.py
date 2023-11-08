@@ -95,11 +95,11 @@ def _guess_num_layers(state_dict):
     looking for lists of sub modules. This can be used to setup model-parallel
     when we don't yet have a model instance.
     """
-    # really we wouldn't be training a model from scratch with MP, so
-    # I think it's OK to use an arbitrary value. We don't have a config
-    # at this point.
+    # MP is handy for running inference on longer sequence lengths, but
     if state_dict is None or len(state_dict) == 0:
-        return 20
+        raise ValueError(
+            "Use model parallel with pre-trained models that have a state dict"
+        )
 
     layers = set()
     import re
