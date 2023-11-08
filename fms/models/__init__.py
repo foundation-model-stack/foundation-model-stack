@@ -95,11 +95,10 @@ def _guess_num_layers(state_dict):
     looking for lists of sub modules. This can be used to setup model-parallel
     when we don't yet have a model instance.
     """
-    # really we wouldn't be training a model from scratch with MP, so
-    # I think it's OK to use an arbitrary value. We don't have a config
-    # at this point.
     if state_dict is None or len(state_dict) == 0:
-        return 20
+        raise ValueError(
+            "Use model parallel with pre-trained models that have a state dict"
+        )
 
     layers = set()
     import re
@@ -183,8 +182,6 @@ def get_model(
     if distributed_strategy is None or distributed_strategy == "":
         if world_size > 1:
             distributed_strategy = "tp"
-        elif torch.cuda.device_count() > 1 and device_type == "cuda":
-            distributed_strategy = "mp"
 
     device = torch.device(device_type, local_rank)
 
