@@ -413,7 +413,12 @@ def _hf_sd_to_fms_sd(hf_sd: OrderedDict):
         (r"post_attention_layernorm", "ff_ln"),
     ]
     new_sd = {}
-    rotary_inv_freq_size = hf_sd["model.layers.0.self_attn.rotary_emb.inv_freq"].size(0)
+
+    # nheads is used in the transformation required for hf->fms
+    # here we are using 128 as this value fits with all popular models 7B, 13B, 70B to recover the number of heads
+    emb_dim = hf_sd["model.embed_tokens.weight"].size(1)
+    nheads = int(emb_dim / 128)
+
     trans_required_pattern = re.compile("layers.[0-9]+.attn.(query|key).weight")
     for name, param in hf_sd.items():
         new_name = name
@@ -423,13 +428,13 @@ def _hf_sd_to_fms_sd(hf_sd: OrderedDict):
 
         # hf -> fms requires a transpose operation for the query and key
         if bool(trans_required_pattern.match(new_name)):
-            temp = new_sd[new_name].data
+            temp = new_sd[new_name]
             temp = (
-                temp.view(-1, 2, rotary_inv_freq_size, temp.size(1))
+                temp.view(nheads, 2, -1, temp.size(1))
                 .transpose(1, 2)
                 .reshape(*temp.size())
             )
-            new_sd[new_name].data = temp
+            new_sd[new_name] = temp
 
     return new_sd
 
