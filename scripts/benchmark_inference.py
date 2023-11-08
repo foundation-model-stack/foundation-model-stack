@@ -80,9 +80,9 @@ parser.add_argument(
     help="This is a distributed job (multiple instances run with RANK+WORLD_SIZE)",
 )
 parser.add_argument(
-    "--check_correctness",
+    "--skip_check_correctness",
     action="store_true",
-    help="Test correctness of outputs vs just timing",
+    help="Do not test correctness of outputs vs just timing",
 )
 parser.add_argument(
     "--skip_eager_runs", action="store_true", help="Do not run the eager benchmarks"
@@ -186,7 +186,7 @@ def one_token(model, use_cache):
     else:
         actual = model.forward(next_input, only_last_token=True)
     actual = torch.argmax(actual, dim=-1)
-    if local_rank == 0 and args.check_correctness:
+    if local_rank == 0 and not args.skip_check_correctness:
         torch.testing.assert_close(actual, expected)
     else:
         torch.cuda.synchronize()
@@ -208,7 +208,7 @@ def end_to_end(model, use_cache, expected=None):
         assert (
             result.size()[-1] == SEQ_LEN + MAX_NEW_TOKENS
         ), f"{result.size()}, {SEQ_LEN}, {MAX_NEW_TOKENS}"
-    if expected is not None and args.check_correctness:
+    if expected is not None and not args.skip_check_correctness:
         torch.testing.assert_close(result, expected)
     else:
         torch.cuda.synchronize()
