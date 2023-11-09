@@ -214,7 +214,7 @@ class Checkpointer:
                 # Load dataset
                 if dataloader is not None:
                     data_load_time = time.time()
-                    dataloader._dataset.load_from_path(load_path)
+                    dataloader.dataset.load_from_path(load_path)
                     self.report(dataset_load_time=time.time() - data_load_time)
                 else:
                     self.report("Skipping dataset load, no dataloader provided.")
@@ -235,7 +235,7 @@ class Checkpointer:
         with FSDP.state_dict_type(model, StateDictType.SHARDED_STATE_DICT):
             model_state = model.state_dict()
             optim_state = FSDP.sharded_optim_state_dict(model, optimizer)
-        dataloader_state = dataloader._dataset
+        dataloader_state = dataloader.dataset
 
         save_name = os.path.join(self.ckp_path, "step_" + str(step) + "_ckp")
         state_dict = {"model_state": model_state, "optimizer_state": optim_state}
