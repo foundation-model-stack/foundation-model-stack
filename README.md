@@ -10,6 +10,8 @@ Foundation Model Stack is a collection of components for development, inference,
 
 ## Installation
 
+We recommend running this on Python 3.11 and CUDA 12.1 for best performance, as the CPU overheads of the models are reduced significantly.
+
 ### Pypi
 
 ```
@@ -45,6 +47,8 @@ We measured inference latencies with 1024 token prompt and generation of 256 tok
 | 70B | 8 | 30ms |
 
 If you would like to reproduce the latencies, you can run the `scripts/benchmark_inference.py` and the details are described in [inference](./scripts).
+
+For more information on reproducing the benchmarks and running some examples, see [here](scripts/README.md)
 
 ## HF Model Support
 
