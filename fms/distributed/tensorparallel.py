@@ -46,112 +46,22 @@ def apply_embedding_tp(par_mod: nn.Embedding, mod: nn.Embedding, world_size, ran
     # print(f"For rank {rank}, we have the following weights: Base weight {mod.weight} bias {mod.bias}; Par weight {par_mod.weight}, bias {par_mod.bias}")
 
 
-def _all_reduce(input_: torch.Tensor) -> torch.Tensor:
-    """All-reduce the input tensor across model parallel group."""
-    world_size = torch.distributed.get_world_size()
-
-    if world_size == 1:
-        return input_
-
-    return distfunc.all_reduce(input_, "sum", list(range(world_size)))
-
-
-# Fix #1 is porting the code changes in https://github.com/pytorch/pytorch/pull/108811
-@classmethod
-def wait_create(cls, collective_op: "inductor_ir.TensorBox"):
-    collective_op.decide_layout()
-    return inductor_ir.Wait(
-        layout=inductor_ir.AliasedLayout(collective_op),
-        inputs=[collective_op],
-    )
-
-
-inductor_ir.Wait.create = wait_create
-
-inductor_ir.AllReduce.get_mutation_names = lambda self: [self.inputs[0].get_name()]
-
-
-@classmethod
-def all_reduce_create(
-    cls,
-    x: "inductor_ir.TensorBox",
-    reduce_op: str,
-    tag: str,
-    ranks: List[int],
-    group_size: int,
-):
-    inplace_inputs = cls.wrap_inputs_as_inplace([x])
-    layout = inductor_ir.MutationLayout(inplace_inputs[0])
-
-    _ = inductor_ir.AllReduce(
-        layout=layout,
-        inputs=inplace_inputs,
-        constant_args=[tag, ranks, group_size],
-        reduce_op=reduce_op,
-    )
-    return inplace_inputs[0]
-
-
-inductor_ir.AllReduce.create = all_reduce_create
-
-
-def wcg_codegen_free(self, buffer):
-    name = buffer.get_name()
-
-    # can be freed but not reused
-    # TODO: Port this one-line fix to PyTorch
-    if isinstance(buffer, (inductor_ir.InputBuffer, inductor_ir.OutputBuffer)):
-        self.writeline(self.make_buffer_free(buffer))
-        return
-
-    if not self.can_reuse(buffer):
-        return
-    self.freed.add(name)
-
-    layout = buffer.get_layout()
-    if isinstance(layout, (inductor_ir.AliasedLayout, inductor_ir.MultiOutputLayout)):
-        self.writeline(self.make_buffer_free(buffer))
-        return
-
-    self.writeline(inductor_wrapper.FreeIfNotReusedLine(self, buffer))
-
-
-inductor_wrapper.WrapperCodeGen.codegen_free = wcg_codegen_free
-# End of fix #1
-
-
-# Fix #2: Asserts + dynamic shapes create graph breaks
-# This function is redefined from torch.distributed._functional_collectives.all_gather_tensor
-# to remove an assert that creates an extra graph break
-def _all_gather_tensor(
-    self: torch.Tensor,
+# Fix #1: Use the new native functional collectives
+def _all_gather_into_tensor(
+    input: torch.Tensor,
     gather_dim: int,
-    group: distfunc.RANK_TYPES,
-    tag: str = "",
-):
-    tag, rankset, group_size = distfunc._expand_group(group, tag)
-    tensor = torch.ops.c10d_functional.all_gather_into_tensor(self, tag, rankset, group_size)  # type: ignore[attr-defined]
-    res = distfunc._maybe_wrap_tensor(tensor)
+    world_size: int
+) -> torch.Tensor:
+    res = torch.ops._c10d_functional.all_gather_into_tensor(input, world_size, "default")
+    res = torch.ops._c10d_functional.wait_tensor(res)
     # TODO this should be done inside AsyncCollectiveTensor to delay the wait() call
     if gather_dim != 0:
-        res = torch.cat(torch.chunk(res, group_size, dim=0), dim=gather_dim)
+        res = torch.cat(torch.chunk(res, world_size, dim=0), dim=gather_dim)
     return res
 
-
-# Fix #3: Avoid recompiles on batch size for embedding + TP (until https://github.com/pytorch/pytorch/pull/109561 lands)
-for overload in torch.ops.c10d_functional.all_gather_into_tensor.overloads():
-    other_fn = getattr(torch.ops.c10d_functional.all_gather_into_tensor, overload)
-    if other_fn in inductor_lowering.lowerings:
-        del inductor_lowering.lowerings[other_fn]
-
-
-@inductor_lowering.register_lowering(torch.ops.c10d_functional.all_gather_into_tensor)
-def all_gather_into_tensor(shard, tag, ranks, group_size):
-    return inductor_ir.TensorBox.create(
-        inductor_ir.AllGatherIntoTensor.create(
-            inductor_ir.ExternKernel.require_contiguous(shard), tag, ranks, group_size
-        )
-    )
+def _all_reduce_single(input: torch.Tensor, op: str):
+    res = torch.ops._c10d_functional.all_reduce(input, op, "default")
+    return torch.ops._c10d_functional.wait_tensor(res)
 
 
 def _all_gather(input_: torch.Tensor) -> torch.Tensor:
@@ -165,14 +75,23 @@ def _all_gather(input_: torch.Tensor) -> torch.Tensor:
     # specializing the dimension where the all_gather is happening
     last_dim = input_.dim() - 1
     return (
-        _all_gather_tensor(
+        _all_gather_into_tensor(
             input_.transpose(0, last_dim).contiguous(),
             0,
-            list(range(world_size)),
+            world_size,
         )
         .transpose(0, last_dim)
         .contiguous()
     )
+
+def _all_reduce(input_: torch.Tensor) -> torch.Tensor:
+    """All-reduce the input tensor across model parallel group."""
+    world_size = torch.distributed.get_world_size()
+
+    if world_size == 1:
+        return input_
+
+    return _all_reduce_single(input_, "sum")
 
 
 def _split(input_: torch.Tensor, rank, world_size) -> torch.Tensor:
