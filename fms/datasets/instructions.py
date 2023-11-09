@@ -1,6 +1,8 @@
 from typing import Dict
+import requests
 import torch
 from torch.utils.data import Dataset
+import urllib
 from fms.utils import tokenizers
 import json
 import os
@@ -36,23 +38,25 @@ class JsonInstructions(Dataset):
 
     def __init__(
         self,
-        file: str,
+        path: str,
         tokenizer: tokenizers.BaseTokenizer,
         device="cpu",
         max_len: int = 1024,
-        bos_tok_id=None,
-        eos_tok_id=None,
         ignore_index=-100,
     ):
         self.tokenizer = tokenizer
         self.ignore_index = ignore_index
         self.max_len = max_len
         self.device = device
-        self.bos_token_id = bos_tok_id
-        self.eos_token_id = eos_tok_id
-        file = os.path.expanduser(file)
-        with open(file, "r", encoding="utf-8") as reader:
-            text = reader.read()
+        self.bos_token_id = tokenizer.bos_token_id
+        self.eos_token_id = tokenizer.eos_token_id
+        if urllib.parse.urlparse(path).scheme == "":
+            file = os.path.expanduser(path)
+            with open(file, "r", encoding="utf-8") as reader:
+                text = reader.read()
+                self.instructions = json.loads(text)
+        else:
+            text = requests.get(path)
             self.instructions = json.loads(text)
 
     def __len__(self):
