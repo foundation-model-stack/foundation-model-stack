@@ -438,9 +438,6 @@ def _hf_sd_to_fms_sd(hf_sd: OrderedDict):
     return new_sd
 
 
-# TODO: add an adapter to adapt from an HF state dict (as an alternative to
-# `convert_hf_llama`)
-
 serialization.register_adapter("llama", "meta", _rename_weights_to_fms)
 serialization.register_adapter("llama", "hf", _hf_sd_to_fms_sd)
 
