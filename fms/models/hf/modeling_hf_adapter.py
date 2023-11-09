@@ -16,7 +16,7 @@ from transformers.modeling_outputs import (
 )
 from transformers.utils import ModelOutput, is_torch_fx_proxy
 
-from .utils import mask_2d_to_3d, mask_2d_to_3d_bidirectional
+from fms.models.hf.utils import mask_2d_to_3d, mask_2d_to_3d_bidirectional
 
 
 class _HFBase(PreTrainedModel):
