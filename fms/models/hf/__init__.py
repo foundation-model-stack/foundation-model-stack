@@ -1,4 +1,4 @@
-from fms.models.hf.utils import wrap, register_fms_models
+from fms.models.hf.utils import to_hf_api, register_fms_models
 
 from fms.models.hf.gpt_bigcode import HFAdaptedGPTBigCodeForCausalLM
 from fms.models.hf.llama import HFAdaptedLLaMAForCausalLM

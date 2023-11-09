@@ -93,7 +93,7 @@ def mask_2d_to_3d_bidirectional(
     return mask_encoder.unsqueeze(1) == mask_decoder.unsqueeze(2)
 
 
-def wrap(model: nn.Module, **override_config_kwargs) -> "HFModelArchitecture":
+def to_hf_api(model: nn.Module, **override_config_kwargs) -> "HFModelArchitecture":
     """Wrap an FMS model, converting its API to one of and Huggingface model
 
     Parameters
