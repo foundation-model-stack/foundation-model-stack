@@ -33,9 +33,21 @@ parser.add_argument(
     help="Path to the tokenizer (e.g. ~/tokenizer.model)",
 )
 parser.add_argument(
+    "--no_use_cache",
+    action="store_false",
+    help="Disable the kv-cache (on by default)",
+)
+parser.add_argument(
     "--compile",
     action="store_true",
     help="Use torch.compile (slow for first inference pass)",
+)
+parser.add_argument(
+    "--compile_mode",
+    type=str,
+    help="Mode for compilation",
+    default="default",
+    choices=["default", "reduce-overhead"],
 )
 parser.add_argument(
     "--deterministic",
@@ -76,7 +88,7 @@ if args.compile:
     # Bug with kv-cache in PT2.1
     torch._inductor.config.joint_graph_constant_folding = False
     # compiling can make first inference pass slow
-    model = torch.compile(model)
+    model = torch.compile(model, mode=args.compile_mode)
 
 
 def ids_for_prompt(prompt):
@@ -170,7 +182,7 @@ def infer(use_cache, do_sample):
 print("generating output", local_rank)
 do_sample = [False]
 use_cache = [
-    False
+    args.no_use_cache
 ]  # True/False are identical with greedy iff `torch.use_deterministic_algorithms(True)`
 for sample, cache in itertools.product(do_sample, use_cache):
     infer(cache, sample)
