@@ -5,7 +5,7 @@ from fms.utils.tokenizers import BaseTokenizer
 __dataset_factory = {"instruction": JsonInstructions, "text": text.causaltext}
 
 
-def get_dataset(name: str, tokenizer: BaseTokenizer, data: str = None):
+def get_dataset(name: str, tokenizer: BaseTokenizer, data: str = None, **kwargs):
     """
     Get a dataset by type.
 
@@ -17,4 +17,4 @@ def get_dataset(name: str, tokenizer: BaseTokenizer, data: str = None):
     if name not in __dataset_factory:
         raise NameError(f"Dataset name should be one of {__dataset_factory.keys()}")
     ctr = __dataset_factory[name]
-    return ctr(data, tokenizer)
+    return ctr(data, tokenizer, **kwargs)

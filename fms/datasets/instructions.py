@@ -57,7 +57,7 @@ class JsonInstructions(Dataset):
                 self.instructions = json.loads(text)
         else:
             text = requests.get(path)
-            self.instructions = json.loads(text)
+            self.instructions = json.loads(text.text)
 
     def __len__(self):
         return len(self.instructions)

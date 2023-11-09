@@ -8,12 +8,14 @@ from torch import nn
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
 from fms import models
-from fms.datasets import instructions, text
-from fms.models.llama import LLaMA, LLaMAConfig
+from fms import datasets
 from fms.utils import print0, tokenizers
 from fms.training import trainer, plugins as trainplugins
 
-# e.g.:
+#
+# This is a fairly minimal training/tuning script for causal language models.
+#
+# Example usage for fine tuning llama 7b on the alpaca dataset on slurm:
 # srun --gres=gpu:2 --cpus-per-task=24 --mem=512G --unbuffered --gres-flags=enforce-binding \
 #       torchrun --nproc_per_node=2 scripts/train_causal.py --architecture=llama --variant=7b \
 #       --tokenizer=~/models/tokenizer.model --model_path=~/models/7B/ --output_path=./tuned/ \
@@ -91,6 +93,20 @@ parser.add_argument(
     default=None,
     help="Peft method (lora, ...). Default None if not using peft",
 )
+
+parser.add_argument(
+    "--dataset_style",
+    type=str,
+    default="instruction",
+    help="'instruction' uses alpaca-formatted json. 'text' points to a raw text file.",
+)
+parser.add_argument(
+    "--dataset_path",
+    type=str,
+    default="https://raw.githubusercontent.com/tatsu-lab/stanford_alpaca/main/alpaca_data.json",
+    help="The path or URI refering to data to use in tuning or training",
+)
+
 
 args = parser.parse_args()
 
@@ -232,17 +248,12 @@ def main():
 
     bos_token_id = tokenizer.bos_token_id
     eos_token_id = tokenizer.eos_token_id
-    bos_token = tokenizer.convert_ids_to_tokens(bos_token_id)
-    eos_token = tokenizer.convert_ids_to_tokens(eos_token_id)
+    bos_token = tokenizer.convert_ids_to_tokens([bos_token_id])[0]
+    eos_token = tokenizer.convert_ids_to_tokens([eos_token_id])[0]
 
-    # TODO: provide a way to fetch other datasets by type and path (or url).
-    # e.g. `text.shakespeare(pad_token=' ')` or the below with an alternate
-    # json file.
-    dataset = instructions.JsonInstructions(
-        "/home/bvaughan/alpaca_data.json",
-        tokenizer=tokenizer,
-        max_len=2048,
-        device=device,
+    # TODO: split a validation dataset
+    dataset = datasets.get_dataset(
+        args.dataset_style, tokenizer, args.dataset_path, device=device
     )
 
     sampler = None
@@ -258,16 +269,19 @@ def main():
 
     loss_fn = get_loss_fn()
 
-    # todo, should batch these.
-    sample_prompt = {"instruction": "Explain the meaning of life."}
-    sample_prompt = dataset.make_prompt(sample_prompt)
-    sample_prompt2 = {"instruction": "Please provide a recipe for chicken soup."}
-    sample_prompt2 = dataset.make_prompt(sample_prompt2)
+    # TODO, should batch these.
+    if args.dataset_style == "instruction":
+        sample_prompt = {"instruction": "Explain the meaning of life."}
+        sample_prompt = dataset.make_prompt(sample_prompt)
+        sample_prompt2 = {"instruction": "Please provide a recipe for chicken soup."}
+        sample_prompt2 = dataset.make_prompt(sample_prompt2)
+    else:
+        sample_prompt = "O God! O God!"
+        sample_prompt2 = "Romeo O Romeo,"
 
     sample_prompt = [bos_token] + tokenizer.tokenize(sample_prompt)
     sample_prompt2 = [bos_token] + tokenizer.tokenize(sample_prompt2)
 
-    # sample_prompt = args.validation_prompt
     validator = trainplugins.InferenceValidator(
         sample_prompt, tokenizer, device, steps=args.report_steps, eos_token=eos_token
     )
