@@ -62,6 +62,9 @@ def get_adapted(architecture: str, source: str, state_dict: OrderedDict) -> Orde
     source: A reference to an attribute format
     state_dict: the model.state_dict() to be converted/adapted.
     """
+    # sometimes we only load onto rank 0 so may not have a state_dict here.
+    if state_dict is None or not len(state_dict):
+        return state_dict
     adapter = _get_adapter(architecture, source)
     adapted = adapter(state_dict)
     return adapted
@@ -125,6 +128,7 @@ def load_state_dict(
     checkpoint_sds = [
         torch.load(ckpt_path, map_location="cpu") for ckpt_path in checkpoints
     ]
+    assert len(checkpoint_sds[0]), f"Unable to load checkpoint data at {model_path}"
     if len(checkpoint_sds) == 1:
         return checkpoint_sds[0]
     else:

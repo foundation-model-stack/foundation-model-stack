@@ -16,6 +16,7 @@ class TrainerPlugin:
     It is passed relevant objects that can be used for checkpointing, logging,
     or validation.
     """
+
     def __init__(self, steps=None):
         self.steps = steps
 
@@ -36,7 +37,14 @@ class TrainerPlugin:
         return False
 
     @abstractmethod
-    def step(self, model: nn.Module, optimizer, epoch:int, metrics: Dict = {}, step:int=None):
+    def step(
+        self,
+        model: nn.Module,
+        optimizer,
+        epoch: int,
+        metrics: Dict = {},
+        step: int = None,
+    ):
         pass
 
 
@@ -44,14 +52,28 @@ class InferenceValidator(TrainerPlugin):
     """
     A training plugin to print the results of running inference on a given prompt.
     """
-    def __init__(self, prompt_tokens: List[str], tokenizer, device, steps=None, eos_token=None):
+
+    def __init__(
+        self, prompt_tokens: List[str], tokenizer, device, steps=None, eos_token=None
+    ):
         super().__init__(steps)
         self.tokenizer = tokenizer
         input_ids = tokenizer.convert_tokens_to_ids(prompt_tokens)
         self.input_ids = torch.tensor(input_ids, dtype=torch.long, device=device)
-        self.eos_token_id = None if eos_token is None else self.tokenizer.convert_tokens_to_ids([eos_token])[0]
+        self.eos_token_id = (
+            None
+            if eos_token is None
+            else self.tokenizer.convert_tokens_to_ids([eos_token])[0]
+        )
 
-    def step(self, model: nn.Module, optimizer, epoch: int, metrics: Dict={}, step: int=None):
+    def step(
+        self,
+        model: nn.Module,
+        optimizer,
+        epoch: int,
+        metrics: Dict = {},
+        step: int = None,
+    ):
         if not self.run(step):
             return
         training = model.training
@@ -66,17 +88,20 @@ class InferenceValidator(TrainerPlugin):
             result = generation.truncate_after_eos(result, self.eos_token_id)
             result = self.tokenizer.convert_ids_to_tokens(result)
             result = self.tokenizer.convert_tokens_to_string(result)
-            print0("generated result:", result)
+            print0("generated result:")
+            print0(result)
         model.train(training)
+
 
 class MetricReporter(TrainerPlugin):
     """
     A training plugin to periodically log metrics
     """
+
     # TODO: add optional validation dataloader and validation loss.
     # TODO: add `writer` functions that handles logging metrics to experiment
     # tracking tools such as aimstack/wandb/neptune (or add alternate plugin?)
-    def __init__(self, seconds=3, writer=print0):
+    def __init__(self, seconds=10, writer=print0):
         super().__init__(1)
         self.seconds = seconds
         self.last_reported_time = datetime.now()
@@ -85,7 +110,15 @@ class MetricReporter(TrainerPlugin):
         self.cum_loss = 0
         self.last_step = -1
         self.writer = writer
-    def step(self, model: nn.Module, optimizer, epoch: int, metrics: Dict={}, step: int=None):
+
+    def step(
+        self,
+        model: nn.Module,
+        optimizer,
+        epoch: int,
+        metrics: Dict = {},
+        step: int = None,
+    ):
         if "batch_size" in metrics and "input_length" in metrics:
             self.tokens_seen += metrics["batch_size"] * metrics["input_length"]
         if "loss" in metrics:
@@ -106,6 +139,9 @@ class MetricReporter(TrainerPlugin):
             steps = step - self.last_reported_step
             self.last_reported_step = step
 
+        # TODO: aggregate these per-rank statistics when training with
+        # distributed. e.g.: dist.all_reduce(loss, op=dist.ReduceOp.SUM)
+        # for loss, tokens_seen, etc.
         to_report = {}
         if "loss" in metrics:
             to_report["loss"] = f"{metrics['loss']:.4f}"
@@ -117,8 +153,8 @@ class MetricReporter(TrainerPlugin):
         }
         if torch.cuda.is_available() and utils.has_package("pynvml"):
             nvidia_metrics = {
-                "gpu_mem_use" : f"{torch.cuda.memory_usage()}%",
-                "gpu_utzn" : f"{torch.cuda.utilization()}%"
+                "gpu_mem_use": f"{torch.cuda.memory_usage()}%",
+                "gpu_utzn": f"{torch.cuda.utilization()}%",
             }
             more_metrics.update(nvidia_metrics)
 
@@ -134,6 +170,7 @@ class Checkpointer(TrainerPlugin):
     A training plugin to write checkpoints.
     TODO: This will require changes to handle distributed checkpoints.
     """
+
     def __init__(
         self,
         save_dir: Path = Path("./checkpoints"),
@@ -152,7 +189,16 @@ class Checkpointer(TrainerPlugin):
 
     # TODO: this probably also needs to accept a dataset since we want to
     # support checkpointable datasets.
-    def step(self, model: nn.Module, optimizer, epoch: int, metrics: Dict={}, step: int=None):
+    # TODO: end of epoch checkpoints should probably consolidate to one
+    # rank when using FSDP.
+    def step(
+        self,
+        model: nn.Module,
+        optimizer,
+        epoch: int,
+        metrics: Dict = {},
+        step: int = None,
+    ):
         if not self.run(step):
             return
 
@@ -160,18 +206,23 @@ class Checkpointer(TrainerPlugin):
             model.__class__.__name__.lower() if self.name is None else self.name
         )
         model_dict = model.state_dict()
-        optim_dict = optimizer.state_dict()
-        state_dict = {"model": model_dict, "optimizer": optim_dict, "epoch": epoch}
         if step is not None:
             file = f"{model_name}_{epoch:03d}_{step+1:05d}"
         else:
             file = f"{model_name}_{epoch:03d}_final"
         save_dir = self.save_dir
+
         if self.group is None:
             file = save_dir / f"{file}.pth"
+            train_file = f"{file}.train"
         else:
             file = save_dir / file
             os.makedirs(file, exist_ok=True)
+            train_file = f"rank_{self.group.rank():02d}.train"
             file = file / f"rank_{self.group.rank():02d}.pth"
         print0("Writing checkpoint", file)
-        torch.save(state_dict, file)
+        torch.save(model_dict, file)
+
+        optim_dict = optimizer.state_dict()
+        train_dict = {"optimizer": optim_dict, "epoch": epoch}
+        torch.save(train_dict, train_file)

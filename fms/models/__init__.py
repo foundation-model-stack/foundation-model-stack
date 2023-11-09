@@ -1,4 +1,5 @@
 from contextlib import nullcontext
+from functools import partial
 from typing import Callable, Optional
 import torch
 from torch import nn
@@ -7,7 +8,16 @@ from fms.distributed.strategy import (
     TensorParallelStrategy,
     UniformModelParallelStrategy,
 )
-from torch.distributed.fsdp import FullyShardedDataParallel as FSDP, ShardingStrategy
+from torch.distributed.fsdp import (
+    FullyShardedDataParallel as FSDP,
+    ShardingStrategy,
+    MixedPrecision,
+)
+from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
+    checkpoint_wrapper,
+    CheckpointImpl,
+    apply_activation_checkpointing,
+)
 from torch.distributed.distributed_c10d import ProcessGroup
 from fms.utils import serialization
 
@@ -111,13 +121,52 @@ def _guess_num_layers(state_dict):
     return len(layers)
 
 
-# TODO: FSDP configuration isn't tested, more of a placeholder to make sure
-# it fits the rest of the model-loading paradigm being used here. Will be
-# updated along with in-progress tuning script.
-def _fsdp_wrap(model: nn.Module, distributed_strategy, local_rank, sync_module_states):
+def _class_hierarchy(clz):
+    if clz == object:
+        return {clz}
+    bases = clz.__bases__
+    all = [_class_hierarchy(c) for c in bases]
+    result = {clz}
+    for classes in all:
+        result = result | classes
+    return result
+
+
+def _fsdp_autowrap_policy(module: nn.Module, recurse: bool, nonwrapped_numel: int):
+    if recurse:
+        return True
+    classes = _class_hierarchy(module.__class__)
+    for clz in classes:
+        name = str(clz).lower()
+        if ("layer" in name or "block" in name) and "layernorm" not in name:
+            return True
+    return False
+
+
+def _activation_checkpoint_check_fn(layer):
+    for name in layer.__class__.__bases__:
+        name = str(name).lower()
+        if "block" in name or "layer" in name:
+            return True
+    return False
+
+
+def _fsdp_wrap(
+    model: nn.Module, distributed_strategy: str, device: torch.device, rank0: bool
+):
     # initializes parameters that are on meta devices
-    def init_fn(x):
-        return x.to_empty()
+    def init_fn(x: nn.Module):
+        if not rank0:
+            return x.to_empty(device=device, recurse=False)
+        else:
+            return x
+
+    # TODO: enable other policies
+    mp_policy = MixedPrecision(
+        param_dtype=torch.bfloat16,
+        reduce_dtype=torch.bfloat16,
+        buffer_dtype=torch.bfloat16,
+    )
 
     if distributed_strategy == "fsdp":
         dp_strategy = ShardingStrategy.FULL_SHARD
@@ -126,21 +175,31 @@ def _fsdp_wrap(model: nn.Module, distributed_strategy, local_rank, sync_module_s
     elif distributed_strategy == "ddp":
         dp_strategy = ShardingStrategy.NO_SHARD
     else:
-        raise KeyError("distributed strategy was supposed to be one of fsdp or hsdp")
+        raise KeyError(
+            "distributed strategy should be one of fsdp, dpp, or hsdp"
+        )
 
     model = FSDP(
         model,
         param_init_fn=init_fn,
-        sync_module_states=sync_module_states,
-        device_id=local_rank,
+        sync_module_states=True,
+        device_id=device.index,
         limit_all_gathers=True,
         use_orig_params=True,
-        # TODO: add wrap and mixed precision policies.
-        # auto_wrap_policy=wrapping_policy,
-        # mixed_precision=mp_policy,
+        auto_wrap_policy=_fsdp_autowrap_policy,
+        mixed_precision=mp_policy,
         sharding_strategy=dp_strategy,
     )
-    # TODO: add activation checkpointing.
+
+    wrapper_fn = partial(
+        checkpoint_wrapper, checkpoint_impl=CheckpointImpl.NO_REENTRANT
+    )
+    apply_activation_checkpointing(
+        model,
+        checkpoint_wrapper_fn=wrapper_fn,
+        check_fn=_activation_checkpoint_check_fn,
+    )
+
     return model
 
 
@@ -234,12 +293,12 @@ def get_model(
         distributed_strategy in ["fsdp", "hsdp"] and checkpoint_sharding != "fsdp"
     )
 
-    if pre_load and local_rank == 0 and fms_sd is not None:
+    if pre_load and local_rank == 0 and len(fms_sd):
         fms_model.load_state_dict(fms_sd, strict=False)
 
     # post-init distribution
     if _is_dp(distributed_strategy):
-        fms_model = _fsdp_wrap(fms_model, distributed_strategy, local_rank, pre_load)
+        fms_model = _fsdp_wrap(fms_model, distributed_strategy, device, local_rank == 0)
 
     if not pre_load and len(fms_sd):
         fms_model.load_state_dict(fms_sd, strict=False)
