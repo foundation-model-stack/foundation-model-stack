@@ -20,6 +20,7 @@ class RoBERTaConfig(ModelConfig):
     pad_id: int = 1
     hidden_grow_factor: float = 4.0
     activation_fn: str = "gelu"
+    classifier_activation_fn: str = "tanh"
     max_pos: int = 512
     p_dropout: float = 0.1
     multiquery_attn: bool = False
@@ -62,9 +63,8 @@ class RoBERTaBlock(nn.Module):
         mask: Optional[torch.Tensor] = None,
         attn_algorithm: Optional[str] = None,
     ):
-        # first we do MHA and Add&Norm
+        # first we do MHA
         residual = x
-        x = self.ln(x)
         # self attention
         x = self.attn(
             q=x,
@@ -81,10 +81,11 @@ class RoBERTaBlock(nn.Module):
 
         # residual connection
         x = x + residual
+        # post ln
+        x = self.ln(x)
 
         # then we do FF and Add&Norm
         residual = x
-        x = self.ff_ln(x)
         x = self.ff_sub_layer(x)
 
         if self.config.p_dropout != 0:
@@ -92,6 +93,7 @@ class RoBERTaBlock(nn.Module):
 
         # another residual
         x = x + residual
+        x = self.ff_ln(x)
 
         return x
 
@@ -106,13 +108,19 @@ class RoBERTaHeadless(nn.Module):
         )
 
         self.embedding = nn.Embedding(self.config.src_vocab_size, self.config.emb_dim)
+        self.position_embedding = nn.Embedding(self.config.max_pos, self.config.emb_dim)
 
         self.enc_norm = nn.LayerNorm(self.config.emb_dim, eps=self.config.norm_eps)
 
         if self.config.p_dropout:
             self.dropout = nn.Dropout(self.config.p_dropout)
 
-    def forward(self, x: torch.LongTensor, mask: Optional[torch.Tensor] = None):
+    def forward(
+        self,
+        x: torch.LongTensor,
+        mask: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
+    ):
 
         if mask is None:
             if x is None:
@@ -121,7 +129,28 @@ class RoBERTaHeadless(nn.Module):
             is_pad: torch.BoolTensor = x == pad_id
             mask: torch.BoolTensor = is_pad.unsqueeze(-1) == is_pad.unsqueeze(-2)
 
-        x = self.embedding(x)
+        x_emb = self.embedding(x)
+
+        # if pad_id exists
+        #   is_pad will be a BoolTensor
+        #   otherwise pad_id will not be taken into account
+        if self.config.pad_id is None:
+            is_pad = torch.zeros_like(x, dtype=bool, device=x.device)
+        else:
+            is_pad = x == self.config.pad_id
+
+        if position_ids is None:
+            position_ids = ((~is_pad).cumsum(1) - 1).clamp(min=0)
+
+        # look up position embeddings
+        position_out = self.position_embedding(position_ids)
+
+        # zero out the associated position embeddings
+        if self.config.pad_id is not None:
+            position_out = position_out.mul(~is_pad.unsqueeze(-1))
+
+        # perform absolute position embedding
+        x = x_emb + position_out
 
         # layer norm
         x = self.enc_norm(x)
@@ -148,7 +177,8 @@ class RoBERTaClassHead(nn.Module):
     def forward(self, x: torch.FloatTensor):
         x = self.dense(x)
         x = self.act(x)
-        return self.ln(x)
+        x = self.ln(x)
+        return x
 
 
 class RoBERTa(nn.Module):
@@ -161,7 +191,7 @@ class RoBERTa(nn.Module):
             self.config = RoBERTaConfig()
         self.config = self.config.updated(**kwargs)
 
-        self.base_model = RoBERTaHeadless(config)
+        self.base_model = RoBERTaHeadless(self.config)
 
         self.class_head = RoBERTaClassHead(self.config)
 
@@ -172,15 +202,20 @@ class RoBERTa(nn.Module):
         # this model ties weights, so we tie here
         self.head.weight = self.base_model.embedding.weight
 
-    def forward(self, x: torch.LongTensor, mask: Optional[torch.Tensor] = None):
+    def forward(
+        self,
+        x: torch.LongTensor,
+        mask: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
+    ):
         # run through the encoder layers
-        x = self.base_model(x, mask=mask)
+        x = self.base_model(x, mask=mask, position_ids=position_ids)
 
         # run through the class head (using the first in each sequence in the batch as the cls_token)
-        x = self.class_head(x[:, 0, :])
+        x = self.class_head(x)
 
         # project to vocab space
-        x = self.lm_head(x)
+        x = self.head(x)
         return x
 
     @classmethod

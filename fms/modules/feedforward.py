@@ -73,7 +73,8 @@ class FeedForwardBlock(nn.Module):
         out = self.a(self.w1(x))
         if self.p_dropout:
             out = self.d(out)
-        return self.w2(out)
+        out = self.w2(out)
+        return out
 
 
 class TPFeedForwardBlock(FeedForwardBlock):

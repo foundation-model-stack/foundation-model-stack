@@ -10,6 +10,7 @@ from transformers.modeling_outputs import (
     CausalLMOutputWithCrossAttentions,
     Seq2SeqLMOutput,
     SequenceClassifierOutput,
+    MaskedLMOutput,
 )
 from transformers.utils import ModelOutput
 
@@ -396,6 +397,70 @@ class SequenceClassificationLMHeadMixin(LMHeadMixin):
         decoder_outputs: Optional[BaseModelOutputWithPastAndCrossAttentions],
     ) -> ModelOutput:
         return SequenceClassifierOutput(
+            loss=loss,
+            logits=logits,
+            hidden_states=encoder_outputs.hidden_states,
+            attentions=encoder_outputs.attentions,
+        )
+
+
+class MaskedLMHeadMixin(LMHeadMixin):
+    """Provides a model architecture with a masked lm head"""
+
+    def __init__(
+        self,
+        activation_fn: str = "gelu",
+        norm_eps: float = 1e-12,
+        *args,
+        **kwargs,
+    ):
+        """
+        Initialize a MaskedLMHeadMixin
+
+        Parameters
+        ----------
+        activation_fn: str
+            the activation function name to use in creating the lm_head. Will be ignored if depth is 0. (default is gelu)
+        norm_eps: norm_eps
+            norm eps for model
+
+        Returns
+        -------
+        MaskedLMHeadMixin
+            a new MaskedLMHeadMixin
+        """
+        super().__init__(
+            _lm_head_params={
+                "activation_fn": activation_fn,
+                "norm_eps": norm_eps,
+            },
+            *args,
+            **kwargs,
+        )
+
+    def _get_empty_lm_head(self, activation_fn: str, norm_eps: float) -> nn.Module:
+
+        class_head = nn.Sequential(
+            nn.Linear(self.config.hidden_size, self.config.hidden_size, bias=True),
+            str_to_activation(activation_fn),
+            nn.LayerNorm(self.config.hidden_size, norm_eps),
+        )
+        head = nn.Linear(self.config.hidden_size, self.config.vocab_size)
+
+        return nn.Sequential(class_head, head)
+
+    def _compute_loss(self, prediction: torch.Tensor, labels: torch.Tensor) -> _Loss:
+        loss_fn = nn.CrossEntropyLoss(ignore_index=-100)
+        return loss_fn(prediction.view(-1, self.config.vocab_size), labels.view(-1))
+
+    def _produce_lm_output(
+        self,
+        logits: torch.FloatTensor,
+        loss: _Loss,
+        encoder_outputs: Optional[BaseModelOutputWithPastAndCrossAttentions],
+        decoder_outputs: Optional[BaseModelOutputWithPastAndCrossAttentions],
+    ) -> ModelOutput:
+        return MaskedLMOutput(
             loss=loss,
             logits=logits,
             hidden_states=encoder_outputs.hidden_states,
