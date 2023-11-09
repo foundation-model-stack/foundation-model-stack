@@ -10,6 +10,8 @@ Foundation Model Stack is a collection of components for development, inference,
 
 ## Installation
 
+We recommend running this on Python 3.11 and CUDA 12.1 for best performance, as the CPU overheads of the models are reduced significantly.
+
 ### Pypi
 
 ```
@@ -46,16 +48,18 @@ We measured inference latencies with 1024 token prompt and generation of 256 tok
 
 If you would like to reproduce the latencies, you can run the `scripts/benchmark_inference.py` and the details are described in [inference](./scripts).
 
+For more information on reproducing the benchmarks and running some examples, see [here](scripts/README.md)
+
 ## HF Model Support
 
 The support for HF models is provided by our HF model adapter. One can obtain similar latencies as tabulated above with HF models using our HF model adapter:
 
 ```python
 # fms model
-llama: LLaMA = LLaMA(config)
+llama = get_model("llama", "13b")
 
 # huggingface model backed by fms internals
-llama_hf = HFAdaptedLLaMAForCausalLM.from_fms_model(llama)
+llama_hf = to_hf_api(llama)
 
 # compile the model -- in HF, the decoder only
 llama_hf.decoder = torch.compile(llama_hf.decoder)

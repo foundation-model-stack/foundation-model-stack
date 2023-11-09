@@ -1,6 +1,7 @@
 import torch
 from torch.utils.data import Dataset
 import requests
+import urllib
 from fms.utils import tokenizers
 
 
@@ -40,7 +41,7 @@ class CausalTextDatasetFromString(Dataset):
         start_idx = idx * self.seq_len
         end_idx = start_idx + self.seq_len + 1
         if end_idx >= self.ids.shape[0]:
-            end_idx = self.ids.shape[0] - 1
+            end_idx = self.ids.shape[0]
         input = self.ids[start_idx : end_idx - 1]
         label = self.ids[start_idx + 1 : end_idx]
 
@@ -61,6 +62,16 @@ class CausalTextDatasetFromString(Dataset):
             return (tokens // self.seq_len) + 1
 
 
+def causaltext(path_or_uri: str, tokenizer: tokenizers.BaseTokenizer, pad_token=None):
+    if urllib.parse.urlparse(path_or_uri).scheme == "":
+        with open(path_or_uri) as f:
+            text = f.read()
+            return CausalTextDatasetFromString(text, tokenizer, pad_token=pad_token)
+    else:
+        text = requests.get(path_or_uri)
+        return CausalTextDatasetFromString(text, tokenizer, pad_token=pad_token)
+
+
 __shakespeare_url = "https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt"
 
 
@@ -69,11 +80,4 @@ def shakespeare(pad_token=None, tokenizer=tokenizers.char_tokenizer) -> Dataset:
     get a dataset of the complete works of shakespeare
     """
     # TODO: maybe this should cache somewhere?
-    text = requests.get(__shakespeare_url)
-    text = text.text
-    dataset = CausalTextDatasetFromString(
-        text,
-        pad_token=pad_token,
-        tokenizer=tokenizers.get_tokenizer(tokenizer),
-    )
-    return dataset
+    return causaltext(__shakespeare_url, tokenizers.get_tokenizer(tokenizer), pad_token)

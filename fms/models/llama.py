@@ -396,10 +396,50 @@ def _rename_weights_to_fms(orig_sd):
     return new_sd
 
 
-# TODO: add an adapter to adapt from an HF state dict (as an alternative to
-# `convert_hf_llama`)
+def _hf_sd_to_fms_sd(hf_sd: OrderedDict):
+    replacements = [
+        (r"^lm_head.weight", "shared.head.weight"),
+        (r"^model.embed_tokens.weight", "shared.emb.weight"),
+        (r"^model.norm", "dec_norm"),
+        (r"^model.layers", "layers"),
+        (r"self_attn\.k_proj", "attn.key"),
+        (r"self_attn\.v_proj", "attn.value"),
+        (r"self_attn\.q_proj", "attn.query"),
+        (r"self_attn\.o_proj", "attn.dense"),
+        (r"mlp\.gate_proj", "ff_sub_layer.wg"),
+        (r"mlp\.up_proj", "ff_sub_layer.w1"),
+        (r"mlp\.down_proj", "ff_sub_layer.w2"),
+        (r"input_layernorm", "ln"),
+        (r"post_attention_layernorm", "ff_ln"),
+    ]
+    new_sd = {}
+
+    trans_required_pattern = re.compile("layers.[0-9]+.attn.(query|key).weight")
+    for name, param in hf_sd.items():
+        new_name = name
+        for pattern, repl in replacements:
+            new_name = re.sub(pattern, repl, new_name)
+        new_sd[new_name] = param
+
+        # hf -> fms requires a transpose operation for the query and key
+        if bool(trans_required_pattern.match(new_name)):
+            temp = new_sd[new_name]
+            # nheads is used in the transformation required for hf->fms
+            # here we are using 128 as this value fits with all popular models
+            #   7B, 13B, 70B to recover the number of heads
+            nheads = int(temp.size(0) / 128)
+            temp = (
+                temp.view(nheads, 2, -1, temp.size(1))
+                .transpose(1, 2)
+                .reshape(*temp.size())
+            )
+            new_sd[new_name] = temp
+
+    return new_sd
+
 
 serialization.register_adapter("llama", "meta", _rename_weights_to_fms)
+serialization.register_adapter("llama", "hf", _hf_sd_to_fms_sd)
 
 
 def load_fms_llama(model_path: str, group=None, **kwargs):
