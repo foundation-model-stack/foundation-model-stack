@@ -1,32 +1,22 @@
 from typing import Union
 from transformers import AutoConfig, AutoModel, AutoModelForCausalLM
 import torch
+import torch.nn as nn
 
 
 def register_fms_models():
-    """Register all FMS models with huggingface AutoModels. This will include Sandstone
-    (AutoConfig, AutoModel, AutoModelForSeq2SeqLM) and Granite (AutoConfig, AutoModel, AutoModelForCausalLM)"""
-    from fms.models.hf.llama.modeling_llama_hf import (
-        HFAdaptedLLaMAConfig,
-        HFAdaptedLLaMAHeadless,
-        HFAdaptedLLaMAForCausalLM,
-    )
+    """Register all FMS models with huggingface AutoModels"""
+    from fms.models.hf import _headless_models, _causal_lm_models
 
-    AutoConfig.register("hf_adapted_llama", HFAdaptedLLaMAConfig)
-    AutoModel.register(HFAdaptedLLaMAConfig, HFAdaptedLLaMAHeadless)
-    AutoModelForCausalLM.register(HFAdaptedLLaMAConfig, HFAdaptedLLaMAForCausalLM)
+    for model_cls in _headless_models:
+        # register config
+        AutoConfig.register(model_cls.config_class.model_type, model_cls.config_class)
+        # register base headless model
+        AutoModel.register(model_cls.config_class, model_cls)
 
-    from fms.models.hf.gpt_bigcode.modeling_gpt_bigcode_hf import (
-        HFAdaptedGPTBigCodeConfig,
-        HFAdaptedGPTBigCodeHeadless,
-        HFAdaptedGPTBigCodeForCausalLM,
-    )
-
-    AutoConfig.register("hf_adapted_gpt_bigcode", HFAdaptedGPTBigCodeConfig)
-    AutoModel.register(HFAdaptedGPTBigCodeConfig, HFAdaptedGPTBigCodeHeadless)
-    AutoModelForCausalLM.register(
-        HFAdaptedGPTBigCodeConfig, HFAdaptedGPTBigCodeForCausalLM
-    )
+    for model_cls in _causal_lm_models:
+        # register causal lm model
+        AutoModelForCausalLM.register(model_cls.config_class, model_cls)
 
 
 def mask_2d_to_3d(inp: torch.Tensor) -> torch.BoolTensor:
@@ -101,3 +91,32 @@ def mask_2d_to_3d_bidirectional(
     )
 
     return mask_encoder.unsqueeze(1) == mask_decoder.unsqueeze(2)
+
+
+def to_hf_api(model: nn.Module, **override_config_kwargs) -> "HFModelArchitecture":
+    """Wrap an FMS model, converting its API to one of and Huggingface model
+
+    Parameters
+    ----------
+    model: nn.Module
+        The FMS model to wrap (currently one of LLaMA or GPTBigCode)
+    override_config_kwargs
+        configuration parameters to override as a set of keyword arguments
+
+    Returns
+    -------
+    HFModelArchitecture
+        an HF adapted FMS model
+    """
+    from fms.models.hf import _fms_to_hf_adapt_map
+
+    register_fms_models()
+
+    model_type = type(model)
+    if model_type not in _fms_to_hf_adapt_map:
+        raise ValueError(
+            f"{model.__class__.__name__} is not one of {_fms_to_hf_adapt_map.keys()}"
+        )
+
+    hf_adapted_cls = _fms_to_hf_adapt_map[model_type]
+    return hf_adapted_cls.from_fms_model(model, **override_config_kwargs)

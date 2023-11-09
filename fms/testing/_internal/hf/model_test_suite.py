@@ -9,7 +9,7 @@ from fms.models.hf.modeling_hf_adapter import (
     HFEncoderDecoderModelArchitecture,
     HFDecoderModelArchitecture,
 )
-from fms.models.hf.utils import register_fms_models
+from fms.models.hf.utils import register_fms_models, to_hf_api
 from fms.testing._internal.model_test_suite import ConfigFixtureMixin
 
 SEED = 42
@@ -231,9 +231,7 @@ class HFModelEquivalenceTestSuite(HFConfigFixtureMixin, HFModelFixtureMixin):
     def test_hf_and_fms_model_equivalence(self, fms_hf_model, model):
         """test model signature equivalence between huggingface model and fms model"""
 
-        _fms_hf_model = type(fms_hf_model).from_fms_model(
-            model, **fms_hf_model.config.to_dict()
-        )
+        _fms_hf_model = to_hf_api(model, **fms_hf_model.config.to_dict())
         fms_signature_params = ModelSignatureParams(
             model, len(self._get_hf_signature_params) - 1
         )

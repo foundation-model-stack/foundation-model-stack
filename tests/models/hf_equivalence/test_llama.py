@@ -1,6 +1,5 @@
 import pytest
 
-from fms.models.hf.llama.modeling_llama_hf import HFAdaptedLLaMAForCausalLM
 from fms.models.llama import convert_hf_llama
 from fms.models import get_model
 import torch
@@ -10,6 +9,7 @@ from fms.testing.comparison import (
     HFModelSignatureParams,
     ModelSignatureParams,
 )
+from fms.models.hf.utils import to_hf_api
 
 
 @pytest.mark.slow
@@ -26,7 +26,7 @@ def test_llama_7b_equivalence():
     # convert the hf model to fms
     model = get_model("llama", "7b", llama_model_path, "hf")
 
-    hf_model_fms = HFAdaptedLLaMAForCausalLM.from_fms_model(
+    hf_model_fms = to_hf_api(
         model,
         bos_token_id=hf_model.config.bos_token_id,
         eos_token_id=hf_model.config.eos_token_id,
