@@ -8,6 +8,7 @@ from torch.optim import Optimizer
 from fms.training.plugins import TrainerPlugin
 from fms.utils import print0
 
+
 def __one_step(
     model: nn.Module,
     input: torch.Tensor,
@@ -46,13 +47,13 @@ def __one_epoch(
     loss_fn,
     epoch: int,
     plugins: List[TrainerPlugin],
-    accum_iters: int=1
+    accum_iters: int = 1,
 ):
     print0("Epoch", epoch)
     model.train()
 
     grad_scaler = None
-    #grad_scaler = torch.cuda.amp.GradScaler()
+    # grad_scaler = torch.cuda.amp.GradScaler()
 
     optimized = False
     optimizer.zero_grad()
@@ -67,7 +68,7 @@ def __one_epoch(
         metrics = {
             "loss": loss,
             "batch_size": input.shape[0],
-            "input_length":input.shape[1],
+            "input_length": input.shape[1],
         }
         for plugin in plugins:
             plugin.step(model, optimizer, epoch, metrics, step)
@@ -85,7 +86,15 @@ def train(
     start_epoch=0,
     epochs: int = 1,
     trainer_plugins: List[TrainerPlugin] = [],
-    grad_accum_iters: int = 1
+    grad_accum_iters: int = 1,
 ):
     for epoch in range(start_epoch, start_epoch + epochs):
-        __one_epoch(model, optimizer, dataloader, loss_fn, epoch, trainer_plugins, accum_iters=grad_accum_iters)
+        __one_epoch(
+            model,
+            optimizer,
+            dataloader,
+            loss_fn,
+            epoch,
+            trainer_plugins,
+            accum_iters=grad_accum_iters,
+        )

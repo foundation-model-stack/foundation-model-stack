@@ -175,9 +175,7 @@ def _fsdp_wrap(
     elif distributed_strategy == "ddp":
         dp_strategy = ShardingStrategy.NO_SHARD
     else:
-        raise KeyError(
-            "distributed strategy should be one of fsdp, dpp, or hsdp"
-        )
+        raise KeyError("distributed strategy should be one of fsdp, dpp, or hsdp")
 
     model = FSDP(
         model,
