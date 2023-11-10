@@ -1,3 +1,4 @@
+from fms import datasets
 from fms.datasets.text import CausalTextDatasetFromString
 from fms.datasets.instructions import JsonInstructions
 from fms.utils import tokenizers
@@ -16,12 +17,10 @@ def test_instructions_dataset():
     with tempfile.NamedTemporaryFile(mode="w+t") as file:
         file.writelines(sample_json)
         file.seek(0)
-        instructions = JsonInstructions(
-            file.name, tokenizer, bos_tok_id=1, eos_tok_id=2
-        )
+        instructions = JsonInstructions(file.name, tokenizer)
         input, label = instructions[0]
-        assert input[0] == 1
-        assert label[len(label) - 1] == 2
+        assert input[0] == 2
+        assert label[len(label) - 1] == 3
         assert label[0] == -100
 
 
@@ -33,6 +32,10 @@ def test_text_dataset():
     first_input, _ = ds[0]
     last_input, last_label = ds[10]
     assert last_input[0] == tokenizer.convert_tokens_to_ids("b")[0]
+    expected = (["b"] * 90) + (["a"] * 9)
+    torch.testing.assert_close(
+        last_input, torch.tensor(tokenizer.convert_tokens_to_ids(expected))
+    )
     assert last_label[0] == -100
     torch.testing.assert_close(
         first_input, torch.tensor(tokenizer.convert_tokens_to_ids(["a"] * 99))
@@ -40,3 +43,18 @@ def test_text_dataset():
 
     ds = CausalTextDatasetFromString(text, tokenizer, seq_len=99)
     assert len(ds) == 10
+
+
+def test_dataset_getter():
+    text = "a" * 10
+    with tempfile.NamedTemporaryFile(mode="w+t") as file:
+        file.writelines(text)
+        file.seek(0)
+        result = datasets.get_dataset(
+            "text", tokenizers.get_tokenizer(tokenizers.char_tokenizer), file.name
+        )
+        # for input, output in result:
+        #     print(input, output)
+        input, _ = result[0]
+        assert input[0].item() == ord("a")
+        assert input.shape[0] == 9
