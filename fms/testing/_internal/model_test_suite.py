@@ -219,7 +219,9 @@ class ModelConsistencyTestSuite(ModelFixtureMixin, SignatureFixtureMixin):
         {_FAILED_MODEL_SIGNATURE_OUTPUT_MSG}
         """
 
-        assert np.allclose(np.array(actual), np.array(signature)), assertion_msg
+        torch.testing.assert_close(
+            torch.tensor(actual), torch.tensor(signature)
+        ), assertion_msg
 
     def test_model_weight_keys(self, model, capture_expectation):
         import inspect
