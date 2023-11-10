@@ -124,6 +124,7 @@ class RoBERTaHeadless(nn.Module):
         x: torch.LongTensor,
         mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
+        attn_algorithm: Optional[str] = None,
     ):
 
         if mask is None:
@@ -165,7 +166,7 @@ class RoBERTaHeadless(nn.Module):
 
         # layers
         for layer in self.layers:
-            x = layer(x, mask=mask)
+            x = layer(x, mask=mask, attn_algorithm=attn_algorithm)
 
         return x
 
@@ -198,9 +199,12 @@ class RoBERTa(nn.Module):
         x: torch.LongTensor,
         mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
+        attn_algorithm: Optional[str] = None,
     ):
         # run through the encoder layers
-        x = self.base_model(x, mask=mask, position_ids=position_ids)
+        x = self.base_model(
+            x, mask=mask, position_ids=position_ids, attn_algorithm=attn_algorithm
+        )
 
         # run through the class head (using the first in each sequence in the batch as the cls_token)
         x = self.class_head(x)
