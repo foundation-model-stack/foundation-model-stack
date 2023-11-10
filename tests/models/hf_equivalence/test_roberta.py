@@ -28,7 +28,9 @@ def test_roberta_base_for_masked_lm_equivalency():
     hf_model = AutoModelForMaskedLM.from_pretrained("roberta-base")
 
     with tempfile.TemporaryDirectory() as workdir:
-        hf_model.save_pretrained(f"{workdir}/roberta-base-masked_lm")
+        hf_model.save_pretrained(
+            f"{workdir}/roberta-base-masked_lm", safe_serialization=False
+        )
 
         model = get_model(
             "roberta",
@@ -139,7 +141,9 @@ def test_roberta_base_for_sequence_classification(task, problem_type):
         hf_model.roberta.embeddings.token_type_embeddings.weight.zero_()
 
     with tempfile.TemporaryDirectory() as workdir:
-        hf_model.save_pretrained(f"{workdir}/SamLowe-roberta-base-go_emotions")
+        hf_model.save_pretrained(
+            f"{workdir}/SamLowe-roberta-base-go_emotions", safe_serialization=False
+        )
 
         model = get_model(
             "roberta",
