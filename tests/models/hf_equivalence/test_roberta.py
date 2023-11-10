@@ -1,16 +1,13 @@
 import tempfile
 
 import pytest
-from fm.utils import pad_mask
 from transformers import (
     AutoModelForMaskedLM,
     RobertaTokenizerFast,
     AutoModelForSequenceClassification,
 )
 
-from fms.models.roberta import RoBERTa
 from fms.models.hf.roberta.modeling_roberta_hf import (
-    HFAdaptedRoBERTaForMaskedLM,
     HFAdaptedRoBERTaForSequenceClassification,
 )
 import torch
@@ -195,7 +192,7 @@ def test_roberta_base_for_sequence_classification(task, problem_type):
         labels = torch.randint(high=hf_model.config.num_labels, size=(1,))
     else:
         labels = torch.randn(hf_model.config.num_labels).unsqueeze(0)
-    attention_mask = pad_mask(inputs, hf_model.config.pad_token_id)
+    attention_mask = (inputs == 1).unsqueeze(-1) == (inputs == 1).unsqueeze(-2)
     hf_model_loss = hf_model(
         input_ids=inputs, labels=labels, attention_mask=attention_mask, return_dict=True
     ).loss
