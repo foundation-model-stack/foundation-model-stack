@@ -12,7 +12,7 @@ from fms.modules.feedforward import FeedForwardBlock
 from fms.utils.activation import str_to_activation
 from fms.utils.config import ModelConfig
 from fms.utils import serialization
-from modules.head import ClassHead
+from fms.modules.head import ClassHead
 
 
 @dataclass
