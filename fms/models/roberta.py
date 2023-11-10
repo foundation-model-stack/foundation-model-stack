@@ -119,6 +119,14 @@ class RoBERTaHeadless(nn.Module):
         if self.config.p_dropout:
             self.dropout = nn.Dropout(self.config.p_dropout)
 
+    def reset_params(self):
+        for layer in ["embedding", "position_embedding"]:
+            nn.init.normal_(
+                getattr(self, layer).weight,
+                mean=0.0,
+                std=self.config.emb_dim**-0.5,
+            )
+
     def forward(
         self,
         x: torch.LongTensor,
@@ -221,12 +229,8 @@ class RoBERTa(nn.Module):
         return self.config
 
     def reset_params(self):
-        # Modules are self-initializing, we're just going to down-scale the final prediction head to be
-        # mixed-fan (inputs and gradients scale to the same inverse factors) if it isn't tied
-        self.head.weight.data.normal_(
-            0,
-            1 / math.sqrt(math.sqrt(self.config.emb_dim * self.config.src_vocab_size)),
-        )
+        self.base_model.reset_params()
+        self.head.bias.data.zero_()
 
 
 # a micro llama model to use with a char-level tokenizer
