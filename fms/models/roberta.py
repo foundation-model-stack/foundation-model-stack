@@ -1,14 +1,18 @@
 import math
+import re
 from dataclasses import dataclass
 from typing import Optional
 
 import torch
 import torch.nn as nn
 
+from fms import models
 from fms.modules.attention import MultiHeadAttention
 from fms.modules.feedforward import FeedForwardBlock
 from fms.utils.activation import str_to_activation
 from fms.utils.config import ModelConfig
+from fms.utils import serialization
+from modules.head import ClassHead
 
 
 @dataclass
@@ -24,7 +28,7 @@ class RoBERTaConfig(ModelConfig):
     max_pos: int = 512
     p_dropout: float = 0.1
     multiquery_attn: bool = False
-    norm_eps: float = 1e-5
+    norm_eps: float = 1e-12
 
 
 class RoBERTaBlock(nn.Module):
@@ -166,21 +170,6 @@ class RoBERTaHeadless(nn.Module):
         return x
 
 
-class RoBERTaClassHead(nn.Module):
-    def __init__(self, config: RoBERTaConfig):
-        super().__init__()
-        self.config = config
-        self.dense = nn.Linear(config.emb_dim, config.emb_dim)
-        self.act = str_to_activation(config.activation_fn)
-        self.ln = nn.LayerNorm(config.emb_dim, config.norm_eps)
-
-    def forward(self, x: torch.FloatTensor):
-        x = self.dense(x)
-        x = self.act(x)
-        x = self.ln(x)
-        return x
-
-
 class RoBERTa(nn.Module):
     def __init__(self, config: Optional[RoBERTaConfig] = None, **kwargs):
 
@@ -193,11 +182,13 @@ class RoBERTa(nn.Module):
 
         self.base_model = RoBERTaHeadless(self.config)
 
-        self.class_head = RoBERTaClassHead(self.config)
-
-        self.head = nn.Linear(
-            self.config.emb_dim, self.config.src_vocab_size, bias=False
+        self.class_head = ClassHead(
+            self.config.emb_dim,
+            str_to_activation(self.config.activation_fn),
+            self.config.norm_eps,
         )
+
+        self.head = nn.Linear(self.config.emb_dim, self.config.src_vocab_size)
 
         # this model ties weights, so we tie here
         self.head.weight = self.base_model.embedding.weight
@@ -232,3 +223,109 @@ class RoBERTa(nn.Module):
             0,
             1 / math.sqrt(math.sqrt(self.config.emb_dim * self.config.src_vocab_size)),
         )
+
+
+# a micro llama model to use with a char-level tokenizer
+_micro_char_config = RoBERTaConfig(
+    emb_dim=192, nheads=4, nlayers=5, max_pos=1024, src_vocab_size=256
+)
+
+_base_config = RoBERTaConfig()
+
+_architecture_name = "roberta"
+
+
+def _roberta_factory_factory(config):
+    def factory(**kwargs):
+        return RoBERTa(config, **kwargs)
+
+    return factory
+
+
+models.register_model(
+    _architecture_name, "micro", _roberta_factory_factory(_micro_char_config)
+)
+models.register_model(
+    _architecture_name, "base", _roberta_factory_factory(_base_config)
+)
+
+
+def _hf_sd_to_fms_sd(hf_sd):
+    result = {}
+
+    # process embeddings
+    result["base_model.embedding.weight"] = hf_sd[
+        "roberta.embeddings.word_embeddings.weight"
+    ]
+    result["base_model.position_embedding.weight"] = hf_sd[
+        "roberta.embeddings.position_embeddings.weight"
+    ][2:]
+
+    def _apply_weight_bias(hf_value, fms_value):
+        result[f"{fms_value}.weight"] = hf_sd[f"{hf_value}.weight"]
+        result[f"{fms_value}.bias"] = hf_sd[f"{hf_value}.bias"]
+
+    # process layers
+    layer_pattern = re.compile("roberta.encoder.layer.[0-9]+")
+    processed_layers = set()
+    for hf_k, hf_v in hf_sd.items():
+        match = layer_pattern.match(hf_k)
+        if bool(match):
+            layer = f"{hf_k[: match.regs[0][1]]}"
+
+            # only process the layer if we have not seen it yet
+            if layer not in processed_layers:
+                layer_i = re.search("\d+|$", layer).group()
+                fms_layer = f"base_model.layers.{layer_i}"
+
+                # layer norm
+                _apply_weight_bias(
+                    f"{layer}.attention.output.LayerNorm", f"{fms_layer}.ln"
+                )
+                _apply_weight_bias(f"{layer}.output.LayerNorm", f"{fms_layer}.ff_ln")
+
+                # attn
+                _apply_weight_bias(
+                    f"{layer}.attention.self.query", f"{fms_layer}.attn.query"
+                )
+                _apply_weight_bias(
+                    f"{layer}.attention.self.key", f"{fms_layer}.attn.key"
+                )
+                _apply_weight_bias(
+                    f"{layer}.attention.self.value", f"{fms_layer}.attn.value"
+                )
+                _apply_weight_bias(
+                    f"{layer}.attention.output.dense", f"{fms_layer}.attn.dense"
+                )
+
+                # ff
+                _apply_weight_bias(
+                    f"{layer}.intermediate.dense", f"{fms_layer}.ff_sub_layer.w1"
+                )
+                _apply_weight_bias(
+                    f"{layer}.output.dense", f"{fms_layer}.ff_sub_layer.w2"
+                )
+
+                processed_layers.add(layer)
+
+    # process model layer norm
+    _apply_weight_bias("roberta.embeddings.LayerNorm", "base_model.enc_norm")
+
+    # process model head
+    if (
+        "lm_head.dense.weight" in hf_sd
+        and "lm_head.layer_norm.weight" in hf_sd
+        and "lm_head.decoder.bias" in hf_sd
+    ):
+        _apply_weight_bias("lm_head.dense", "class_head.dense")
+        _apply_weight_bias("lm_head.layer_norm", "class_head.ln")
+        result["head.bias"] = hf_sd["lm_head.decoder.bias"]
+    else:
+        print(
+            "This model does not have the default head, and therefore requires manual copying for the head"
+        )
+
+    return result
+
+
+serialization.register_adapter("roberta", "hf", _hf_sd_to_fms_sd)

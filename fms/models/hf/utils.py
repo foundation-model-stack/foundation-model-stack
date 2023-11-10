@@ -1,12 +1,17 @@
 from typing import Union
-from transformers import AutoConfig, AutoModel, AutoModelForCausalLM
+from transformers import (
+    AutoConfig,
+    AutoModel,
+    AutoModelForCausalLM,
+    AutoModelForMaskedLM,
+)
 import torch
 import torch.nn as nn
 
 
 def register_fms_models():
     """Register all FMS models with huggingface AutoModels"""
-    from fms.models.hf import _headless_models, _causal_lm_models
+    from fms.models.hf import _headless_models, _causal_lm_models, _masked_lm_models
 
     for model_cls in _headless_models:
         # register config
@@ -17,6 +22,10 @@ def register_fms_models():
     for model_cls in _causal_lm_models:
         # register causal lm model
         AutoModelForCausalLM.register(model_cls.config_class, model_cls)
+
+    for model_cls in _masked_lm_models:
+        # register masked lm models
+        AutoModelForMaskedLM.register(model_cls.config_class, model_cls)
 
 
 def mask_2d_to_3d(inp: torch.Tensor) -> torch.BoolTensor:

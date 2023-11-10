@@ -15,6 +15,7 @@ from transformers.modeling_outputs import (
 from transformers.utils import ModelOutput
 
 from fms.utils.activation import str_to_activation
+from modules.head import ClassHead
 
 
 class LMHeadMixin:
@@ -440,10 +441,8 @@ class MaskedLMHeadMixin(LMHeadMixin):
 
     def _get_empty_lm_head(self, activation_fn: str, norm_eps: float) -> nn.Module:
 
-        class_head = nn.Sequential(
-            nn.Linear(self.config.hidden_size, self.config.hidden_size, bias=True),
-            str_to_activation(activation_fn),
-            nn.LayerNorm(self.config.hidden_size, norm_eps),
+        class_head = ClassHead(
+            self.config.hidden_size, str_to_activation(activation_fn), norm_eps
         )
         head = nn.Linear(self.config.hidden_size, self.config.vocab_size)
 

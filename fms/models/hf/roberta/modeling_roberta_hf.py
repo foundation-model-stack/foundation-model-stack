@@ -106,7 +106,7 @@ class HFAdaptedRoBERTaEncoder(HFEncoder):
         )
 
 
-class HFAdaptedRobertaHeadless(HFEncoderModelArchitecture):
+class HFAdaptedRoBERTaHeadless(HFEncoderModelArchitecture):
 
     # attributes required by HF
     config_class = HFAdaptedRoBERTaConfig
@@ -132,9 +132,9 @@ class HFAdaptedRobertaHeadless(HFEncoderModelArchitecture):
         super().__init__(encoder, embedding, config, *args, **kwargs)
 
 
-class HFAdaptedRoBERTaForMaskedLM(MaskedLMHeadMixin, HFAdaptedRobertaHeadless):
+class HFAdaptedRoBERTaForMaskedLM(MaskedLMHeadMixin, HFAdaptedRoBERTaHeadless):
     _keys_to_ignore_on_load_missing = [r"lm_head.weight"]
-    _tied_weights_keys = ["embedding.weight", "lm_head.weight"]
+    _tied_weights_keys = ["embedding.weight", "lm_head.1.weight", "lm_head.1.bias"]
 
     def __init__(self, config: HFAdaptedRoBERTaConfig, *args, **kwargs):
         super().__init__(
@@ -158,7 +158,7 @@ class HFAdaptedRoBERTaForMaskedLM(MaskedLMHeadMixin, HFAdaptedRobertaHeadless):
 
 
 class HFAdaptedRoBERTaForSequenceClassification(
-    SequenceClassificationLMHeadMixin, HFAdaptedRobertaHeadless
+    SequenceClassificationLMHeadMixin, HFAdaptedRoBERTaHeadless
 ):
     _keys_to_ignore_on_load_missing = [r"lm_head.weight"]
     _tied_weights_keys = ["embedding.weight", "lm_head.weight"]
