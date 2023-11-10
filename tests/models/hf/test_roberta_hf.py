@@ -18,7 +18,6 @@ from fms.testing._internal.hf.model_test_suite import (
     HFModelFixtureMixin,
     HFConfigTestSuite,
     HFModelEquivalenceTestSuite,
-    HFModelGenerationTestSuite,
     HFModelCompileTestSuite,
 )
 from fms.testing._internal.model_test_suite import ModelFixtureMixin

@@ -15,7 +15,7 @@ import math
 
 from fms.models import get_model
 from fms.models.hf import to_hf_api
-from testing.comparison import (
+from fms.testing.comparison import (
     ModelSignatureParams,
     HFModelSignatureParams,
     compare_model_signatures,
