@@ -45,6 +45,19 @@ class TrainerPlugin:
         metrics: Dict = {},
         step: int = None,
     ):
+        """
+        This method is called on every step of training, or with step=None
+        at the end of each epoch. Implementations can use the passed in
+        parameters for validation, checkpointing, logging, etc.
+
+        Args:
+        model: The model being trained.
+        step: The step in training, re-starting from zero each epoch. None at
+                 epoch end.
+        metrics: a dictionary of metrics that might be useful for
+                logging/reporting. E.g. 'loss'. Specific metrics subject
+                to change.
+        """
         pass
 
 
@@ -95,7 +108,9 @@ class InferenceValidator(TrainerPlugin):
 
 class MetricReporter(TrainerPlugin):
     """
-    A training plugin to periodically log metrics
+    A training plugin to periodically log metrics. Logs every `seconds`
+    seconds by calling `writer` with the log message. A custom writer
+    should accept `*args` similar to `print`.
     """
 
     # TODO: add optional validation dataloader and validation loss.

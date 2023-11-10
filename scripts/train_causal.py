@@ -9,6 +9,7 @@ from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
 from fms import models
 from fms import datasets
+from fms.models.hf.utils import to_hf_api
 from fms.utils import print0, tokenizers
 from fms.training import trainer, plugins as trainplugins
 
@@ -175,7 +176,7 @@ def peft_model(model):
     """
     from fms.models.hf.llama.modeling_llama_hf import HFAdaptedLLaMAForCausalLM
 
-    model = HFAdaptedLLaMAForCausalLM.from_fms_model(model)
+    model = to_hf_api(model)
     from peft import get_peft_config, get_peft_model, LoraConfig
     from peft.mapping import PeftModelForCausalLM
 
