@@ -62,14 +62,20 @@ class CausalTextDatasetFromString(Dataset):
             return (tokens // self.seq_len) + 1
 
 
-def causaltext(path_or_uri: str, tokenizer: tokenizers.BaseTokenizer, pad_token=None):
+def causaltext(
+    path_or_uri: str, tokenizer: tokenizers.BaseTokenizer, pad_token=None, **kwargs
+):
     if urllib.parse.urlparse(path_or_uri).scheme == "":
         with open(path_or_uri) as f:
             text = f.read()
-            return CausalTextDatasetFromString(text, tokenizer, pad_token=pad_token)
+            return CausalTextDatasetFromString(
+                text, tokenizer, pad_token=pad_token, **kwargs
+            )
     else:
         text = requests.get(path_or_uri)
-        return CausalTextDatasetFromString(text, tokenizer, pad_token=pad_token)
+        return CausalTextDatasetFromString(
+            text.text, tokenizer, pad_token=pad_token, **kwargs
+        )
 
 
 __shakespeare_url = "https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt"
