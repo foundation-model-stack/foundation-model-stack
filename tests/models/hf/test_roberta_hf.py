@@ -66,6 +66,7 @@ class HFAdaptedRoBERTaFixtures(
                 bos_token_id=hf_config.bos_token_id,
                 eos_token_id=hf_config.eos_token_id,
                 max_position_embeddings=hf_config.max_pos,
+                tie_word_embeddings=fms_hf_model.config.tie_word_embeddings,
             )
         )
 
