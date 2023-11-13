@@ -1,7 +1,7 @@
 import math
 import re
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, OrderedDict
 
 import torch
 import torch.nn as nn
@@ -283,82 +283,39 @@ models.register_model(
 )
 
 
-def _hf_sd_to_fms_sd(hf_sd):
-    result = {}
-
-    # process embeddings
-    result["base_model.embedding.weight"] = hf_sd[
-        "roberta.embeddings.word_embeddings.weight"
+def _hf_sd_to_fms_sd(hf_sd: OrderedDict):
+    replacements = [
+        (r"^roberta.embeddings.word_embeddings.weight", "base_model.embedding.weight"),
+        (
+            r"^roberta.embeddings.position_embeddings.weight",
+            "base_model.position_embedding.weight",
+        ),
+        (r"^roberta.embeddings.LayerNorm", "base_model.enc_norm"),
+        (r"^roberta.encoder.layer", "base_model.layers"),
+        (r"attention\.output\.LayerNorm", "ln"),
+        (r"output\.LayerNorm", "ff_ln"),
+        (r"attention\.self\.key", "attn.key"),
+        (r"attention\.self\.value", "attn.value"),
+        (r"attention\.self\.query", "attn.query"),
+        (r"attention\.output\.dense", "attn.dense"),
+        (r"intermediate\.dense", "ff_sub_layer.w1"),
+        (r"output\.dense", "ff_sub_layer.w2"),
+        (r"^lm_head\.dense", "classification_head.dense"),
+        (r"^lm_head\.layer_norm", "classification_head.ln"),
+        (r"^lm_head\.decoder", "classification_head.head"),
     ]
-    result["base_model.position_embedding.weight"] = hf_sd[
-        "roberta.embeddings.position_embeddings.weight"
-    ][2:]
+    new_sd = {}
+    for name, param in hf_sd.items():
+        new_name = name
+        for pattern, repl in replacements:
+            new_name = re.sub(pattern, repl, new_name)
+        new_sd[new_name] = param
 
-    def _apply_weight_bias(hf_value, fms_value):
-        result[f"{fms_value}.weight"] = hf_sd[f"{hf_value}.weight"]
-        result[f"{fms_value}.bias"] = hf_sd[f"{hf_value}.bias"]
+        # hf always has the first 2 spots set, we need to remove them as they are not used
+        if name == "roberta.embeddings.position_embeddings.weight":
+            new_sd[new_name] = new_sd[new_name][2:]
 
-    # process layers
-    layer_pattern = re.compile("roberta.encoder.layer.[0-9]+")
-    processed_layers = set()
-    for hf_k, hf_v in hf_sd.items():
-        match = layer_pattern.match(hf_k)
-        if bool(match):
-            layer = f"{hf_k[: match.regs[0][1]]}"
-
-            # only process the layer if we have not seen it yet
-            if layer not in processed_layers:
-                layer_i = re.search("\d+|$", layer).group()
-                fms_layer = f"base_model.layers.{layer_i}"
-
-                # layer norm
-                _apply_weight_bias(
-                    f"{layer}.attention.output.LayerNorm", f"{fms_layer}.ln"
-                )
-                _apply_weight_bias(f"{layer}.output.LayerNorm", f"{fms_layer}.ff_ln")
-
-                # attn
-                _apply_weight_bias(
-                    f"{layer}.attention.self.query", f"{fms_layer}.attn.query"
-                )
-                _apply_weight_bias(
-                    f"{layer}.attention.self.key", f"{fms_layer}.attn.key"
-                )
-                _apply_weight_bias(
-                    f"{layer}.attention.self.value", f"{fms_layer}.attn.value"
-                )
-                _apply_weight_bias(
-                    f"{layer}.attention.output.dense", f"{fms_layer}.attn.dense"
-                )
-
-                # ff
-                _apply_weight_bias(
-                    f"{layer}.intermediate.dense", f"{fms_layer}.ff_sub_layer.w1"
-                )
-                _apply_weight_bias(
-                    f"{layer}.output.dense", f"{fms_layer}.ff_sub_layer.w2"
-                )
-
-                processed_layers.add(layer)
-
-    # process model layer norm
-    _apply_weight_bias("roberta.embeddings.LayerNorm", "base_model.enc_norm")
-
-    # process model head
-    if (
-        "lm_head.dense.weight" in hf_sd
-        and "lm_head.layer_norm.weight" in hf_sd
-        and "lm_head.decoder.bias" in hf_sd
-    ):
-        _apply_weight_bias("lm_head.dense", "classification_head.dense")
-        _apply_weight_bias("lm_head.layer_norm", "classification_head.ln")
-        _apply_weight_bias("lm_head.decoder", "classification_head.head")
-    else:
-        print(
-            "This model does not have the default head, and therefore requires manual copying for the head"
-        )
-
-    return result
+    return new_sd
 
 
 serialization.register_adapter("roberta", "hf", _hf_sd_to_fms_sd)
