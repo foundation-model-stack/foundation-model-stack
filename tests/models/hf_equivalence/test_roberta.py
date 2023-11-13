@@ -38,6 +38,7 @@ def test_roberta_base_for_masked_lm_equivalency():
             f"{workdir}/roberta-base-masked_lm",
             "hf",
             norm_eps=1e-5,
+            tie_heads=True,
         )
 
     # test the param count is the same before we load hf fms model
@@ -151,6 +152,7 @@ def test_roberta_base_for_sequence_classification(task, problem_type):
             f"{workdir}/SamLowe-roberta-base-go_emotions",
             "hf",
             norm_eps=1e-5,
+            tie_heads=True,
         )
 
     # copy weights
@@ -164,10 +166,10 @@ def test_roberta_base_for_sequence_classification(task, problem_type):
         pad_token_id=hf_model.config.pad_token_id,
         problem_type=hf_model.config.problem_type,
     )
-    hf_model_fms.lm_head[0][1].weight = hf_model.classifier.dense.weight
-    hf_model_fms.lm_head[0][1].bias = hf_model.classifier.dense.bias
-    hf_model_fms.lm_head[1][1].weight = hf_model.classifier.out_proj.weight
-    hf_model_fms.lm_head[1][1].bias = hf_model.classifier.out_proj.bias
+    hf_model_fms.lm_head.dense.weight = hf_model.classifier.dense.weight
+    hf_model_fms.lm_head.dense.bias = hf_model.classifier.dense.bias
+    hf_model_fms.lm_head.head.weight = hf_model.classifier.out_proj.weight
+    hf_model_fms.lm_head.head.bias = hf_model.classifier.out_proj.bias
 
     model.eval()
     hf_model.eval()

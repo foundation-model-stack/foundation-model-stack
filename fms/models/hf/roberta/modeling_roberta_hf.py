@@ -21,6 +21,7 @@ class HFAdaptedRoBERTaConfig(PretrainedConfig):
         "hidden_size": "emb_dim",
         "num_attention_heads": "nheads",
         "num_hidden_layers": "nlayers",
+        "tie_word_embeddings": "tie_heads",
     }
 
     def __init__(
@@ -39,6 +40,7 @@ class HFAdaptedRoBERTaConfig(PretrainedConfig):
         use_cache=True,
         num_labels=1,
         norm_eps=1e-12,
+        tie_heads=False,
         **kwargs,
     ):
         self.src_vocab_size = src_vocab_size
@@ -57,10 +59,11 @@ class HFAdaptedRoBERTaConfig(PretrainedConfig):
         self.use_cache = use_cache
         self.norm_eps = norm_eps
         self.classifier_activation_fn = classifier_activation_fn
+        self.tie_heads = tie_heads
         super().__init__(
             pad_token_id=pad_token_id,
-            tie_word_embeddings=kwargs.pop("tie_word_embeddings", True),
             num_labels=num_labels,
+            tie_word_embeddings=kwargs.pop("tie_word_embeddings", tie_heads),
             **kwargs,
         )
 
@@ -133,12 +136,6 @@ class HFAdaptedRoBERTaHeadless(HFEncoderModelArchitecture):
 
 
 class HFAdaptedRoBERTaForMaskedLM(MaskedLMHeadMixin, HFAdaptedRoBERTaHeadless):
-    _keys_to_ignore_on_load_missing = [r"lm_head.head.weight"]
-    _tied_weights_keys = [
-        "lm_head.head.weight",
-        "lm_head.head.bias",
-    ]
-
     def __init__(self, config: HFAdaptedRoBERTaConfig, *args, **kwargs):
         super().__init__(
             config=config,
@@ -156,16 +153,13 @@ class HFAdaptedRoBERTaForMaskedLM(MaskedLMHeadMixin, HFAdaptedRoBERTaHeadless):
             config=config,
             encoder=model.base_model,
             embedding=model.base_model.embedding,
-            lm_head=model.mlp_head,
+            lm_head=model.classification_head,
         )
 
 
 class HFAdaptedRoBERTaForSequenceClassification(
     SequenceClassificationLMHeadMixin, HFAdaptedRoBERTaHeadless
 ):
-    _keys_to_ignore_on_load_missing = [r"lm_head.weight"]
-    _tied_weights_keys = ["embedding.weight", "lm_head.weight"]
-
     def __init__(
         self,
         config: HFAdaptedRoBERTaConfig,
@@ -176,7 +170,6 @@ class HFAdaptedRoBERTaForSequenceClassification(
     ):
         super().__init__(
             config=config,
-            max_pos=config.max_pos,
             classifier_activation_fn=config.classifier_activation_fn,
             classifier_dropout=config.classifier_dropout,
             encoder=encoder,

@@ -30,6 +30,7 @@ class RoBERTaFixtures(ConfigFixtureMixin, ModelFixtureMixin):
             nlayers=2,
             max_pos=512,
             hidden_grow_factor=2.0,
+            tie_heads=True,
         )
 
 

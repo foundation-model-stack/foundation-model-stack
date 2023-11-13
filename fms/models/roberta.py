@@ -6,13 +6,14 @@ from typing import Optional
 import torch
 import torch.nn as nn
 
+from fms.distributed.strategy import DistributedStrategy, NoOpStrategy
 from fms import models
 from fms.modules.attention import MultiHeadAttention
 from fms.modules.feedforward import FeedForwardBlock
 from fms.utils.activation import str_to_activation
 from fms.utils.config import ModelConfig
 from fms.utils import serialization
-from fms.modules.head import MLPHead
+from fms.modules.head import ClassificationHead
 
 
 @dataclass
@@ -29,6 +30,7 @@ class RoBERTaConfig(ModelConfig):
     p_dropout: float = 0.1
     multiquery_attn: bool = False
     norm_eps: float = 1e-12
+    tie_heads: bool = False
 
 
 class RoBERTaBlock(nn.Module):
@@ -103,18 +105,27 @@ class RoBERTaBlock(nn.Module):
 
 
 class RoBERTaHeadless(nn.Module):
-    def __init__(self, config: RoBERTaConfig):
+    def __init__(
+        self, config: RoBERTaConfig, distributed_strategy: DistributedStrategy
+    ):
         super().__init__()
         self.config = config
 
         self.layers = nn.ModuleList(
-            [RoBERTaBlock(self.config) for _ in range(self.config.nlayers)]
+            [
+                distributed_strategy.distribute_layer(RoBERTaBlock(self.config), i)
+                for i in range(self.config.nlayers)
+            ]
         )
 
         self.embedding = nn.Embedding(self.config.src_vocab_size, self.config.emb_dim)
+
         self.position_embedding = nn.Embedding(self.config.max_pos, self.config.emb_dim)
 
-        self.enc_norm = nn.LayerNorm(self.config.emb_dim, eps=self.config.norm_eps)
+        self.enc_norm = distributed_strategy.distribute_module(
+            nn.LayerNorm(self.config.emb_dim, eps=self.config.norm_eps),
+            final_layers=True,
+        )
 
         if self.config.p_dropout:
             self.dropout = nn.Dropout(self.config.p_dropout)
@@ -180,7 +191,12 @@ class RoBERTaHeadless(nn.Module):
 
 
 class RoBERTa(nn.Module):
-    def __init__(self, config: Optional[RoBERTaConfig] = None, **kwargs):
+    def __init__(
+        self,
+        config: Optional[RoBERTaConfig] = None,
+        distributed_strategy: DistributedStrategy = NoOpStrategy,
+        **kwargs,
+    ):
 
         super(RoBERTa, self).__init__()
         if config is not None:
@@ -188,18 +204,22 @@ class RoBERTa(nn.Module):
         else:
             self.config = RoBERTaConfig()
         self.config = self.config.updated(**kwargs)
+        self.distributed_strategy = distributed_strategy
 
-        self.base_model = RoBERTaHeadless(self.config)
+        self.base_model = RoBERTaHeadless(self.config, distributed_strategy)
 
-        self.mlp_head = MLPHead(
-            self.config.src_vocab_size,
+        self.classification_head = ClassificationHead(
             self.config.emb_dim,
-            str_to_activation(self.config.activation_fn),
-            self.config.norm_eps,
+            # number of classes is vocab size as this is predicting a masked token
+            num_classes=self.config.src_vocab_size,
+            activation_fn=str_to_activation(self.config.activation_fn),
+            layer_norm=nn.LayerNorm(self.config.emb_dim, self.config.norm_eps),
+            dropout=self.config.p_dropout,
         )
 
         # this model ties weights, so we tie here
-        self.mlp_head.head.weight = self.base_model.embedding.weight
+        if self.config.tie_heads:
+            self.classification_head.head.weight = self.base_model.embedding.weight
 
     def forward(
         self,
@@ -213,8 +233,8 @@ class RoBERTa(nn.Module):
             x, mask=mask, position_ids=position_ids, attn_algorithm=attn_algorithm
         )
 
-        # run through mlp and project to vocab space
-        x = self.mlp_head(x)
+        # run through classification head and project to vocab space
+        x = self.classification_head(x)
         return x
 
     @classmethod
@@ -226,7 +246,16 @@ class RoBERTa(nn.Module):
 
     def reset_params(self):
         self.base_model.reset_params()
-        self.mlp_head.head.bias.data.zero_()
+        if self.config.tie_heads:
+            self.classification_head.head.bias.data.zero_()
+        else:
+            self.classification_head.head.weight.data.normal_(
+                0,
+                1
+                / math.sqrt(
+                    math.sqrt(self.config.emb_dim * self.config.src_vocab_size)
+                ),
+            )
 
 
 # a micro llama model to use with a char-level tokenizer
@@ -321,9 +350,9 @@ def _hf_sd_to_fms_sd(hf_sd):
         and "lm_head.layer_norm.weight" in hf_sd
         and "lm_head.decoder.bias" in hf_sd
     ):
-        _apply_weight_bias("lm_head.dense", "mlp_head.dense")
-        _apply_weight_bias("lm_head.layer_norm", "mlp_head.ln")
-        result["mlp_head.head.bias"] = hf_sd["lm_head.decoder.bias"]
+        _apply_weight_bias("lm_head.dense", "classification_head.dense")
+        _apply_weight_bias("lm_head.layer_norm", "classification_head.ln")
+        _apply_weight_bias("lm_head.decoder", "classification_head.head")
     else:
         print(
             "This model does not have the default head, and therefore requires manual copying for the head"
