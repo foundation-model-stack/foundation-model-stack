@@ -12,7 +12,7 @@ from fms.modules.feedforward import FeedForwardBlock
 from fms.utils.activation import str_to_activation
 from fms.utils.config import ModelConfig
 from fms.utils import serialization
-from fms.modules.head import ClassHead
+from fms.modules.head import MLPHead
 
 
 @dataclass
@@ -191,16 +191,15 @@ class RoBERTa(nn.Module):
 
         self.base_model = RoBERTaHeadless(self.config)
 
-        self.class_head = ClassHead(
+        self.mlp_head = MLPHead(
+            self.config.src_vocab_size,
             self.config.emb_dim,
             str_to_activation(self.config.activation_fn),
             self.config.norm_eps,
         )
 
-        self.head = nn.Linear(self.config.emb_dim, self.config.src_vocab_size)
-
         # this model ties weights, so we tie here
-        self.head.weight = self.base_model.embedding.weight
+        self.mlp_head.head.weight = self.base_model.embedding.weight
 
     def forward(
         self,
@@ -214,11 +213,8 @@ class RoBERTa(nn.Module):
             x, mask=mask, position_ids=position_ids, attn_algorithm=attn_algorithm
         )
 
-        # run through the class head (using the first in each sequence in the batch as the cls_token)
-        x = self.class_head(x)
-
-        # project to vocab space
-        x = self.head(x)
+        # run through mlp and project to vocab space
+        x = self.mlp_head(x)
         return x
 
     @classmethod
@@ -230,7 +226,7 @@ class RoBERTa(nn.Module):
 
     def reset_params(self):
         self.base_model.reset_params()
-        self.head.bias.data.zero_()
+        self.mlp_head.head.bias.data.zero_()
 
 
 # a micro llama model to use with a char-level tokenizer
@@ -325,9 +321,9 @@ def _hf_sd_to_fms_sd(hf_sd):
         and "lm_head.layer_norm.weight" in hf_sd
         and "lm_head.decoder.bias" in hf_sd
     ):
-        _apply_weight_bias("lm_head.dense", "class_head.dense")
-        _apply_weight_bias("lm_head.layer_norm", "class_head.ln")
-        result["head.bias"] = hf_sd["lm_head.decoder.bias"]
+        _apply_weight_bias("lm_head.dense", "mlp_head.dense")
+        _apply_weight_bias("lm_head.layer_norm", "mlp_head.ln")
+        result["mlp_head.head.bias"] = hf_sd["lm_head.decoder.bias"]
     else:
         print(
             "This model does not have the default head, and therefore requires manual copying for the head"

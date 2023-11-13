@@ -133,8 +133,11 @@ class HFAdaptedRoBERTaHeadless(HFEncoderModelArchitecture):
 
 
 class HFAdaptedRoBERTaForMaskedLM(MaskedLMHeadMixin, HFAdaptedRoBERTaHeadless):
-    _keys_to_ignore_on_load_missing = [r"lm_head.weight"]
-    _tied_weights_keys = ["embedding.weight", "lm_head.1.weight", "lm_head.1.bias"]
+    _keys_to_ignore_on_load_missing = [r"lm_head.head.weight"]
+    _tied_weights_keys = [
+        "lm_head.head.weight",
+        "lm_head.head.bias",
+    ]
 
     def __init__(self, config: HFAdaptedRoBERTaConfig, *args, **kwargs):
         super().__init__(
@@ -153,7 +156,7 @@ class HFAdaptedRoBERTaForMaskedLM(MaskedLMHeadMixin, HFAdaptedRoBERTaHeadless):
             config=config,
             encoder=model.base_model,
             embedding=model.base_model.embedding,
-            lm_head=nn.Sequential(model.class_head, model.head),
+            lm_head=model.mlp_head,
         )
 
 

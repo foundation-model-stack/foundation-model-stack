@@ -15,7 +15,7 @@ from transformers.modeling_outputs import (
 from transformers.utils import ModelOutput
 
 from fms.utils.activation import str_to_activation
-from fms.modules.head import ClassHead
+from fms.modules.head import MLPHead
 
 
 class LMHeadMixin:
@@ -439,14 +439,16 @@ class MaskedLMHeadMixin(LMHeadMixin):
             **kwargs,
         )
 
+    def get_output_embeddings(self):
+        return self.lm_head.head
+
     def _get_empty_lm_head(self, activation_fn: str, norm_eps: float) -> nn.Module:
-
-        class_head = ClassHead(
-            self.config.hidden_size, str_to_activation(activation_fn), norm_eps
+        return MLPHead(
+            self.config.vocab_size,
+            self.config.hidden_size,
+            str_to_activation(activation_fn),
+            norm_eps,
         )
-        head = nn.Linear(self.config.hidden_size, self.config.vocab_size)
-
-        return nn.Sequential(class_head, head)
 
     def _compute_loss(self, prediction: torch.Tensor, labels: torch.Tensor) -> _Loss:
         loss_fn = nn.CrossEntropyLoss(ignore_index=-100)

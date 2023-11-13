@@ -115,11 +115,9 @@ class HFAdaptedRoBERTaFixtures(
             )
 
             # process model head
-            _copy_weight_bias(oss_hf_model.lm_head.dense, fms_hf_model.lm_head[0].dense)
-            _copy_weight_bias(
-                oss_hf_model.lm_head.layer_norm, fms_hf_model.lm_head[0].ln
-            )
-            # oss_hf_model.lm_head.decoder.bias.copy_(fms_hf_model.lm_head[1].bias)
+            _copy_weight_bias(oss_hf_model.lm_head.dense, fms_hf_model.lm_head.dense)
+            _copy_weight_bias(oss_hf_model.lm_head.layer_norm, fms_hf_model.lm_head.ln)
+            oss_hf_model.lm_head.decoder.bias.copy_(fms_hf_model.lm_head.head.bias)
         return oss_hf_model
 
 
