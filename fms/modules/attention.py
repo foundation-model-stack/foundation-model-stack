@@ -13,6 +13,8 @@ from fms.distributed.tensorparallel import (
 )
 from fms.modules.positions import PositionEncoder
 
+from flash_attn import flash_attn_func
+
 
 class MultiHeadAttention(nn.Module):
     """
@@ -202,39 +204,54 @@ class MultiHeadAttention(nn.Module):
             keys_e = keys
             values_e = values
 
-        if attn_algorithm:
-            # Pick which fused attn kernels will run.
-            use_flash = attn_algorithm == "flash"
-            use_mem_efficient = attn_algorithm == "mem"
-            use_math = attn_algorithm == "math"
+        # if attn_algorithm:
+        #     # Pick which fused attn kernels will run.
+        #     use_flash = attn_algorithm == "flash"
+        #     use_mem_efficient = attn_algorithm == "mem"
+        #     use_math = attn_algorithm == "math"
+        #
+        #     torch.backends.cuda.enable_flash_sdp(use_flash)
+        #     torch.backends.cuda.enable_mem_efficient_sdp(use_mem_efficient)
+        #     torch.backends.cuda.enable_math_sdp(use_math)
+        #
+        # attn = F.scaled_dot_product_attention(
+        #     queries,
+        #     keys_e,
+        #     values_e,
+        #     attn_mask=attn_mask,
+        #     dropout_p=self.p_dropout if self.training else 0.0,
+        #     is_causal=is_causal_mask,
+        # )
 
-            torch.backends.cuda.enable_flash_sdp(use_flash)
-            torch.backends.cuda.enable_mem_efficient_sdp(use_mem_efficient)
-            torch.backends.cuda.enable_math_sdp(use_math)
+        queries = queries.transpose(1, 2)
+        keys_e = keys_e.transpose(1, 2)
+        values_e = values_e.transpose(1, 2)
 
-        attn = F.scaled_dot_product_attention(
+        attn = flash_attn_func(
             queries,
             keys_e,
             values_e,
-            attn_mask=attn_mask,
             dropout_p=self.p_dropout if self.training else 0.0,
-            is_causal=is_causal_mask,
+            causal=is_causal_mask,
+            window_size=(4096, 4096),
         )
 
-        if attn_algorithm:
-            torch.backends.cuda.enable_flash_sdp(self.previous_flash)
-            torch.backends.cuda.enable_mem_efficient_sdp(self.previous_mem_efficient)
-            torch.backends.cuda.enable_math_sdp(self.previous_math)
+        attn = attn.reshape(batch_size, q_len, self.nheads * self.emb_v_per_head).contiguous()
+
+        # if attn_algorithm:
+        #     torch.backends.cuda.enable_flash_sdp(self.previous_flash)
+        #     torch.backends.cuda.enable_mem_efficient_sdp(self.previous_mem_efficient)
+        #     torch.backends.cuda.enable_math_sdp(self.previous_math)
 
         # attn: bs x seq_len x nheads*emb_v_per_head
         # attn: b x h x qlen x ds
         # attn after permute: b x qlen x h x ds
         # b x qlen x (d)
-        attn = (
-            attn.transpose(2, 1)
-            .contiguous()
-            .view(batch_size, q_len, self.nheads * self.emb_v_per_head)
-        )
+        # attn = (
+        #     attn.transpose(2, 1)
+        #     .contiguous()
+        #     .view(batch_size, q_len, self.nheads * self.emb_v_per_head)
+        # )
         out = self.dense(attn)
 
         # if use_cache=True, we return the hidden_state as well as the kv cache
