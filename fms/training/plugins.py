@@ -2,7 +2,7 @@ from abc import abstractmethod
 from datetime import datetime
 import os
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 import torch
 from torch import distributed as dist
 from torch import nn
@@ -43,7 +43,7 @@ class TrainerPlugin:
         optimizer,
         epoch: int,
         metrics: Dict = {},
-        step: int = None,
+        step: Optional[int] = None,
     ):
         """
         This method is called on every step of training, or with step=None
@@ -85,7 +85,7 @@ class InferenceValidator(TrainerPlugin):
         optimizer,
         epoch: int,
         metrics: Dict = {},
-        step: int = None,
+        step: Optional[int] = None,
     ):
         if not self.run(step):
             return
@@ -132,7 +132,7 @@ class MetricReporter(TrainerPlugin):
         optimizer,
         epoch: int,
         metrics: Dict = {},
-        step: int = None,
+        step: Optional[int] = None,
     ):
         if "batch_size" in metrics and "input_length" in metrics:
             self.tokens_seen += metrics["batch_size"] * metrics["input_length"]
@@ -188,17 +188,15 @@ class Checkpointer(TrainerPlugin):
 
     def __init__(
         self,
-        save_dir: Path = Path("./checkpoints"),
-        steps: int = None,
-        name: str = None,
-        group: dist.ProcessGroup = None,
+        save_dir: str | Path = Path("./checkpoints"),
+        steps: Optional[int] = None,
+        name: Optional[str] = None,
+        group: Optional[dist.ProcessGroup] = None,
     ):
         super().__init__(steps)
         os.makedirs(save_dir, exist_ok=True)
-        if type(save_dir) == str:
-            save_dir = os.path.expanduser(save_dir)
-            save_dir = Path(save_dir)
-        self.save_dir = save_dir
+        save_dir = os.path.expanduser(save_dir)
+        self.save_dir = Path(save_dir)
         self.group = group
         self.name = name
 
@@ -212,7 +210,7 @@ class Checkpointer(TrainerPlugin):
         optimizer,
         epoch: int,
         metrics: Dict = {},
-        step: int = None,
+        step: Optional[int] = None,
     ):
         if not self.run(step):
             return
@@ -228,15 +226,15 @@ class Checkpointer(TrainerPlugin):
         save_dir = self.save_dir
 
         if self.group is None:
-            file = save_dir / f"{file}.pth"
+            path = save_dir / f"{file}.pth"
             train_file = f"{file}.train"
         else:
-            file = save_dir / file
-            os.makedirs(file, exist_ok=True)
+            path = save_dir / file
+            os.makedirs(path, exist_ok=True)
             train_file = f"rank_{self.group.rank():02d}.train"
-            file = file / f"rank_{self.group.rank():02d}.pth"
-        print0("Writing checkpoint", file)
-        torch.save(model_dict, file)
+            path = path / f"rank_{self.group.rank():02d}.pth"
+        print0("Writing checkpoint", path)
+        torch.save(model_dict, path)
 
         optim_dict = optimizer.state_dict()
         train_dict = {"optimizer": optim_dict, "epoch": epoch}

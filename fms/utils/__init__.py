@@ -1,9 +1,10 @@
 import os
+from typing import Optional
 
 from torch.distributed import ProcessGroup
 
 
-def print0(*args, group: ProcessGroup = None):
+def print0(*args, group: Optional[ProcessGroup] = None):
     """
     Print *args to stdout on rank 0 of the default process group, or an
     optionally specified process group.

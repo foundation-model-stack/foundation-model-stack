@@ -1,5 +1,5 @@
 from contextlib import nullcontext
-from typing import List
+from typing import List, Optional
 import torch
 from torch.cuda import amp
 from torch import nn
@@ -14,7 +14,7 @@ def __one_step(
     input: torch.Tensor,
     label: torch.Tensor,
     loss_fn: nn.Module,
-    grad_scaler: amp.GradScaler,
+    grad_scaler: Optional[amp.GradScaler],
 ):
     autocast = amp.autocast if grad_scaler is not None else nullcontext
     with autocast():

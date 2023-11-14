@@ -1,6 +1,6 @@
 import math
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -58,13 +58,13 @@ class GPTBigCodeBlock(nn.Module):
 
     def forward(
         self,
-        x: torch.LongTensor,
+        x: torch.Tensor,
         *,
         mask: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.LongTensor] = None,
+        position_ids: Optional[torch.Tensor] = None,
         past_key_value_state: Optional[
             Tuple[
-                torch.FloatTensor,
+                torch.Tensor,
             ]
         ] = None,
         use_cache: bool = False,
@@ -136,19 +136,20 @@ class GPTBigCodeHeadless(nn.Module):
 
     def _compute_position_ids(
         self,
-        is_pad: torch.BoolTensor,
+        is_pad: torch.Tensor,
         use_cache: bool,
-        past_key_value_states: Optional[
-            Tuple[
+        past_key_value_states: Optional[List[
+            Optional[Tuple[
                 torch.FloatTensor,
-            ]
+                torch.FloatTensor
+            ]]]
         ] = None,
     ):
         """compute the position ids if the use happened not to give any"""
         position_ids = ((~is_pad).cumsum(1) - 1).clamp(min=0)
 
         # Compute position_ids based on cache config
-        if use_cache and past_key_value_states[0] is not None:
+        if use_cache and past_key_value_states is not None and past_key_value_states[0] is not None:
             position_ids += past_key_value_states[0][0].size(-2)
 
         return position_ids
@@ -158,10 +159,11 @@ class GPTBigCodeHeadless(nn.Module):
         x: torch.LongTensor,
         mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
-        past_key_value_states: Optional[
-            Tuple[
+        past_key_value_states: Optional[List[
+            Optional[Tuple[
                 torch.FloatTensor,
-            ]
+                torch.FloatTensor
+            ]]]
         ] = None,
         use_cache: bool = False,
         attn_algorithm: Optional[str] = None,
@@ -178,7 +180,7 @@ class GPTBigCodeHeadless(nn.Module):
             past_key_value_states = [None for _ in range(len(self.layers))]
 
         # if we are using the cache, the key length needs to be extended with the past keys length
-        if use_cache and past_key_value_states[0] is not None:
+        if use_cache and past_key_value_states is not None and past_key_value_states[0] is not None:
             klen += past_key_value_states[0][0].size(-2)
 
         # if mask is none, we need to compute mask
@@ -192,8 +194,8 @@ class GPTBigCodeHeadless(nn.Module):
                 mask = torch.ones(qlen, klen, device=x.device)
             else:
                 pad_id: int = self.config.pad_id
-                is_pad: torch.BoolTensor = x == pad_id
-                mask: torch.BoolTensor = is_pad.unsqueeze(-1) == is_pad.unsqueeze(-2)
+                is_pad: torch.Tensor = x == pad_id
+                mask = is_pad.unsqueeze(-1) == is_pad.unsqueeze(-2)
                 mask = mask.tril(diagonal=0)
 
         x_emb = self.embedding(x)
@@ -264,7 +266,7 @@ class GPTBigCode(nn.Module):
             self.config = config
         else:
             self.config = GPTBigCodeConfig()
-        self.config: GPTBigCodeConfig = self.config.updated(**kwargs)
+        self.config = self.config.updated(**kwargs)
 
         self.base_model = GPTBigCodeHeadless(self.config)
         self.head = nn.Linear(

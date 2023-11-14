@@ -3,11 +3,12 @@ import inspect
 import json
 import os
 from dataclasses import asdict, dataclass
-from typing import Union
+from typing import TypeVar, Union
 import logging
 
 logger = logging.getLogger(__name__)
 
+T=TypeVar('T', bound='ModelConfig')
 
 @dataclass
 class ModelConfig:
@@ -32,7 +33,7 @@ class ModelConfig:
         with open(file_path, "w") as f:
             json.dump(self.as_dict(), f)
 
-    def updated(self, **kwargs) -> "ModelConfig":
+    def updated(self: T, **kwargs) -> T:
         """Clone this ModelConfig and override the parameters of the ModelConfig specified by kwargs
 
         Note: This will always return a deep copy
