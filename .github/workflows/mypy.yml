@@ -1,6 +1,6 @@
-# This workflow will install Python dependencies and run tests
+# This workflow will install Python dependencies and run MyPy
 
-name: FMS Testing
+name: MyPy Type Checking
 
 on: [pull_request]
 
