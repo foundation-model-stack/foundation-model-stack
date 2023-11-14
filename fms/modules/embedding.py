@@ -130,6 +130,42 @@ class WordEmbedding(nn.Module):
             return self.head(inp)
 
 
+class TPEmbedding(nn.Embedding):
+    def __init__(self, num_embeddings: int, embedding_dim: int, group: ProcessGroup):
+        assert torch.distributed.is_initialized()
+        if group is None:
+            group = torch.distributed.GroupMember.WORLD
+        self.world_size = group.size()
+        self.rank = group.rank()
+        assert (
+            embedding_dim % self.world_size == 0
+        ), "The embedding dimensions must be divisible by world size"
+        assert (
+            num_embeddings % self.world_size == 0
+        ), "The number of tokens must be divisible by world size"
+        super().__init__(num_embeddings, embedding_dim // self.world_size)
+
+    @staticmethod
+    def import_module(embedding: nn.Embedding, group: ProcessGroup) -> "TPEmbedding":
+        return TPEmbedding(
+            embedding.num_embeddings,
+            embedding.embedding_dim,
+            group,
+        )
+
+    def import_weights(self, embedding: nn.Embedding):
+        apply_embedding_tp(self, embedding, self.world_size, self.rank)
+
+    def forward(self, x: torch.Tensor):
+        x_parallel = copy_to_tensor_model_parallel_region(x)
+        x_out_parallel = nn.Embedding.forward(self, x_parallel)
+        rank = torch.tensor(self.rank)
+        world_size = torch.tensor(self.world_size)
+        return all_gather_from_tensor_model_parallel_region(
+            x_out_parallel, rank, world_size
+        )
+
+
 class TPWordEmbedding(WordEmbedding):
     """
     Input/output embedding layer for sequence models.

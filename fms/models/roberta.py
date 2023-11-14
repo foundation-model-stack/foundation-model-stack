@@ -118,9 +118,15 @@ class RoBERTaHeadless(nn.Module):
             ]
         )
 
-        self.embedding = nn.Embedding(self.config.src_vocab_size, self.config.emb_dim)
+        self.embedding = distributed_strategy.distribute_module(
+            nn.Embedding(self.config.src_vocab_size, self.config.emb_dim),
+            final_layers=True,
+        )
 
-        self.position_embedding = nn.Embedding(self.config.max_pos, self.config.emb_dim)
+        self.position_embedding = distributed_strategy.distribute_module(
+            nn.Embedding(self.config.max_pos, self.config.emb_dim),
+            final_layers=True,
+        )
 
         self.enc_norm = distributed_strategy.distribute_module(
             nn.LayerNorm(self.config.emb_dim, eps=self.config.norm_eps),
@@ -203,7 +209,7 @@ class RoBERTa(nn.Module):
             self.config = config
         else:
             self.config = RoBERTaConfig()
-        self.config = self.config.updated(**kwargs)
+        self.config: RoBERTaConfig = self.config.updated(**kwargs)
         self.distributed_strategy = distributed_strategy
 
         self.base_model = RoBERTaHeadless(self.config, distributed_strategy)
@@ -217,9 +223,20 @@ class RoBERTa(nn.Module):
             dropout=self.config.p_dropout,
         )
 
+        self.classification_head.dense = distributed_strategy.distribute_module(
+            self.classification_head.dense, final_layers=True
+        )
+        self.classification_head.ln = distributed_strategy.distribute_module(
+            self.classification_head.ln, final_layers=True
+        )
+
         # this model ties weights, so we tie here
         if self.config.tie_heads:
             self.classification_head.head.weight = self.base_model.embedding.weight
+        else:
+            self.classification_head.head = distributed_strategy.distribute_module(
+                self.classification_head.head, final_layers=True
+            )
 
     def forward(
         self,
