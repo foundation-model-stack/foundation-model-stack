@@ -4,10 +4,13 @@ from fms.datasets.instructions import JsonInstructions
 from fms.datasets import text
 from fms.utils.tokenizers import BaseTokenizer
 
-__dataset_factory: Mapping[str, Callable[[str, BaseTokenizer], Dataset] | type] = {"instruction": JsonInstructions, "text": text.causaltext}
+__dataset_factory: Mapping[str, Callable[[str, BaseTokenizer], Dataset] | type] = {
+    "instruction": JsonInstructions,
+    "text": text.causaltext,
+}
 
 
-def get_dataset(name: str, tokenizer: BaseTokenizer, data: str = '', **kwargs):
+def get_dataset(name: str, tokenizer: BaseTokenizer, data: str = "", **kwargs):
     """
     Get a dataset by type.
 

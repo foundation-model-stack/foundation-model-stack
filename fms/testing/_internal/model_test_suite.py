@@ -235,7 +235,6 @@ class ModelConsistencyTestSuite(ModelFixtureMixin, SignatureFixtureMixin):
         )
 
         if capture_expectation:
-
             with open(weight_keys_path, "w") as weight_keys_file:
                 weight_keys_file.write(",".join(map(str, actual_keys)))
             weight_keys_file.close()

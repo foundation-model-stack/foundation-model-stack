@@ -92,7 +92,7 @@ class UniformModelParallelStrategy(DistributedStrategy):
         device = self.layer_to_device[layer]
         if self.from_meta:
             # https://github.com/pytorch/pytorch/pull/113647
-            block.to_empty(device=device) # type: ignore[arg-type]
+            block.to_empty(device=device)  # type: ignore[arg-type]
         wrapped = DeviceMover(block, device)
         return wrapped
 
@@ -104,7 +104,7 @@ class UniformModelParallelStrategy(DistributedStrategy):
         else:
             device = self.layer_to_device[0]
         if self.from_meta:
-            return module.to_empty(device=device) # type: ignore[arg-type]
+            return module.to_empty(device=device)  # type: ignore[arg-type]
         wrapped = DeviceMover(module, device)
         return wrapped
 

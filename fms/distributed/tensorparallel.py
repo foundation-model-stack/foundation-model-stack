@@ -62,14 +62,14 @@ def _all_reduce(input_: torch.Tensor) -> torch.Tensor:
 def wait_create(cls, collective_op: "inductor_ir.TensorBox"):
     collective_op.decide_layout()
     return inductor_ir.Wait(
-        layout=inductor_ir.AliasedLayout(collective_op), # type: ignore[arg-type]
+        layout=inductor_ir.AliasedLayout(collective_op),  # type: ignore[arg-type]
         inputs=[collective_op],
     )
 
 
-inductor_ir.Wait.create = wait_create # type: ignore[assignment]
+inductor_ir.Wait.create = wait_create  # type: ignore[assignment]
 
-inductor_ir.AllReduce.get_mutation_names = lambda self: [self.inputs[0].get_name()] # type: ignore[attr-defined]
+inductor_ir.AllReduce.get_mutation_names = lambda self: [self.inputs[0].get_name()]  # type: ignore[attr-defined]
 
 
 @classmethod
@@ -93,7 +93,7 @@ def all_reduce_create(
     return inplace_inputs[0]
 
 
-inductor_ir.AllReduce.create = all_reduce_create # type: ignore[assignment]
+inductor_ir.AllReduce.create = all_reduce_create  # type: ignore[assignment]
 
 
 def wcg_codegen_free(self, buffer):

@@ -207,7 +207,7 @@ class LLaMA(nn.Module):
 
         layers = []
         for i in range(self.config.nlayers):
-            block:nn.Module = LLaMABlock(self.config, self.rot_emb)
+            block: nn.Module = LLaMABlock(self.config, self.rot_emb)
             block = self.distributed_strategy.distribute_layer(block, i)
             layers.append(block)
         self.layers = nn.ModuleList(layers)
@@ -501,7 +501,7 @@ def load_fms_llama(model_path: str, group=None, **kwargs):
     return ibm_model
 
 
-def convert_hf_llama(hf_model: "LlamaForCausalLM") -> LLaMA: # type: ignore
+def convert_hf_llama(hf_model: "LlamaForCausalLM") -> LLaMA:  # type: ignore
     """
     Convert a Llama huggingface model to an fms model
 
@@ -565,7 +565,7 @@ def convert_hf_llama(hf_model: "LlamaForCausalLM") -> LLaMA: # type: ignore
     model.load_state_dict(new_sd, strict=False)
     model.shared.head.weight = hf_model.lm_head.weight
 
-    #model.rot_emb.freqs = hf_model.model.layers[0].self_attn.rotary_emb.inv_freq
+    # model.rot_emb.freqs = hf_model.model.layers[0].self_attn.rotary_emb.inv_freq
     for layer in model.layers:
         q = layer.attn.query.weight.data
         q = (

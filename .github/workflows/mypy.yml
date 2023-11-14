@@ -24,6 +24,7 @@ jobs:
         pip install pytest numpy
         pip install transformers==4.35.0
         pip install types-requests
+        pip install mypy
         pip install .
         
     - name: Test with pytest

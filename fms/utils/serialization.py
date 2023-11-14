@@ -7,7 +7,9 @@ import torch
 __adapters: MutableMapping[str, MutableMapping[str, Callable[[Mapping], Mapping]]] = {}
 
 
-def register_adapter(architecture: str, source: str, adapter: Callable[[Mapping], Mapping]):
+def register_adapter(
+    architecture: str, source: str, adapter: Callable[[Mapping], Mapping]
+):
     """
     Registers a state dict adapter to be available to the (de) serialization
     API.
@@ -43,8 +45,14 @@ def list_sources(architecture: str):
     return list(__adapters[architecture].keys())
 
 
-def _get_adapter(architecture: str, source: Optional[str]) -> Callable[[Mapping[str,Any]], Mapping[str, Any]]:
-    if source is None or architecture not in __adapters or source not in __adapters[architecture]:
+def _get_adapter(
+    architecture: str, source: Optional[str]
+) -> Callable[[Mapping[str, Any]], Mapping[str, Any]]:
+    if (
+        source is None
+        or architecture not in __adapters
+        or source not in __adapters[architecture]
+    ):
         # if no adapter is registered, assume the attributes are already in
         # fms format.
         # should we raise an error here instead?
@@ -53,7 +61,9 @@ def _get_adapter(architecture: str, source: Optional[str]) -> Callable[[Mapping[
         return __adapters[architecture][source]
 
 
-def get_adapted(architecture: str, source: Optional[str], state_dict: Mapping[str, Any]) -> Mapping[str, Any]:
+def get_adapted(
+    architecture: str, source: Optional[str], state_dict: Mapping[str, Any]
+) -> Mapping[str, Any]:
     """
     Convert a state dict to FMS format, using an adapter specified by name.
 

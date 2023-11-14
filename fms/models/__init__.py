@@ -152,7 +152,10 @@ def _activation_checkpoint_check_fn(layer):
 
 
 def _fsdp_wrap(
-    model: nn.Module, distributed_strategy: Optional[str], device: torch.device, rank0: bool
+    model: nn.Module,
+    distributed_strategy: Optional[str],
+    device: torch.device,
+    rank0: bool,
 ) -> nn.Module:
     # initializes parameters that are on meta devices
     def init_fn(x: nn.Module):

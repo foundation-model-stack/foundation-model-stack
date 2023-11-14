@@ -87,4 +87,6 @@ def shakespeare(pad_token=None, tokenizer=tokenizers.char_tokenizer) -> Dataset:
     get a dataset of the complete works of shakespeare
     """
     # TODO: maybe this should cache somewhere?
-    return causaltext(__shakespeare_url, tokenizers.get_tokenizer(tokenizer), pad_token=pad_token)
+    return causaltext(
+        __shakespeare_url, tokenizers.get_tokenizer(tokenizer), pad_token=pad_token
+    )

@@ -8,7 +8,8 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-T=TypeVar('T', bound='ModelConfig')
+T = TypeVar("T", bound="ModelConfig")
+
 
 @dataclass
 class ModelConfig:
