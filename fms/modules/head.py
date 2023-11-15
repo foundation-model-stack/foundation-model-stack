@@ -52,17 +52,17 @@ class ClassificationHead(nn.Module):
         self.head = nn.Linear(emb_dim, num_classes, bias=head_bias)
         self.apply_pooling_fn = apply_pooling_fn
 
-    def forward(self, x: torch.FloatTensor):
+    def forward(self, x: torch.Tensor):
         """Run the forward method of a classification head
 
         Parameters
         ----------
-        x: torch.FloatTensor
+        x: torch.Tensor
             typically the output from a headless model
 
         Returns
         -------
-        torch.FloatTensor
+        torch.Tensor
             a tensor projected to a space given by num_classes
         """
         if self.apply_pooling_fn:

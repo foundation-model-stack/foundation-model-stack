@@ -1,7 +1,7 @@
 import math
 import re
 from dataclasses import dataclass
-from typing import Optional, OrderedDict
+from typing import Optional, OrderedDict, Mapping, Any
 
 import torch
 import torch.nn as nn
@@ -64,7 +64,7 @@ class RoBERTaBlock(nn.Module):
 
     def forward(
         self,
-        x: torch.LongTensor,
+        x: torch.Tensor,
         *,
         mask: Optional[torch.Tensor] = None,
         attn_algorithm: Optional[str] = None,
@@ -148,9 +148,9 @@ class RoBERTaHeadless(nn.Module):
 
     def forward(
         self,
-        x: torch.LongTensor,
+        x: torch.Tensor,
         mask: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.LongTensor] = None,
+        position_ids: Optional[torch.Tensor] = None,
         attn_algorithm: Optional[str] = None,
     ):
 
@@ -158,8 +158,8 @@ class RoBERTaHeadless(nn.Module):
             if x is None:
                 raise ValueError("cannot create a mask when x is None")
             pad_id: int = self.config.pad_id
-            is_pad: torch.BoolTensor = x == pad_id
-            mask: torch.BoolTensor = is_pad.unsqueeze(-1) == is_pad.unsqueeze(-2)
+            is_pad = x == pad_id
+            mask = is_pad.unsqueeze(-1) == is_pad.unsqueeze(-2)
 
         x_emb = self.embedding(x)
 
@@ -211,7 +211,7 @@ class RoBERTa(nn.Module):
             self.config = config
         else:
             self.config = RoBERTaConfig()
-        self.config: RoBERTaConfig = self.config.updated(**kwargs)
+        self.config = self.config.updated(**kwargs)
         self.distributed_strategy = distributed_strategy
 
         self.base_model = RoBERTaHeadless(self.config, self.distributed_strategy)
@@ -235,9 +235,9 @@ class RoBERTa(nn.Module):
 
     def forward(
         self,
-        x: torch.LongTensor,
+        x: torch.Tensor,
         mask: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.LongTensor] = None,
+        position_ids: Optional[torch.Tensor] = None,
         attn_algorithm: Optional[str] = None,
     ):
         # run through the encoder layers
@@ -295,7 +295,7 @@ models.register_model(
 )
 
 
-def _hf_sd_to_fms_sd(hf_sd: OrderedDict):
+def _hf_sd_to_fms_sd(hf_sd: Mapping[Any, Any]) -> Mapping[Any, Any]:
     replacements = [
         (r"^roberta.embeddings.word_embeddings.weight", "base_model.embedding.weight"),
         (
