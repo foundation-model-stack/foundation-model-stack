@@ -1,6 +1,6 @@
 from contextlib import nullcontext
 from functools import partial
-from typing import Callable, Optional
+from typing import Any, Callable, Mapping, MutableMapping, Optional
 import torch
 from torch import nn
 from fms import distributed
@@ -21,10 +21,10 @@ from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
 from torch.distributed.distributed_c10d import ProcessGroup
 from fms.utils import serialization
 
-__models = {}
+__models: MutableMapping[str, MutableMapping[str, Callable[[], nn.Module]]] = {}
 
 
-def register_model(architecture: str, variant: str, factory: Callable):
+def register_model(architecture: str, variant: str, factory: Callable[[], nn.Module]):
     """
     Registers a model variant to be made available in the registration API.
     Args:
@@ -33,7 +33,7 @@ def register_model(architecture: str, variant: str, factory: Callable):
         e.g. '7b'
     factory: A callable that constructs an instance of the model variant.
     """
-    variants = {}
+    variants: MutableMapping[str, Callable[[], nn.Module]] = {}
     if architecture in __models:
         variants = __models[architecture]
     if variant in variants:
@@ -152,8 +152,11 @@ def _activation_checkpoint_check_fn(layer):
 
 
 def _fsdp_wrap(
-    model: nn.Module, distributed_strategy: str, device: torch.device, rank0: bool
-):
+    model: nn.Module,
+    distributed_strategy: Optional[str],
+    device: torch.device,
+    rank0: bool,
+) -> nn.Module:
     # initializes parameters that are on meta devices
     def init_fn(x: nn.Module):
         if not rank0:

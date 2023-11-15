@@ -62,7 +62,6 @@ class HFAdaptedLLaMAHeadless(HFDecoderModelArchitecture):
         *args,
         **kwargs,
     ):
-
         # in the case we have not yet received the encoder/decoder/embedding, initialize it here
         if decoder is None or embedding is None:
             params = config.to_dict()
