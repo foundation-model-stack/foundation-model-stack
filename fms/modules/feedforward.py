@@ -43,15 +43,15 @@ class FeedForwardBlock(nn.Module):
         gain=1,
     ):
         super(FeedForwardBlock, self).__init__()
-        hidden_dim = int(hidden_grow_factor * emb_dim)
+        self.hidden_dim = int(hidden_grow_factor * emb_dim)
         if multiple_of:
-            hidden_dim = multiple_of * ((hidden_dim + multiple_of - 1) // multiple_of)
-        self.w1 = nn.Linear(emb_dim, hidden_dim, bias=use_bias)
+            self.hidden_dim = multiple_of * ((self.hidden_dim + multiple_of - 1) // multiple_of)
+        self.w1 = nn.Linear(emb_dim, self.hidden_dim, bias=use_bias)
         self.a = activation_fn
         self.p_dropout = p_dropout
         if p_dropout:
             self.d = nn.Dropout(p_dropout)
-        self.w2 = nn.Linear(hidden_dim, emb_dim, bias=use_bias)
+        self.w2 = nn.Linear(self.hidden_dim, emb_dim, bias=use_bias)
         self.use_bias = use_bias
         self.reset_params(gain=gain)
 

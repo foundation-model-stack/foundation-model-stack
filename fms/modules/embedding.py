@@ -158,7 +158,7 @@ class TPEmbedding(nn.Embedding):
 
     def forward(self, x: torch.Tensor):
         x_parallel = copy_to_tensor_model_parallel_region(x)
-        x_out_parallel = nn.Embedding.forward(self, x_parallel)
+        x_out_parallel = super().forward(x_parallel)
         rank = torch.tensor(self.rank)
         world_size = torch.tensor(self.world_size)
         return all_gather_from_tensor_model_parallel_region(

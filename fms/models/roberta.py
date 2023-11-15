@@ -110,25 +110,27 @@ class RoBERTaHeadless(nn.Module):
     ):
         super().__init__()
         self.config = config
+        self.distributed_strategy = distributed_strategy
 
         self.layers = nn.ModuleList(
             [
-                distributed_strategy.distribute_layer(RoBERTaBlock(self.config), i)
+                self.distributed_strategy.distribute_layer(RoBERTaBlock(self.config), i)
                 for i in range(self.config.nlayers)
             ]
         )
 
-        self.embedding = distributed_strategy.distribute_module(
+        # TODO: figure out proper way to tp-wrap embedding
+        self.embedding = self.distributed_strategy.distribute_module(
             nn.Embedding(self.config.src_vocab_size, self.config.emb_dim),
-            final_layers=True,
+            final_layers=True
         )
 
-        self.position_embedding = distributed_strategy.distribute_module(
+        self.position_embedding = self.distributed_strategy.distribute_module(
             nn.Embedding(self.config.max_pos, self.config.emb_dim),
             final_layers=True,
         )
 
-        self.enc_norm = distributed_strategy.distribute_module(
+        self.enc_norm = self.distributed_strategy.distribute_module(
             nn.LayerNorm(self.config.emb_dim, eps=self.config.norm_eps),
             final_layers=True,
         )
@@ -212,31 +214,24 @@ class RoBERTa(nn.Module):
         self.config: RoBERTaConfig = self.config.updated(**kwargs)
         self.distributed_strategy = distributed_strategy
 
-        self.base_model = RoBERTaHeadless(self.config, distributed_strategy)
+        self.base_model = RoBERTaHeadless(self.config, self.distributed_strategy)
 
-        self.classification_head = ClassificationHead(
-            self.config.emb_dim,
-            # number of classes is vocab size as this is predicting a masked token
-            num_classes=self.config.src_vocab_size,
-            activation_fn=str_to_activation(self.config.activation_fn),
-            layer_norm=nn.LayerNorm(self.config.emb_dim, self.config.norm_eps),
-            dropout=self.config.p_dropout,
-        )
-
-        self.classification_head.dense = distributed_strategy.distribute_module(
-            self.classification_head.dense, final_layers=True
-        )
-        self.classification_head.ln = distributed_strategy.distribute_module(
-            self.classification_head.ln, final_layers=True
+        # TODO: figure out proper way to tp-wrap head
+        self.classification_head = self.embedding = self.distributed_strategy.distribute_module(
+            ClassificationHead(
+                self.config.emb_dim,
+                # number of classes is vocab size as this is predicting a masked token
+                num_classes=self.config.src_vocab_size,
+                activation_fn=str_to_activation(self.config.activation_fn),
+                layer_norm=nn.LayerNorm(self.config.emb_dim, self.config.norm_eps),
+                dropout=self.config.p_dropout,
+            ),
+            final_layers=True
         )
 
         # this model ties weights, so we tie here
         if self.config.tie_heads:
             self.classification_head.head.weight = self.base_model.embedding.weight
-        else:
-            self.classification_head.head = distributed_strategy.distribute_module(
-                self.classification_head.head, final_layers=True
-            )
 
     def forward(
         self,

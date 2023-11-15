@@ -27,8 +27,6 @@ def _tp_wrapped(module: nn.Module, group: ProcessGroup):
         # setattr(model, name, tp_layer)
     elif isinstance(module, WordEmbedding):
         return TPWordEmbedding.import_module(module, group)
-    elif isinstance(module, nn.Embedding):
-        return TPEmbedding.import_module(module, group)
     else:
         return module
 
