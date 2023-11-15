@@ -1,7 +1,7 @@
 from collections import ChainMap, OrderedDict
 import os
 from pathlib import Path
-from typing import Any, Callable, List, Mapping, MutableMapping, Optional
+from typing import Any, Callable, List, Mapping, MutableMapping, Optional, Union
 import torch
 
 __adapters: MutableMapping[str, MutableMapping[str, Callable[[Mapping], Mapping]]] = {}
@@ -87,7 +87,7 @@ from fms import models
 
 
 def load_state_dict(
-    model_path: str | Path,
+    model_path: Union[str, Path],
     distributed_strategy: Optional[str] = None,
     checkpoint_sharding: Optional[str] = None,
     initial_device: torch.device = torch.device("cpu"),
