@@ -122,7 +122,7 @@ class RoBERTaHeadless(nn.Module):
         # TODO: figure out proper way to tp-wrap embedding
         self.embedding = self.distributed_strategy.distribute_module(
             nn.Embedding(self.config.src_vocab_size, self.config.emb_dim),
-            final_layers=True
+            final_layers=True,
         )
 
         self.position_embedding = self.distributed_strategy.distribute_module(
@@ -217,7 +217,7 @@ class RoBERTa(nn.Module):
         self.base_model = RoBERTaHeadless(self.config, self.distributed_strategy)
 
         # TODO: figure out proper way to tp-wrap head
-        self.classification_head = self.embedding = self.distributed_strategy.distribute_module(
+        self.classification_head = self.distributed_strategy.distribute_module(
             ClassificationHead(
                 self.config.emb_dim,
                 # number of classes is vocab size as this is predicting a masked token
@@ -226,7 +226,7 @@ class RoBERTa(nn.Module):
                 layer_norm=nn.LayerNorm(self.config.emb_dim, self.config.norm_eps),
                 dropout=self.config.p_dropout,
             ),
-            final_layers=True
+            final_layers=True,
         )
 
         # this model ties weights, so we tie here
