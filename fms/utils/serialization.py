@@ -1,13 +1,15 @@
 from collections import ChainMap, OrderedDict
 import os
 from pathlib import Path
-from typing import Any, Callable, List, Optional
+from typing import Any, Callable, List, Mapping, MutableMapping, Optional
 import torch
 
-__adapters = {}
+__adapters: MutableMapping[str, MutableMapping[str, Callable[[Mapping], Mapping]]] = {}
 
 
-def register_adapter(architecture: str, source: str, adapter: Callable[[dict], dict]):
+def register_adapter(
+    architecture: str, source: str, adapter: Callable[[Mapping], Mapping]
+):
     """
     Registers a state dict adapter to be available to the (de) serialization
     API.
@@ -19,7 +21,7 @@ def register_adapter(architecture: str, source: str, adapter: Callable[[dict], d
     adapter: the class of the adapter. The class must accept one constructor
                 parameter, which will be a state dict (`OrderedDict`)
     """
-    sources = {}
+    sources: MutableMapping[str, Callable[[Mapping], Mapping]] = {}
     if architecture in __adapters:
         sources = __adapters[architecture]
     if source in sources:
@@ -43,16 +45,25 @@ def list_sources(architecture: str):
     return list(__adapters[architecture].keys())
 
 
-def _get_adapter(architecture: str, source: str):
-    if architecture not in __adapters or source not in __adapters[architecture]:
+def _get_adapter(
+    architecture: str, source: Optional[str]
+) -> Callable[[Mapping[str, Any]], Mapping[str, Any]]:
+    if (
+        source is None
+        or architecture not in __adapters
+        or source not in __adapters[architecture]
+    ):
         # if no adapter is registered, assume the attributes are already in
         # fms format.
         # should we raise an error here instead?
         return lambda x: x
-    return __adapters[architecture][source]
+    else:
+        return __adapters[architecture][source]
 
 
-def get_adapted(architecture: str, source: str, state_dict: OrderedDict) -> OrderedDict:
+def get_adapted(
+    architecture: str, source: Optional[str], state_dict: Mapping[str, Any]
+) -> Mapping[str, Any]:
     """
     Convert a state dict to FMS format, using an adapter specified by name.
 
@@ -62,6 +73,9 @@ def get_adapted(architecture: str, source: str, state_dict: OrderedDict) -> Orde
     source: A reference to an attribute format
     state_dict: the model.state_dict() to be converted/adapted.
     """
+    # sometimes we only load onto rank 0 so may not have a state_dict here.
+    if not len(state_dict):
+        return state_dict
     adapter = _get_adapter(architecture, source)
     adapted = adapter(state_dict)
     return adapted
@@ -73,13 +87,13 @@ from fms import models
 
 
 def load_state_dict(
-    model_path: str,
+    model_path: str | Path,
     distributed_strategy: Optional[str] = None,
     checkpoint_sharding: Optional[str] = None,
     initial_device: torch.device = torch.device("cpu"),
-    rank: Optional[int] = 0,
-    world_size: Optional[int] = 1,
-) -> Optional[OrderedDict]:
+    rank: int = 0,
+    world_size: int = 1,
+) -> Mapping[str, Any]:
     """
     Validates that the file(s) found at a checkpoint path are compatible with
     the intended (possibly distributed) use-case, and returns the state dict
@@ -95,7 +109,7 @@ def load_state_dict(
     initial_device: where the state dict will be loaded. if meta, return None.
     """
     if model_path is None or initial_device.type == "meta":
-        return None
+        return {}
     # TODO: Add support for tp-sharding a non-sharded state dict.
     if (
         distributed_strategy == "tp" or checkpoint_sharding == "tp"
@@ -125,6 +139,7 @@ def load_state_dict(
     checkpoint_sds = [
         torch.load(ckpt_path, map_location="cpu") for ckpt_path in checkpoints
     ]
+    assert len(checkpoint_sds[0]), f"Unable to load checkpoint data at {model_path}"
     if len(checkpoint_sds) == 1:
         return checkpoint_sds[0]
     else:

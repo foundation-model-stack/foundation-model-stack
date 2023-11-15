@@ -138,7 +138,6 @@ def convert_to_hf(
     )
 
     with torch.no_grad():
-
         oss_hf_model.transformer.wte.weight.copy_(
             fms_hf_model.decoder.model.embedding.weight
         )

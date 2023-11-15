@@ -81,7 +81,7 @@ class _SentencePieceTokenizer(BaseTokenizer):
     """
 
     def __init__(self, path: str):
-        from sentencepiece import SentencePieceProcessor
+        from sentencepiece import SentencePieceProcessor  # type: ignore
 
         self.sp_model = SentencePieceProcessor(model_file=path)
         super().__init__(self.sp_model.bos_id(), self.sp_model.eos_id())
@@ -110,7 +110,7 @@ class _HFTokenizer(BaseTokenizer):
     """
 
     def __init__(self, name: str):
-        from transformers import AutoTokenizer
+        from transformers import AutoTokenizer  # type: ignore
 
         self.tokenizer = AutoTokenizer.from_pretrained(name)
         super().__init__(self.tokenizer.bos_token_id, self.tokenizer.eos_token_id)

@@ -1,7 +1,9 @@
+from typing import Optional
 import torch
 import torch.distributed
 import torch.nn as nn
 from torch.distributed.distributed_c10d import ProcessGroup
+from fms import distributed
 
 from fms.distributed.tensorparallel import (
     apply_colwise_tp,
@@ -102,14 +104,13 @@ class TPFeedForwardBlock(FeedForwardBlock):
         p_dropout=0.1,
         use_bias=True,
         gain=1,
-        group: ProcessGroup = None,
+        group: Optional[ProcessGroup] = None,
     ):
         assert torch.distributed.is_initialized()
         hidden_dim = int(hidden_grow_factor * emb_dim)
         if multiple_of:
             hidden_dim = multiple_of * ((hidden_dim + multiple_of - 1) // multiple_of)
-        world_size = group.size()
-        rank = group.rank()
+        rank, world_size = distributed.rank_and_world(group)
         assert (
             hidden_dim % world_size == 0
         ), "Hidden dim must be divisible by world size"
@@ -246,11 +247,10 @@ class TPGatedLinearUnit(GatedLinearUnit):
         p_dropout=0.1,
         use_bias=True,
         gain=1,
-        group: ProcessGroup = None,
+        group: Optional[ProcessGroup] = None,
     ):
         assert torch.distributed.is_initialized()
-        world_size = group.size()
-        rank = group.rank()
+        rank, world_size = distributed.rank_and_world(group)
 
         hidden_dim = int(hidden_grow_factor * emb_dim)
         if multiple_of:

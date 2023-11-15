@@ -5,7 +5,7 @@ import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Mapping, Optional
 
 import torch
 import torch.nn as nn
@@ -196,7 +196,7 @@ class LLaMA(nn.Module):
             max_seq_len=self.config.max_expected_seq_len,
         )
         if isinstance(self.distributed_strategy, UniformModelParallelStrategy):
-            for dev_idx in set(self.distributed_strategy.layer_to_device.values()):
+            for dev_idx in set(self.distributed_strategy.layer_to_device):
                 self.rot_emb.compute_freqs_cis(
                     torch.device("cuda", dev_idx), self.config.max_expected_seq_len
                 )
@@ -205,12 +205,12 @@ class LLaMA(nn.Module):
                 self.shared.emb.weight.device, self.config.max_expected_seq_len
             )
 
-        self.layers = []
+        layers = []
         for i in range(self.config.nlayers):
-            block = LLaMABlock(self.config, self.rot_emb)
+            block: nn.Module = LLaMABlock(self.config, self.rot_emb)
             block = self.distributed_strategy.distribute_layer(block, i)
-            self.layers.append(block)
-        self.layers = nn.ModuleList(self.layers)
+            layers.append(block)
+        self.layers = nn.ModuleList(layers)
 
         dec_norm = LayerNormParameterized(
             self.config.emb_dim,
@@ -225,7 +225,7 @@ class LLaMA(nn.Module):
         )
 
         if self.config.p_dropout:
-            self.dropout = nn.Dropout(config.p_dropout)
+            self.dropout = nn.Dropout(self.config.p_dropout)
 
         self.reset_params()
 
@@ -396,7 +396,7 @@ def _rename_weights_to_fms(orig_sd):
     return new_sd
 
 
-def _hf_sd_to_fms_sd(hf_sd: OrderedDict):
+def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
     replacements = [
         (r"^lm_head.weight", "shared.head.weight"),
         (r"^model.embed_tokens.weight", "shared.emb.weight"),
@@ -446,7 +446,7 @@ def load_fms_llama(model_path: str, group=None, **kwargs):
     """
     Deprecated in favor of `models.load_model`
     """
-    rank, world_size = distributed.rank_and_group(group)
+    rank, world_size = distributed.rank_and_world(group)
 
     # from llama.tokenizer import Tokenizer
     model_path = os.path.expanduser(model_path)
@@ -501,7 +501,7 @@ def load_fms_llama(model_path: str, group=None, **kwargs):
     return ibm_model
 
 
-def convert_hf_llama(hf_model: "LlamaForCausalLM") -> LLaMA:
+def convert_hf_llama(hf_model: "LlamaForCausalLM") -> LLaMA:  # type: ignore
     """
     Convert a Llama huggingface model to an fms model
 
@@ -564,7 +564,8 @@ def convert_hf_llama(hf_model: "LlamaForCausalLM") -> LLaMA:
 
     model.load_state_dict(new_sd, strict=False)
     model.shared.head.weight = hf_model.lm_head.weight
-    model.rot_emb.freqs = hf_model.model.layers[0].self_attn.rotary_emb.inv_freq
+
+    # model.rot_emb.freqs = hf_model.model.layers[0].self_attn.rotary_emb.inv_freq
     for layer in model.layers:
         q = layer.attn.query.weight.data
         q = (
