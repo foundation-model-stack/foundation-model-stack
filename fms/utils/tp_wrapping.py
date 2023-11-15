@@ -2,7 +2,7 @@ from torch import nn
 from torch.distributed.distributed_c10d import ProcessGroup
 
 from fms.modules.attention import MultiHeadAttention, TPMultiHeadAttention
-from fms.modules.embedding import TPWordEmbedding, WordEmbedding, TPEmbedding
+from fms.modules.embedding import TPWordEmbedding, WordEmbedding
 from fms.modules.feedforward import (
     FeedForwardBlock,
     GatedLinearUnit,

@@ -119,7 +119,7 @@ class RoBERTaHeadless(nn.Module):
             ]
         )
 
-        # TODO: figure out proper way to tp-wrap embedding
+        # RoBERTa embeddings don't support TP as in many cases, the vocab size is not divisible by the world size
         self.embedding = self.distributed_strategy.distribute_module(
             nn.Embedding(self.config.src_vocab_size, self.config.emb_dim),
             final_layers=True,
@@ -216,7 +216,7 @@ class RoBERTa(nn.Module):
 
         self.base_model = RoBERTaHeadless(self.config, self.distributed_strategy)
 
-        # TODO: figure out proper way to tp-wrap head
+        # The head does not get TP-Wrapped as in many cases the vocab_size will not be divisible by the world size
         self.classification_head = self.distributed_strategy.distribute_module(
             ClassificationHead(
                 self.config.emb_dim,
