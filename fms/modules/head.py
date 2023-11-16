@@ -6,8 +6,9 @@ import torch.nn as nn
 
 class ClassificationHead(nn.Module):
     """
-    A general purpose Classification Head. When applied on the output of a Headless model, will project from the
-    embedding space to a space equal to the number of classes provided.
+    A general purpose Classification Head. When applied on the output of a
+    Headless model, will project from the embedding space to a space equal to
+    the number of classes provided.
     """
 
     def __init__(
