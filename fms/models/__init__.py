@@ -308,3 +308,4 @@ def get_model(
 
 
 from fms.models import llama
+from fms.models import roberta
