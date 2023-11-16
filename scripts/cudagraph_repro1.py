@@ -15,7 +15,7 @@ model = get_model("llama",
                   device_type="cuda",
                   distributed_strategy="tp",
                   group=dist.group.WORLD
-                  ).half()
+                  ).half().eval()
 
 cmodel = torch.compile(model)
 cmodel_cg = torch.compile(model, mode="reduce-overhead")
