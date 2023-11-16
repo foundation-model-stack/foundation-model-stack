@@ -78,11 +78,15 @@ A detailed example is provided [here](./notebooks/hf_adapted_llama_inference.ipy
 To fine-tune LLaMA, use the `scripts/train_causal.py` training script. Here's
 an example of that command.
 ```
-srun --gres=gpu:2 --cpus-per-task=24 --mem=512G --unbuffered \
-     --gres-flags=enforce-binding torchrun --nproc_per_node=2 \
-     scripts/train_causal.py --architecture=llama --variant=7b \
-     --tokenizer=~/models/tokenizer.model --model_path=~/models/7B/ \
-     --report_steps=10 --checkpoint_format=meta --distributed=fsdp
+torchrun --nproc_per_node=2 \
+        scripts/train_causal.py \
+        --architecture=llama \
+        --variant=7b \
+        --tokenizer=~/models/tokenizer.model \
+        --model_path=~/models/7B/ \
+        --report_steps=10 \
+        --checkpoint_format=meta \
+        --distributed=fsdp
 ```
 See options in the script for other ways to train and tune.
 
