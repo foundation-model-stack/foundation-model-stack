@@ -5,8 +5,7 @@ import os
 import torch
 from torch import distributed as dist
 
-from fms.distributed.strategy import TensorParallelStrategy
-from fms.models.llama import load_fms_llama
+from fms.models import get_model
 from fms.utils import generation, tokenizers
 from fms.utils.generation import generate
 
@@ -20,6 +19,18 @@ from fms.utils.generation import generate
 
 parser = argparse.ArgumentParser(description="Script to run inference on a LLaMA model")
 parser.add_argument("--device_type", type=str, default="cuda")
+parser.add_argument(
+    "--architecture",
+    type=str,
+    default="llama",
+    help="The model architecture to benchmark",
+)
+parser.add_argument(
+    "--variant",
+    type=str,
+    default="7b",
+    help="The model variant (configuration) to benchmark. E.g. 7b, 13b, 70b.",
+)
 parser.add_argument(
     "--model_path",
     type=str,
@@ -77,7 +88,16 @@ if args.distributed:
     dist.init_process_group()
 
 print("loading model")
-model = load_fms_llama(args.model_path)
+distr_param = "tp" if args.distributed else None
+model = get_model(args.architecture,
+                  args.variant,
+                  model_path=args.model_path,
+                  device_type=args.device_type,
+                  source="meta",
+                  distributed_strategy=distr_param,
+                  checkpoint_sharding=distr_param,
+                  group=dist.group.WORLD
+                  )
 tokenizer = tokenizers.get_tokenizer(args.tokenizer)
 model.eval()
 torch.set_grad_enabled(False)
@@ -170,7 +190,7 @@ def infer(use_cache, do_sample):
     result = generate(
         model,
         ids,
-        max_new_tokens=100,
+        max_new_tokens=200,
         use_cache=use_cache,
         do_sample=do_sample,
         max_seq_len=max_seq_len,
