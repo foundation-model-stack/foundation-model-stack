@@ -137,7 +137,6 @@ torch.set_default_dtype(torch.half)
 
 if world_size > 1:
     dist.init_process_group()
-    torch._C._distributed_c10d._register_process_group("default", dist.group.WORLD)
 
 print("loading model")
 model = models.get_model(args.architecture, args.variant, device_type=args.device_type)

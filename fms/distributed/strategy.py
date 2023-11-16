@@ -4,6 +4,7 @@ from typing import Any, List, Mapping
 import torch
 import torch.distributed
 from torch import nn
+from torch.distributed._device_mesh import DeviceMesh
 
 from fms.utils import tp_wrapping
 
@@ -109,15 +110,15 @@ class UniformModelParallelStrategy(DistributedStrategy):
 
 
 class TensorParallelStrategy(DistributedStrategy):
-    def __init__(self, group=None, from_meta=False):
+    def __init__(self, mesh=None, from_meta=False):
         super().__init__(from_meta)
         assert torch.distributed.is_initialized(), "must initialize a process group"
-        self.group = group if group is not None else torch.distributed.GroupMember.WORLD
+        self.mesh = mesh if mesh is not None else DeviceMesh("cuda", list(range(torch.distributed.get_world_size())))
 
     def distribute_module(
         self, module: nn.Module, final_layers: bool = False
     ) -> nn.Module:
-        return tp_wrapping.apply_tp(module, self.group)
+        return tp_wrapping.pt_apply_tp(module, self.mesh)
 
     def distribute_layer(self, block: nn.Module, layer: int) -> nn.Module:
-        return tp_wrapping.apply_tp(block, self.group)
+        return tp_wrapping.pt_apply_tp(block, self.mesh)
