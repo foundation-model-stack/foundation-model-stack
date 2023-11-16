@@ -34,7 +34,6 @@ parser.add_argument(
 parser.add_argument(
     "--model_path",
     type=str,
-    required=True,
     help="Path to the directory containing LLaMa weights (.pth files sharded by tensor parallel rank, not HF weights)",
 )
 parser.add_argument(
@@ -86,6 +85,7 @@ if args.deterministic:
 
 if args.distributed:
     dist.init_process_group()
+    torch._C._distributed_c10d._register_process_group("default", dist.group.WORLD)
 
 print("loading model")
 distr_param = "tp" if args.distributed else None
@@ -106,7 +106,7 @@ print("loading complete on rank", local_rank)
 if args.compile:
     print("compiling model")
     # Bug with kv-cache in PT2.1
-    torch._inductor.config.joint_graph_constant_folding = False
+    # torch._inductor.config.joint_graph_constant_folding = False
     # compiling can make first inference pass slow
     model = torch.compile(model, mode=args.compile_mode)
 
@@ -194,6 +194,7 @@ def infer(use_cache, do_sample):
         use_cache=use_cache,
         do_sample=do_sample,
         max_seq_len=max_seq_len,
+        contiguous_cache=True
     )
     for i in range(result.shape[0]):
         print_result(result[i])
