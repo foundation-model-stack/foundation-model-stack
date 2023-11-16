@@ -3,11 +3,11 @@
 Foundation Model Stack is a collection of components for development, inference, training, and tuning of foundation models leveraging PyTorch native components. For inference optimizations we aim to support PyTorch compile, accelerated transformers, and tensor parallelism. At training time we aim to support FSDP, accelerated transformers, and PyTorch compile. To enable these optimizations, we will provide reimplementations of several popular model architectures starting with Llama and GPT-BigCode. 
 
 ## Models Supported
-| Model family | Inference | Tuning | Training |
-|--------------| ---------- | -------- | ----- |
-| LLaMA        | :heavy_check_mark: | :x: | :x: |
-| GPT-BigCode  | :heavy_check_mark: | :x: | :x: |
-| RoBERTa      | :heavy_check_mark: | :x: | :x: |
+| Model family | Inference | Tuning and Training |
+|--------------| ---------- | ------------------ |
+| LLaMA        | :heavy_check_mark: | :heavy_check_mark: |
+| GPT-BigCode  | :heavy_check_mark: | :x: |
+| RoBERTa      | :heavy_check_mark: | :x: |
 
 
 ## Installation
@@ -73,13 +73,22 @@ llama_generator("""q: how are you? a: I am good. How about you? q: What is the w
 
 A detailed example is provided [here](./notebooks/hf_adapted_llama_inference.ipynb).
 
-## Tuning (Coming Soon!!)
+## Tuning
 
-## Training (Coming Soon!!)
+To fine-tune LLaMA, use the `scripts/train_causal.py` training script. Here's
+an example of that command.
+```
+srun --gres=gpu:2 --cpus-per-task=24 --mem=512G --unbuffered \
+     --gres-flags=enforce-binding torchrun --nproc_per_node=2 \
+     scripts/train_causal.py --architecture=llama --variant=7b \
+     --tokenizer=~/models/tokenizer.model --model_path=~/models/7B/ \
+     --report_steps=10 --checkpoint_format=meta --distributed=fsdp
+```
+See options in the script for other ways to train and tune.
 
 ## Open Issues
 
-* https://github.com/pytorch/pytorch/issues/107824 prevents training/finetuning from working
+* https://github.com/pytorch/pytorch/issues/107824 prevents training/finetuning from working with `torch.compile`.
 * In addition, there are several open issues we are tracking to improve stability and memory footprint of inference
   
 ## References
