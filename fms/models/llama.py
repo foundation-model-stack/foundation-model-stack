@@ -26,6 +26,7 @@ from fms.utils import serialization
 from fms.utils.activation import str_to_activation
 from fms.utils.config import ModelConfig
 from fms.utils.tokenizers import _has_hf, get_tokenizer
+from utils.cache import PagedKVCache
 
 
 # params emb_dim heads layers lr
@@ -248,7 +249,7 @@ class LLaMA(nn.Module):
         x_in,
         mask=None,
         position_ids=None,
-        past_key_value_states=None,
+        kv_cache: Optional[PagedKVCache] = None,
         use_cache=False,
         attn_algorithm=None,
     ):
@@ -256,15 +257,26 @@ class LLaMA(nn.Module):
         # x_in: batch_size x seq_len
         # mask: batch_size x seq_len x seq_len
         # bias: nheads x seq_len x seq_len
-        if past_key_value_states is None or len(past_key_value_states) == 0:
-            past_key_value_states = [None for _ in range(len(self.layers))]
+        if use_cache and kv_cache is None:
+            kv_cache = PagedKVCache(
+                self.config.nlayers,
+                self.config.nheads,
+                self.config.emb_dim,
+                dtype=self.shared.emb.weight.dtype,
+            )
+        elif not use_cache:
+            kv_cache = [None for _ in range(len(self.layers))]
 
         qlen = x_in.size(1)
         klen = x_in.size(1)
 
         # if we are using the cache, the key length needs to be extended with the past keys length
-        if use_cache and past_key_value_states[0] is not None:
-            klen += past_key_value_states[0][0].size(-2)
+        if use_cache:
+            if kv_cache.get_max_sequence_length() == 0:
+                kv_cache.allocate_initial_prompt(x_in)
+            else:
+                klen += kv_cache.get_max_sequence_length()
+                kv_cache.allocate_generated_token(x_in)
 
         # if mask is none, we need to specify causal mask
         if mask is None:
@@ -279,24 +291,19 @@ class LLaMA(nn.Module):
 
         x_in = self.shared(x_in)
 
-        # this is the output cache for all the decoder layers
-        present_key_value_states = []
-
         for i, layer in enumerate(self.layers):
             output = layer(
                 x=x_in,
                 mask=mask,
                 position_ids=position_ids,
-                past_key_value_state=past_key_value_states[i],
+                kv_cache=kv_cache,
                 use_cache=use_cache,
                 is_causal_mask=is_causal_mask,
                 attn_algorithm=attn_algorithm,
             )
 
             if use_cache:
-                x_in, present_key_value_state = output
-                present_key_value_states.append(present_key_value_state)
-
+                x_in, kv_cache = output
             else:
                 x_in = output
 
@@ -305,20 +312,20 @@ class LLaMA(nn.Module):
         if self.config.p_dropout:
             dec_out = self.dropout(dec_out)
 
-        return dec_out, present_key_value_states
+        return dec_out, kv_cache
 
     def forward(
         self,
         x,
         mask=None,
         position_ids=None,
-        past_key_value_states=None,
+        kv_cache=None,
         use_cache=False,
         only_last_token=False,
         attn_algorithm=None,
     ):
         output, cache = self._helper(
-            x, mask, position_ids, past_key_value_states, use_cache, attn_algorithm
+            x, mask, position_ids, kv_cache, use_cache, attn_algorithm
         )
 
         if only_last_token:

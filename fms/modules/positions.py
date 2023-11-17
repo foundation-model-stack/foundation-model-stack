@@ -4,6 +4,8 @@ from typing import MutableMapping, Optional, Tuple
 import torch
 from torch import nn
 
+from utils.cache import PagedKVCache
+
 
 class PositionEncoder:
     """
@@ -215,7 +217,7 @@ class RotaryEmbedding(PositionEncoder):
         q: torch.Tensor,
         k: torch.Tensor,
         position_ids: Optional[torch.Tensor] = None,
-        past_kv_state: Optional[torch.Tensor] = None,
+        kv_cache: Optional[PagedKVCache] = None,
         use_cache=False,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
@@ -238,8 +240,8 @@ class RotaryEmbedding(PositionEncoder):
             position_ids = torch.arange(
                 0, q.size(2), dtype=torch.long, device=q.device
             ).repeat(q.size(0), 1)
-            if use_cache and past_kv_state is not None:
-                position_ids += past_kv_state[0].size(2)
+            if use_cache and not kv_cache.is_empty():
+                position_ids += kv_cache.get_max_sequence_length()
 
         seq_len = q.size(2)
         q_ = q.float().reshape(*q.size()[:-1], -1, 2)  # B H L D/2 2

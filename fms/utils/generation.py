@@ -51,30 +51,31 @@ def generate(
     result = input_ids
     next_input = input_ids
     kwargs: MutableMapping[str, Any] = dict()
-    kwargs["past_key_value_states"] = None
+    kwargs["kv_cache"] = None
     kwargs["use_cache"] = use_cache
 
     for _ in range(max_new_tokens):
         input_ids = next_input[:, -max_seq_len:]
         output = model(input_ids, **kwargs)
         if use_cache:
-            logits, past_key_value_states = output
-            if contiguous_cache:
-                # kv updates are required for torch.compile with
-                # mode='reduce-overhead'
-                n_kv_s: List[List[torch.Tensor]] = []
-                for layer_idx in range(len(past_key_value_states)):
-                    n_kv_s.append([])
-                    for tensor_idx in range(len(past_key_value_states[layer_idx])):
-                        n_kv_s[layer_idx].append(
-                            past_key_value_states[layer_idx][tensor_idx]
-                            .clone(memory_format=torch.contiguous_format)
-                            .detach()
-                        )
-                        # torch._dynamo.mark_dynamic(n_kv_s[layer_idx][tensor_idx], 2)
-                kwargs["past_key_value_states"] = n_kv_s
-            else:
-                kwargs["past_key_value_states"] = past_key_value_states
+            logits, kv_cache = output
+            # if contiguous_cache:
+            #     # kv updates are required for torch.compile with
+            #     # mode='reduce-overhead'
+            #     n_kv_s: List[List[torch.Tensor]] = []
+            #     for layer_idx in range(len(past_key_value_states)):
+            #         n_kv_s.append([])
+            #         for tensor_idx in range(len(past_key_value_states[layer_idx])):
+            #             n_kv_s[layer_idx].append(
+            #                 past_key_value_states[layer_idx][tensor_idx]
+            #                 .clone(memory_format=torch.contiguous_format)
+            #                 .detach()
+            #             )
+            #             # torch._dynamo.mark_dynamic(n_kv_s[layer_idx][tensor_idx], 2)
+            #     kwargs["past_key_value_states"] = n_kv_s
+            # else:
+            #     kwargs["past_key_value_states"] = past_key_value_states
+            kwargs["kv_cache"] = kv_cache
         else:
             logits = output
         logits = logits[:, -1, :]

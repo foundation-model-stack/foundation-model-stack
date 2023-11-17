@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Tuple, List
 
 import torch
 from torch import nn
@@ -13,6 +13,8 @@ from fms.distributed.tensorparallel import (
     reduce_from_tensor_model_parallel_region,
 )
 from fms.modules.positions import PositionEncoder
+from utils.cache import PagedKVCache
+from vllm import attention_ops, cache_ops
 
 
 class MultiHeadAttention(nn.Module):
@@ -105,10 +107,12 @@ class MultiHeadAttention(nn.Module):
         q,
         k,
         v,
+        # adding this just for poc, will be re-writing a lot of this
+        layer_index: int,
         mask=None,
         position_ids=None,
         attn_algorithm=None,
-        past_key_value_state=None,
+        kv_cache: Optional[PagedKVCache] = None,
         use_cache=False,
         is_self=True,
         is_causal_mask=False,
@@ -151,7 +155,7 @@ class MultiHeadAttention(nn.Module):
         # b x kvlen x d
         # b x kvlen x h x ds
         # b x h x kvlen x ds
-        if is_self or past_key_value_state is None:
+        if is_self or kv_cache is None or kv_cache.is_empty():
             keys = self.key(k).view(
                 batch_size, kv_len, self.kvheads, self.emb_kq_per_head
             )
@@ -165,67 +169,124 @@ class MultiHeadAttention(nn.Module):
             # You want to apply rotary embeddings pre-cache
             if self.position_encoder is not None:
                 queries, keys = self.position_encoder.adjusted_qk(
-                    queries, keys, position_ids, past_key_value_state, use_cache
+                    queries, keys, position_ids, kv_cache, use_cache
                 )
 
-        # if you want to use caching and past_key_value_state is not None meaning you have values in your cache
-        if use_cache and past_key_value_state is not None:
-            if is_self:
-                keys = torch.cat((past_key_value_state[0], keys), dim=2)
-                values = torch.cat((past_key_value_state[1], values), dim=2)
+        def _pad_to_max(x: List[int], max_len: int, pad: int) -> List[int]:
+            return x + [pad] * (max_len - len(x))
+
+        if kv_cache:
+            slot_mapping = []
+            for cbg in kv_cache.block_table_map.values():
+                start_pos = 0 if kv_cache.is_empty() else cbg.get_sequence_length() - 1
+                slot = cbg.get_slot_mapping(start_pos)
+                slot_mapping.append(
+                    _pad_to_max(slot, kv_cache.get_max_sequence_length(), -1)
+                )
+
+            slot_mapping_tensor = torch.tensor(
+                slot_mapping, dtype=torch.long, device="cuda"
+            )
+
+            key_to_cache = keys
+            value_to_cache = values
+            cache_ops.reshape_and_cache(
+                key_to_cache,
+                value_to_cache,
+                kv_cache.cache[layer_index][0],
+                kv_cache.cache[layer_index][1],
+                slot_mapping_tensor,
+            )
+
+        # we use the special paged_attention call if we have a cache
+        if kv_cache and not kv_cache.is_empty():
+            head_mapping = torch.repeat_interleave(
+                torch.arange(self.kvheads, dtype=torch.int32, device="cuda"),
+                self.nheads // self.kvheads,
+            )
+
+            # Pre-allocate the output tensor.
+            attn = torch.empty_like(q)
+            block_tables_tensor = torch.tensor(
+                [cbg[-1].block_number for cbg in kv_cache.block_table_map.values()],
+                dtype=torch.long,
+                device="cuda",
+            )
+            context_lens_tensor = torch.tensor(
+                [
+                    cbg.get_sequence_length()
+                    for cbg in kv_cache.block_table_map.values()
+                ],
+                dtype=torch.int,
+                device="cuda",
+            )
+            attention_ops.paged_attention_v1(
+                attn,
+                queries,
+                kv_cache.cache[layer_index][0],
+                kv_cache.cache[layer_index][1],
+                head_mapping,
+                (self.emb_dim // self.nheads) ** -0.5,
+                block_tables_tensor,
+                context_lens_tensor,
+                kv_cache.block_size,
+                kv_cache.get_max_sequence_length(),
+            )
+        else:
+
+            # Merge rel pos bias and mask into single float mask
+            if mask is not None:
+                # Our expected mask format is bs x q_len x k_len, so to make it broadcastable
+                # we need to create the nheads dimension
+                while len(mask.size()) != 4:  # expects bs (x nheads) x q_len x kv_len
+                    mask = mask.unsqueeze(1)
+
+            if self.position_encoder is not None:
+                attn_mask = self.position_encoder.adjusted_mask(
+                    mask, queries, keys, kv_cache, use_cache
+                )
             else:
-                keys = past_key_value_state[0]
-                values = past_key_value_state[1]
+                attn_mask = mask
 
-        # Merge rel pos bias and mask into single float mask
-        if mask is not None:
-            # Our expected mask format is bs x q_len x k_len, so to make it broadcastable
-            # we need to create the nheads dimension
-            while len(mask.size()) != 4:  # expects bs (x nheads) x q_len x kv_len
-                mask = mask.unsqueeze(1)
+            # Expand kv so black-box attn will work
+            expansion = self.nheads // self.kvheads
+            # k/v: b h l d
+            if expansion != 1:
+                keys_e = (
+                    keys.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
+                )
+                values_e = (
+                    values.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
+                )
+            else:
+                keys_e = keys
+                values_e = values
 
-        if self.position_encoder is not None:
-            attn_mask = self.position_encoder.adjusted_mask(
-                mask, queries, keys, past_key_value_state, use_cache
+            if attn_algorithm:
+                # Pick which fused attn kernels will run.
+                use_flash = attn_algorithm == "flash"
+                use_mem_efficient = attn_algorithm == "mem"
+                use_math = attn_algorithm == "math"
+
+                torch.backends.cuda.enable_flash_sdp(use_flash)
+                torch.backends.cuda.enable_mem_efficient_sdp(use_mem_efficient)
+                torch.backends.cuda.enable_math_sdp(use_math)
+
+            attn = F.scaled_dot_product_attention(
+                queries,
+                keys_e,
+                values_e,
+                attn_mask=attn_mask,
+                dropout_p=self.p_dropout if self.training else 0.0,
+                is_causal=is_causal_mask,
             )
-        else:
-            attn_mask = mask
 
-        # Expand kv so black-box attn will work
-        expansion = self.nheads // self.kvheads
-        # k/v: b h l d
-        if expansion != 1:
-            keys_e = keys.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
-            values_e = (
-                values.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
-            )
-        else:
-            keys_e = keys
-            values_e = values
-
-        if attn_algorithm:
-            # Pick which fused attn kernels will run.
-            use_flash = attn_algorithm == "flash"
-            use_mem_efficient = attn_algorithm == "mem"
-            use_math = attn_algorithm == "math"
-
-            torch.backends.cuda.enable_flash_sdp(use_flash)
-            torch.backends.cuda.enable_mem_efficient_sdp(use_mem_efficient)
-            torch.backends.cuda.enable_math_sdp(use_math)
-
-        attn = F.scaled_dot_product_attention(
-            queries,
-            keys_e,
-            values_e,
-            attn_mask=attn_mask,
-            dropout_p=self.p_dropout if self.training else 0.0,
-            is_causal=is_causal_mask,
-        )
-
-        if attn_algorithm:
-            torch.backends.cuda.enable_flash_sdp(self.previous_flash)
-            torch.backends.cuda.enable_mem_efficient_sdp(self.previous_mem_efficient)
-            torch.backends.cuda.enable_math_sdp(self.previous_math)
+            if attn_algorithm:
+                torch.backends.cuda.enable_flash_sdp(self.previous_flash)
+                torch.backends.cuda.enable_mem_efficient_sdp(
+                    self.previous_mem_efficient
+                )
+                torch.backends.cuda.enable_math_sdp(self.previous_math)
 
         # attn: bs x seq_len x nheads*emb_v_per_head
         # attn: b x h x qlen x ds
