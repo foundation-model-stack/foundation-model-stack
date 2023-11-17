@@ -79,7 +79,7 @@ class CacheBlockGroup(List[CacheBlock]):
         slot_mapping = []
         start = position if position else 0
         for position_i in range(start, self.get_sequence_length()):
-            block_number = self.get_cache_block(position)
+            block_number = self.get_cache_block(position).block_number
             block_offset = position % self.block_size
             slot = block_number * self.block_size + block_offset
             slot_mapping.append(slot)
@@ -167,7 +167,7 @@ class PagedKVCache:
         self.cache_empty = False
 
     def _allocate_prompt_sequence(self, seq_id: int, tokens: List[int]):
-        cache_block_group: CacheBlockGroup = CacheBlockGroup()
+        cache_block_group: CacheBlockGroup = CacheBlockGroup(self.block_size)
 
         # one block allocation will happen automatically as the group always starts empty
         last_cache_block = self._allocate_block()

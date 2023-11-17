@@ -13,7 +13,7 @@ from fms.distributed.tensorparallel import (
     reduce_from_tensor_model_parallel_region,
 )
 from fms.modules.positions import PositionEncoder
-from utils.cache import PagedKVCache
+from fms.utils.cache import PagedKVCache
 from vllm import attention_ops, cache_ops
 
 
@@ -208,8 +208,8 @@ class MultiHeadAttention(nn.Module):
             # Pre-allocate the output tensor.
             attn = torch.empty_like(q)
             block_tables_tensor = torch.tensor(
-                [cbg[-1].block_number for cbg in kv_cache.block_table_map.values()],
-                dtype=torch.long,
+                [[cbg[-1].block_number] for cbg in kv_cache.block_table_map.values()],
+                dtype=torch.int,
                 device="cuda",
             )
             context_lens_tensor = torch.tensor(
@@ -222,7 +222,7 @@ class MultiHeadAttention(nn.Module):
             )
             attention_ops.paged_attention_v1(
                 attn,
-                queries,
+                queries.transpose(2, 1),
                 kv_cache.cache[layer_index][0],
                 kv_cache.cache[layer_index][1],
                 head_mapping,
@@ -231,6 +231,7 @@ class MultiHeadAttention(nn.Module):
                 context_lens_tensor,
                 kv_cache.block_size,
                 kv_cache.get_max_sequence_length(),
+                None,
             )
         else:
 
@@ -301,7 +302,7 @@ class MultiHeadAttention(nn.Module):
 
         # if use_cache=True, we return the hidden_state as well as the kv cache
         if use_cache:
-            return out, (keys, values)
+            return out, kv_cache
         else:
             return out
 

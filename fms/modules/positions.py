@@ -4,7 +4,7 @@ from typing import MutableMapping, Optional, Tuple
 import torch
 from torch import nn
 
-from utils.cache import PagedKVCache
+from fms.utils.cache import PagedKVCache
 
 
 class PositionEncoder:
