@@ -13,8 +13,6 @@ from fms.distributed.tensorparallel import (
 )
 from fms.modules.positions import PositionEncoder
 
-# from flash_attn import flash_attn_func
-
 
 class MultiHeadAttention(nn.Module):
     """
@@ -204,6 +202,7 @@ class MultiHeadAttention(nn.Module):
             keys_e = keys
             values_e = values
 
+        # >>> if use SDPA
         if attn_algorithm:
             # Pick which fused attn kernels will run.
             use_flash = attn_algorithm == "flash"
@@ -223,21 +222,6 @@ class MultiHeadAttention(nn.Module):
             is_causal=is_causal_mask,
         )
 
-        # queries = queries.transpose(1, 2)
-        # keys_e = keys_e.transpose(1, 2)
-        # values_e = values_e.transpose(1, 2)
-        #
-        # attn = flash_attn_func(
-        #     queries,
-        #     keys_e,
-        #     values_e,
-        #     dropout_p=self.p_dropout if self.training else 0.0,
-        #     causal=is_causal_mask,
-        #     window_size=(4096, 4096),
-        # )
-
-        # attn = attn.reshape(batch_size, q_len, self.nheads * self.emb_v_per_head).contiguous()
-
         if attn_algorithm:
             torch.backends.cuda.enable_flash_sdp(self.previous_flash)
             torch.backends.cuda.enable_mem_efficient_sdp(self.previous_mem_efficient)
@@ -252,6 +236,26 @@ class MultiHeadAttention(nn.Module):
             .contiguous()
             .view(batch_size, q_len, self.nheads * self.emb_v_per_head)
         )
+        # <<< if use SDPA
+
+        # # >>> if use flash attn
+        # from flash_attn import flash_attn_func
+        # queries = queries.transpose(1, 2)
+        # keys_e = keys_e.transpose(1, 2)
+        # values_e = values_e.transpose(1, 2)
+        #
+        # attn = flash_attn_func(
+        #     queries,
+        #     keys_e,
+        #     values_e,
+        #     dropout_p=self.p_dropout if self.training else 0.0,
+        #     causal=is_causal_mask,
+        #     window_size=(4096, 4096),
+        # )
+        #
+        # attn = attn.reshape(batch_size, q_len, self.nheads * self.emb_v_per_head).contiguous()
+        # # <<< if use flash attn
+
         out = self.dense(attn)
 
         # if use_cache=True, we return the hidden_state as well as the kv cache
