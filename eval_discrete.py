@@ -125,11 +125,14 @@ def speculative_generate(
     embeds = embeds[:,-1:]
     kwargs["past_key_value_states"] = past_key_value_states
     next_input = next_input[:,-1:]
+    del output
+    torch.cuda.empty_cache()
     
     n_gen = 0
     n_steps = 0
     n_kv_s = past_key_value_states
     while n_gen < max_new_tokens:
+        print("n_gen:", n_gen)
         n_steps += 1
         input_ids = next_input[:, -max_seq_len:]
         
@@ -156,6 +159,7 @@ def speculative_generate(
         
 #         input_ids = input_ids[0].unsqueeze(0).expand(25,-1)
         
+        torch.cuda.empty_cache()
         output = model.forward(input_ids, include_embeds=True, mask=mask, **kwargs)
         
         logits, past_key_value_states, embeds = output
