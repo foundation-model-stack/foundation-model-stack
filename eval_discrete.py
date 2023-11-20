@@ -133,7 +133,7 @@ def speculative_generate(
     n_kv_s = past_key_value_states
     while n_gen < max_new_tokens:
         print("n_gen:", n_gen)
-        print(len(result))
+        print(result.shape)
         
         n_steps += 1
         input_ids = next_input[:, -max_seq_len:]
