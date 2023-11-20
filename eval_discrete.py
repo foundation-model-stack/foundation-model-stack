@@ -114,6 +114,10 @@ def speculative_generate(
     if not batched:
         input_ids = input_ids.unsqueeze(0)
 
+    
+    cudastats = torch.cuda.memory_summary(device=torch.cuda.current_device(), abbreviated=True)
+    print(cudastats)
+
     result = input_ids
     next_input = input_ids
     kwargs = dict()
