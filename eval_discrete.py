@@ -150,7 +150,7 @@ def speculative_generate(
 #         for i in range(top_k):
 #             print(decode_obo(input_ids[i]))
         
-        mask = torch.ones(input_ids.size(1),input_ids.size(1)+n_kv_s[0][0].size(2))
+        mask = torch.ones(input_ids.size(1),input_ids.size(1)+n_kv_s[0][0].size(2), device=input_ids.device)
         mask = mask.tril(diagonal=mask.size(1)-mask.size(0))
         mask = mask.unsqueeze(0).unsqueeze(0).log()
         
