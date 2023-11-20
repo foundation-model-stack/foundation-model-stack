@@ -4,6 +4,22 @@ import torch
 import torch.nn.functional as F
 
 
+def _make_cache_contiguous(past_key_value_states):
+    # kv updates are required for torch.compile with
+    # mode='reduce-overhead'
+    n_kv_s: List[List[torch.Tensor]] = []
+    for layer_idx in range(len(past_key_value_states)):
+        n_kv_s.append([])
+        for tensor_idx in range(len(past_key_value_states[layer_idx])):
+            n_kv_s[layer_idx].append(
+                past_key_value_states[layer_idx][tensor_idx]
+                .clone(memory_format=torch.contiguous_format)
+                .detach()
+            )
+            # torch._dynamo.mark_dynamic(n_kv_s[layer_idx][tensor_idx], 2)
+    return n_kv_s
+
+
 def generate(
     model: Union[Callable, torch.nn.Module],
     input_ids: torch.Tensor,
@@ -59,20 +75,10 @@ def generate(
         output = model(input_ids, **kwargs)
         if use_cache:
             logits, past_key_value_states = output
+            # TODO: this should go away when reduce-overhead issues are fixed, or
+            # maybe could be moved into model code to be more portable.
             if contiguous_cache:
-                # kv updates are required for torch.compile with
-                # mode='reduce-overhead'
-                n_kv_s: List[List[torch.Tensor]] = []
-                for layer_idx in range(len(past_key_value_states)):
-                    n_kv_s.append([])
-                    for tensor_idx in range(len(past_key_value_states[layer_idx])):
-                        n_kv_s[layer_idx].append(
-                            past_key_value_states[layer_idx][tensor_idx]
-                            .clone(memory_format=torch.contiguous_format)
-                            .detach()
-                        )
-                        # torch._dynamo.mark_dynamic(n_kv_s[layer_idx][tensor_idx], 2)
-                kwargs["past_key_value_states"] = n_kv_s
+                kwargs["past_key_value_states"] = _make_cache_contiguous(past_key_value_states)
             else:
                 kwargs["past_key_value_states"] = past_key_value_states
         else:
