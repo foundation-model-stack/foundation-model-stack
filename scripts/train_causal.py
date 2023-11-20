@@ -67,7 +67,7 @@ parser.add_argument(
     "--distributed",
     type=str,
     default=None,
-    help="The strategy used for distributed the model. E.g. fsdp, ddp, tp, mp. Default None",
+    help="The strategy used for distributing the model. E.g. fsdp, ddp, tp, mp. Default None",
 )
 parser.add_argument(
     "--peft_method",
