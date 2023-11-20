@@ -8,6 +8,8 @@ from typing import Callable, Union
 
 from fms.models.llama import LLaMAConfig, LLaMA
 
+print("Job start!")
+
 modelc = LLaMAConfig(32000, 4096, 1e-6, 32, 0, 32)
 model = LLaMA(modelc)
 model.eval()
@@ -24,6 +26,8 @@ for key in keylist:
 
 model.load_state_dict(d, strict=False)
 model.cuda()
+
+print("Model loaded!")
 
 data = torch.load("/lustre/dwertheimer/sap-v2-test_2_encode.pth")
 
@@ -219,6 +223,8 @@ def speculative_generate(
 test = Speculator(n_heads=3)
 test.load_state_dict(torch.load("/lustre/dwertheimer/results/llama-speculator/gen3/discrete-n2-gen_PAhsdp_ws8_mbs32_sl64_pr0_vFMS3ee331f1_jid2533_sysAwsEfa0/checkpoints/step_40000_ckp.pth", map_location="cpu")["model_state"])
 test.cuda()
+
+print("Speculator ready!")
 
 steps = {}
 outs = []
