@@ -169,12 +169,18 @@ class MultiHeadAttention(nn.Module):
 
         # if you want to use caching and past_key_value_state is not None meaning you have values in your cache
         if use_cache and past_key_value_state is not None:
+            # Expand batch dimension of kv-cache to match input (for recycled prompts in speculative decoding)
+            past_keys = past_key_value_state[0]
+            past_vals = past_key_value_state[1]
+            if past_keys.size(0) != batch_size:
+                past_keys = past_keys.expand(batch_size, -1, -1, -1)
+                past_vals = past_vals.expand(batch_size, -1, -1, -1)
             if is_self:
-                keys = torch.cat((past_key_value_state[0], keys), dim=2)
-                values = torch.cat((past_key_value_state[1], values), dim=2)
+                keys = torch.cat((past_keys, keys), dim=2)
+                values = torch.cat((past_vals, values), dim=2)
             else:
-                keys = past_key_value_state[0]
-                values = past_key_value_state[1]
+                keys = past_keys
+                values = past_vals
 
         # Merge rel pos bias and mask into single float mask
         if mask is not None:
