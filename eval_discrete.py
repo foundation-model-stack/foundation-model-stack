@@ -205,7 +205,7 @@ def speculative_generate(
                 if n_wrong > 0:
                     base = base[:,:,:-n_wrong]
                 n_kv_s[layer_idx].append(
-                    base.clone(memory_format=torch.contiguous_format).detach()
+                    base.clone(memory_format=torch.contiguous_format).detach().cuda()
                 )
                 # torch._dynamo.mark_dynamic(n_kv_s[layer_idx][tensor_idx], 2)
         kwargs["past_key_value_states"] = n_kv_s
