@@ -172,6 +172,7 @@ class MultiHeadAttention(nn.Module):
             # Expand batch dimension of kv-cache to match input (for recycled prompts in speculative decoding)
             past_keys = past_key_value_state[0]
             past_vals = past_key_value_state[1]
+            print(past_key_value_state[0].shape)
             if past_keys.size(0) != batch_size:
                 past_keys = past_keys.expand(batch_size, -1, -1, -1)
                 past_vals = past_vals.expand(batch_size, -1, -1, -1)
