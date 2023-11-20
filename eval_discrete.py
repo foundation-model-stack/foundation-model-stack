@@ -100,6 +100,7 @@ def speculative_generate(
     top_k: int = 25,
     num_beams: int = 1,
 ):
+    torch.cuda.memory._record_memory_history()
     threshes = [7,5,3]
     do_sample = False
     batched = False
@@ -130,6 +131,7 @@ def speculative_generate(
     kwargs["past_key_value_states"] = past_key_value_states
     next_input = next_input[:,-1:]
     del output
+    torch.cuda.memory._dump_snapshot("/lustre/dwertheimer/memory_dump.pth")
     torch.cuda.empty_cache()
     cudastats = torch.cuda.memory_summary(device=torch.cuda.current_device(), abbreviated=True)
     print("post_first_forward", cudastats)
@@ -157,8 +159,6 @@ def speculative_generate(
         adds = topk.gather(2, topk_i).transpose(1,2) # b k h
         adds = adds[0] # For now, non-batching and take only first b entry
         input_ids = torch.cat([input_ids.expand(top_k,1), adds], dim=-1) 
-        cudastats = torch.cuda.memory_summary(device=torch.cuda.current_device(), abbreviated=True)
-        print("post-specu",cudastats)
 #         print("Speculations:")
 #         for i in range(top_k):
 #             print(decode_obo(input_ids[i]))
@@ -166,14 +166,8 @@ def speculative_generate(
         mask = torch.ones(input_ids.size(1),input_ids.size(1)+n_kv_s[0][0].size(2), device=input_ids.device)
         mask = mask.tril(diagonal=mask.size(1)-mask.size(0))
         mask = mask.unsqueeze(0).unsqueeze(0).log()
-        cudastats = torch.cuda.memory_summary(device=torch.cuda.current_device(), abbreviated=True)
-        print("post-mask", cudastats)
         
 #         input_ids = input_ids[0].unsqueeze(0).expand(25,-1)
-        
-        torch.cuda.empty_cache()
-        cudastats = torch.cuda.memory_summary(device=torch.cuda.current_device(), abbreviated=True)
-        print(cudastats)
         
         output = model.forward(input_ids, include_embeds=True, mask=mask, **kwargs)
         
