@@ -204,7 +204,7 @@ class MultiHeadAttention(nn.Module):
                 causal = causal.tril(diagonal=causal.size(-1)-causal.size(-2))
                 attn_mask = causal.log()
             else:
-                causal = torch.ones_like(attn_mask).tril(diagonal=attn_mask.size(-1)-attn_mask.size(-2))
+                causal = torch.ones_like(attn_mask, device=queries.device).tril(diagonal=attn_mask.size(-1)-attn_mask.size(-2))
                 attn_mask = attn_mask.add(causal.log())
 
         # Expand kv so black-box attn will work
