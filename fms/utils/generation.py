@@ -78,7 +78,9 @@ def generate(
             # TODO: this should go away when reduce-overhead issues are fixed, or
             # maybe could be moved into model code to be more portable.
             if contiguous_cache:
-                kwargs["past_key_value_states"] = _make_cache_contiguous(past_key_value_states)
+                kwargs["past_key_value_states"] = _make_cache_contiguous(
+                    past_key_value_states
+                )
             else:
                 kwargs["past_key_value_states"] = past_key_value_states
         else:
