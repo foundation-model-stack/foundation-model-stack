@@ -226,6 +226,7 @@ test.cuda()
 
 print("Speculator ready!")
 
+torch.cuda.empty_cache()
 steps = {}
 outs = []
 for k in [5, 10, 25]:
