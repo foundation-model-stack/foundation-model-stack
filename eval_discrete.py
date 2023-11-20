@@ -100,7 +100,6 @@ def speculative_generate(
     top_k: int = 25,
     num_beams: int = 1,
 ):
-    torch.cuda.memory._record_memory_history()
     threshes = [7,5,3]
     do_sample = False
     batched = False
@@ -131,7 +130,6 @@ def speculative_generate(
     kwargs["past_key_value_states"] = past_key_value_states
     next_input = next_input[:,-1:]
     del output
-    torch.cuda.memory._dump_snapshot("/lustre/dwertheimer/memory_dump.pth")
     torch.cuda.empty_cache()
     cudastats = torch.cuda.memory_summary(device=torch.cuda.current_device(), abbreviated=True)
     print("post_first_forward", cudastats)
