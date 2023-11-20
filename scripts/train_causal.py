@@ -25,37 +25,8 @@ from fms.training import trainer, plugins as trainplugins
 
 
 parser = argparse.ArgumentParser(description="Script to train or tune a model")
-parser.add_argument("--epochs", type=int, default=1)
-parser.add_argument(
-    "--report_steps",
-    type=int,
-    default=500,
-    help="Run the reporting function every report_steps steps",
-)
-parser.add_argument(
-    "--checkpoint_steps",
-    type=int,
-    default=None,
-    help="If > 0, Checkpoint every checkpoint_steps steps within a single epoch.",
-)
-parser.add_argument(
-    "--device_type",
-    type=str,
-    default=None,
-    help="Device type. If not specified check for availability of cuda, mps, then cpu",
-)
-parser.add_argument(
-    "--distributed",
-    type=str,
-    default=None,
-    help="The strategy used for distributed the model. E.g. fsdp, ddp, tp, mp. Default None",
-)
-parser.add_argument(
-    "--output_path",
-    type=str,
-    default="./checkpoints",
-    help="Output directory to save trained model checkpoints",
-)
+
+# parameters for model and tokenizer initialization and loading
 parser.add_argument(
     "--architecture",
     type=str,
@@ -74,7 +45,6 @@ parser.add_argument(
     default=None,
     help="E.g. meta, hf, or None. Resuming from a checkpoint will be `None` but fine tuning may initially load from another source",
 )
-
 parser.add_argument(
     "--model_path",
     type=str,
@@ -87,7 +57,18 @@ parser.add_argument(
     default="char_tokenizer",
     help="Name of or path to the tokenizer (e.g. ~/tokenizer.model)",
 )
-
+parser.add_argument(
+    "--device_type",
+    type=str,
+    default=None,
+    help="Device type. If not specified check for availability of cuda, mps, then cpu",
+)
+parser.add_argument(
+    "--distributed",
+    type=str,
+    default=None,
+    help="The strategy used for distributing the model. E.g. fsdp, ddp, tp, mp. Default None",
+)
 parser.add_argument(
     "--peft_method",
     type=str,
@@ -95,17 +76,49 @@ parser.add_argument(
     help="Peft method (lora, ...). Default None if not using peft",
 )
 
+# Dataset arguments
 parser.add_argument(
     "--dataset_style",
     type=str,
     default="instruction",
-    help="'instruction' uses alpaca-formatted json. 'text' points to a raw text file.",
+    help="'instruction' uses alpaca-formatted json. 'text' points to a raw text file. See `--dataset_path` to specify a file or URL",
 )
 parser.add_argument(
     "--dataset_path",
     type=str,
     default="https://raw.githubusercontent.com/tatsu-lab/stanford_alpaca/main/alpaca_data.json",
     help="The path or URI refering to data to use in tuning or training",
+)
+
+# Metrics/reporting/output
+parser.add_argument(
+    "--report_steps",
+    type=int,
+    default=500,
+    help="Run the reporting function every report_steps steps",
+)
+parser.add_argument(
+    "--checkpoint_steps",
+    type=int,
+    default=None,
+    help="If > 0, Checkpoint every checkpoint_steps steps within a single epoch.",
+)
+parser.add_argument(
+    "--output_path",
+    type=str,
+    default="./checkpoints",
+    help="Output directory to save trained model checkpoints",
+)
+
+# Training/tuning parameters
+parser.add_argument(
+    "--epochs", type=int, default=2, help="Number of epochs to train/tune"
+)
+parser.add_argument(
+    "--grad_accum_steps",
+    type=int,
+    default=1,
+    help="Number of steps to accumulate gradients before applying",
 )
 
 
@@ -305,7 +318,7 @@ def main():
             start_epoch=epoch,
             epochs=args.epochs,
             trainer_plugins=plugins,
-            grad_accum_iters=10,
+            grad_accum_iters=args.grad_accum_steps,
         )
 
 
