@@ -35,7 +35,7 @@ print("Model loaded!")
 data = []
 datapath = "/lustre/bluepile-processing/rel0_5/tokens_llama2/lang=en/dataset=commoncrawl/part-00000-0ad865cb-a6d4-4037-bc29-79b5c6097d0b-c000-attempt_202306281109048020644254530093061_0204_m_000000_158265.arrow"
 with pa.ipc.open_file(pa.memory_map(datapath)) as reader:
-    for i in range(100):
+    for i in range(200):
         test = reader.get_batch(i)['tokens']
         line = test.tolist()
         # Take first half
@@ -256,7 +256,7 @@ print("Speculator ready!")
 torch.cuda.empty_cache()
 steps = {}
 outs = []
-for k in [2, 5]:
+for k in [1, 2, 5, 10, 25]:
     steps[k] = []
     for j,seq in enumerate(data):
         inp = torch.IntTensor(seq).cuda()
@@ -266,7 +266,7 @@ for k in [2, 5]:
             outs.append(out.squeeze().tolist())
         steps[k].append(nsteps)
         print(f"Ex {j}, topk={k}: 100 tokens in {nsteps} steps.")
-        print("    ", out.squeeze().tolist()[-100:])
+        # print("    ", out.squeeze().tolist()[-100:])
 
 torch.save(steps, "/lustre/dwertheimer/results/llama-speculator/gen3/discrete-n2-gen_PAhsdp_ws8_mbs32_sl64_pr0_vFMS3ee331f1_jid2533_sysAwsEfa0/steps_for_100_at_k.pth")
 torch.save(outs, "/lustre/dwertheimer/results/sandbox/llama_7b_sap_outputs.pth")
