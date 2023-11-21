@@ -26,7 +26,7 @@ def get_latest(targdir, qualifier=lambda x: True):
     if os.path.exists(targdir) and len(os.listdir(targdir)) > 0:
         latest = max(
             [os.path.join(targdir, x) for x in os.listdir(targdir) if qualifier(os.path.join(targdir, x))],
-            key=lambda path: int(path.split("/")[-1].split(_)[1]),
+            key=lambda path: int(path.split("/")[-1].split("_")[1]),
         )
         return os.path.join(targdir, latest)
     return None
