@@ -3,7 +3,7 @@ import triton.language as tl
 import torch 
 
 @triton.jit()
-def _small_quantized_matmul(a_ptr, b_ptr, c_ptr, scales_ptr, zeros_ptr,
+def _a100_quantized_matmul(a_ptr, b_ptr, c_ptr, scales_ptr, zeros_ptr,
                              stride_am, stride_ak,
                              stride_bk, stride_bn,
                              stride_cm, stride_cn,
@@ -74,7 +74,7 @@ def _small_quantized_matmul(a_ptr, b_ptr, c_ptr, scales_ptr, zeros_ptr,
     c_ptrs = c_ptr + (offs_cm[:, None] * stride_cm + offs_cn[None, :] * stride_cn)
     tl.store(c_ptrs, output)
 
-class small_qlinear(torch.autograd.Function):
+class a100_qlinear(torch.autograd.Function):
     def forward(ctx, a, b, scales, zeros):
 
         m, k = a.shape
@@ -93,7 +93,7 @@ class small_qlinear(torch.autograd.Function):
         grid = (total_programs, 1)
 
         c = torch.zeros((m, n), device=b.device, dtype=torch.float16)
-        k = _small_quantized_matmul[grid](
+        k = _a100_quantized_matmul[grid](
             a, b, c, scales, zeros,
             a.stride(0), a.stride(1),
             b.stride(0), b.stride(1),
@@ -120,4 +120,4 @@ class small_qlinear(torch.autograd.Function):
         return c
         
 
-small_qlinear = small_qlinear.apply
+a100_qlinear = a100_qlinear.apply
