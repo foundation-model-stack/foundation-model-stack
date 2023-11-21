@@ -760,11 +760,7 @@ class Streaming_Doc_Dataset(_Stateful_Dataset):
 
     def load_state_dict(self, state_dicts, sharded_input=False):
         assert self.load_worldsize == self.worldsize, "Streaming_Doc_Dataset does not support rescaling"
-        out = super().load_state_dict(state_dicts, sharded_input)
-
-        print(f"Worker {self.rank}, path {self.data}, dataset(s) {self.datasets} detected {len(self.docset)} documents. Resuming from index {self.docset_index}. {self.dataset_tokens_seen[list(self.dataset_tokens_seen.keys())[0]]} tokens seen.")
-
-        return out
+        return super().load_state_dict(state_dicts, sharded_input)
 
 
 class Sampling_Dataset(_Stateful_Dataset):
@@ -1104,9 +1100,6 @@ class Scalable_Shard_Dataset(_Stateful_Dataset):
         return super().state_dict()
 
     def load_state_dict(self, state_dicts, sharded_input=False):
-
-        print(f"Meta-worker {self.rank} owns logical shards {self.logicals_owned}")
-
         sharded_dicts = super().load_state_dict(state_dicts, sharded_input)
         for i in range(self.n_logicals):
             self.data[i].load_state_dict([self.logical_shard_states[i]], True)
