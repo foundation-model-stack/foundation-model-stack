@@ -1103,6 +1103,9 @@ class Scalable_Shard_Dataset(_Stateful_Dataset):
         return super().state_dict()
 
     def load_state_dict(self, state_dicts, sharded_input=False):
+
+        print(f"Meta-worker {self.rank} owns logical shards {self.logicals_owned}")
+
         sharded_dicts = super().load_state_dict(state_dicts, sharded_input)
         for i in range(self.n_logicals):
             self.data[i].load_state_dict([self.logical_shard_states[i]], True)
