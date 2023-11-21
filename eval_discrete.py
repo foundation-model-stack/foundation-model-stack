@@ -115,8 +115,8 @@ def speculative_generate(
         input_ids = input_ids.unsqueeze(0)
 
     
-    cudastats = torch.cuda.memory_summary(device=torch.cuda.current_device(), abbreviated=True)
-    print(cudastats)
+    # cudastats = torch.cuda.memory_summary(device=torch.cuda.current_device(), abbreviated=True)
+    # print(cudastats)
 
     result = input_ids
     next_input = input_ids
@@ -131,14 +131,14 @@ def speculative_generate(
     next_input = next_input[:,-1:]
     del output
     torch.cuda.empty_cache()
-    cudastats = torch.cuda.memory_summary(device=torch.cuda.current_device(), abbreviated=True)
-    print("post_first_forward", cudastats)
+    # cudastats = torch.cuda.memory_summary(device=torch.cuda.current_device(), abbreviated=True)
+    # print("post_first_forward", cudastats)
     
     n_gen = 0
     n_steps = 0
     n_kv_s = past_key_value_states
     while n_gen < max_new_tokens:
-        print("n_gen:", n_gen)
+        # print("n_gen:", n_gen)
         print(result.shape)
         
         n_steps += 1
@@ -188,7 +188,7 @@ def speculative_generate(
         # Check correctness of smallmodel predictions
         test = input_ids.roll(-1, 1).eq(next_vals).cumprod(1)
         
-        n_correct = test.sum(1)
+        n_correct = test.sum(1).clamp(0,n_adds)
         best_guess = n_correct.argmax()
         
 #         for i in range(top_k):
@@ -202,7 +202,7 @@ def speculative_generate(
         
         # Toss any wrong smallmodel outputs
         next_vals = next_vals[:,:n_correct+1]
-        n_gen += n_correct+1
+        n_gen += n_correct.item()+1
         embeds = embeds[:,n_correct].unsqueeze(1)
             
         n_wrong = n_adds - n_correct
