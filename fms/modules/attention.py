@@ -168,11 +168,15 @@ class MultiHeadAttention(nn.Module):
                 )
 
         # if you want to use caching and past_key_value_state is not None meaning you have values in your cache
+        fat_cache = False
         if use_cache and past_key_value_state is not None:
             # Expand batch dimension of kv-cache to match input (for recycled prompts in speculative decoding)
             past_keys = past_key_value_state[0]
             past_vals = past_key_value_state[1]
             if past_keys.size(0) != batch_size:
+                fat_cache = True
+                new_keys = keys
+                new_values = values
                 past_keys = past_keys.expand(batch_size, -1, -1, -1)
                 past_vals = past_vals.expand(batch_size, -1, -1, -1)
             if is_self:
@@ -181,7 +185,6 @@ class MultiHeadAttention(nn.Module):
             else:
                 keys = past_keys
                 values = past_vals
-            print(keys.shape)
 
         # Merge rel pos bias and mask into single float mask
         if mask is not None:
@@ -257,7 +260,7 @@ class MultiHeadAttention(nn.Module):
 
         # if use_cache=True, we return the hidden_state as well as the kv cache
         if use_cache:
-            return out, (keys, values)
+            return out, (keys, values) if not fat_cache else (past_key_value_state[0], past_key_value_state[1], new_keys, new_values)
         else:
             return out
 

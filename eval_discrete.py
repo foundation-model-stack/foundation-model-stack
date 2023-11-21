@@ -211,10 +211,12 @@ def speculative_generate(
         n_kv_s = []
         for layer_idx in range(len(past_key_value_states)):
             n_kv_s.append([])
-            for tensor_idx in range(len(past_key_value_states[layer_idx])):
-                base = past_key_value_states[layer_idx][tensor_idx][best_guess].unsqueeze(0)
+            for tensor_idx in range(2):
+                base = past_key_value_states[layer_idx][tensor_idx]
+                new = past_key_value_states[layer_idx][tensor_idx+2][best_guess].unsqueeze(0)
                 if n_wrong > 0:
-                    base = base[:,:,:-n_wrong]
+                    new = new[:,:,:-n_wrong]
+                base = torch.cat([base, new], dim=2)
                 n_kv_s[layer_idx].append(
                     base.clone(memory_format=torch.contiguous_format).detach().cuda()
                 )
@@ -245,7 +247,7 @@ for k in [5, 10, 25]:
     for j,seq in enumerate(data):
         inp = torch.IntTensor(seq).cuda()
         with torch.no_grad():
-            out, nsteps = speculative_generate(model, inp, test, 4096, 100, top_k=25)
+            out, nsteps = speculative_generate(model, inp, test, 4096, 100, top_k=k)
         if k==5:
             outs.append(out).squeeze().tolist()
         steps[k].append(nsteps)
