@@ -112,6 +112,7 @@ class _Stateful_Dataset(data.IterableDataset):
         assert os.path.exists(path), "Specified checkpoint does not exist"
         assert not os.path.isfile(path), "Checkpoint should be a folder of shard states"
         fileshards = [x for x in os.listdir(path) if "loader" in x]
+        fileshards = sorted(fileshards, key=lambda x: int(x.split("_")[2][:-4])) # TODO: untie from checkpointer fname formats
         assert len(fileshards) > 0, "Checkpoint directory must contain checkpoint files with 'loader' in the name"
         self.load_worldsize = len(fileshards)
         # Grab only the shard files holding data we currently own
