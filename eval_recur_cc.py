@@ -74,8 +74,8 @@ class Speculator(nn.Module):
         # state: b 1 d
         # ind: b 1
         b = state.size(0)
-        out = torch.LongTensor(b,1,0) # b k h
-        log_probs = torch.zeros(b,1) # b k
+        out = torch.LongTensor(b,1,0).cuda() # b k h
+        log_probs = torch.zeros(b,1).cuda() # b k
         assert len(topk)==self.nheads
         for i in range(self.nheads):
             z = self.emb[i](ind) # b k d
