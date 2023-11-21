@@ -233,6 +233,8 @@ class MultiHeadAttention(nn.Module):
             torch.backends.cuda.enable_mem_efficient_sdp(use_mem_efficient)
             torch.backends.cuda.enable_math_sdp(use_math)
 
+        print(queries.device, keys_e.device, values_e.device, attn_mask.device)
+
         attn = F.scaled_dot_product_attention(
             queries,
             keys_e,
