@@ -759,7 +759,11 @@ class Streaming_Doc_Dataset(_Stateful_Dataset):
 
     def load_state_dict(self, state_dicts, sharded_input=False):
         assert self.load_worldsize == self.worldsize, "Streaming_Doc_Dataset does not support rescaling"
-        return super().load_state_dict(state_dicts, sharded_input)
+        out = super().load_state_dict(state_dicts, sharded_input)
+
+        print(f"Worker {self.rank}, path {self.data}, dataset(s) {self.datasets} detected {len(self.docset)} documents. Resuming from index {self.docset_index}.")
+
+        return out
 
 
 class Sampling_Dataset(_Stateful_Dataset):
