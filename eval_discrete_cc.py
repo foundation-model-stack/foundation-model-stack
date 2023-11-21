@@ -4,6 +4,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 import time
+import pyarrow as pa
 from typing import Callable, Union
 
 from fms.models.llama import LLaMAConfig, LLaMA
@@ -29,7 +30,20 @@ model.cuda()
 
 print("Model loaded!")
 
-data = torch.load("/lustre/dwertheimer/sap-v2-test_2_encode.pth")
+# data = torch.load("/lustre/dwertheimer/sap-v2-test_2_encode.pth")
+
+data = []
+datapath = "/cos-optimal-llm-pile/bluepile-processing/rel0_5/tokens_llama2/lang=en/dataset=commoncrawl/part-00000-0ad865cb-a6d4-4037-bc29-79b5c6097d0b-c000-attempt_202306281109048020644254530093061_0204_m_000000_158265.arrow"
+with pa.ipc.open_file(pa.memory_map(datapath)) as reader:
+    for i in range(100):
+        test = reader.get_batch(i)['tokens']
+        line = test.tolist()
+        # Take first half
+        line = line[:len(line)//2]
+        # Shorten if necessary
+        line = line[:3096]
+        data.append(line)
+
 
 from fms.modules.layernorm import LayerNormParameterized
 
