@@ -139,7 +139,7 @@ def speculative_generate(
     n_kv_s = past_key_value_states
     while n_gen < max_new_tokens:
         # print("n_gen:", n_gen)
-        print(result.shape)
+        # print(result.shape)
         
         n_steps += 1
         input_ids = next_input[:, -max_seq_len:]
@@ -249,7 +249,7 @@ for k in [5, 10, 25]:
         with torch.no_grad():
             out, nsteps = speculative_generate(model, inp, test, 4096, 100, top_k=k)
         if k==5:
-            outs.append(out).squeeze().tolist()
+            outs.append(out.squeeze().tolist())
         steps[k].append(nsteps)
         print(f"Ex {j}, topk={k}: 100 tokens in {nsteps} steps.")
 
