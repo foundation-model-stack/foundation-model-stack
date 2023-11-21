@@ -225,7 +225,7 @@ def speculative_generate(
 
         result = torch.cat((result, next_vals), dim=-1)
         # print("Updated output:", decode_obo(result))
-        print()
+        # print()
 
         next_input = next_vals[:,-1].unsqueeze(-1)
 
