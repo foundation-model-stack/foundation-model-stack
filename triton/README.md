@@ -31,3 +31,7 @@ python vector_add.py
 ~~~
 
 Download the trace file that ncu generates to your local machine to see full detailed analysis.
+
+# Kernels
+
+In the `kernels` folder you will find fused dequant + GEMM int4 matmul Triton kernels that are currently in development. Parameters have been handtuned to specific problem sizes and NVIDIA A100 and H100 hardware.
