@@ -256,7 +256,7 @@ print("Speculator ready!")
 torch.cuda.empty_cache()
 steps = {}
 outs = []
-for k in [1, 2, 5, 10, 25]:
+for k in [2, 5, 10, 25]:
     steps[k] = []
     for j,seq in enumerate(data):
         inp = torch.IntTensor(seq).cuda()
