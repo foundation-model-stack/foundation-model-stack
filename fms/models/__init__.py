@@ -207,6 +207,14 @@ def _fsdp_wrap(
 def _is_dp(distributed_strategy):
     return distributed_strategy in {"fsdp", "hsdp", "ddp"}
 
+def _load_state_dict_into_model(model, state_dict, device, rank, world_size, checkpoint_format):
+    if checkpoint_format == "st":
+        # In this case state_dict contains info about what files to open and how to
+        # match FMS weights to original weight names
+        serialization.load_safetensors_checkpoint(model, state_dict, device, rank, world_size)
+    else:
+        model.load_state_dict(state_dict, strict=False)
+
 
 def get_model(
     architecture: str,
@@ -216,6 +224,7 @@ def get_model(
     device_type: str = "cpu",
     distributed_strategy: Optional[str] = None,
     checkpoint_sharding: Optional[str] = None,
+    checkpoint_format: Optional[str] = None,
     group: Optional[ProcessGroup] = None,
     **kwargs,
 ):
@@ -232,6 +241,8 @@ def get_model(
     distributed_strategy: None, 'fsdp', 'hsdp', 'tp', or 'mp'.
     checkpoint_sharding: how the checkpoint files are sharded: None, 'tp',
                 'fsdp', or 'layer'. If None, guess based on files.
+    checkpoint_format: how the checkpoint files are saved: None, 'pt',
+                'hf', or 'st'. If None, guess based on files.
     source: If the weights in the state dict didn't come from an FMS model,
                 `source` specifies which conversion function might be needed.
                 See `serialization.list_sources(architecture)`
@@ -257,11 +268,12 @@ def get_model(
         initial_device = device
 
     if model_path is not None:
-        fms_sd = serialization.load_state_dict(
+        fms_sd, checkpoint_format = serialization.load_state_dict(
             model_path,
             distributed_strategy,
             checkpoint_sharding,
             initial_device,
+            checkpoint_format,
             local_rank,
             world_size,
         )
@@ -281,6 +293,7 @@ def get_model(
                 devices, _guess_num_layers(fms_sd)
             )
 
+    # Create the model 
     fms_model = _get_model_instance(
         architecture, variant, device=initial_device, extra_args=extra_args
     )
@@ -295,14 +308,14 @@ def get_model(
     )
 
     if pre_load and local_rank == 0 and len(fms_sd):
-        fms_model.load_state_dict(fms_sd, strict=False)
+        _load_state_dict_into_model(fms_model, fms_sd, device, local_rank, world_size, checkpoint_format)
 
     # post-init distribution
     if _is_dp(distributed_strategy):
         fms_model = _fsdp_wrap(fms_model, distributed_strategy, device, local_rank == 0)
 
     if not pre_load and len(fms_sd):
-        fms_model.load_state_dict(fms_sd, strict=False)
+        _load_state_dict_into_model(fms_model, fms_sd, device, local_rank, world_size, checkpoint_format)
 
     return fms_model
 
