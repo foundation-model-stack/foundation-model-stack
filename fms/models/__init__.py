@@ -207,11 +207,16 @@ def _fsdp_wrap(
 def _is_dp(distributed_strategy):
     return distributed_strategy in {"fsdp", "hsdp", "ddp"}
 
-def _load_state_dict_into_model(model, state_dict, device, rank, world_size, checkpoint_format):
+
+def _load_state_dict_into_model(
+    model, state_dict, device, rank, world_size, checkpoint_format
+):
     if checkpoint_format == "st":
         # In this case state_dict contains info about what files to open and how to
         # match FMS weights to original weight names
-        serialization.load_safetensors_checkpoint(model, state_dict, device, rank, world_size)
+        serialization.load_safetensors_checkpoint(
+            model, state_dict, device, rank, world_size
+        )
     else:
         model.load_state_dict(state_dict, strict=False)
 
@@ -293,7 +298,7 @@ def get_model(
                 devices, _guess_num_layers(fms_sd)
             )
 
-    # Create the model 
+    # Create the model
     fms_model = _get_model_instance(
         architecture, variant, device=initial_device, extra_args=extra_args
     )
@@ -308,14 +313,18 @@ def get_model(
     )
 
     if pre_load and local_rank == 0 and len(fms_sd):
-        _load_state_dict_into_model(fms_model, fms_sd, device, local_rank, world_size, checkpoint_format)
+        _load_state_dict_into_model(
+            fms_model, fms_sd, device, local_rank, world_size, checkpoint_format
+        )
 
     # post-init distribution
     if _is_dp(distributed_strategy):
         fms_model = _fsdp_wrap(fms_model, distributed_strategy, device, local_rank == 0)
 
     if not pre_load and len(fms_sd):
-        _load_state_dict_into_model(fms_model, fms_sd, device, local_rank, world_size, checkpoint_format)
+        _load_state_dict_into_model(
+            fms_model, fms_sd, device, local_rank, world_size, checkpoint_format
+        )
 
     return fms_model
 
