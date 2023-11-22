@@ -27,7 +27,7 @@ class PositionEncoder:
         q: torch.Tensor,
         k: torch.Tensor,
         position_ids: Optional[torch.LongTensor],
-        past_kv_state: torch.Tensor,
+        past_kv_state: Optional[Tuple[torch.Tensor, torch.Tensor]],
         use_cache=False,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         return q, k
@@ -215,7 +215,7 @@ class RotaryEmbedding(PositionEncoder):
         q: torch.Tensor,
         k: torch.Tensor,
         position_ids: Optional[torch.Tensor] = None,
-        past_kv_state: Optional[torch.Tensor] = None,
+        past_kv_state: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
         use_cache=False,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """

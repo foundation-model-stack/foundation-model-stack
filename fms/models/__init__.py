@@ -1,25 +1,25 @@
 from contextlib import nullcontext
 from functools import partial
 from typing import Any, Callable, Mapping, MutableMapping, Optional
+
 import torch
 from torch import nn
+from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
+    CheckpointImpl,
+    apply_activation_checkpointing,
+    checkpoint_wrapper,
+)
+from torch.distributed.distributed_c10d import ProcessGroup
+from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+from torch.distributed.fsdp import MixedPrecision, ShardingStrategy
+
 from fms import distributed
 from fms.distributed.strategy import (
     TensorParallelStrategy,
     UniformModelParallelStrategy,
 )
-from torch.distributed.fsdp import (
-    FullyShardedDataParallel as FSDP,
-    ShardingStrategy,
-    MixedPrecision,
-)
-from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
-    checkpoint_wrapper,
-    CheckpointImpl,
-    apply_activation_checkpointing,
-)
-from torch.distributed.distributed_c10d import ProcessGroup
 from fms.utils import serialization
+
 
 __models: MutableMapping[str, MutableMapping[str, Callable[[], nn.Module]]] = {}
 
@@ -160,9 +160,7 @@ def _fsdp_wrap(
     # initializes parameters that are on meta devices
     def init_fn(x: nn.Module):
         if not rank0:
-            return x.to_empty(device=device, recurse=False)
-        else:
-            return x
+            x.to_empty(device=device, recurse=False)
 
     # TODO: enable other policies
     mp_policy = MixedPrecision(
@@ -329,5 +327,4 @@ def get_model(
     return fms_model
 
 
-from fms.models import llama
-from fms.models import roberta
+from fms.models import llama, roberta

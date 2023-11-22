@@ -3,6 +3,7 @@ import itertools
 import os
 
 import torch
+import torch._inductor.config
 from torch import distributed as dist
 
 from fms.models import get_model
