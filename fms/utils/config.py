@@ -3,7 +3,12 @@ import inspect
 import json
 import os
 from dataclasses import asdict, dataclass
-from typing import Union
+from typing import TypeVar, Union
+import logging
+
+logger = logging.getLogger(__name__)
+
+T = TypeVar("T", bound="ModelConfig")
 
 
 @dataclass
@@ -29,7 +34,7 @@ class ModelConfig:
         with open(file_path, "w") as f:
             json.dump(self.as_dict(), f)
 
-    def updated(self, **kwargs) -> "ModelConfig":
+    def updated(self: T, **kwargs) -> T:
         """Clone this ModelConfig and override the parameters of the ModelConfig specified by kwargs
 
         Note: This will always return a deep copy
@@ -46,9 +51,14 @@ class ModelConfig:
         """
         # create a deep copy as we don't want to modify this reference
         copied_config = copy.deepcopy(self)
+        unknown_params = []
         for k, v in kwargs.items():
             if hasattr(copied_config, k):
                 setattr(copied_config, k, v)
             else:
-                print(f"Warning: unknown parameter {k}")
+                unknown_params.append(k)
+        if len(unknown_params) > 0:
+            logger.info(
+                f"""Found the following unknown parameters while cloning and updating the configuration: {unknown_params}"""
+            )
         return copied_config

@@ -1,4 +1,5 @@
 from fms.utils.tokenizers import get_tokenizer
+import pytest
 
 
 def test_hf_compat():
@@ -20,6 +21,17 @@ def test_hf_compat():
     assert fm_tokenizer.convert_tokens_to_string(
         ["hello", "world"]
     ) == hf_tokenizer.convert_tokens_to_string(["hello", "world"])
+    assert fm_tokenizer.bos_token_id == hf_tokenizer.bos_token_id
+    assert fm_tokenizer.eos_token_id == hf_tokenizer.eos_token_id
+
+
+def test_styled():
+    tokenizer_name = "EleutherAI/gpt-neox-20b"
+    get_tokenizer(tokenizer_name, style="hf")
+    with pytest.raises(RuntimeError):
+        get_tokenizer(tokenizer_name, style="fms")
+    with pytest.raises(RuntimeError):
+        get_tokenizer(tokenizer_name, style="sentencepiece")
 
 
 def test_char_tokenizer():
@@ -40,6 +52,8 @@ def test_char_tokenizer():
         111,
     ]
     assert char_tokenizer.convert_tokens_to_string(["h", "e", "l", "l", "o"]) == "hello"
+    assert char_tokenizer.bos_token_id == 2
+    assert char_tokenizer.eos_token_id == 3
 
 
 def test_out_of_range_ascii():

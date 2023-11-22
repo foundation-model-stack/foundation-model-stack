@@ -1,5 +1,6 @@
 import abc
 import os
+import platform
 import tempfile
 from typing import List, Union
 
@@ -7,6 +8,8 @@ import numpy as np
 import pytest
 import torch
 import torch.nn as nn
+from torch._dynamo.exc import TorchDynamoException
+from torch._dynamo.testing import CompileCounterWithBackend
 
 from fms.testing.comparison import get_signature
 from fms.utils.config import ModelConfig
@@ -133,6 +136,45 @@ class ModelConfigTestSuite(ConfigFixtureMixin, ModelFixtureMixin):
         assert model.get_config().as_dict() == config.as_dict()
 
 
+class ModelCompileTestSuite(ModelFixtureMixin):
+    """A set of tests associated with compilation of fms models"""
+
+    @property
+    @abc.abstractmethod
+    def _get_signature_params(self) -> Union[int, List[str]]:
+        """the value to pass into params in get_signature function for this model
+
+        Returns
+        -------
+        Union[int, List[str]]
+            the params to set to the default tensor value (inp) in get_signature. If an integer, will use *args, if a
+            list, will use **kwargs
+        """
+        pass
+
+    @pytest.mark.skipif(
+        platform.system() != "Linux",
+        reason=f"pytorch compile is more stable on Linux, skipping as current platform is {platform.platform()}",
+    )
+    def test_model_compile_no_graph_breaks(self, model):
+        """Test that an FMS model is compilable without graph breaks"""
+        try:
+            torch._dynamo.reset()
+            cnt = CompileCounterWithBackend("inductor")
+            compiled_model = torch.compile(model=model, backend=cnt, fullgraph=True)
+            assert cnt.frame_count == 0
+            get_signature(
+                compiled_model,
+                params=self._get_signature_params,
+                # default attn_algorithm won't compile on CPU
+                # TODO: add non-mmath attn_algorithm when we have GPUs to run unit tests
+                optional_params={"attn_algorithm": "math"},
+            )
+            assert cnt.frame_count == 1
+        except TorchDynamoException as e:
+            pytest.fail(f"Failed to get signature of full-graph compiled model:\n{e}")
+
+
 class ModelConsistencyTestSuite(ModelFixtureMixin, SignatureFixtureMixin):
     """All tests related to model consistency will be part of this test suite"""
 
@@ -171,9 +213,15 @@ class ModelConsistencyTestSuite(ModelFixtureMixin, SignatureFixtureMixin):
                 "Signature file has been saved, please re-run the tests without --capture_expectation"
             )
 
-        assert np.allclose(
-            np.array(actual), np.array(signature)
-        ), _FAILED_MODEL_SIGNATURE_OUTPUT_MSG
+        assertion_msg = f"""
+        difference: {np.mean(np.abs(np.array(actual) - np.array(signature)))}
+        
+        {_FAILED_MODEL_SIGNATURE_OUTPUT_MSG}
+        """
+
+        torch.testing.assert_close(
+            torch.tensor(actual), torch.tensor(signature)
+        ), assertion_msg
 
     def test_model_weight_keys(self, model, capture_expectation):
         import inspect
@@ -189,7 +237,6 @@ class ModelConsistencyTestSuite(ModelFixtureMixin, SignatureFixtureMixin):
         )
 
         if capture_expectation:
-
             with open(weight_keys_path, "w") as weight_keys_file:
                 weight_keys_file.write(",".join(map(str, actual_keys)))
             weight_keys_file.close()

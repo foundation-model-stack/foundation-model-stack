@@ -1,7 +1,9 @@
+from typing import Optional
 import torch
 import torch.distributed
 import torch.nn as nn
 from torch.distributed.distributed_c10d import ProcessGroup
+from fms import distributed
 
 from fms.distributed.tensorparallel import (
     apply_colwise_tp,
@@ -19,7 +21,7 @@ class FeedForwardBlock(nn.Module):
     ----
     emb_dim : int
         Dimensionality of input and output vectors.
-    hidden_grow_factor : int
+    hidden_grow_factor : float
         Sets dimensionality of inner latent space (emb_dim * hidden_grow_factor)
     multiple_of : Optional[int]
         Ensure inner latent space is a multiple of this parameter if defined (useful for
@@ -35,7 +37,7 @@ class FeedForwardBlock(nn.Module):
     def __init__(
         self,
         emb_dim,
-        hidden_grow_factor=4,
+        hidden_grow_factor=4.0,
         multiple_of=None,
         activation_fn=nn.ReLU(),
         p_dropout=0.1,
@@ -43,15 +45,17 @@ class FeedForwardBlock(nn.Module):
         gain=1,
     ):
         super(FeedForwardBlock, self).__init__()
-        hidden_dim = int(hidden_grow_factor * emb_dim)
+        self.hidden_dim = int(hidden_grow_factor * emb_dim)
         if multiple_of:
-            hidden_dim = multiple_of * ((hidden_dim + multiple_of - 1) // multiple_of)
-        self.w1 = nn.Linear(emb_dim, hidden_dim, bias=use_bias)
+            self.hidden_dim = multiple_of * (
+                (self.hidden_dim + multiple_of - 1) // multiple_of
+            )
+        self.w1 = nn.Linear(emb_dim, self.hidden_dim, bias=use_bias)
         self.a = activation_fn
         self.p_dropout = p_dropout
         if p_dropout:
             self.d = nn.Dropout(p_dropout)
-        self.w2 = nn.Linear(hidden_dim, emb_dim, bias=use_bias)
+        self.w2 = nn.Linear(self.hidden_dim, emb_dim, bias=use_bias)
         self.use_bias = use_bias
         self.reset_params(gain=gain)
 
@@ -73,7 +77,8 @@ class FeedForwardBlock(nn.Module):
         out = self.a(self.w1(x))
         if self.p_dropout:
             out = self.d(out)
-        return self.w2(out)
+        out = self.w2(out)
+        return out
 
 
 class TPFeedForwardBlock(FeedForwardBlock):
@@ -99,14 +104,13 @@ class TPFeedForwardBlock(FeedForwardBlock):
         p_dropout=0.1,
         use_bias=True,
         gain=1,
-        group: ProcessGroup = None,
+        group: Optional[ProcessGroup] = None,
     ):
         assert torch.distributed.is_initialized()
         hidden_dim = int(hidden_grow_factor * emb_dim)
         if multiple_of:
             hidden_dim = multiple_of * ((hidden_dim + multiple_of - 1) // multiple_of)
-        world_size = group.size()
-        rank = group.rank()
+        rank, world_size = distributed.rank_and_world(group)
         assert (
             hidden_dim % world_size == 0
         ), "Hidden dim must be divisible by world size"
@@ -243,11 +247,10 @@ class TPGatedLinearUnit(GatedLinearUnit):
         p_dropout=0.1,
         use_bias=True,
         gain=1,
-        group: ProcessGroup = None,
+        group: Optional[ProcessGroup] = None,
     ):
         assert torch.distributed.is_initialized()
-        world_size = group.size()
-        rank = group.rank()
+        rank, world_size = distributed.rank_and_world(group)
 
         hidden_dim = int(hidden_grow_factor * emb_dim)
         if multiple_of:
