@@ -133,12 +133,6 @@ def load_state_dict(
     if model_path is None or initial_device.type == "meta":
         return {}
     # TODO: Add support for tp-sharding a non-sharded state dict.
-    if (
-        distributed_strategy == "tp" or checkpoint_sharding == "tp"
-    ) and distributed_strategy != checkpoint_sharding:
-        raise ValueError(
-            f"TP-sharded models are currently only compatible with TP-sharded checkpoints. Attempting to load {checkpoint_sharding} to {distributed_strategy}"
-        )
     if checkpoint_sharding == "fsdp" and distributed_strategy not in ["fsdp", "hsdp"]:
         raise ValueError(f"FSDP checkpoints can only be loaded into an FSDP model")
 
@@ -161,6 +155,15 @@ def load_state_dict(
             f"Requested checkpoint format {checkpoint_format}, but you are loading {file_format} format."
         )
 
+    if (
+        (distributed_strategy == "tp" or checkpoint_sharding == "tp")
+        and distributed_strategy != checkpoint_sharding
+        and file_format != "st"
+    ):
+        raise ValueError(
+            f"TP-sharded models are currently only compatible with TP-sharded checkpoints unless you are using a safetensors checkpoint. Attempting to load {checkpoint_sharding} to {distributed_strategy}"
+        )
+
     if checkpoint_sharding is not None and checkpoint_sharding != "layer":
         assert world_size == len(
             checkpoints
@@ -175,7 +178,7 @@ def load_state_dict(
         # is available for sharding
         checkpoint_sds = []
         for ckp in checkpoints:
-            with safe_open(ckp, framework="pt", device=initial_device) as ckp_f:
+            with safe_open(ckp, framework="pt", device=str(initial_device)) as ckp_f:
                 st_sd = {}
                 for key in ckp_f.keys():
                     st_sd[key] = {"file": ckp, "orig_key": key}
