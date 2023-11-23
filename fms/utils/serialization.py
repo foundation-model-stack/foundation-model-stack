@@ -195,7 +195,9 @@ def load_state_dict(
         # is available for sharding
         checkpoint_sds = []
         for ckp in checkpoints:
-            with safe_open(ckp, framework="pt", device=str(initial_device)) as ckp_f:  # attr-defined: ignore
+            with safe_open(
+                ckp, framework="pt", device=str(initial_device)
+            ) as ckp_f:  # attr-defined: ignore
                 st_sd = {}
                 for key in ckp_f.keys():
                     st_sd[key] = {"file": ckp, "orig_key": key}
