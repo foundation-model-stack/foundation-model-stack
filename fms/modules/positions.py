@@ -18,11 +18,8 @@ class PositionEncoder:
         k: torch.Tensor,
         past_kv_state: Optional[Tuple[torch.Tensor, torch.Tensor]],
         use_cache=False,
-    ) -> torch.Tensor:
-        if mask is not None:
-            return mask
-        else:
-            return torch.empty_like(q * k.transpose(2, 3))
+    ) -> Optional[torch.Tensor]:
+        return mask
 
     # Override to adjust q/k's e.g. for rotary embeddings
     def adjusted_qk(
@@ -69,7 +66,7 @@ class Alibi(PositionEncoder):
         k: torch.Tensor,
         past_kv_state: Optional[Tuple[torch.Tensor, torch.Tensor]],
         use_cache=False,
-    ) -> torch.Tensor:
+    ) -> Optional[torch.Tensor]:
         qlen = q.size(1)
         klen = k.size(1)
 
