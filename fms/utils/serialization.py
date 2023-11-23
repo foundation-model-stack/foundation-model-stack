@@ -197,7 +197,7 @@ def load_state_dict(
         for ckp in checkpoints:
             with safe_open(
                 ckp, framework="pt", device=str(initial_device)
-            ) as ckp_f:  # attr-defined: ignore
+            ) as ckp_f:  # type: ignore[attr-defined]
                 st_sd = {}
                 for key in ckp_f.keys():
                     st_sd[key] = {"file": ckp, "orig_key": key}
@@ -245,7 +245,7 @@ def load_safetensors_checkpoint(
         for weights_file, weights_info in weights_map.items():
             with safe_open(
                 weights_file, framework="pt", device=str(device)
-            ) as model_weights:  # attr-defined: ignore
+            ) as model_weights:  # type: ignore[attr-defined]
                 _load_safetensors_checkpoint_impl(
                     model, model_weights, weights_info, rank, world_size, ""
                 )
