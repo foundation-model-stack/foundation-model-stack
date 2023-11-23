@@ -2,7 +2,17 @@ from collections import ChainMap, OrderedDict
 import itertools
 import os
 from pathlib import Path
-from typing import Any, Callable, List, Mapping, MutableMapping, Optional, Tuple, Union
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    List,
+    Mapping,
+    MutableMapping,
+    Optional,
+    Tuple,
+    Union,
+)
 import torch
 from fms.modules.attention import TPMultiHeadAttention
 from fms.modules.embedding import TPWordEmbedding
@@ -179,7 +189,7 @@ def load_state_dict(
         checkpoints = [checkpoints[rank]]
 
     if file_format == "st":
-        from safetensors import safe_open
+        from safetensors import safe_open  # type: ignore
 
         # For safetensors, delay loading the weights until information about the model
         # is available for sharding
@@ -223,7 +233,7 @@ def load_safetensors_checkpoint(
     from safetensors import safe_open
 
     # First redo state_dict into a better structure for loading
-    weights_map = {}
+    weights_map: Dict[str, Dict[str, str]] = {}
     for weight_name, weight_info in state_dict.items():
         if not weight_info["file"] in weights_map:
             weights_map[weight_info["file"]] = {}

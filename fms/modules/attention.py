@@ -8,8 +8,6 @@ from torch.nn import functional as F
 
 from fms import distributed
 from fms.distributed.tensorparallel import (
-    apply_colwise_tp,
-    apply_rowwise_tp,
     copy_to_tensor_model_parallel_region,
     reduce_from_tensor_model_parallel_region,
 )
@@ -187,7 +185,7 @@ class MultiHeadAttention(nn.Module):
                 mask = mask.unsqueeze(1)
 
         if self.position_encoder is not None:
-            attn_mask = self.position_encoder.adjusted_mask(
+            attn_mask: Optional[Tensor] = self.position_encoder.adjusted_mask(
                 mask, queries, keys, past_key_value_state, use_cache
             )
         else:

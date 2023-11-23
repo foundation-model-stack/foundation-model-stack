@@ -1,6 +1,6 @@
 import itertools
-from abc import ABCMeta, abstractmethod, abstractstaticmethod
-from typing import List
+from abc import ABCMeta, abstractmethod
+from typing import List, Type
 
 import torch
 import torch.nn as nn
@@ -36,7 +36,7 @@ class TPModule(nn.Module, metaclass=ABCMeta):
 
     @staticmethod
     @abstractmethod
-    def import_module(module: nn.Module, group: ProcessGroup):
+    def import_module(module, group: ProcessGroup):
         pass
 
     def import_weights(self, module: nn.Module):

@@ -13,13 +13,16 @@ class PositionEncoder:
     # Override to adjust the mask e.g. for Alibi
     def adjusted_mask(
         self,
-        mask: torch.Tensor,
+        mask: Optional[torch.Tensor],
         q: torch.Tensor,
         k: torch.Tensor,
-        past_kv_state: torch.Tensor,
+        past_kv_state: Optional[Tuple[torch.Tensor, torch.Tensor]],
         use_cache=False,
     ) -> torch.Tensor:
-        return mask
+        if mask is not None:
+            return mask
+        else:
+            return torch.empty_like(q * k.transpose(2, 3))
 
     # Override to adjust q/k's e.g. for rotary embeddings
     def adjusted_qk(
@@ -61,10 +64,10 @@ class Alibi(PositionEncoder):
 
     def adjusted_mask(
         self,
-        mask: torch.Tensor,
+        mask: Optional[torch.Tensor],
         q: torch.Tensor,
         k: torch.Tensor,
-        past_kv_state: torch.Tensor,
+        past_kv_state: Optional[Tuple[torch.Tensor, torch.Tensor]],
         use_cache=False,
     ) -> torch.Tensor:
         qlen = q.size(1)
