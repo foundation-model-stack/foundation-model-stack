@@ -79,8 +79,8 @@ class CacheBlockGroup(List[CacheBlock]):
         slot_mapping = []
         start = position if position else 0
         for position_i in range(start, self.get_sequence_length()):
-            block_number = self.get_cache_block(position).block_number
-            block_offset = position % self.block_size
+            block_number = self.get_cache_block(position_i).block_number
+            block_offset = position_i % self.block_size
             slot = block_number * self.block_size + block_offset
             slot_mapping.append(slot)
         return slot_mapping
@@ -102,7 +102,7 @@ class PagedKVCache:
 
         if not total_num_gpu_blocks:
             total_num_gpu_blocks = get_max_gpu_blocks_available(
-                block_size, emb_dim, num_heads, num_layers, 0.8, dtype
+                block_size, emb_dim, num_heads, num_layers, 0.7, dtype
             )
 
         head_size = emb_dim // num_heads
@@ -164,6 +164,8 @@ class PagedKVCache:
                 last_block = self._allocate_block()
                 last_block.append_num_tokens(1)
                 cache_block_group.append(last_block)
+            else:
+                cache_block_group[-1].append_num_tokens(1)
         self.cache_empty = False
 
     def _allocate_prompt_sequence(self, seq_id: int, tokens: List[int]):

@@ -1,3 +1,4 @@
+import math
 from typing import Optional, Tuple, List
 
 import torch
@@ -180,16 +181,25 @@ class MultiHeadAttention(nn.Module):
             for cbg in kv_cache.block_table_map.values():
                 start_pos = 0 if kv_cache.is_empty() else cbg.get_sequence_length() - 1
                 slot = cbg.get_slot_mapping(start_pos)
-                slot_mapping.append(
-                    _pad_to_max(slot, kv_cache.get_max_sequence_length(), -1)
-                )
+                if kv_cache.is_empty():
+                    slot_mapping.append(
+                        _pad_to_max(slot, kv_cache.get_max_sequence_length(), -1)
+                    )
+                else:
+                    slot_mapping.append(slot)
+
 
             slot_mapping_tensor = torch.tensor(
                 slot_mapping, dtype=torch.long, device="cuda"
-            )
+            ).view(-1)
 
-            key_to_cache = keys
-            value_to_cache = values
+            key_to_cache = keys.transpose(2, 1).reshape(keys.size(0), keys.size(1), keys.size(2) * keys.size(3))
+            value_to_cache = values.transpose(2, 1).reshape(values.size(0), values.size(1), values.size(2) * values.size(3))
+            # print(f"keys to cache: {key_to_cache.shape}")
+            # print(f"values to cache: {value_to_cache.shape}")
+            if layer_index == 0:
+                print(f"slot mapping: {slot_mapping_tensor}")
+            # exit()
             cache_ops.reshape_and_cache(
                 key_to_cache,
                 value_to_cache,
@@ -200,13 +210,14 @@ class MultiHeadAttention(nn.Module):
 
         # we use the special paged_attention call if we have a cache
         if kv_cache and not kv_cache.is_empty():
+            queries = queries.squeeze(2)
             head_mapping = torch.repeat_interleave(
                 torch.arange(self.kvheads, dtype=torch.int32, device="cuda"),
                 self.nheads // self.kvheads,
             )
 
             # Pre-allocate the output tensor.
-            attn = torch.empty_like(q)
+            attn = torch.empty_like(queries)
             block_tables_tensor = torch.tensor(
                 [[cbg[-1].block_number] for cbg in kv_cache.block_table_map.values()],
                 dtype=torch.int,
@@ -220,9 +231,24 @@ class MultiHeadAttention(nn.Module):
                 dtype=torch.int,
                 device="cuda",
             )
+            # print(f"output shape: {attn.shape}")
+            # print(f"query shape:{queries.shape}")
+            # print(f"key cache shape: {kv_cache.cache[layer_index][0].shape}")
+            # print(f"value cache shape: {kv_cache.cache[layer_index][1].shape}")
+            # print(f"head mapping: {head_mapping}")
+            # if layer_index == 0:
+            #     print(f"bla{1 / math.sqrt(queries.size(2))}")
+            #     print(f"bla2{(self.emb_dim // self.nheads) ** -0.5}")
+            #     print(f"block tables: {block_tables_tensor}")
+            # print(f"context lens: {context_lens_tensor}")
+            #     print(f"max context len: {kv_cache.get_max_sequence_length()}")
+            # print(f"scale: {(self.emb_dim // self.nheads) ** -0.5}")
+            # print(f"head mapping: {head_mapping}")
+            # exit()
             attention_ops.paged_attention_v1(
                 attn,
-                queries.transpose(2, 1),
+                # num_sequences x num_heads x head_size
+                queries,
                 kv_cache.cache[layer_index][0],
                 kv_cache.cache[layer_index][1],
                 head_mapping,
@@ -233,6 +259,7 @@ class MultiHeadAttention(nn.Module):
                 kv_cache.get_max_sequence_length(),
                 None,
             )
+            attn = attn.view(batch_size, q_len, self.nheads * self.emb_v_per_head)
         else:
 
             # Merge rel pos bias and mask into single float mask
@@ -272,7 +299,6 @@ class MultiHeadAttention(nn.Module):
                 torch.backends.cuda.enable_flash_sdp(use_flash)
                 torch.backends.cuda.enable_mem_efficient_sdp(use_mem_efficient)
                 torch.backends.cuda.enable_math_sdp(use_math)
-
             attn = F.scaled_dot_product_attention(
                 queries,
                 keys_e,
@@ -280,6 +306,7 @@ class MultiHeadAttention(nn.Module):
                 attn_mask=attn_mask,
                 dropout_p=self.p_dropout if self.training else 0.0,
                 is_causal=is_causal_mask,
+                # scale=(self.emb_dim // self.nheads) ** -0.5
             )
 
             if attn_algorithm:
@@ -289,15 +316,15 @@ class MultiHeadAttention(nn.Module):
                 )
                 torch.backends.cuda.enable_math_sdp(self.previous_math)
 
-        # attn: bs x seq_len x nheads*emb_v_per_head
-        # attn: b x h x qlen x ds
-        # attn after permute: b x qlen x h x ds
-        # b x qlen x (d)
-        attn = (
-            attn.transpose(2, 1)
-            .contiguous()
-            .view(batch_size, q_len, self.nheads * self.emb_v_per_head)
-        )
+            # attn: bs x seq_len x nheads*emb_v_per_head
+            # attn: b x h x qlen x ds
+            # attn after permute: b x qlen x h x ds
+            # b x qlen x (d)
+            attn = (
+                attn.transpose(2, 1)
+                .contiguous()
+                .view(batch_size, q_len, self.nheads * self.emb_v_per_head)
+            )
         out = self.dense(attn)
 
         # if use_cache=True, we return the hidden_state as well as the kv cache

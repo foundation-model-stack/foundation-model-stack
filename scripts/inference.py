@@ -6,6 +6,7 @@ import torch
 from torch import distributed as dist
 
 from fms.distributed.strategy import TensorParallelStrategy
+from fms.models import get_model
 from fms.models.llama import load_fms_llama
 from fms.utils import generation, tokenizers
 from fms.utils.generation import generate
@@ -77,7 +78,7 @@ if args.distributed:
     dist.init_process_group()
 
 print("loading model")
-model = load_fms_llama(args.model_path)
+model = get_model("llama", "7b", args.model_path, source="hf", device_type="cuda", norm_eps=1e-6)
 tokenizer = tokenizers.get_tokenizer(args.tokenizer)
 model.eval()
 torch.set_grad_enabled(False)
