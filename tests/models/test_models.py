@@ -57,7 +57,7 @@ def test_load():
         for i in range(len(dicts)):
             path = Path(d) / f"{i}.pth"
             torch.save(dicts[i], path)
-        newsd, file_format = serialization.load_state_dict(d)
+        newsd = serialization.load_state_dict(d)
         as_loaded = models.get_model("llama", "micro", d).state_dict()
         # this style load, layer-sharded, has to stitch together the state dicts.
         assert type(newsd) == ChainMap

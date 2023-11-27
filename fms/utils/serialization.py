@@ -1,4 +1,4 @@
-from collections import ChainMap, OrderedDict
+from collections import ChainMap
 import itertools
 import os
 from pathlib import Path
@@ -6,7 +6,6 @@ from typing import (
     Any,
     Callable,
     Dict,
-    List,
     Mapping,
     MutableMapping,
     Optional,
@@ -14,10 +13,7 @@ from typing import (
     Union,
 )
 import torch
-from fms.modules.attention import TPMultiHeadAttention
-from fms.modules.embedding import TPWordEmbedding
-
-from fms.modules.feedforward import TPFeedForwardBlock, TPGatedLinearUnit
+from fms.modules.tp import TPModule
 
 __adapters: MutableMapping[str, MutableMapping[str, Callable[[Mapping], Mapping]]] = {}
 
@@ -101,26 +97,33 @@ def get_adapted(
 from fms import models
 
 
-def _format_from_file(path: Path) -> str:
-    if path.suffix == ".pth":
+def get_ckp_format(model_path: Union[str, Path]) -> str:
+    """
+    Returns the checkpoint format of a model checkpoint. If format
+    is not supported, returns "unk"
+
+    Args:
+    model_path: the path to find the weights.
+    """
+    model_path = Path(os.path.expanduser(model_path))
+    if len(sorted(model_path.glob("*.pth"))) > 0:
         return "pt"
-    elif path.suffix == ".bin":
+    if len(sorted(model_path.glob("*.bin"))) > 0:
         return "hf"
-    elif path.suffix == ".safetensors":
+    if len(sorted(model_path.glob("*.safetensors"))) > 0:
         return "st"
-    else:
-        return "unk"
+    return "unk"
 
 
 def load_state_dict(
     model_path: Union[str, Path],
+    checkpoint_format: str,
     distributed_strategy: Optional[str] = None,
     checkpoint_sharding: Optional[str] = None,
     initial_device: torch.device = torch.device("cpu"),
-    checkpoint_format: Optional[str] = None,
     rank: int = 0,
     world_size: int = 1,
-) -> Tuple[Mapping[str, Any], str]:
+) -> Mapping[str, Any]:
     """
     Validates that the file(s) found at a checkpoint path are compatible with
     the intended (possibly distributed) use-case, and returns the state dict
@@ -132,50 +135,41 @@ def load_state_dict(
 
     Args:
     model_path: the path to find the weights. If not set, return None.
+    checkpoint_format: how the checkpoint files are saved: None, 'pt',
+            'hf', or 'st'. If None, guess based on files.
     distributed_strategy: the kind of possibly-distributed model in which we
             intend to load these weights. E.g. tp, fsdp, None. Used for
             validation.
     checkpoint_sharding: the sharding format of the checkpoint.
             E.g. layer, tp, fsdp.
-    checkpoint_format: how the checkpoint files are saved: None, 'pt',
-            'hf', or 'st'. If None, guess based on files.
     initial_device: where the state dict will be loaded. if meta, return None.
     """
     if model_path is None or initial_device.type == "meta":
         return {}  # type: ignore
-    # TODO: Add support for tp-sharding a non-sharded state dict.
+    # TODO: Add support for tp-sharding a non-sharded state dict for pt, hf formats.
     if checkpoint_sharding == "fsdp" and distributed_strategy not in ["fsdp", "hsdp"]:
         raise ValueError(f"FSDP checkpoints can only be loaded into an FSDP model")
 
     model_path = Path(os.path.expanduser(model_path))
-    if not model_path.is_dir():
-        checkpoints = [model_path]
+    if checkpoint_format == "pt":
+        glob_pattern = "*.pth"
+    elif checkpoint_format == "hf":
+        glob_pattern = "*.bin"
+    elif checkpoint_format == "st":
+        glob_pattern = "*.safetensors"
     else:
-        checkpoints = []
-        if checkpoint_format is None or checkpoint_format == "pt":
-            checkpoints = sorted(model_path.glob("*.pth"))
-        if not len(checkpoints) and (
-            checkpoint_format is None or checkpoint_format == "hf"
-        ):
-            checkpoints = sorted(model_path.glob("*.bin"))
-        if not len(checkpoints) and (
-            checkpoint_format is None or checkpoint_format == "st"
-        ):
-            checkpoints = sorted(model_path.glob("*.safetensors"))
+        raise ValueError(f"Unsupported checkpoint format {checkpoint_format}")
+    checkpoints = sorted(model_path.glob(glob_pattern))
+
     # Check if the requested file format matches the file format
     assert (
         len(checkpoints) > 0
     ), f"Can't find the requested checkpoint data at {model_path} for format {checkpoint_format}"
-    file_format = _format_from_file(checkpoints[0])
-    if checkpoint_format != None and checkpoint_format != file_format:
-        raise ValueError(
-            f"Requested checkpoint format {checkpoint_format}, but you are loading {file_format} format."
-        )
 
     if (
         (distributed_strategy == "tp" or checkpoint_sharding == "tp")
         and distributed_strategy != checkpoint_sharding
-        and file_format != "st"
+        and checkpoint_format != "st"
     ):
         raise ValueError(
             f"TP-sharded models are currently only compatible with TP-sharded checkpoints unless you are using a safetensors checkpoint. Attempting to load {checkpoint_sharding} to {distributed_strategy}"
@@ -188,7 +182,7 @@ def load_state_dict(
 
         checkpoints = [checkpoints[rank]]
 
-    if file_format == "st":
+    if checkpoint_format == "st":
         from safetensors import safe_open  # type: ignore
 
         # For safetensors, delay loading the weights until information about the model
@@ -208,10 +202,10 @@ def load_state_dict(
         ]
     assert len(checkpoint_sds[0]), f"Unable to load checkpoint data at {model_path}"
     if len(checkpoint_sds) == 1:
-        return checkpoint_sds[0], file_format
+        return checkpoint_sds[0]
     else:
         # layer-sharded checkpoints, e.g. as used in HF
-        return ChainMap(*checkpoint_sds), file_format
+        return ChainMap(*checkpoint_sds)
 
 
 def load_safetensors_checkpoint(
@@ -395,7 +389,7 @@ def _load_safetensors_checkpoint_impl(
             )
 
     for name, child in layer.named_children():
-        if getattr(child, "is_tp", False):
+        if isinstance(child, TPModule):
             for colwise_weight in child.list_colwise_weights():
                 _copy_colwise_st(
                     getattr(child, colwise_weight),
@@ -439,13 +433,6 @@ def _load_safetensors_checkpoint_impl(
                             f"{prefix}{name}.{mod_name}.{param_name}",
                             weight_name_map,
                         )
-        # TODO: Implement TPAlibi
-        # elif isinstance(child, TPAlibi):
-        #     # Divide the weight matrix along the last dimension.
-        #     output_size_per_partition = child.nheads // world_size
-        #     tensor_slice = model_weights.get_slice(prefix + name + ".scales")
-        #     tensor = tensor_slice[:, (rank * output_size_per_partition) : ((rank + 1) * output_size_per_partition)]
-        #     child.scales.copy_(tensor, non_blocking=True)
         else:
             _load_safetensors_checkpoint_impl(
                 child,

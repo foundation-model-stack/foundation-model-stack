@@ -14,7 +14,6 @@ from fms.distributed.tensorparallel import (
 
 
 class TPModule(nn.Module, metaclass=ABCMeta):
-    is_tp: bool = True
     rank: int
     world_size: int
 

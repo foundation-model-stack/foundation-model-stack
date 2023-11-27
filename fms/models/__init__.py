@@ -257,7 +257,10 @@ def get_model(
         if world_size > 1:
             distributed_strategy = "tp"
 
-    device = torch.device(device_type, local_rank)
+    if device_type == "cuda":
+        device = torch.device(device_type, local_rank)
+    else:
+        device = torch.device(device_type)
 
     if (
         _is_dp(distributed_strategy)
@@ -271,12 +274,14 @@ def get_model(
         initial_device = device
 
     if model_path is not None:
-        fms_sd, checkpoint_format = serialization.load_state_dict(
+        if checkpoint_format is None:
+            checkpoint_format = serialization.get_ckp_format(model_path)
+        fms_sd = serialization.load_state_dict(
             model_path,
+            checkpoint_format,
             distributed_strategy,
             checkpoint_sharding,
             initial_device,
-            checkpoint_format,
             local_rank,
             world_size,
         )
