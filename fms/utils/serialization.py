@@ -1,19 +1,13 @@
-from collections import ChainMap
 import itertools
 import os
+from collections import ChainMap
 from pathlib import Path
-from typing import (
-    Any,
-    Callable,
-    Dict,
-    Mapping,
-    MutableMapping,
-    Optional,
-    Tuple,
-    Union,
-)
+from typing import Any, Callable, Dict, Mapping, MutableMapping, Optional, Union
+
 import torch
+
 from fms.modules.tp import TPModule
+
 
 __adapters: MutableMapping[str, MutableMapping[str, Callable[[Mapping], Mapping]]] = {}
 
@@ -106,11 +100,14 @@ def get_ckp_format(model_path: Union[str, Path]) -> str:
     model_path: the path to find the weights.
     """
     model_path = Path(os.path.expanduser(model_path))
-    if len(sorted(model_path.glob("*.pth"))) > 0:
+    if model_path.suffix == ".pth" or len(sorted(model_path.glob("*.pth"))) > 0:
         return "pt"
-    if len(sorted(model_path.glob("*.bin"))) > 0:
+    if model_path.suffix == ".bin" or len(sorted(model_path.glob("*.bin"))) > 0:
         return "hf"
-    if len(sorted(model_path.glob("*.safetensors"))) > 0:
+    if (
+        model_path.suffix == ".safetensors"
+        or len(sorted(model_path.glob("*.safetensors"))) > 0
+    ):
         return "st"
     return "unk"
 
@@ -159,7 +156,13 @@ def load_state_dict(
         glob_pattern = "*.safetensors"
     else:
         raise ValueError(f"Unsupported checkpoint format {checkpoint_format}")
-    checkpoints = sorted(model_path.glob(glob_pattern))
+    if model_path.is_file():
+        checkpoints = [model_path]
+        assert (
+            model_path.suffix == glob_pattern[1:]
+        ), f"Checkpoint {model_path} is not a {checkpoint_format} checkpoint"
+    else:
+        checkpoints = sorted(model_path.glob(glob_pattern))
 
     # Check if the requested file format matches the file format
     assert (
