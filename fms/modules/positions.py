@@ -242,7 +242,6 @@ class RotaryEmbedding(PositionEncoder):
             ).repeat(q.size(0), 1)
             if use_cache and not kv_cache.is_empty():
                 position_ids += (kv_cache.get_max_sequence_length() - 1)
-        # print(position_ids)
         seq_len = q.size(2)
 
         q_ = q.float().reshape(*q.size()[:-1], -1, 2)  # B H L D/2 2

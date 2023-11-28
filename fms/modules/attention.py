@@ -196,8 +196,8 @@ class MultiHeadAttention(nn.Module):
                 slot_mapping, dtype=torch.long, device="cuda"
             ).view(-1)
 
-            key_to_cache = keys.transpose(2, 1).view(-1, self.kvheads, self.head_size)
-            value_to_cache = values.transpose(2, 1).view(-1, self.kvheads, self.head_size)
+            key_to_cache = keys.transpose(2, 1).view(-1, self.kvheads, self.head_size).contiguous()
+            value_to_cache = values.transpose(2, 1).view(-1, self.kvheads, self.head_size).contiguous()
             cache_ops.reshape_and_cache(
                 key_to_cache,
                 value_to_cache,
