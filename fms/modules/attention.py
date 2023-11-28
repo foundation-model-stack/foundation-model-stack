@@ -196,8 +196,8 @@ class MultiHeadAttention(nn.Module):
                 slot_mapping, dtype=torch.long, device="cuda"
             ).view(-1)
 
-            key_to_cache = keys.transpose(2, 1).view(-1, self.kvheads, self.head_size).contiguous()
-            value_to_cache = values.transpose(2, 1).view(-1, self.kvheads, self.head_size).contiguous()
+            key_to_cache = keys.transpose(2, 1).reshape(-1, self.kvheads, self.head_size)
+            value_to_cache = values.transpose(2, 1).reshape(-1, self.kvheads, self.head_size)
             cache_ops.reshape_and_cache(
                 key_to_cache,
                 value_to_cache,
@@ -208,7 +208,7 @@ class MultiHeadAttention(nn.Module):
 
         # we use the special paged_attention call if we have a cache
         if kv_cache and not kv_cache.is_empty():
-            queries = queries.transpose(2, 1).view(-1, self.nheads, self.head_size)
+            queries = queries.transpose(2, 1).reshape(-1, self.nheads, self.head_size)
             head_mapping = torch.repeat_interleave(
                 torch.arange(self.kvheads, dtype=torch.int32, device="cuda"),
                 self.nheads // self.kvheads,

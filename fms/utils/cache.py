@@ -146,7 +146,7 @@ class PagedKVCache:
         return max([cb.get_sequence_length() for cb in self.block_table_map.values()])
 
     def _allocate_block(self) -> CacheBlock:
-        return self.free_blocks.pop(0)
+        return self.free_blocks.pop()
 
     def is_empty(self):
         return self.cache_empty
