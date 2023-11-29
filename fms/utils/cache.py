@@ -233,6 +233,7 @@ class PagedKVCache:
         for cb in cbg:
             cb.num_tokens = 0
             self.free_blocks.append(cb)
+        self.block_table_map[sequence_id] = CacheBlockGroup(self.block_size)
 
     def free_sequences(self, sequence_ids: List[int]):
         for seq_id in sequence_ids:

@@ -114,6 +114,7 @@ class LLaMABlock(nn.Module):
         kv_cache=None,
         layer_index=None,
         use_cache=False,
+        cache_metadata=None,
         is_causal_mask=False,
         attn_algorithm=None,
     ):
@@ -133,6 +134,7 @@ class LLaMABlock(nn.Module):
             use_cache=use_cache,
             is_self=True,
             is_causal_mask=is_causal_mask,
+            cache_metadata=cache_metadata,
         )
         cache = None
         if use_cache:
@@ -247,6 +249,7 @@ class LLaMA(nn.Module):
         position_ids=None,
         kv_cache: Optional[PagedKVCache] = None,
         use_cache=False,
+        cache_metadata: Optional[dict] = None,
         attn_algorithm=None,
     ):
         # Embed the given vocabulary indices using the given attention mask, with pre-/post-norm and dropout as specified
@@ -260,17 +263,13 @@ class LLaMA(nn.Module):
                 self.config.emb_dim,
                 dtype=self.shared.emb.weight.dtype,
             )
-        elif not use_cache:
-            kv_cache = [None for _ in range(len(self.layers))]
 
         qlen = x_in.size(1)
         klen = x_in.size(1)
 
         # if we are using the cache, the key length needs to be extended with the past keys length
         if use_cache:
-            # todo: this is making an assumption about the sequence ids lining up with the index into the batch
-            #  this will have to be passed in as some mapping from sequence id to index in reality
-            sequence_ids = [i for i in range(x_in.size(0))]
+            sequence_ids = cache_metadata['sequence_ids']
             if not kv_cache.is_initialized_with_prompt(sequence_ids):
                 kv_cache.allocate_initial_prompt(sequence_ids, x_in)
             else:
@@ -300,6 +299,7 @@ class LLaMA(nn.Module):
                 is_causal_mask=is_causal_mask,
                 attn_algorithm=attn_algorithm,
                 layer_index=i,
+                cache_metadata=cache_metadata
             )
 
             if use_cache:
@@ -321,11 +321,12 @@ class LLaMA(nn.Module):
         position_ids=None,
         kv_cache=None,
         use_cache=False,
+        cache_metadata=None,
         only_last_token=False,
         attn_algorithm=None,
     ):
         output, cache = self._helper(
-            x, mask, position_ids, kv_cache, use_cache, attn_algorithm
+            x, mask, position_ids, kv_cache, use_cache, cache_metadata, attn_algorithm
         )
 
         if only_last_token:

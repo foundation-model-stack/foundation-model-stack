@@ -219,6 +219,7 @@ class RotaryEmbedding(PositionEncoder):
         position_ids: Optional[torch.Tensor] = None,
         kv_cache: Optional[PagedKVCache] = None,
         use_cache=False,
+        cache_metadata=None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Args
@@ -240,10 +241,7 @@ class RotaryEmbedding(PositionEncoder):
             position_ids = torch.arange(
                 0, q.size(2), dtype=torch.long, device=q.device
             ).repeat(q.size(0), 1)
-            # todo: this is making an assumption about the sequence ids lining up with the index into the batch
-            #  this will have to be passed in as some mapping from sequence id to index in reality
-            sequence_ids = [i for i in range(q.size(0))]
-            print(kv_cache.is_generating(sequence_ids))
+            sequence_ids = cache_metadata['sequence_ids']
             if use_cache and kv_cache.is_generating(sequence_ids):
                 # todo: get_max_sequence_length should be returning the right value here
                 #  we should have a way of denoting num_allocated vs num_stored in cache

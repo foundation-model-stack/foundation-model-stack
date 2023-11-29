@@ -1,7 +1,9 @@
-from typing import Any, Callable, List, MutableMapping, Union
+from typing import Any, Callable, List, MutableMapping, Union, Optional
 
 import torch
 import torch.nn.functional as F
+
+from fms.utils.cache import PagedKVCache
 
 
 def generate(
@@ -15,6 +17,8 @@ def generate(
     num_beams: int = 1,
     use_cache: bool = False,
     contiguous_cache: bool = False,
+    kv_cache: Optional[PagedKVCache] = None,
+    cache_metadata: Optional[dict] = None
 ):
     """
     A trivial generate function that can be used for validation/testing in
@@ -51,8 +55,9 @@ def generate(
     result = input_ids
     next_input = input_ids
     kwargs: MutableMapping[str, Any] = dict()
-    kwargs["kv_cache"] = None
+    kwargs["kv_cache"] = kv_cache
     kwargs["use_cache"] = use_cache
+    kwargs["cache_metadata"] = {"sequence_ids": [i for i in range(input_ids.size(0))]} if cache_metadata is None else cache_metadata
 
     for _ in range(max_new_tokens):
         input_ids = next_input[:, -max_seq_len:]
@@ -85,6 +90,10 @@ def generate(
 
     if not batched:
         result = result[0]
+
+    if kv_cache:
+        kv_cache.free_sequences(kwargs["cache_metadata"]['sequence_ids'])
+
     return result
 
 

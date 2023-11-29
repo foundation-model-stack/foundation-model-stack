@@ -5,8 +5,6 @@ import torch
 from torch import nn
 from torch.distributed.distributed_c10d import ProcessGroup
 from torch.nn import functional as F
-
-import vllm.model_executor.layers.rotary_embedding
 from fms import distributed
 
 from fms.distributed.tensorparallel import (
@@ -122,6 +120,7 @@ class MultiHeadAttention(nn.Module):
         attn_algorithm=None,
         kv_cache: Optional[PagedKVCache] = None,
         use_cache=False,
+        cache_metadata=None,
         is_self=True,
         is_causal_mask=False,
     ):
@@ -163,7 +162,7 @@ class MultiHeadAttention(nn.Module):
         # b x kvlen x d
         # b x kvlen x h x ds
         # b x h x kvlen x ds
-        if is_self or kv_cache is None or kv_cache.is_empty():
+        if is_self or kv_cache is None or not kv_cache.is_generating(cache_metadata['sequence_ids']):
             keys = self.key(k).view(
                 batch_size, kv_len, self.kvheads, self.emb_kq_per_head
             )
@@ -177,15 +176,13 @@ class MultiHeadAttention(nn.Module):
             # You want to apply rotary embeddings pre-cache
             if self.position_encoder is not None:
                 queries, keys = self.position_encoder.adjusted_qk(
-                    queries, keys, position_ids, kv_cache, use_cache
+                    queries, keys, position_ids, kv_cache, use_cache, cache_metadata
                 )
 
         def _pad_to_max(x: List[int], max_len: int, pad: int) -> List[int]:
             return x + [pad] * (max_len - len(x))
 
-        # todo: this is making an assumption about the sequence ids lining up with the index into the batch
-        #  this will have to be passed in as some mapping from sequence id to index in reality
-        sequence_ids = [i for i in range(batch_size)]
+        sequence_ids = cache_metadata['sequence_ids']
 
         if kv_cache:
             key_to_cache = keys.transpose(2, 1).reshape(
@@ -264,7 +261,6 @@ class MultiHeadAttention(nn.Module):
                 attn_mask=attn_mask,
                 dropout_p=self.p_dropout if self.training else 0.0,
                 is_causal=is_causal_mask,
-                # scale=(self.emb_dim // self.nheads) ** -0.5
             )
 
             if attn_algorithm:
