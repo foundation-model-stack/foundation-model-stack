@@ -85,6 +85,10 @@ class MultiHeadAttention(nn.Module):
         )
         self.previous_math: bool = torch.backends.cuda.math_sdp_enabled()
         self.head_size = emb_dim // nheads
+        self.head_mapping = torch.repeat_interleave(
+            torch.arange(self.kvheads, dtype=torch.int32, device="cuda"),
+            self.nheads // self.kvheads,
+        )
         self.reset_params(gain)
 
     def reset_params(self, gain=1):
@@ -179,68 +183,38 @@ class MultiHeadAttention(nn.Module):
         def _pad_to_max(x: List[int], max_len: int, pad: int) -> List[int]:
             return x + [pad] * (max_len - len(x))
 
+        # todo: this is making an assumption about the sequence ids lining up with the index into the batch
+        #  this will have to be passed in as some mapping from sequence id to index in reality
+        sequence_ids = [i for i in range(batch_size)]
+
         if kv_cache:
-            slot_mapping = []
-            for cbg in kv_cache.block_table_map.values():
-                start_pos = 0 if kv_cache.is_empty() else cbg.get_sequence_length() - 1
-                slot = cbg.get_slot_mapping(start_pos)
-                if kv_cache.is_empty():
-                    slot_mapping.append(
-                        _pad_to_max(slot, kv_cache.get_max_sequence_length(), -1)
-                    )
-                else:
-                    slot_mapping.append(slot)
-
-
-            slot_mapping_tensor = torch.tensor(
-                slot_mapping, dtype=torch.long, device="cuda"
-            ).view(-1)
-
-            key_to_cache = keys.transpose(2, 1).reshape(-1, self.kvheads, self.head_size)
-            value_to_cache = values.transpose(2, 1).reshape(-1, self.kvheads, self.head_size)
-            cache_ops.reshape_and_cache(
-                key_to_cache,
-                value_to_cache,
-                kv_cache.cache[layer_index][0],
-                kv_cache.cache[layer_index][1],
-                slot_mapping_tensor,
+            key_to_cache = keys.transpose(2, 1).reshape(
+                -1, self.kvheads, self.head_size
             )
+            value_to_cache = values.transpose(2, 1).reshape(
+                -1, self.kvheads, self.head_size
+            )
+            kv_cache.cache_keys_values(sequence_ids, key_to_cache, value_to_cache)
 
         # we use the special paged_attention call if we have a cache
-        if kv_cache and not kv_cache.is_empty():
+        if kv_cache and kv_cache.is_generating(sequence_ids):
             queries = queries.transpose(2, 1).reshape(-1, self.nheads, self.head_size)
-            head_mapping = torch.repeat_interleave(
-                torch.arange(self.kvheads, dtype=torch.int32, device="cuda"),
-                self.nheads // self.kvheads,
-            )
 
             # Pre-allocate the output tensor.
             attn = torch.empty_like(queries)
-            block_tables_tensor = torch.tensor(
-                [[cb.block_number for cb in cbg] for cbg in kv_cache.block_table_map.values()],
-                dtype=torch.int,
-                device="cuda",
-            )
-            context_lens_tensor = torch.tensor(
-                [
-                    cbg.get_sequence_length()
-                    for cbg in kv_cache.block_table_map.values()
-                ],
-                dtype=torch.int,
-                device="cuda",
-            )
+
             attention_ops.paged_attention_v1(
                 attn,
                 # num_sequences x num_heads x head_size
                 queries,
                 kv_cache.cache[layer_index][0],
                 kv_cache.cache[layer_index][1],
-                head_mapping,
+                self.head_mapping,
                 (self.emb_dim // self.nheads) ** -0.5,
-                block_tables_tensor,
-                context_lens_tensor,
+                kv_cache.get_block_tables(sequence_ids),
+                kv_cache.get_context_lengths(sequence_ids),
                 kv_cache.block_size,
-                kv_cache.get_max_sequence_length(),
+                kv_cache.get_max_sequence_length(sequence_ids),
                 None,
             )
             attn = attn.view(batch_size, q_len, self.nheads * self.emb_v_per_head)
@@ -309,7 +283,6 @@ class MultiHeadAttention(nn.Module):
                 .contiguous()
                 .view(batch_size, q_len, self.nheads * self.emb_v_per_head)
             )
-
 
         out = self.dense(attn)
 

@@ -268,11 +268,14 @@ class LLaMA(nn.Module):
 
         # if we are using the cache, the key length needs to be extended with the past keys length
         if use_cache:
-            if len(kv_cache.block_table_map) == 0:
-                kv_cache.allocate_initial_prompt(x_in)
+            # todo: this is making an assumption about the sequence ids lining up with the index into the batch
+            #  this will have to be passed in as some mapping from sequence id to index in reality
+            sequence_ids = [i for i in range(x_in.size(0))]
+            if not kv_cache.is_generating(sequence_ids):
+                kv_cache.allocate_initial_prompt(sequence_ids, x_in)
             else:
-                klen += kv_cache.get_max_sequence_length()
-                kv_cache.allocate_generated_token(x_in)
+                klen += kv_cache.get_max_sequence_length(sequence_ids)
+                kv_cache.allocate_generated_token(sequence_ids)
 
         # if mask is none, we need to specify causal mask
         if mask is None:
@@ -296,7 +299,7 @@ class LLaMA(nn.Module):
                 use_cache=use_cache,
                 is_causal_mask=is_causal_mask,
                 attn_algorithm=attn_algorithm,
-                layer_index=i
+                layer_index=i,
             )
 
             if use_cache:

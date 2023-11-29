@@ -55,6 +55,7 @@ class CacheBlock:
         return self.num_available_slots() == 0
 
     def append_num_tokens(self, num_tokens: int):
+        # todo: we need some way of differentiating number of tokens stored in the cache vs num allocated
         self.num_tokens += num_tokens
 
 
@@ -62,6 +63,7 @@ class CacheBlockGroup(List[CacheBlock]):
     def __init__(self, block_size: int):
         super().__init__()
         self.block_size = block_size
+        self._is_generating = False
 
     def __getitem__(self, key):
         return super(CacheBlockGroup, self).__getitem__(key)
@@ -70,7 +72,10 @@ class CacheBlockGroup(List[CacheBlock]):
         return self[-1].is_full()
 
     def get_sequence_length(self):
-        return sum([cb.num_tokens for cb in self])
+        if len(self) == 0:
+            return 0
+        else:
+            return sum([cb.num_tokens for cb in self])
 
     def get_cache_block(self, position: int):
         return self[position // self.block_size]
@@ -142,23 +147,101 @@ class PagedKVCache:
         self.block_table_map: Dict[int, CacheBlockGroup] = {}
         self.cache_empty = True
 
-    def get_max_sequence_length(self):
-        return max([cb.get_sequence_length() for cb in self.block_table_map.values()])
+    def get_max_sequence_length(self, sequence_ids: List[int]):
+        return max(
+            [
+                self.block_table_map[seq_id].get_sequence_length()
+                for seq_id in sequence_ids
+            ]
+        )
 
     def _allocate_block(self) -> CacheBlock:
         return self.free_blocks.pop()
 
-    def is_empty(self):
-        return self.cache_empty
+    @staticmethod
+    def __pad_to_max(x: List[int], max_len: int, pad: int) -> List[int]:
+        return x + [pad] * (max_len - len(x))
 
-    def allocate_initial_prompt(self, prompt_tensor: torch.Tensor):
+    def cache_keys_values(
+        self, sequence_ids: List[int], keys: torch.Tensor, values: torch.Tensor
+    ):
+        slot_mapping = []
+        for sequence_id in sequence_ids:
+            cbg = self.block_table_map[sequence_id]
+            start_pos = 0 if not cbg._is_generating else cbg.get_sequence_length() - 1
+            slot = cbg.get_slot_mapping(start_pos)
+            slot_mapping.append(
+                self.__pad_to_max(slot, kv_cache.get_max_sequence_length(), -1)
+            )
+
+        slot_mapping_tensor = torch.tensor(
+            slot_mapping, dtype=torch.long, device="cuda"
+        ).view(-1)
+
+        key_to_cache = keys.transpose(2, 1).reshape(-1, self.kvheads, self.head_size)
+        value_to_cache = values.transpose(2, 1).reshape(
+            -1, self.kvheads, self.head_size
+        )
+        cache_ops.reshape_and_cache(
+            key_to_cache,
+            value_to_cache,
+            kv_cache.cache[layer_index][0],
+            kv_cache.cache[layer_index][1],
+            slot_mapping_tensor,
+        )
+
+        for sequence_id in sequence_ids:
+            cbg = self.block_table_map[sequence_id]
+            cbg._is_generating = True
+
+    def get_block_tables(self, sequence_ids: List[int]) -> torch.Tensor:
+        return torch.tensor(
+            [
+                [cb.block_number for cb in self.block_table_map[seq_id]]
+                for seq_id in range(sequence_ids)
+            ],
+            dtype=torch.int,
+            device="cuda",
+        )
+
+    def get_context_lengths(self, sequence_ids: List[int]) -> torch.Tensor:
+        return torch.tensor(
+            [
+                self.block_table_map[seq_id].get_sequence_length()
+                for seq_id in range(sequence_ids)
+            ],
+            dtype=torch.int,
+            device="cuda",
+        )
+
+    def is_generating(self, sequence_ids: List[int]):
+        for sequence_id in sequence_ids:
+            if not self.block_table_map[sequence_id]._is_generating:
+                return False
+        return True
+
+    def free(self, sequence_id: int):
+        if sequence_id not in self.block_table_map:
+            return
+        cbg = self.block_table_map[sequence_id]
+        for cb in cbg:
+            cb.num_tokens = 0
+            self.free_blocks.append(cb)
+
+    def free_sequences(self, sequence_ids: List[int]):
+        for seq_id in sequence_ids:
+            self.free(seq_id)
+
+    def allocate_initial_prompt(
+        self, sequence_ids: List[int], prompt_tensor: torch.Tensor
+    ):
         prompt_list = prompt_tensor.tolist()
-        for i, seq_id in enumerate(prompt_list):
-            self._allocate_prompt_sequence(i, seq_id)
+        for seq_id, prompt_ids in zip(sequence_ids, prompt_list):
+            self._allocate_prompt_sequence(seq_id, prompt_ids)
 
-    def allocate_generated_token(self, generated_tensor: torch.Tensor):
-        for i in range(generated_tensor.size(0)):
-            cache_block_group = self.block_table_map[i]
+    def allocate_generated_token(self, sequence_ids: List[int]):
+        for seq_id in sequence_ids:
+            cache_block_group = self.block_table_map[seq_id]
 
             if cache_block_group.last_cache_block_is_full():
                 last_block = self._allocate_block()
@@ -166,7 +249,6 @@ class PagedKVCache:
                 cache_block_group.append(last_block)
             else:
                 cache_block_group[-1].append_num_tokens(1)
-        self.cache_empty = False
 
     def _allocate_prompt_sequence(self, seq_id: int, tokens: List[int]):
         cache_block_group: CacheBlockGroup = CacheBlockGroup(self.block_size)

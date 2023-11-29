@@ -240,8 +240,15 @@ class RotaryEmbedding(PositionEncoder):
             position_ids = torch.arange(
                 0, q.size(2), dtype=torch.long, device=q.device
             ).repeat(q.size(0), 1)
-            if use_cache and not kv_cache.is_empty():
-                position_ids += (kv_cache.get_max_sequence_length() - 1)
+            # todo: this is making an assumption about the sequence ids lining up with the index into the batch
+            #  this will have to be passed in as some mapping from sequence id to index in reality
+            sequence_ids = [i for i in range(batch_size)]
+            if use_cache and kv_cache.is_generating(sequence_ids):
+                # todo: get_max_sequence_length should be returning the right value here
+                #  we should have a way of denoting num_allocated vs num_stored in cache
+                #  since we don't have this yet, for now just removing 1 as we have allocated one extra but have not
+                #  stored it in the cache yet
+                position_ids += kv_cache.get_max_sequence_length(sequence_ids) - 1
         seq_len = q.size(2)
 
         q_ = q.float().reshape(*q.size()[:-1], -1, 2)  # B H L D/2 2
