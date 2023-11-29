@@ -198,6 +198,7 @@ class MultiHeadAttention(nn.Module):
 
             key_to_cache = keys.transpose(2, 1).reshape(-1, self.kvheads, self.head_size)
             value_to_cache = values.transpose(2, 1).reshape(-1, self.kvheads, self.head_size)
+
             cache_ops.reshape_and_cache(
                 key_to_cache,
                 value_to_cache,
@@ -229,6 +230,31 @@ class MultiHeadAttention(nn.Module):
                 dtype=torch.int,
                 device="cuda",
             )
+            if layer_index == 0 and kv_cache.get_max_sequence_length() == 148:
+                path_out = "./paged_attn_input.bin"
+                print(f"attn: {attn.shape}")
+                print(f"queries: {queries.shape}")
+                print(f"key cache for layer: {kv_cache.cache[layer_index][0].shape}")
+                print(f"value cache for layer: {kv_cache.cache[layer_index][1].shape}")
+                print(f"head mapping: {head_mapping}")
+                print(f"block_tables_tensor: {block_tables_tensor}")
+                print(f"context_lens_tensor: {context_lens_tensor}")
+                print(f"block size: {kv_cache.block_size}")
+                print(f"max sequence length: {kv_cache.get_max_sequence_length()}")
+                output = {
+                    "attn_in": attn,
+                    "queries": queries,
+                    "key cache": kv_cache.cache[layer_index][0],
+                    "value cache": kv_cache.cache[layer_index][1],
+                    "head mapping": head_mapping,
+                    "scale": (self.emb_dim // self.nheads) ** -0.5,
+                    "block tables tensor": block_tables_tensor,
+                    "context lens tensor": context_lens_tensor,
+                    "block size": kv_cache.block_size,
+                    "max sequence length": kv_cache.get_max_sequence_length(),
+                    "alibi_slopes": None
+                }
+                torch.save(output, path_out)
             attention_ops.paged_attention_v1(
                 attn,
                 # num_sequences x num_heads x head_size
@@ -243,6 +269,10 @@ class MultiHeadAttention(nn.Module):
                 kv_cache.get_max_sequence_length(),
                 None,
             )
+            if layer_index == 0 and kv_cache.get_max_sequence_length() == 148:
+                path_out = "./paged_attn_output.bin"
+                torch.save({"attn_out": attn}, path_out)
+
             attn = attn.view(batch_size, q_len, self.nheads * self.emb_v_per_head)
         else:
 
