@@ -10,7 +10,7 @@ setup(
     url="https://github.com/foundation-model-stack/foundation-model-stack",
     packages=find_packages(),
     install_requires=["torch >= 2.1"],
-    extras_require={"hf": ["transformers >= 4.34.0"]},
+    extras_require={"hf": ["transformers >= 4.35.0"]},
     license="Apache License 2.0",
     classifiers=[
         "Programming Language :: Python :: 3",
