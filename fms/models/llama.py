@@ -271,7 +271,7 @@ class LLaMA(nn.Module):
             # todo: this is making an assumption about the sequence ids lining up with the index into the batch
             #  this will have to be passed in as some mapping from sequence id to index in reality
             sequence_ids = [i for i in range(x_in.size(0))]
-            if not kv_cache.is_generating(sequence_ids):
+            if not kv_cache.is_initialized_with_prompt(sequence_ids):
                 kv_cache.allocate_initial_prompt(sequence_ids, x_in)
             else:
                 klen += kv_cache.get_max_sequence_length(sequence_ids)

@@ -17,7 +17,7 @@ from fms.distributed.tensorparallel import (
 )
 from fms.modules.positions import PositionEncoder
 from fms.utils.cache import PagedKVCache
-from vllm import attention_ops, cache_ops
+from vllm import attention_ops
 
 
 class MultiHeadAttention(nn.Module):
@@ -194,7 +194,7 @@ class MultiHeadAttention(nn.Module):
             value_to_cache = values.transpose(2, 1).reshape(
                 -1, self.kvheads, self.head_size
             )
-            kv_cache.cache_keys_values(sequence_ids, key_to_cache, value_to_cache)
+            kv_cache.cache_keys_values(sequence_ids, layer_index, key_to_cache, value_to_cache)
 
         # we use the special paged_attention call if we have a cache
         if kv_cache and kv_cache.is_generating(sequence_ids):

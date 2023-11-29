@@ -1,5 +1,5 @@
 from typing import Tuple, List, Dict, Optional
-
+from vllm import cache_ops
 import torch
 
 KVCache = Tuple[torch.Tensor, torch.Tensor]  # (key cache, value cache)
@@ -64,9 +64,16 @@ class CacheBlockGroup(List[CacheBlock]):
         super().__init__()
         self.block_size = block_size
         self._is_generating = False
+        self._is_initialized_with_prompt = False
 
     def __getitem__(self, key):
         return super(CacheBlockGroup, self).__getitem__(key)
+
+    def is_initialized_with_prompt(self):
+        return self._is_initialized_with_prompt
+
+    def is_generating(self):
+        return self._is_generating
 
     def last_cache_block_is_full(self):
         return self[-1].is_full()
@@ -109,6 +116,7 @@ class PagedKVCache:
             total_num_gpu_blocks = get_max_gpu_blocks_available(
                 block_size, emb_dim, num_heads, num_layers, 0.7, dtype
             )
+        self.total_num_gpu_blocks = total_num_gpu_blocks
 
         head_size = emb_dim // num_heads
 
@@ -163,42 +171,34 @@ class PagedKVCache:
         return x + [pad] * (max_len - len(x))
 
     def cache_keys_values(
-        self, sequence_ids: List[int], keys: torch.Tensor, values: torch.Tensor
+        self, sequence_ids: List[int], layer: int, keys: torch.Tensor, values: torch.Tensor
     ):
         slot_mapping = []
         for sequence_id in sequence_ids:
             cbg = self.block_table_map[sequence_id]
-            start_pos = 0 if not cbg._is_generating else cbg.get_sequence_length() - 1
+            start_pos = 0 if not cbg.is_generating() else cbg.get_sequence_length() - 1
             slot = cbg.get_slot_mapping(start_pos)
-            slot_mapping.append(
-                self.__pad_to_max(slot, kv_cache.get_max_sequence_length(), -1)
-            )
+            if not cbg.is_generating():
+                slot = self.__pad_to_max(slot, self.get_max_sequence_length(sequence_ids), -1)
+            slot_mapping.append(slot)
 
         slot_mapping_tensor = torch.tensor(
             slot_mapping, dtype=torch.long, device="cuda"
         ).view(-1)
 
-        key_to_cache = keys.transpose(2, 1).reshape(-1, self.kvheads, self.head_size)
-        value_to_cache = values.transpose(2, 1).reshape(
-            -1, self.kvheads, self.head_size
-        )
         cache_ops.reshape_and_cache(
-            key_to_cache,
-            value_to_cache,
-            kv_cache.cache[layer_index][0],
-            kv_cache.cache[layer_index][1],
+            keys,
+            values,
+            self.cache[layer][0],
+            self.cache[layer][1],
             slot_mapping_tensor,
         )
-
-        for sequence_id in sequence_ids:
-            cbg = self.block_table_map[sequence_id]
-            cbg._is_generating = True
 
     def get_block_tables(self, sequence_ids: List[int]) -> torch.Tensor:
         return torch.tensor(
             [
                 [cb.block_number for cb in self.block_table_map[seq_id]]
-                for seq_id in range(sequence_ids)
+                for seq_id in sequence_ids
             ],
             dtype=torch.int,
             device="cuda",
@@ -208,7 +208,7 @@ class PagedKVCache:
         return torch.tensor(
             [
                 self.block_table_map[seq_id].get_sequence_length()
-                for seq_id in range(sequence_ids)
+                for seq_id in sequence_ids
             ],
             dtype=torch.int,
             device="cuda",
@@ -216,7 +216,13 @@ class PagedKVCache:
 
     def is_generating(self, sequence_ids: List[int]):
         for sequence_id in sequence_ids:
-            if not self.block_table_map[sequence_id]._is_generating:
+            if sequence_id not in self.block_table_map or not self.block_table_map[sequence_id].is_generating():
+                return False
+        return True
+
+    def is_initialized_with_prompt(self, sequence_ids: List[int]):
+        for sequence_id in sequence_ids:
+            if sequence_id not in self.block_table_map or not self.block_table_map[sequence_id].is_initialized_with_prompt():
                 return False
         return True
 
@@ -242,6 +248,7 @@ class PagedKVCache:
     def allocate_generated_token(self, sequence_ids: List[int]):
         for seq_id in sequence_ids:
             cache_block_group = self.block_table_map[seq_id]
+            cache_block_group._is_generating = True
 
             if cache_block_group.last_cache_block_is_full():
                 last_block = self._allocate_block()
@@ -274,4 +281,5 @@ class PagedKVCache:
                 # because the other condition did not hold, we can allocate a new block
                 last_cache_block = self._allocate_block()
 
+        cache_block_group._is_initialized_with_prompt = True
         self.block_table_map[seq_id] = cache_block_group
