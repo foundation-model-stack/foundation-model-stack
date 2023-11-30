@@ -162,7 +162,7 @@ class MultiHeadAttention(nn.Module):
         # b x kvlen x d
         # b x kvlen x h x ds
         # b x h x kvlen x ds
-        if is_self or kv_cache is None or not kv_cache.is_generating(cache_metadata['sequence_ids']):
+        if is_self or kv_cache is None or not kv_cache.is_generating(cache_metadata):
             keys = self.key(k).view(
                 batch_size, kv_len, self.kvheads, self.emb_kq_per_head
             )
@@ -182,8 +182,6 @@ class MultiHeadAttention(nn.Module):
         def _pad_to_max(x: List[int], max_len: int, pad: int) -> List[int]:
             return x + [pad] * (max_len - len(x))
 
-        sequence_ids = cache_metadata['sequence_ids']
-
         if kv_cache:
             key_to_cache = keys.transpose(2, 1).reshape(
                 -1, self.kvheads, self.head_size
@@ -191,10 +189,10 @@ class MultiHeadAttention(nn.Module):
             value_to_cache = values.transpose(2, 1).reshape(
                 -1, self.kvheads, self.head_size
             )
-            kv_cache.cache_keys_values(sequence_ids, layer_index, key_to_cache, value_to_cache)
+            kv_cache.cache_keys_values(cache_metadata, layer_index, key_to_cache, value_to_cache)
 
         # we use the special paged_attention call if we have a cache
-        if kv_cache and kv_cache.is_generating(sequence_ids):
+        if kv_cache and kv_cache.is_generating(cache_metadata):
             queries = queries.transpose(2, 1).reshape(-1, self.nheads, self.head_size)
 
             # Pre-allocate the output tensor.
@@ -208,10 +206,10 @@ class MultiHeadAttention(nn.Module):
                 kv_cache.cache[layer_index][1],
                 self.head_mapping,
                 (self.emb_dim // self.nheads) ** -0.5,
-                kv_cache.get_block_tables(sequence_ids),
-                kv_cache.get_context_lengths(sequence_ids),
+                kv_cache.get_block_tables(cache_metadata),
+                kv_cache.get_context_lengths(cache_metadata),
                 kv_cache.block_size,
-                kv_cache.get_max_sequence_length(sequence_ids),
+                kv_cache.get_max_sequence_length(cache_metadata),
                 None,
             )
             attn = attn.view(batch_size, q_len, self.nheads * self.emb_v_per_head)

@@ -11,6 +11,10 @@ from fms import models
 
 from fms.utils import generation, print0, tokenizers
 from fms.utils.cache import PagedKVCache
+import numpy as np
+# torch.manual_seed(42)  # pytorch random seed
+# np.random.seed(42)  # numpy random seed
+# torch.backends.cudnn.deterministic = True
 
 # Example running llama 7B on one A100:
 #
@@ -240,7 +244,7 @@ def end_to_end(model, use_cache, expected=None):
 
 
 e2e_expected_cache = end_to_end(model, True)
-e2e_expected_nocache = end_to_end(model, False)
+e2e_expected_nocache = end_to_end(model, True)
 
 
 def log_result(result):

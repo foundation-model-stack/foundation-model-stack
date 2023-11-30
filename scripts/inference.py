@@ -9,6 +9,7 @@ from fms.distributed.strategy import TensorParallelStrategy
 from fms.models import get_model
 from fms.models.llama import load_fms_llama
 from fms.utils import generation, tokenizers
+from fms.utils.cache import PagedKVCache
 from fms.utils.generation import generate
 
 
@@ -83,6 +84,14 @@ tokenizer = tokenizers.get_tokenizer(args.tokenizer)
 model.eval()
 torch.set_grad_enabled(False)
 print("loading complete on rank", local_rank)
+
+kv_cache = PagedKVCache(
+    model.config.nlayers,
+    model.config.nheads,
+    model.config.emb_dim,
+    dtype=model.shared.emb.weight.dtype,
+)
+
 
 if args.compile:
     print("compiling model")
@@ -173,6 +182,7 @@ def infer(use_cache, do_sample):
         ids,
         max_new_tokens=100,
         use_cache=use_cache,
+        kv_cache=kv_cache,
         do_sample=do_sample,
         max_seq_len=max_seq_len,
     )

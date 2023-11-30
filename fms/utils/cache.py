@@ -1,4 +1,4 @@
-from typing import Tuple, List, Dict, Optional
+from typing import Tuple, List, Dict, Optional, Union
 from vllm import cache_ops
 import torch
 
@@ -97,6 +97,18 @@ class CacheBlockGroup(List[CacheBlock]):
             slot_mapping.append(slot)
         return slot_mapping
 
+SequenceIDsInput = Union[Dict, List[int], int]
+
+def cache_input_decorator(inner_f):
+    def wrapper(self, sequence_ids: SequenceIDsInput, *args, **kwargs):
+        if isinstance(sequence_ids, Dict):
+            result = sequence_ids['sequence_ids']
+        elif isinstance(sequence_ids, List):
+            result = sequence_ids
+        else:
+            result = [sequence_ids]
+        return inner_f(self, result, *args, **kwargs)
+    return wrapper
 
 class PagedKVCache:
     def __init__(
@@ -153,9 +165,9 @@ class PagedKVCache:
         # each sequence will be mapped to a cache block group
         # for now this will just assume we always have the same sequences in batch
         self.block_table_map: Dict[int, CacheBlockGroup] = {}
-        self.cache_empty = True
 
-    def get_max_sequence_length(self, sequence_ids: List[int]):
+    @cache_input_decorator
+    def get_max_sequence_length(self, sequence_ids: SequenceIDsInput):
         return max(
             [
                 self.block_table_map[seq_id].get_sequence_length()
@@ -170,8 +182,9 @@ class PagedKVCache:
     def __pad_to_max(x: List[int], max_len: int, pad: int) -> List[int]:
         return x + [pad] * (max_len - len(x))
 
+    @cache_input_decorator
     def cache_keys_values(
-        self, sequence_ids: List[int], layer: int, keys: torch.Tensor, values: torch.Tensor
+        self, sequence_ids: SequenceIDsInput, layer: int, keys: torch.Tensor, values: torch.Tensor
     ):
         slot_mapping = []
         for sequence_id in sequence_ids:
@@ -194,7 +207,8 @@ class PagedKVCache:
             slot_mapping_tensor,
         )
 
-    def get_block_tables(self, sequence_ids: List[int]) -> torch.Tensor:
+    @cache_input_decorator
+    def get_block_tables(self, sequence_ids: SequenceIDsInput) -> torch.Tensor:
         return torch.tensor(
             [
                 [cb.block_number for cb in self.block_table_map[seq_id]]
@@ -204,7 +218,8 @@ class PagedKVCache:
             device="cuda",
         )
 
-    def get_context_lengths(self, sequence_ids: List[int]) -> torch.Tensor:
+    @cache_input_decorator
+    def get_context_lengths(self, sequence_ids: SequenceIDsInput) -> torch.Tensor:
         return torch.tensor(
             [
                 self.block_table_map[seq_id].get_sequence_length()
@@ -214,13 +229,15 @@ class PagedKVCache:
             device="cuda",
         )
 
-    def is_generating(self, sequence_ids: List[int]):
+    @cache_input_decorator
+    def is_generating(self, sequence_ids: SequenceIDsInput):
         for sequence_id in sequence_ids:
             if sequence_id not in self.block_table_map or not self.block_table_map[sequence_id].is_generating():
                 return False
         return True
 
-    def is_initialized_with_prompt(self, sequence_ids: List[int]):
+    @cache_input_decorator
+    def is_initialized_with_prompt(self, sequence_ids: SequenceIDsInput):
         for sequence_id in sequence_ids:
             if sequence_id not in self.block_table_map or not self.block_table_map[sequence_id].is_initialized_with_prompt():
                 return False
@@ -235,18 +252,21 @@ class PagedKVCache:
             self.free_blocks.append(cb)
         self.block_table_map[sequence_id] = CacheBlockGroup(self.block_size)
 
-    def free_sequences(self, sequence_ids: List[int]):
+    @cache_input_decorator
+    def free_sequences(self, sequence_ids: SequenceIDsInput):
         for seq_id in sequence_ids:
             self.free(seq_id)
 
+    @cache_input_decorator
     def allocate_initial_prompt(
-        self, sequence_ids: List[int], prompt_tensor: torch.Tensor
+        self, sequence_ids: SequenceIDsInput, prompt_tensor: torch.Tensor
     ):
         prompt_list = prompt_tensor.tolist()
         for seq_id, prompt_ids in zip(sequence_ids, prompt_list):
             self._allocate_prompt_sequence(seq_id, prompt_ids)
 
-    def allocate_generated_token(self, sequence_ids: List[int]):
+    @cache_input_decorator
+    def allocate_generated_token(self, sequence_ids: SequenceIDsInput):
         for seq_id in sequence_ids:
             cache_block_group = self.block_table_map[seq_id]
             cache_block_group._is_generating = True
