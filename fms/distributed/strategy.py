@@ -77,7 +77,7 @@ class UniformModelParallelStrategy(DistributedStrategy):
         num_dev = len(devices)
         layers_per_dev = num_layers // num_dev
         remainder = num_layers - (layers_per_dev * num_dev)
-        self.layer_to_device = {}
+        self.layer_to_device = [0] * len(devices)
         layer_id = 0
         for dev_idx in range(len(devices)):
             for i in range(layers_per_dev):
@@ -91,7 +91,8 @@ class UniformModelParallelStrategy(DistributedStrategy):
     def distribute_layer(self, block: nn.Module, layer: int) -> nn.Module:
         device = self.layer_to_device[layer]
         if self.from_meta:
-            block.to_empty(device)
+            # https://github.com/pytorch/pytorch/pull/113647
+            block.to_empty(device=device)  # type: ignore[arg-type]
         wrapped = DeviceMover(block, device)
         return wrapped
 
@@ -103,7 +104,7 @@ class UniformModelParallelStrategy(DistributedStrategy):
         else:
             device = self.layer_to_device[0]
         if self.from_meta:
-            return module.to_empty(device)
+            return module.to_empty(device=device)  # type: ignore[arg-type]
         wrapped = DeviceMover(module, device)
         return wrapped
 

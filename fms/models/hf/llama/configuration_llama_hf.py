@@ -5,8 +5,8 @@ from transformers import PretrainedConfig
 from fms.models.llama import LLaMAConfig
 
 
-class LLaMAHFConfig(PretrainedConfig):
-    model_type = "llama_hf"
+class HFAdaptedLLaMAConfig(PretrainedConfig):
+    model_type = "hf_adapted_llama"
     attribute_map = {
         "vocab_size": "src_vocab_size",
         "hidden_size": "emb_dim",
@@ -18,7 +18,7 @@ class LLaMAHFConfig(PretrainedConfig):
         self,
         src_vocab_size: Optional[int] = 32000,
         emb_dim: Optional[int] = 4096,
-        norm_eps: float = 1e-6,
+        norm_eps: float = 1e-5,
         nheads: int = 32,
         kvheads: int = 0,
         nlayers: int = 32,

@@ -1,10 +1,11 @@
 import math
-from typing import List, Tuple, Union
+from typing import List, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
 from numpy import sign
 from torch.distributed.distributed_c10d import ProcessGroup
+from fms import distributed
 
 from fms.distributed.tensorparallel import (
     all_gather_from_tensor_model_parallel_region,
@@ -157,13 +158,10 @@ class TPWordEmbedding(WordEmbedding):
         tie_weights=True,
         bias=False,
         debug=False,
-        group: ProcessGroup = None,
+        group: Optional[ProcessGroup] = None,
     ):
         assert torch.distributed.is_initialized()
-        if group is None:
-            group = torch.distributed.GroupMember.WORLD
-        world_size = group.size()
-        rank = group.rank()
+        rank, world_size = distributed.rank_and_world(group)
         assert (
             emb_dim % world_size == 0
         ), "The embedding dimensions must be divisible by world size"

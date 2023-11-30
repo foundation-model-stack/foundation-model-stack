@@ -1,5 +1,5 @@
 import math
-from typing import Optional, Tuple
+from typing import MutableMapping, Optional, Tuple
 
 import torch
 from torch import nn
@@ -66,7 +66,7 @@ class Alibi(PositionEncoder):
         k: torch.Tensor,
         past_kv_state: torch.Tensor,
         use_cache=False,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    ) -> torch.Tensor:
         qlen = q.size(1)
         klen = k.size(1)
 
@@ -122,8 +122,8 @@ class RotaryEmbedding(PositionEncoder):
         super(RotaryEmbedding, self).__init__()
         self.dim = dim
         self.ratio = ratio
-        self.cached_freqs = {}
-        self.max_seq_len_cached = {}
+        self.cached_freqs: MutableMapping[int, MutableMapping[int, torch.Tensor]] = {}
+        self.max_seq_len_cached: MutableMapping[int, int] = {}
         self.ntk_scaling = ntk_scaling
         self.max_seq_len = max_seq_len
 
@@ -214,7 +214,7 @@ class RotaryEmbedding(PositionEncoder):
         self,
         q: torch.Tensor,
         k: torch.Tensor,
-        position_ids: Optional[torch.LongTensor] = None,
+        position_ids: Optional[torch.Tensor] = None,
         past_kv_state: Optional[torch.Tensor] = None,
         use_cache=False,
     ) -> Tuple[torch.Tensor, torch.Tensor]:

@@ -1538,7 +1538,6 @@ class HFEncoderDecoderModelArchitecture(
         labels: Optional[torch.LongTensor] = None,
         **kwargs,
     ):
-
         """forward method matching the signature of an encoder-decoder model architecture implemented with huggingface.
         This method will conditionally execute the forward method of the underlying encoder, then will proceed to
         call the forward method of its base class, HFDecoderModelArchitecture.

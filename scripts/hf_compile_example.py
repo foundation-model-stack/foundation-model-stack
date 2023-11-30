@@ -80,7 +80,7 @@ model = llama.convert_hf_llama(model)
 # Adapt the FMS implementation back to the HF API, so it can be used in
 # the huggingface ecosystem. Under the hood this is still the FMS
 # implementation.
-model = modeling_llama_hf.LLaMAHFForCausalLM.from_fms_model(model)
+model = modeling_llama_hf.HFAdaptedLLaMAForCausalLM.from_fms_model(model)
 model.to(device)
 model = model.to(torch.half)
 register_fms_models()
