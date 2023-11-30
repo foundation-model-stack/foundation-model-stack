@@ -6,26 +6,33 @@ import numpy as np
 import time
 from typing import Callable, Union
 
-from fms.models.llama import LLaMAConfig, LLaMA
+from fms.models import get_model
 
 print("Job start!")
 
-modelc = LLaMAConfig(32000, 4096, 1e-6, 32, 0, 32)
-model = LLaMA(modelc)
+model = get_model(
+    "llama",
+    "7b",
+    model_path="/lustre/llama_weights/7B-F/",
+    device_type="cuda",
+    source="meta",
+)
+# modelc = LLaMAConfig(32000, 4096, 1e-6, 32, 0, 32)
+# model = LLaMA(modelc)
 model.eval()
 model.cuda()
 
-d = torch.load("/lustre/dwertheimer/llama_7b_ckp.pth", map_location='cpu')['model_state']
-keylist = list(d.keys())
-for key in keylist:
-    if "dec_process" in key:
-        value = d.pop(key)
-        fields = key.split(".")
-        fields[0] = "layers"
-        d[".".join(fields)] = value
+# d = torch.load("/lustre/dwertheimer/llama_7b_ckp.pth", map_location='cpu')['model_state']
+# keylist = list(d.keys())
+# for key in keylist:
+#     if "dec_process" in key:
+#         value = d.pop(key)
+#         fields = key.split(".")
+#         fields[0] = "layers"
+#         d[".".join(fields)] = value
 
-model.load_state_dict(d, strict=False)
-model.cuda()
+# model.load_state_dict(d, strict=False)
+# model.cuda()
 
 print("Model loaded!")
 
@@ -234,7 +241,7 @@ def speculative_generate(
     return result, n_steps
 
 test = Speculator(n_heads=3)
-test.load_state_dict(torch.load("/lustre/dwertheimer/results/llama-speculator/gen3/discrete-n2-gen_PAhsdp_ws8_mbs32_sl64_pr0_vFMS3ee331f1_jid2533_sysAwsEfa0/checkpoints/step_40000_ckp.pth", map_location="cpu")["model_state"])
+test.load_state_dict(torch.load("/lustre/dwertheimer/results/llama-speculator/gen3/discrete-n2_PAhsdp_ws8_mbs8_sl4096_pr0_vFMS4e2972ae_jid2389_sysAwsEfa0/checkpoints/step_40000_ckp.pth", map_location="cpu")["model_state"])
 test.cuda()
 
 print("Speculator ready!")
@@ -254,5 +261,5 @@ for k in [2, 5]:
         print(f"Ex {j}, topk={k}: 100 tokens in {nsteps} steps.")
         print("    ", out.squeeze().tolist()[-100:])
 
-torch.save(steps, "/lustre/dwertheimer/results/llama-speculator/gen3/discrete-n2-gen_PAhsdp_ws8_mbs32_sl64_pr0_vFMS3ee331f1_jid2533_sysAwsEfa0/steps_for_100_at_k.pth")
+torch.save(steps, "/lustre/dwertheimer/results/llama-speculator/gen3/discrete-n2_PAhsdp_ws8_mbs8_sl4096_pr0_vFMS4e2972ae_jid2389_sysAwsEfa0/steps_for_100_at_k.pth")
 torch.save(outs, "/lustre/dwertheimer/results/sandbox/llama_7b_sap_outputs.pth")
