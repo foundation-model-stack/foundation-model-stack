@@ -10,10 +10,12 @@ from transformers.modeling_outputs import (
     CausalLMOutputWithCrossAttentions,
     Seq2SeqLMOutput,
     SequenceClassifierOutput,
+    MaskedLMOutput,
 )
 from transformers.utils import ModelOutput
 
 from fms.utils.activation import str_to_activation
+from fms.modules.head import ClassificationHead
 
 
 class LMHeadMixin:
@@ -272,13 +274,15 @@ class SequenceClassificationLMHeadMixin(LMHeadMixin):
     set at run-time based on config.num_labels and the label dtype.
     """
 
+    _tied_weights_keys = [
+        "lm_head.head.weight",
+        "lm_head.head.bias",
+    ]
+
     def __init__(
         self,
-        max_pos: int,
-        depth: int = 1,
         classifier_activation_fn: str = "tanh",
         classifier_dropout: float = 0.1,
-        pooling_fn: Callable[[torch.Tensor], torch.Tensor] = None,
         *args,
         **kwargs,
     ):
@@ -287,36 +291,21 @@ class SequenceClassificationLMHeadMixin(LMHeadMixin):
 
         Parameters
         ----------
-        max_pos: int
-            The maximum sequence length that this model might ever be used with. Typically set this to something large
-            just in case (e.g., 512 or 1024 or 2048).
-        depth: int
-            describes the depth of mlp (default is 1)
         classifier_activation_fn: str
             the activation function name to use in creating the lm_head. Will be ignored if depth is 0. (default is tanh)
         classifier_dropout: float
             the dropout to be used in the lm head (default is 0.1)
-        pooling_fn: Callable[[torch.Tensor], torch.Tensor], optional
-            a function which given the tensor output from mlp (batch x max_pos x embedding_dimension) will return
-            a new tensor of size (batch x new_embedding_dimension). This is used in the case you would like to send a
-            different size tensor to the final linear layer. i.e. class token or full-length, etc.
-            (default is first token)
 
         Returns
         -------
         SequenceClassificationLMHeadMixin
             a new SequenceClassificationLMHeadMixin
         """
-        if pooling_fn is None:
-            self.pooling_fn = lambda t: t[:, 0]
 
         super().__init__(
             _lm_head_params={
-                "max_pos": max_pos,
-                "depth": depth,
                 "classifier_activation_fn": classifier_activation_fn,
                 "classifier_dropout": classifier_dropout,
-                "pooling_fn": self.pooling_fn,
             },
             *args,
             **kwargs,
@@ -324,36 +313,16 @@ class SequenceClassificationLMHeadMixin(LMHeadMixin):
 
     def _get_empty_lm_head(
         self,
-        max_pos: int,
-        depth: int,
         classifier_activation_fn: str,
         classifier_dropout: float,
-        pooling_fn: Callable[[torch.Tensor], torch.Tensor],
     ) -> nn.Module:
-        # the width can be extracted by a single call to the forward function
-        # this is ok, as it only happens during initialization and is extremely lightweight
-        width = pooling_fn(torch.randn(0, max_pos, self.config.hidden_size)).size(1)
-
-        mlp = []
-        # create mlp based on depth
-        # if depth is 0, simply ignore the classifier_dropout and classifier_activation_fn
-        for i in range(depth):
-            mlp.extend(
-                [
-                    nn.Dropout(classifier_dropout),
-                    nn.Linear(
-                        self.config.hidden_size, self.config.hidden_size, bias=True
-                    ),
-                    str_to_activation(classifier_activation_fn),
-                ]
-            )
-
-        head = [
-            nn.Dropout(classifier_dropout),
-            nn.Linear(width, self.config.num_labels),
-        ]
-
-        return nn.Sequential(nn.Sequential(*mlp), nn.Sequential(*head))
+        return ClassificationHead(
+            self.config.hidden_size,
+            self.config.num_labels,
+            str_to_activation(classifier_activation_fn),
+            dropout=classifier_dropout,
+            apply_pooling_fn=True,
+        )
 
     def _compute_loss(self, prediction: torch.Tensor, labels: torch.Tensor) -> _Loss:
         if self.config.problem_type is None:
@@ -383,11 +352,6 @@ class SequenceClassificationLMHeadMixin(LMHeadMixin):
 
         return loss
 
-    def _lm_head(self, input_ids: torch.Tensor, *args, **kwargs) -> torch.Tensor:
-        mlp = self.lm_head[0](input_ids)
-        out = self.lm_head[1](self.pooling_fn(mlp))
-        return out
-
     def _produce_lm_output(
         self,
         logits: torch.FloatTensor,
@@ -396,6 +360,78 @@ class SequenceClassificationLMHeadMixin(LMHeadMixin):
         decoder_outputs: Optional[BaseModelOutputWithPastAndCrossAttentions],
     ) -> ModelOutput:
         return SequenceClassifierOutput(
+            loss=loss,
+            logits=logits,
+            hidden_states=encoder_outputs.hidden_states,
+            attentions=encoder_outputs.attentions,
+        )
+
+    def get_output_embeddings(self):
+        return self.lm_head.head
+
+
+class MaskedLMHeadMixin(LMHeadMixin):
+    """Provides a model architecture with a masked lm head"""
+
+    _tied_weights_keys = [
+        "lm_head.head.weight",
+        "lm_head.head.bias",
+    ]
+
+    def __init__(
+        self,
+        activation_fn: str = "gelu",
+        norm_eps: float = 1e-12,
+        *args,
+        **kwargs,
+    ):
+        """
+        Initialize a MaskedLMHeadMixin
+
+        Parameters
+        ----------
+        activation_fn: str
+            the activation function name to use in creating the lm_head. Will be ignored if depth is 0. (default is gelu)
+        norm_eps: norm_eps
+            norm eps for model
+
+        Returns
+        -------
+        MaskedLMHeadMixin
+            a new MaskedLMHeadMixin
+        """
+        super().__init__(
+            _lm_head_params={
+                "activation_fn": activation_fn,
+                "norm_eps": norm_eps,
+            },
+            *args,
+            **kwargs,
+        )
+
+    def get_output_embeddings(self):
+        return self.lm_head.head
+
+    def _get_empty_lm_head(self, activation_fn: str, norm_eps: float) -> nn.Module:
+        return ClassificationHead(
+            self.config.hidden_size,
+            self.config.vocab_size,
+            activation_fn=str_to_activation(activation_fn),
+            layer_norm=nn.LayerNorm(self.config.hidden_size, norm_eps),
+        )
+
+    def _compute_loss(self, prediction: torch.Tensor, labels: torch.Tensor) -> _Loss:
+        loss_fn = nn.CrossEntropyLoss(ignore_index=-100)
+        return loss_fn(prediction.view(-1, self.config.vocab_size), labels.view(-1))
+
+    def _produce_lm_output(
+        self,
+        logits: torch.FloatTensor,
+        loss: _Loss,
+        encoder_outputs: Optional[BaseModelOutputWithPastAndCrossAttentions],
+        decoder_outputs: Optional[BaseModelOutputWithPastAndCrossAttentions],
+    ) -> ModelOutput:
+        return MaskedLMOutput(
             loss=loss,
             logits=logits,
             hidden_states=encoder_outputs.hidden_states,

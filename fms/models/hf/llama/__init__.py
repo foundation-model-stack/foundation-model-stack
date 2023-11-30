@@ -9,7 +9,7 @@ def get_model(model_name_or_path: Union[str, os.PathLike]) -> HFAdaptedLLaMAForC
 
     Parameters
     ----------
-    model_path_or_name: Union[str, os.PathLike]
+    model_name_or_path: Union[str, os.PathLike]
         Either the name of the model in huggingface hub or the absolute path to
         the huggingface model
 
@@ -27,6 +27,12 @@ def get_model(model_name_or_path: Union[str, os.PathLike]) -> HFAdaptedLLaMAForC
     hf_model = LlamaForCausalLM.from_pretrained(model_name_or_path)
     fms_model = convert_hf_llama(hf_model).half()
     result_model: HFAdaptedLLaMAForCausalLM = HFAdaptedLLaMAForCausalLM.from_fms_model(
-        fms_model, torch_dtype=torch.float16
+        fms_model,
+        torch_dtype=torch.float16,
+        # pad_token_id in fms is defaulted to -1
+        # in generation, huggingface will add pad_tokens to the end of a sequence after the eos token is found for a
+        # given sequence in the batch, if -1 is provided, our model won't be able to interpret it. We should be using
+        # huggingface pad_token_id as that is where the model weights are coming from.
+        pad_token_id=hf_model.config.pad_token_id,
     )
     return result_model

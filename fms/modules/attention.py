@@ -4,6 +4,7 @@ import torch
 from torch import nn
 from torch.distributed.distributed_c10d import ProcessGroup
 from torch.nn import functional as F
+from fms import distributed
 
 from fms.distributed.tensorparallel import (
     apply_colwise_tp,
@@ -291,13 +292,11 @@ class TPMultiHeadAttention(MultiHeadAttention):
         use_bias=False,
         position_encoder: Optional[PositionEncoder] = None,
         gain=1,
-        group: ProcessGroup = None,
+        group: Optional[ProcessGroup] = None,
     ):
         assert torch.distributed.is_initialized()
-        if group is None:
-            group = torch.distributed.GroupMember.WORLD
-        world_size = group.size()
-        rank = group.rank()
+
+        rank, world_size = distributed.rank_and_world(group)
         assert (
             nheads % world_size == 0
         ), "The number of heads must be divisible by world size"
