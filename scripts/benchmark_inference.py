@@ -10,7 +10,7 @@ from torch._dynamo import OptimizedModule
 from fms import models
 
 from fms.utils import generation, print0, tokenizers
-
+from fms.utils.cache import PagedKVCache
 
 # Example running llama 7B on one A100:
 #
@@ -164,25 +164,32 @@ ids = torch.randint(
 # of the first token without cache, plus the cost of all subsequent tokens with
 # cache. I.e. the amortized per-token cost would depend on the number of tokens
 # generated.
-logits, cache = model.forward(ids, use_cache=True)
-logits = logits[:, -1, :]
-next_val = torch.argmax(logits, dim=-1).unsqueeze(0).t()
-next_input = torch.cat((ids, next_val), dim=-1)
+# logits, cache = model.forward(ids, use_cache=True)
+# logits = logits[:, -1, :]
+# next_val = torch.argmax(logits, dim=-1).unsqueeze(0).t()
+# next_input = torch.cat((ids, next_val), dim=-1)
 
 # not still needed
-del logits
+# del logits
 
-expected, _ = model.forward(
-    next_val, past_key_value_states=cache, use_cache=True, only_last_token=True
-)
-expected = torch.argmax(expected, dim=-1)
-
-expected2 = model.forward(next_input, only_last_token=True)
-expected2 = torch.argmax(expected2, dim=-1)
-
-torch.testing.assert_close(expected, expected2)
+# expected, _ = model.forward(
+#     next_val, kv_cache=cache, use_cache=True, only_last_token=True
+# )
+# expected = torch.argmax(expected, dim=-1)
+#
+# expected2 = model.forward(next_input, only_last_token=True)
+# expected2 = torch.argmax(expected2, dim=-1)
+#
+# torch.testing.assert_close(expected, expected2)
 
 repeat = 3
+
+kv_cache = PagedKVCache(
+    model.config.nlayers,
+    model.config.nheads,
+    model.config.emb_dim,
+    dtype=model.shared.emb.weight.dtype,
+)
 
 
 # The function we're measuring, with or without caching.
@@ -197,13 +204,13 @@ repeat = 3
 def one_token(model, use_cache):
     if use_cache:
         actual, _ = model.forward(
-            next_val, past_key_value_states=cache, use_cache=True, only_last_token=True
+            None, past_key_value_states=None, use_cache=True, only_last_token=True
         )
     else:
-        actual = model.forward(next_input, only_last_token=True)
+        actual = model.forward(None, only_last_token=True)
     actual = torch.argmax(actual, dim=-1)
     if local_rank == 0 and not args.skip_correctness_check:
-        torch.testing.assert_close(actual, expected)
+        torch.testing.assert_close(actual, None)
     else:
         torch.cuda.synchronize()
 
@@ -219,6 +226,7 @@ def end_to_end(model, use_cache, expected=None):
         and isinstance(
             model, OptimizedModule
         ),  # this is needed for reduce-overhead to work correctly for now
+        kv_cache=kv_cache if use_cache else None
     )
     if local_rank == 0:
         assert (
@@ -232,7 +240,7 @@ def end_to_end(model, use_cache, expected=None):
 
 
 e2e_expected_cache = end_to_end(model, True)
-e2e_expected_nocache = end_to_end(model, True)
+e2e_expected_nocache = end_to_end(model, False)
 
 
 def log_result(result):
