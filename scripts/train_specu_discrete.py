@@ -414,7 +414,6 @@ def train_func(args):
                 dist.barrier()
                 with torch.no_grad():
                     targs, embeds = model(inp[:, :-1], include_embeds=True, use_cache=False)
-                print(embeds.size())
                 preds = speculator(embeds.detach(), inp[:, 1:])
                 losses = []
                 for i in range(args.n_specu_heads):
