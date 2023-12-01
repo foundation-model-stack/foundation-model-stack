@@ -259,15 +259,15 @@ def train_func(args):
 
     # Wrap model
     report(f"Applying wrapper for parallelization mode={args.parallel_mode}...")
-    # model = FSDP(
-    #     model,
-    #     auto_wrap_policy=wrapping_policy,
-    #     mixed_precision=mp_policy,
-    #     sharding_strategy=model_sharding_strategy,
-    #     device_id=local_rank,
-    #     limit_all_gathers=True,
-    #     use_orig_params=True,
-    # )
+    model = FSDP(
+        model,
+        auto_wrap_policy=wrapping_policy,
+        mixed_precision=mp_policy,
+        sharding_strategy=model_sharding_strategy,
+        device_id=local_rank,
+        limit_all_gathers=True,
+        use_orig_params=True,
+    )
     model.to(device=local_rank)
     model.rot_emb.compute_freqs_cis(model.shared.emb.weight.device, args.seq_len)
     # model = torch.compile(model)
