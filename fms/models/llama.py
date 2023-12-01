@@ -269,11 +269,18 @@ class LLaMA(nn.Module):
 
         # if we are using the cache, the key length needs to be extended with the past keys length
         if use_cache:
+            # everything is pre-allocated so assume that step is done
+            max_sequence_length = cache_metadata.get("max_sequence_length", None)
             if not kv_cache.is_initialized_with_prompt(cache_metadata):
-                kv_cache.allocate_initial_prompt(cache_metadata, x_in)
+                if not max_sequence_length:
+                    cache_metadata = kv_cache.allocate_initial_prompt(cache_metadata, x_in)
             else:
-                klen += kv_cache.get_max_sequence_length(cache_metadata)
-                kv_cache.allocate_generated_token(cache_metadata)
+                if not max_sequence_length:
+                    cache_metadata = kv_cache.allocate_generated_token(cache_metadata)
+                    max_sequence_length = cache_metadata['max_sequence_length']
+                # we subtract by 1 here as we have already added 1 from the generated token allocation,
+                # but should not include it in the offset
+                klen += (max_sequence_length - 1)
 
         # if mask is none, we need to specify causal mask
         if mask is None:

@@ -57,10 +57,23 @@ def generate(
     kwargs: MutableMapping[str, Any] = dict()
     kwargs["kv_cache"] = kv_cache
     kwargs["use_cache"] = use_cache
-    kwargs["cache_metadata"] = {"sequence_ids": [i for i in range(input_ids.size(0))]} if cache_metadata is None else cache_metadata
+
+    if use_cache and not cache_metadata:
+        cache_metadata = {"sequence_ids": [i for i in range(input_ids.size(0))]}
 
     for _ in range(max_new_tokens):
+
         input_ids = next_input[:, -max_seq_len:]
+
+        # cache allocation
+        if use_cache:
+            if not kv_cache.is_initialized_with_prompt(cache_metadata):
+                cache_metadata = kv_cache.allocate_initial_prompt(cache_metadata, input_ids)
+            else:
+                cache_metadata = kv_cache.allocate_generated_token(cache_metadata)
+
+            kwargs['cache_metadata'] = cache_metadata
+
         output = model(input_ids, **kwargs)
         if use_cache:
             logits, kv_cache = output
@@ -91,8 +104,8 @@ def generate(
     if not batched:
         result = result[0]
 
-    if kv_cache:
-        kv_cache.free_sequences(kwargs["cache_metadata"]['sequence_ids'])
+    if use_cache and kv_cache:
+        kv_cache.free_sequences(cache_metadata)
 
     return result
 

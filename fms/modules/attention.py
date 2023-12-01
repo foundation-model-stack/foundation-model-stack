@@ -15,7 +15,6 @@ from fms.distributed.tensorparallel import (
 )
 from fms.modules.positions import PositionEncoder
 from fms.utils.cache import PagedKVCache
-from vllm import attention_ops
 
 
 class MultiHeadAttention(nn.Module):
@@ -198,10 +197,11 @@ class MultiHeadAttention(nn.Module):
             # Pre-allocate the output tensor.
             attn = torch.empty_like(queries)
 
-            attention_ops.paged_attention_v1(
+            torch.ops.paged_attention.paged_attention_v1(
                 attn,
                 # num_sequences x num_heads x head_size
                 queries,
+                # todo: we really should be just passing these in as past_key_values (maybe some class that acts as a tuple but has the other information required
                 kv_cache.cache[layer_index][0],
                 kv_cache.cache[layer_index][1],
                 self.head_mapping,
