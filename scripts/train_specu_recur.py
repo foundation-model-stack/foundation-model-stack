@@ -297,7 +297,6 @@ def train_func(args):
         "Model created!",
         num_params=num_params[0],
         num_spec_params=num_params[1],
-        gradcheck=speculator.w_in.requires_grad,
     )
 
     # Optimizers
