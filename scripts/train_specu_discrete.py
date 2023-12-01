@@ -38,8 +38,9 @@ from fm.utils import (
     run_rank_n,
 )
 from fm.utils.profiling import maybe_profile, trace_handler
-from fms.models import get_model
+from fms.models import llama
 
+from transformers import LlamaForCausalLM
 
 torch._inductor.config.joint_graph_constant_folding = False
 
@@ -217,13 +218,17 @@ def train_func(args):
     # Model
     report("Constructing model...")
 
-    model = get_model(
-        "llama",
-        "13b",
-        model_path="/lustre/llama_weights/13B-F/",
-        device_type="cuda",
-        source="meta",
-    )
+    model = LlamaForCausalLM.from_pretrained("/lustre/llama_weights/hf/13B-F/")
+    model = llama.convert_hf_llama(model)
+
+
+    # model = get_model(
+    #     "llama",
+    #     "13b",
+    #     model_path="/lustre/llama_weights/13B-F/",
+    #     device_type="cuda",
+    #     source="meta",
+    # )
 
     # model = Llama(
     #     args.vocab,
