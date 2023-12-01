@@ -334,7 +334,7 @@ def train_func(args):
         )
         data = fmdata.Buffer_Dataset(
             data,
-            [args.seq_len + 1],
+            [args.seq_len + 4],
             bos_token=args.sep_token,
             pack_hard=True,
         )
@@ -416,13 +416,12 @@ def train_func(args):
                 inp = inp.to(local_rank)
                 dist.barrier()
                 with torch.no_grad():
-                    _, embeds = model(inp[:, :-1], include_embeds=True, use_cache=False)
-                preds = speculator(embeds.detach(), inp[:, 1:])
+                    targs, embeds = model(inp[:, :-4], include_embeds=True, use_cache=False)
+                preds = speculator(embeds.detach(), inp)
                 losses = []
                 for i in range(args.n_specu_heads):
-                    targ = inp[:, i + 2 :]  # b n
-                    pred = preds[i][:, : args.seq_len - i - 1]  # b n v
-                    loss = loss_fn(pred.reshape(-1, pred.size(2)), targ.long().reshape(-1))
+                    targ = inp[:, i + 2 : args.seq_len + i + 2]  # b n
+                    loss = loss_fn(preds[i].reshape(-1, preds.size(3)), targ.long().reshape(-1))
                     loss = loss.div(emu_factor)
                     losses.append(loss)
                     losstracker[i] += loss.item()
