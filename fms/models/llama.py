@@ -111,8 +111,7 @@ class LLaMABlock(nn.Module):
         *,
         mask=None,
         position_ids=None,
-        kv_cache=None,
-        layer_index=None,
+        past_key_value_state=None,
         use_cache=False,
         cache_metadata=None,
         is_causal_mask=False,
@@ -129,8 +128,7 @@ class LLaMABlock(nn.Module):
             mask=mask,
             position_ids=position_ids,
             attn_algorithm=attn_algorithm,
-            kv_cache=kv_cache,
-            layer_index=layer_index,
+            past_key_value_state=past_key_value_state,
             use_cache=use_cache,
             is_self=True,
             is_causal_mask=is_causal_mask,
@@ -247,7 +245,7 @@ class LLaMA(nn.Module):
         x_in,
         mask=None,
         position_ids=None,
-        kv_cache: Optional[PagedKVCache] = None,
+        past_key_value_states=None,
         use_cache=False,
         cache_metadata: Optional[dict] = None,
         attn_algorithm=None,
@@ -256,31 +254,30 @@ class LLaMA(nn.Module):
         # x_in: batch_size x seq_len
         # mask: batch_size x seq_len x seq_len
         # bias: nheads x seq_len x seq_len
-        if use_cache and kv_cache is None:
-            kv_cache = PagedKVCache(
-                self.config.nlayers,
-                self.config.nheads,
-                self.config.emb_dim,
-                dtype=self.shared.emb.weight.dtype,
-            )
+        if past_key_value_states is None or len(past_key_value_states) == 0:
+            past_key_value_states = [None for _ in range(len(self.layers))]
 
         qlen = x_in.size(1)
         klen = x_in.size(1)
 
         # if we are using the cache, the key length needs to be extended with the past keys length
         if use_cache:
-            # everything is pre-allocated so assume that step is done
-            max_sequence_length = cache_metadata.get("max_sequence_length", None)
-            if not kv_cache.is_initialized_with_prompt(cache_metadata):
-                if not max_sequence_length:
-                    cache_metadata = kv_cache.allocate_initial_prompt(cache_metadata, x_in)
+            if not cache_metadata:
+                cache_metadata = {}
+
+            cache_type = cache_metadata.get("type", "default")
+            position_offset = 0
+            if cache_type == "paged_attention":
+                # todo: we can support cache allocation in here, but for now this is fine
+                # todo: we are making an assumption that the user had already called allocate to get the cache_metadata
+                position_offset += cache_metadata["position_offset"]
             else:
-                if not max_sequence_length:
-                    cache_metadata = kv_cache.allocate_generated_token(cache_metadata)
-                    max_sequence_length = cache_metadata['max_sequence_length']
-                # we subtract by 1 here as we have already added 1 from the generated token allocation,
-                # but should not include it in the offset
-                klen += (max_sequence_length - 1)
+                if past_key_value_states[0] is not None:
+                    position_offset += past_key_value_states[0][0].size(-2)
+
+                cache_metadata["type"] = cache_type
+                cache_metadata["position_offset"] = position_offset
+            klen += max_sequence_length
 
         # if mask is none, we need to specify causal mask
         if mask is None:
@@ -295,21 +292,25 @@ class LLaMA(nn.Module):
 
         x_in = self.shared(x_in)
 
+        # this is the output cache for all the decoder layers
+        present_key_value_states = []
+
         for i, layer in enumerate(self.layers):
             output = layer(
                 x=x_in,
                 mask=mask,
                 position_ids=position_ids,
-                kv_cache=kv_cache,
+                past_key_value_state=past_key_value_states[i],
                 use_cache=use_cache,
                 is_causal_mask=is_causal_mask,
                 attn_algorithm=attn_algorithm,
-                layer_index=i,
-                cache_metadata=cache_metadata
+                cache_metadata=cache_metadata,
             )
 
             if use_cache:
-                x_in, kv_cache = output
+                x_in, present_key_value_state = output
+                present_key_value_states.append(present_key_value_state)
+
             else:
                 x_in = output
 
@@ -318,21 +319,21 @@ class LLaMA(nn.Module):
         if self.config.p_dropout:
             dec_out = self.dropout(dec_out)
 
-        return dec_out, kv_cache
+        return dec_out, present_key_value_states
 
     def forward(
         self,
         x,
         mask=None,
         position_ids=None,
-        kv_cache=None,
+        past_key_value_states=None,
         use_cache=False,
         cache_metadata=None,
         only_last_token=False,
         attn_algorithm=None,
     ):
         output, cache = self._helper(
-            x, mask, position_ids, kv_cache, use_cache, cache_metadata, attn_algorithm
+            x, mask, position_ids, past_key_value_states, use_cache, attn_algorithm
         )
 
         if only_last_token:

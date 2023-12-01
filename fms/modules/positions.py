@@ -18,7 +18,7 @@ class PositionEncoder:
         mask: torch.Tensor,
         q: torch.Tensor,
         k: torch.Tensor,
-        past_kv_state: torch.Tensor,
+        position_offset: int = 0,
         use_cache=False,
     ) -> torch.Tensor:
         return mask
@@ -29,7 +29,7 @@ class PositionEncoder:
         q: torch.Tensor,
         k: torch.Tensor,
         position_ids: Optional[torch.LongTensor],
-        past_kv_state: torch.Tensor,
+        position_offset: int = 0,
         use_cache=False,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         return q, k
@@ -66,16 +66,16 @@ class Alibi(PositionEncoder):
         mask: torch.Tensor,
         q: torch.Tensor,
         k: torch.Tensor,
-        past_kv_state: torch.Tensor,
+        position_offset: int = 0,
         use_cache=False,
     ) -> torch.Tensor:
         qlen = q.size(1)
         klen = k.size(1)
 
         # if we are using the cache, the key length needs to be extended with the past keys length
-        if use_cache and past_kv_state is not None and past_kv_state[0] is not None:
-            klen += past_kv_state[0][0].size(-2)
-            qlen += past_kv_state[0][1].size(-2)
+        if use_cache:
+            klen += position_offset
+            qlen += position_offset
 
         # Automatically allocates on chosen cuda
         device = self.scales.device
@@ -217,9 +217,8 @@ class RotaryEmbedding(PositionEncoder):
         q: torch.Tensor,
         k: torch.Tensor,
         position_ids: Optional[torch.Tensor] = None,
-        kv_cache: Optional[PagedKVCache] = None,
+        position_offset: int = 0,
         use_cache=False,
-        cache_metadata=None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Args
@@ -241,12 +240,8 @@ class RotaryEmbedding(PositionEncoder):
             position_ids = torch.arange(
                 0, q.size(2), dtype=torch.long, device=q.device
             ).repeat(q.size(0), 1)
-            if use_cache and kv_cache.is_generating(cache_metadata):
-                # todo: get_max_sequence_length should be returning the right value here
-                #  we should have a way of denoting num_allocated vs num_stored in cache
-                #  since we don't have this yet, for now just removing 1 as we have allocated one extra but have not
-                #  stored it in the cache yet
-                position_ids += kv_cache.get_max_sequence_length(cache_metadata) - 1
+            if use_cache:
+                position_ids += position_offset
         seq_len = q.size(2)
 
         q_ = q.float().reshape(*q.size()[:-1], -1, 2)  # B H L D/2 2

@@ -2,10 +2,13 @@ import collections.abc
 from typing import Tuple, List, Dict, Optional, Union
 from vllm import cache_ops, attention_ops
 import torch
+from dataclasses import dataclass
 
 lib = torch.library.Library("paged_attention", "FRAGMENT")
 
-lib.define("reshape_and_cache(Tensor key, Tensor value, Tensor key_cache, Tensor value_cache, Tensor slot_mapping) -> None")
+lib.define(
+    "reshape_and_cache(Tensor key, Tensor value, Tensor key_cache, Tensor value_cache, Tensor slot_mapping) -> None"
+)
 lib.impl("reshape_and_cache", cache_ops.reshape_and_cache, "CUDA")
 
 # needed for compile
@@ -19,7 +22,9 @@ lib.impl("reshape_and_cache", cache_ops.reshape_and_cache, "CUDA")
 #     return key, value, key_cache, value_cache, slot_mapping
 
 
-lib.define("paged_attention_v1(Tensor out, Tensor query, Tensor key_cache, Tensor value_cache, Tensor head_mapping, float scale, Tensor block_tables, Tensor context_lens, int block_size, int max_context_len, Tensor? alibi_slopes) -> None")
+lib.define(
+    "paged_attention_v1(Tensor out, Tensor query, Tensor key_cache, Tensor value_cache, Tensor head_mapping, float scale, Tensor block_tables, Tensor context_lens, int block_size, int max_context_len, Tensor? alibi_slopes) -> None"
+)
 lib.impl("paged_attention_v1", attention_ops.paged_attention_v1, "CUDA")
 
 # needed for compile
@@ -123,30 +128,36 @@ class CacheBlockGroup(List[CacheBlock]):
             slot_mapping.append(slot)
         return slot_mapping
 
+
 SequenceIDsInput = Union[Dict, List[int], int]
 SlotMappingInput = Union[Dict, torch.Tensor]
+
 
 def sequence_id_input(inner_f):
     def wrapper(self, sequence_ids: SequenceIDsInput, *args, **kwargs):
         if isinstance(sequence_ids, Dict):
-            result = sequence_ids['sequence_ids']
+            result = sequence_ids["sequence_ids"]
         elif isinstance(sequence_ids, List):
             result = sequence_ids
         else:
             result = [sequence_ids]
         return inner_f(self, result, *args, **kwargs)
+
     return wrapper
+
 
 def slot_mapping_input(inner_f):
     def wrapper(self, slot_mapping: SlotMappingInput, *args, **kwargs):
         if isinstance(slot_mapping, Dict):
-            result = slot_mapping['slot_mapping']
+            result = slot_mapping["slot_mapping"]
         elif isinstance(slot_mapping, List):
             result = slot_mapping
         else:
             result = [slot_mapping]
         return inner_f(self, result, *args, **kwargs)
+
     return wrapper
+
 
 class PagedKVCache:
     def __init__(
@@ -204,12 +215,16 @@ class PagedKVCache:
         # for now this will just assume we always have the same sequences in batch
         self.block_table_map: Dict[int, CacheBlockGroup] = {}
 
-    def get_max_sequence_length(self, sequence_ids_or_cache_metadata: SequenceIDsInput) -> int:
+    def get_max_sequence_length(
+        self, sequence_ids_or_cache_metadata: SequenceIDsInput
+    ) -> int:
         max_sequence_length = None
         sequence_ids = sequence_ids_or_cache_metadata
         if isinstance(sequence_ids_or_cache_metadata, dict):
-            sequence_ids = sequence_ids_or_cache_metadata['sequence_ids']
-            max_sequence_length = sequence_ids_or_cache_metadata.get("max_sequence_length", None)
+            sequence_ids = sequence_ids_or_cache_metadata["sequence_ids"]
+            max_sequence_length = sequence_ids_or_cache_metadata.get(
+                "max_sequence_length", None
+            )
 
         if max_sequence_length is None:
             max_sequence_length = max(
@@ -220,11 +235,13 @@ class PagedKVCache:
             )
         return max_sequence_length
 
-    def get_block_tables(self, sequence_ids_or_cache_metadata: SequenceIDsInput) -> torch.Tensor:
+    def get_block_tables(
+        self, sequence_ids_or_cache_metadata: SequenceIDsInput
+    ) -> torch.Tensor:
         block_tables = None
         sequence_ids = sequence_ids_or_cache_metadata
         if isinstance(sequence_ids_or_cache_metadata, dict):
-            sequence_ids = sequence_ids_or_cache_metadata['sequence_ids']
+            sequence_ids = sequence_ids_or_cache_metadata["sequence_ids"]
             block_tables = sequence_ids_or_cache_metadata.get("block_tables", None)
 
         if block_tables is None:
@@ -238,12 +255,14 @@ class PagedKVCache:
             )
         return block_tables
 
-    def get_context_lengths(self, sequence_ids_or_cache_metadata: SequenceIDsInput) -> torch.Tensor:
+    def get_context_lengths(self, sequence_ids: SequenceIDsInput) -> torch.Tensor:
         context_lengths = None
         sequence_ids = sequence_ids_or_cache_metadata
         if isinstance(sequence_ids_or_cache_metadata, dict):
-            sequence_ids = sequence_ids_or_cache_metadata['sequence_ids']
-            context_lengths = sequence_ids_or_cache_metadata.get("context_lengths", None)
+            sequence_ids = sequence_ids_or_cache_metadata["sequence_ids"]
+            context_lengths = sequence_ids_or_cache_metadata.get(
+                "context_lengths", None
+            )
 
         if context_lengths is None:
             context_lengths = torch.tensor(
@@ -263,29 +282,23 @@ class PagedKVCache:
     def __pad_to_max(x: List[int], max_len: int, pad: int) -> List[int]:
         return x + [pad] * (max_len - len(x))
 
-    @slot_mapping_input
-    def cache_keys_values(
-        self, slot_mapping: SlotMappingInput, layer: int, keys: torch.Tensor, values: torch.Tensor
-    ):
-        torch.ops.paged_attention.reshape_and_cache(
-            keys,
-            values,
-            self.cache[layer][0],
-            self.cache[layer][1],
-            slot_mapping,
-        )
-
     @sequence_id_input
     def is_generating(self, sequence_ids: SequenceIDsInput):
         for sequence_id in sequence_ids:
-            if sequence_id not in self.block_table_map or not self.block_table_map[sequence_id].is_generating():
+            if (
+                sequence_id not in self.block_table_map
+                or not self.block_table_map[sequence_id].is_generating()
+            ):
                 return False
         return True
 
     @sequence_id_input
     def is_initialized_with_prompt(self, sequence_ids: SequenceIDsInput):
         for sequence_id in sequence_ids:
-            if sequence_id not in self.block_table_map or not self.block_table_map[sequence_id].is_initialized_with_prompt():
+            if (
+                sequence_id not in self.block_table_map
+                or not self.block_table_map[sequence_id].is_initialized_with_prompt()
+            ):
                 return False
         return True
 
@@ -296,17 +309,31 @@ class PagedKVCache:
         for cb in cbg:
             cb.num_tokens = 0
             self.free_blocks.append(cb)
-        self.block_table_map[sequence_id] = CacheBlockGroup(self.block_size)
+        del self.block_table_map[sequence_id]
 
     @sequence_id_input
     def free_sequences(self, sequence_ids: SequenceIDsInput):
         for seq_id in sequence_ids:
             self.free(seq_id)
 
+    def get_unassigned_sequence_ids(self, prompt_tensor: torch.Tensor) -> List[int]:
+        # todo: there are better ways to do this, but this is fine for now
+        result = []
+        batch_size = prompt_tensor.size(0)
+        seq_id = 0
+        while len(result) < batch_size:
+            if seq_id not in self.block_table_map:
+                result.append(seq_id)
+            seq_id += 1
+        return result
+
     @sequence_id_input
     def allocate_initial_prompt(
-        self, sequence_ids: SequenceIDsInput, prompt_tensor: torch.Tensor
+        self, prompt_tensor: torch.Tensor, sequence_ids: Optional[List[int]] = None
     ) -> dict:
+        if not sequence_ids:
+            sequence_ids = self.get_unassigned_sequence_ids(prompt_tensor)
+
         prompt_list = prompt_tensor.tolist()
         for seq_id, prompt_ids in zip(sequence_ids, prompt_list):
             self._allocate_prompt_sequence(seq_id, prompt_ids)
@@ -319,18 +346,20 @@ class PagedKVCache:
             slot = self.__pad_to_max(slot, max_sequence_length, -1)
             slot_mapping.append(slot)
 
-        slot_mapping = torch.tensor(
-            slot_mapping, dtype=torch.long, device="cuda"
-        ).view(-1)
-
+        slot_mapping = torch.tensor(slot_mapping, dtype=torch.long, device="cuda").view(
+            -1
+        )
+        max_sequence_length = self.get_max_sequence_length(sequence_ids)
         return {
             "sequence_ids": sequence_ids,
             "context_lengths": self.get_context_lengths(sequence_ids),
-            "max_sequence_length": self.get_max_sequence_length(sequence_ids),
+            "max_sequence_length": max_sequence_length,
+            "position_offset": max_sequence_length - 1,
             "slot_mapping": slot_mapping,
             "block_tables": self.get_block_tables(sequence_ids),
+            "type": "paged_attention",
+            "is_generating": False,
         }
-
 
     @sequence_id_input
     def allocate_generated_token(self, sequence_ids: SequenceIDsInput) -> dict:
@@ -351,16 +380,21 @@ class PagedKVCache:
             slot = cbg.get_slot_mapping(cbg.get_sequence_length() - 1)
             slot_mapping.append(slot)
 
-        slot_mapping = torch.tensor(
-            slot_mapping, dtype=torch.long, device="cuda"
-        ).view(-1)
+        slot_mapping = torch.tensor(slot_mapping, dtype=torch.long, device="cuda").view(
+            -1
+        )
+
+        max_sequence_length = self.get_max_sequence_length(sequence_ids)
 
         return {
             "sequence_ids": sequence_ids,
             "context_lengths": self.get_context_lengths(sequence_ids),
-            "max_sequence_length": self.get_max_sequence_length(sequence_ids),
+            "max_sequence_length": max_sequence_length,
+            "position_offset": max_sequence_length - 1,
             "slot_mapping": slot_mapping,
             "block_tables": self.get_block_tables(sequence_ids),
+            "type": "paged_attention",
+            "is_generating": True,
         }
 
     def _allocate_prompt_sequence(self, seq_id: int, tokens: List[int]):
