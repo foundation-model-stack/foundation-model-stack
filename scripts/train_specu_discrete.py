@@ -413,7 +413,7 @@ def train_func(args):
                 inp = inp.to(local_rank)
                 dist.barrier()
                 with torch.no_grad():
-                    targs, embeds = model(inp[:, :-1], include_embeds=True, use_cache=False)
+                    _, embeds = model(inp[:, :-1], include_embeds=True, use_cache=False)
                 preds = speculator(embeds.detach(), inp[:, 1:])
                 losses = []
                 for i in range(args.n_specu_heads):
@@ -438,7 +438,7 @@ def train_func(args):
                     sync_report("Got through backward pass")
 
                 # deallocating GPU memory for the pred tensor
-                del pred
+                del pred, preds, targ, embeds
 
             optimizer.step()
             scheduler.step()
