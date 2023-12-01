@@ -220,6 +220,22 @@ def train_func(args):
 
     model = LlamaForCausalLM.from_pretrained("/lustre/llama_weights/hf/13B-F/")
     model = llama.convert_hf_llama(model)
+    model = model.cpu()
+
+    # Wrap model
+    report(f"Applying wrapper for parallelization mode={args.parallel_mode}...")
+    model = FSDP(
+        model,
+        auto_wrap_policy=wrapping_policy,
+        mixed_precision=mp_policy,
+        sharding_strategy=model_sharding_strategy,
+        device_id=local_rank,
+        limit_all_gathers=True,
+        use_orig_params=True,
+    )
+    model.to(device=local_rank)
+    model.rot_emb.compute_freqs_cis(model.shared.emb.weight.device, args.seq_len)
+    # model = torch.compile(model)
 
 
     # model = get_model(
@@ -257,28 +273,13 @@ def train_func(args):
 
     num_params = [utils.pcount(model), utils.pcount(speculator)]
 
-    # Wrap model
-    report(f"Applying wrapper for parallelization mode={args.parallel_mode}...")
-    model = FSDP(
-        model,
-        auto_wrap_policy=wrapping_policy,
-        mixed_precision=mp_policy,
-        sharding_strategy=model_sharding_strategy,
-        device_id=local_rank,
-        limit_all_gathers=True,
-        use_orig_params=True,
-    )
-    model.to(device=local_rank)
-    model.rot_emb.compute_freqs_cis(model.shared.emb.weight.device, args.seq_len)
-    # model = torch.compile(model)
-
-    # Load pretrained model from checkpoint
-    if len(args.base_path) > 0:
-        report("Loading base model...")
-        checkpoint_data = torch.load(args.base_path, map_location="cpu")
-        model.load_state_dict(checkpoint_data["model_state"], strict=not args.flexible_load)
-        report("Base model loaded!")
-        del checkpoint_data
+    # # Load pretrained model from checkpoint
+    # if len(args.base_path) > 0:
+    #     report("Loading base model...")
+    #     checkpoint_data = torch.load(args.base_path, map_location="cpu")
+    #     model.load_state_dict(checkpoint_data["model_state"], strict=not args.flexible_load)
+    #     report("Base model loaded!")
+    #     del checkpoint_data
 
     speculator = FSDP(
         speculator,
