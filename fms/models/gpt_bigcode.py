@@ -181,8 +181,8 @@ class GPTBigCodeHeadless(nn.Module):
 
         # if we are using the cache, the key length needs to be extended with the past keys length
         if use_cache:
-            # todo: need to handle cache_metadata for paged attention
-            cache_metadata = {}
+            if not cache_metadata:
+                cache_metadata = {}
 
             cache_type = cache_metadata.get("type", "default")
             position_offset = 0
