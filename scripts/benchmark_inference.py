@@ -230,7 +230,7 @@ def end_to_end(model, use_cache, expected=None):
         and isinstance(
             model, OptimizedModule
         ),  # this is needed for reduce-overhead to work correctly for now
-        kv_cache=kv_cache if use_cache else None
+        paged_kv_cache=kv_cache if use_cache else None
     )
     if local_rank == 0:
         assert (

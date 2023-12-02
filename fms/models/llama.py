@@ -26,8 +26,6 @@ from fms.utils import serialization
 from fms.utils.activation import str_to_activation
 from fms.utils.config import ModelConfig
 from fms.utils.tokenizers import _has_hf, get_tokenizer
-from fms.utils.cache import PagedKVCache
-
 
 # params emb_dim heads layers lr
 #  7B    4096    32    32     3.0E-04

@@ -14,8 +14,6 @@ from fms.distributed.tensorparallel import (
     reduce_from_tensor_model_parallel_region,
 )
 from fms.modules.positions import PositionEncoder
-from fms.utils.cache import PagedKVCache
-
 
 class MultiHeadAttention(nn.Module):
     """
