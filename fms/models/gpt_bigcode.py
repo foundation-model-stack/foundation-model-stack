@@ -68,6 +68,7 @@ class GPTBigCodeBlock(nn.Module):
             ]
         ] = None,
         use_cache: bool = False,
+        cache_metadata: Optional[dict] = None,
         is_causal_mask: bool = False,
         attn_algorithm: Optional[str] = None,
     ):
@@ -86,6 +87,7 @@ class GPTBigCodeBlock(nn.Module):
             attn_algorithm=attn_algorithm,
             past_key_value_state=self_attn_past_key_value,
             use_cache=use_cache,
+            cache_metadata=cache_metadata,
             is_self=True,
             is_causal_mask=is_causal_mask,
         )
@@ -163,6 +165,7 @@ class GPTBigCodeHeadless(nn.Module):
             List[Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]
         ] = None,
         use_cache: bool = False,
+        cache_metadata: Optional[dict] = None,
         attn_algorithm: Optional[str] = None,
     ):
         # Embed the given vocabulary indices using the given attention mask, with pre-/post-norm and dropout as specified
@@ -177,12 +180,23 @@ class GPTBigCodeHeadless(nn.Module):
             past_key_value_states = [None for _ in range(len(self.layers))]
 
         # if we are using the cache, the key length needs to be extended with the past keys length
-        if (
-            use_cache
-            and past_key_value_states is not None
-            and past_key_value_states[0] is not None
-        ):
-            klen += past_key_value_states[0][0].size(-2)
+        if use_cache:
+            # todo: need to handle cache_metadata for paged attention
+            cache_metadata = {}
+
+            cache_type = cache_metadata.get("type", "default")
+            position_offset = 0
+            if cache_type == "paged_attention":
+                # todo: we can support cache allocation in here, but for now this is fine
+                # todo: we are making an assumption that the user had already called allocate to get the cache_metadata
+                position_offset += cache_metadata["position_offset"]
+            else:
+                if past_key_value_states[0] is not None:
+                    position_offset += past_key_value_states[0][0].size(-2)
+
+                cache_metadata["type"] = cache_type
+                cache_metadata["position_offset"] = position_offset
+            klen += position_offset
 
         # if mask is none, we need to compute mask
         is_causal_mask = False
@@ -238,6 +252,7 @@ class GPTBigCodeHeadless(nn.Module):
                 is_causal_mask=is_causal_mask,
                 past_key_value_state=past_key_value_states[i],
                 use_cache=use_cache,
+                cache_metadata=cache_metadata,
                 attn_algorithm=attn_algorithm,
             )
 
@@ -305,6 +320,7 @@ class GPTBigCode(nn.Module):
             ]
         ] = None,
         use_cache: bool = False,
+        cache_metadata: Optional[dict] = None,
         attn_algorithm: Optional[str] = None,
     ):
         output, cache = self.base_model(
@@ -313,6 +329,7 @@ class GPTBigCode(nn.Module):
             position_ids=position_ids,
             past_key_value_states=past_key_value_states,
             use_cache=use_cache,
+            cache_metadata=cache_metadata,
             attn_algorithm=attn_algorithm,
         )
 

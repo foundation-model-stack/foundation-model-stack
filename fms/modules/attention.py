@@ -15,6 +15,7 @@ from fms.distributed.tensorparallel import (
 )
 from fms.modules.positions import PositionEncoder
 
+
 class MultiHeadAttention(nn.Module):
     """
     Performs multi-headed self- or cross-attention, with optional attention masking.
@@ -81,7 +82,9 @@ class MultiHeadAttention(nn.Module):
         self.previous_math: bool = torch.backends.cuda.math_sdp_enabled()
         self.head_size = emb_dim // nheads
         self.head_mapping = torch.repeat_interleave(
-            torch.arange(self.kvheads, dtype=torch.int32, device="cuda"),
+            torch.arange(
+                self.kvheads, dtype=torch.int32, device=self.query.weight.device
+            ),
             self.nheads // self.kvheads,
         )
         self.reset_params(gain)
@@ -199,7 +202,7 @@ class MultiHeadAttention(nn.Module):
                     value_to_cache,
                     past_key_value_state[0],
                     past_key_value_state[1],
-                    cache_metadata['slot_mapping'],
+                    cache_metadata["slot_mapping"],
                 )
             # fall back to simple torch.cat
             else:
