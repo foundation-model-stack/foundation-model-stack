@@ -277,7 +277,7 @@ class LLaMA(nn.Module):
 
                 cache_metadata["type"] = cache_type
                 cache_metadata["position_offset"] = position_offset
-            klen += max_sequence_length
+            klen += position_offset
 
         # if mask is none, we need to specify causal mask
         if mask is None:
@@ -333,7 +333,7 @@ class LLaMA(nn.Module):
         attn_algorithm=None,
     ):
         output, cache = self._helper(
-            x, mask, position_ids, past_key_value_states, use_cache, attn_algorithm
+            x, mask, position_ids, past_key_value_states, use_cache, cache_metadata, attn_algorithm
         )
 
         if only_last_token:

@@ -255,7 +255,7 @@ class PagedKVCache:
             )
         return block_tables
 
-    def get_context_lengths(self, sequence_ids: SequenceIDsInput) -> torch.Tensor:
+    def get_context_lengths(self, sequence_ids_or_cache_metadata: SequenceIDsInput) -> torch.Tensor:
         context_lengths = None
         sequence_ids = sequence_ids_or_cache_metadata
         if isinstance(sequence_ids_or_cache_metadata, dict):
@@ -327,7 +327,6 @@ class PagedKVCache:
             seq_id += 1
         return result
 
-    @sequence_id_input
     def allocate_initial_prompt(
         self, prompt_tensor: torch.Tensor, sequence_ids: Optional[List[int]] = None
     ) -> dict:
@@ -354,11 +353,12 @@ class PagedKVCache:
             "sequence_ids": sequence_ids,
             "context_lengths": self.get_context_lengths(sequence_ids),
             "max_sequence_length": max_sequence_length,
-            "position_offset": max_sequence_length - 1,
+            "position_offset": 0,
             "slot_mapping": slot_mapping,
             "block_tables": self.get_block_tables(sequence_ids),
             "type": "paged_attention",
             "is_generating": False,
+            "block_size": self.block_size
         }
 
     @sequence_id_input
@@ -395,6 +395,7 @@ class PagedKVCache:
             "block_tables": self.get_block_tables(sequence_ids),
             "type": "paged_attention",
             "is_generating": True,
+            "block_size": self.block_size
         }
 
     def _allocate_prompt_sequence(self, seq_id: int, tokens: List[int]):

@@ -33,8 +33,7 @@ def generate(
     num_beams: int = 1,
     use_cache: bool = False,
     contiguous_cache: bool = False,
-    paged_kv_cache: Optional[PagedKVCache] = None,
-    cache_metadata: Optional[dict] = None,
+    paged_kv_cache: Optional[PagedKVCache] = None
 ):
     """
     A trivial generate function that can be used for validation/testing in
@@ -74,11 +73,7 @@ def generate(
     kwargs["use_cache"] = use_cache
 
     if use_cache:
-        if not cache_metadata:
-            cache_metadata = {}
-
         if paged_kv_cache:
-            cache_metadata["type"] = "paged_attention"
             sequence_ids = paged_kv_cache.get_unassigned_sequence_ids(input_ids)
             kwargs["past_key_value_states"] = paged_kv_cache.cache
         else:
@@ -92,9 +87,9 @@ def generate(
         if use_cache and paged_kv_cache:
             # this is the prompt
             if i == 0:
-                kwargs["cache_metadata"] = kv_cache.allocate_initial_prompt(input_ids)
+                kwargs["cache_metadata"] = paged_kv_cache.allocate_initial_prompt(input_ids, sequence_ids)
             else:
-                kwargs["cache_metadata"] = kv_cache.allocate_generated_token(
+                kwargs["cache_metadata"] = paged_kv_cache.allocate_generated_token(
                     sequence_ids
                 )
 

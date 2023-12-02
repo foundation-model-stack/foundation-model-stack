@@ -182,7 +182,7 @@ def infer(use_cache, do_sample):
         ids,
         max_new_tokens=100,
         use_cache=use_cache,
-        kv_cache=kv_cache,
+        paged_kv_cache=kv_cache,
         do_sample=do_sample,
         max_seq_len=max_seq_len,
     )

@@ -186,18 +186,8 @@ class MultiHeadAttention(nn.Module):
                     use_cache,
                 )
 
-        # if you want to use caching and past_key_value_state is not None meaning you have values in your cache
-        if use_cache and past_key_value_state is not None:
-            if is_self:
-                keys = torch.cat((past_key_value_state[0], keys), dim=2)
-                values = torch.cat((past_key_value_state[1], values), dim=2)
-            else:
-                keys = past_key_value_state[0]
-                values = past_key_value_state[1]
-
         # store the values in kv-cache
         if use_cache:
-
             # we need to use low level kernels for storing paged attention
             if cache_type == "paged_attention":
                 key_to_cache = keys.transpose(2, 1).reshape(
@@ -207,11 +197,11 @@ class MultiHeadAttention(nn.Module):
                     -1, self.kvheads, self.head_size
                 )
                 torch.ops.paged_attention.reshape_and_cache(
-                    keys,
-                    values,
+                    key_to_cache,
+                    value_to_cache,
                     past_key_value_state[0],
                     past_key_value_state[1],
-                    slot_mapping,
+                    cache_metadata['slot_mapping'],
                 )
             # fall back to simple torch.cat
             else:
@@ -229,7 +219,6 @@ class MultiHeadAttention(nn.Module):
 
             # Pre-allocate the output tensor.
             attn = torch.empty_like(queries)
-
             torch.ops.paged_attention.paged_attention_v1(
                 attn,
                 # num_sequences x num_heads x head_size
@@ -245,7 +234,6 @@ class MultiHeadAttention(nn.Module):
                 None,
             )
             attn = attn.view(batch_size, q_len, self.nheads * self.emb_v_per_head)
-            key, values = past_key_value_state
         # otherwise we always fall back into SDPA as this is either a prompt or it is a single contiguous cache
         else:
             # Merge rel pos bias and mask into single float mask
@@ -257,7 +245,7 @@ class MultiHeadAttention(nn.Module):
 
             if self.position_encoder is not None:
                 attn_mask = self.position_encoder.adjusted_mask(
-                    mask, queries, keys, past_key_value_state, use_cache
+                    mask, queries, keys, position_offset, use_cache
                 )
             else:
                 attn_mask = mask
@@ -315,6 +303,9 @@ class MultiHeadAttention(nn.Module):
 
         # if use_cache=True, we return the hidden_state as well as the kv cache
         if use_cache:
+            if cache_type == "paged_attention":
+                keys, values = past_key_value_state
+
             return out, (keys, values)
         else:
             return out
