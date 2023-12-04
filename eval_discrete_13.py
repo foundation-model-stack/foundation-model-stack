@@ -144,6 +144,7 @@ def speculative_generate(
         # print(result.shape)
         
         n_steps += 1
+        input_ids = next_input[:, -max_seq_len:]
         
         probs = smallmodel(embeds, input_ids).squeeze(1) # b h v
         probs, topk = probs.topk(max(threshes), dim=2) # b h 5
@@ -168,7 +169,6 @@ def speculative_generate(
         
 #         input_ids = input_ids[0].unsqueeze(0).expand(25,-1)
         
-        input_ids = next_input[:, -max_seq_len:]
         print(f"Entering step {n_steps}, inp size {input_ids.shape}")
         
         output = model.forward(input_ids, include_embeds=True, mask=mask, **kwargs)
