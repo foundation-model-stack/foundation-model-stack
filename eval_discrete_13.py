@@ -16,6 +16,7 @@ model = llama.convert_hf_llama(model)
 model.eval()
 model.cuda()
 model.to(dtype=torch.bfloat16)
+model.rot_emb.compute_freqs_cis(model.shared.emb.weight.device, args.seq_len)
 
 # d = torch.load("/lustre/dwertheimer/llama_7b_ckp.pth", map_location='cpu')['model_state']
 # keylist = list(d.keys())
@@ -170,7 +171,7 @@ def speculative_generate(
 #         input_ids = input_ids[0].unsqueeze(0).expand(25,-1)
         
         print(f"Entering step {n_steps}, inp size {input_ids.shape}")
-        
+
         output = model.forward(input_ids, include_embeds=True, mask=mask, **kwargs)
         
         logits, past_key_value_states, embeds = output
