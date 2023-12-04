@@ -168,13 +168,13 @@ def speculative_generate(
 #         for i in range(top_k):
 #             print(decode_obo(input_ids[i]))
         
-        # mask = torch.ones(input_ids.size(1),input_ids.size(1)+n_kv_s[0][0].size(2))
-        # mask = mask.tril(diagonal=mask.size(1)-mask.size(0))
-        # mask = mask.unsqueeze(0).unsqueeze(0).log()
+        mask = torch.ones(input_ids.size(1),input_ids.size(1)+n_kv_s[0][0].size(2), device=input_ids.device, dtype=torch.bfloat16)
+        mask = mask.tril(diagonal=mask.size(1)-mask.size(0))
+        mask = mask.unsqueeze(0).unsqueeze(0).log()
         
 #         input_ids = input_ids[0].unsqueeze(0).expand(25,-1)
         
-        output = model.forward(input_ids, include_embeds=True, **kwargs)
+        output = model.forward(input_ids, include_embeds=True, mask=mask, **kwargs)
         
         logits, past_key_value_states, embeds = output
         logits = logits[:, -n_adds-1:, :]
