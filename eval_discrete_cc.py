@@ -248,7 +248,7 @@ def speculative_generate(
     return result, n_steps
 
 test = Speculator(n_heads=3)
-test.load_state_dict(torch.load("/lustre/dwertheimer/results/llama-speculator/gen3/discrete-n2-gen-smalllr-short_PAhsdp_ws8_mbs32_sl64_pr0_vFMS82186057_jid2763_sysAwsEfa0/checkpoints/step_40000_ckp.pth", map_location="cpu")["model_state"])
+test.load_state_dict(torch.load("/lustre/dwertheimer/results/llama-speculator/gen3/discrete-n2-gen-smalllr-short_PAhsdp_ws8_mbs32_sl64_pr0_vFMS82186057_jid2763_sysAwsEfa0/checkpoints/step_15000_ckp.pth", map_location="cpu")["model_state"])
 test.cuda()
 
 print("Speculator ready!")
