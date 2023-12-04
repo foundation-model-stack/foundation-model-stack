@@ -248,7 +248,7 @@ def speculative_generate(
     return result, n_steps
 
 test = Speculator(n_heads=3)
-test.load_state_dict(torch.load("/lustre/dwertheimer/results/llama-speculator/gen3/discrete-n2-gen-smalllr-short_PAhsdp_ws8_mbs32_sl64_pr0_vFMS82186057_jid2763_sysAwsEfa0/checkpoints/step_10000_ckp.pth", map_location="cpu")["model_state"])
+test.load_state_dict(torch.load("/lustre/dwertheimer/results/llama-speculator/gen3/discrete-n2_PAhsdp_ws8_mbs8_sl4096_pr0_vFMS4e2972ae_jid2389_sysAwsEfa0/checkpoints/step_40000_ckp.pth", map_location="cpu")["model_state"])
 test.cuda()
 
 print("Speculator ready!")
@@ -268,5 +268,5 @@ for k in [2, 5, 10, 25]:
         print(f"Ex {j}, topk={k}: 100 tokens in {nsteps} steps.")
         # print("    ", out.squeeze().tolist()[-100:])
 
-torch.save(steps, "/lustre/dwertheimer/results/llama-speculator/gen3/discrete-n2-gen-smalllr-short_PAhsdp_ws8_mbs32_sl64_pr0_vFMS82186057_jid2763_sysAwsEfa0/steps_for_100_at_k.pth")
+torch.save(steps, "/lustre/dwertheimer/results/llama-speculator/gen3/discrete-n2_PAhsdp_ws8_mbs8_sl4096_pr0_vFMS4e2972ae_jid2389_sysAwsEfa0/steps_for_100_at_k.pth")
 torch.save(outs, "/lustre/dwertheimer/results/sandbox/llama_7b_sap_outputs.pth")
