@@ -31,9 +31,6 @@ model.to(dtype=torch.bfloat16)
 
 print("Model loaded!")
 
-with torch.no_grad():
-    model(torch.arange(2048).unsqueeze(0).long().cuda())
-
 data = torch.load("/lustre/dwertheimer/sap-v2-test_2_encode.pth")
 
 from fms.modules.layernorm import LayerNormParameterized
@@ -148,6 +145,7 @@ def speculative_generate(
         
         n_steps += 1
         input_ids = next_input[:, -max_seq_len:]
+        print(f"Entering step {n_steps}, inp size {input_ids.shape}")
         
         probs = smallmodel(embeds, input_ids).squeeze(1) # b h v
         probs, topk = probs.topk(max(threshes), dim=2) # b h 5

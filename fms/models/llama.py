@@ -283,6 +283,7 @@ class LLaMA(nn.Module):
         present_key_value_states = []
 
         for i, layer in enumerate(self.layers):
+            print(f"Entering layer {i}")
             # torch.cuda.memory._record_memory_history()
             output = layer(
                 x=x_in,
