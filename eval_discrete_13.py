@@ -16,7 +16,7 @@ model = llama.convert_hf_llama(model)
 model.eval()
 model.cuda()
 model.to(dtype=torch.bfloat16)
-model.rot_emb.compute_freqs_cis(model.shared.emb.weight.device, args.seq_len)
+model.rot_emb.compute_freqs_cis(model.shared.emb.weight.device, 4096)
 
 # d = torch.load("/lustre/dwertheimer/llama_7b_ckp.pth", map_location='cpu')['model_state']
 # keylist = list(d.keys())
