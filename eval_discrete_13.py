@@ -31,6 +31,9 @@ model.to(dtype=torch.bfloat16)
 
 print("Model loaded!")
 
+with torch.no_grad():
+    model(torch.arange(2048).unsqueeze(0).long().cuda())
+
 data = torch.load("/lustre/dwertheimer/sap-v2-test_2_encode.pth")
 
 from fms.modules.layernorm import LayerNormParameterized
