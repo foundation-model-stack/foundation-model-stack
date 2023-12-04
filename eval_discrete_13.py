@@ -15,6 +15,7 @@ model = LlamaForCausalLM.from_pretrained("/lustre/llama_weights/hf/13B-F/")
 model = llama.convert_hf_llama(model)
 model.eval()
 model.cuda()
+model.to(dtype=torch.bfloat16)
 
 # d = torch.load("/lustre/dwertheimer/llama_7b_ckp.pth", map_location='cpu')['model_state']
 # keylist = list(d.keys())
@@ -165,6 +166,7 @@ def speculative_generate(
         mask = torch.ones(input_ids.size(1),input_ids.size(1)+n_kv_s[0][0].size(2), device=input_ids.device)
         mask = mask.tril(diagonal=mask.size(1)-mask.size(0))
         mask = mask.unsqueeze(0).unsqueeze(0).log()
+        mask.to(dtype=torch.bfloat16)
         
 #         input_ids = input_ids[0].unsqueeze(0).expand(25,-1)
         
@@ -237,6 +239,7 @@ def speculative_generate(
 test = Speculator(emb_dim=5120, n_heads=3)
 test.load_state_dict(torch.load("/lustre/dwertheimer/results/llama-speculator/gen4/discrete-n2_PAhsdp_ws48_mbs8_sl4096_pr0_vFMSe70fc56_jid2944_sysAwsEfa0/checkpoints/step_15000_ckp.pth", map_location="cpu")["model_state"])
 test.cuda()
+test.to(dtype=torch.bfloat16)
 
 print("Speculator ready!")
 

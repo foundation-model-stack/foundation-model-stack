@@ -181,7 +181,6 @@ class MultiHeadAttention(nn.Module):
                 past_keys = past_keys.expand(batch_size, -1, -1, -1)
                 past_vals = past_vals.expand(batch_size, -1, -1, -1)
             if is_self:
-                print(past_keys.shape, keys.shape)
                 keys = torch.cat((past_keys, keys), dim=2)
                 values = torch.cat((past_vals, values), dim=2)
             else:
