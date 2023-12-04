@@ -243,6 +243,7 @@ def speculative_generate(
 test = Speculator(n_heads=3, emb_dim=5120)
 test.load_state_dict(torch.load("/lustre/dwertheimer/results/llama-speculator/gen4/recur-n2_PAhsdp_ws48_mbs8_sl4096_pr0_vFMS9352761_jid3016_sysAwsEfa0/checkpoints/step_15000_ckp.pth", map_location="cpu")["model_state"])
 test.cuda()
+test.to(dtype=torch.bfloat16)
 
 print("Speculator ready!")
 
