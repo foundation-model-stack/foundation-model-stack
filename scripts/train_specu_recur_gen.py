@@ -255,7 +255,7 @@ def generate(
 
     for _ in range(max_new_tokens):
         input_ids = next_input[:, -max_seq_len:]
-        output = model.forward(input_ids, include_embeds=True, **kwargs)
+        output = model.forward(input_ids, include_embeds=True, use_cache=True, **kwargs)
         logits, past_key_value_states, z = output
         # kv updates are required for torch.compile with
         # mode='reduce-overhead'
