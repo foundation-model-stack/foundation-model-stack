@@ -203,8 +203,8 @@ def load_state_dict(
                         dtype=tensor_info.get_dtype(),
                         device=torch.device("meta"),
                     )
-                    st_sd[key].st_file = ckp
-                    st_sd[key].st_key = key
+                    st_sd[key].st_file = ckp  # type: ignore[attr-defined]
+                    st_sd[key].st_key = key  # type: ignore[attr-defined]
                 checkpoint_sds.append(st_sd)
     else:
         checkpoint_sds = [
