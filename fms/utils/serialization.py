@@ -198,7 +198,11 @@ def load_state_dict(
                 st_sd = {}
                 for key in ckp_f.keys():
                     tensor_info = ckp_f.get_slice(key)
-                    st_sd[key] = torch.zeros(tensor_info.get_shape(), dtype=tensor_info.get_dtype(), device=torch.device("meta"))
+                    st_sd[key] = torch.zeros(
+                        tensor_info.get_shape(),
+                        dtype=tensor_info.get_dtype(),
+                        device=torch.device("meta"),
+                    )
                     st_sd[key].st_file = ckp
                     st_sd[key].st_key = key
                 checkpoint_sds.append(st_sd)
@@ -235,7 +239,9 @@ def load_safetensors_checkpoint(
     from safetensors import safe_open
 
     # First redo state_dict into a better structure for loading
-    weights_map: Dict[str, Dict[str, Tuple[str, Callable[[torch.Tensor], torch.Tensor]]]] = {}
+    weights_map: Dict[
+        str, Dict[str, Tuple[str, Callable[[torch.Tensor], torch.Tensor]]]
+    ] = {}
     for weight_name, weight_info in state_dict.items():
         st_file = getattr(weight_info, "st_file")
         st_key = getattr(weight_info, "st_key")
