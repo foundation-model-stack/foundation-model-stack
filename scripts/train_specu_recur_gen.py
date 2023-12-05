@@ -28,7 +28,7 @@ from torch.profiler import schedule as prof_schedule
 
 from fm import data as fmdata
 from fm import utils
-from fm.modules import LayerNormParameterized, SelfAttnLayer
+from fm.modules import LayerNormParameterized
 from fm.utils import (
     get_datasets_and_weights,
     get_local_rank,
@@ -39,6 +39,7 @@ from fm.utils import (
 )
 from fm.utils.profiling import maybe_profile, trace_handler
 from fms.models import llama
+from fms.models.llama import LLaMABlock
 
 from transformers import LlamaForCausalLM
 
@@ -192,7 +193,7 @@ mp_policy = (
         _module_classes_to_ignore=[],
     )
 )
-wrapping_policy = functools.partial(transformer_auto_wrap_policy, transformer_layer_cls={SelfAttnLayer})
+wrapping_policy = functools.partial(transformer_auto_wrap_policy, transformer_layer_cls={LLaMABlock})
 model_sharding_strategies = {
     "fsdp": ShardingStrategy.FULL_SHARD,
     "hsdp": ShardingStrategy.HYBRID_SHARD,
