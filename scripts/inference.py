@@ -146,7 +146,7 @@ prompt1 = pad_prompt(prompt1, max_len)
 # LLaMA 7B did better on the spanish prompt vs 13B.
 # TODO: add a better english prompt to demonstrate padding/batching.
 prompt2 = pad_prompt(prompt2, max_len)
-ids = torch.stack((prompt2, prompt1), dim=0)
+ids = torch.stack((prompt1, prompt2), dim=0)
 
 # ids = prompt1.unsqueeze(0)
 
