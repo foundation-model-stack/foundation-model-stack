@@ -1,36 +1,39 @@
 import collections.abc
 from typing import Tuple, List, Dict, Optional, Union
-from vllm import cache_ops, attention_ops
+from vllm._C import cache_ops, ops
 import torch
 from dataclasses import dataclass
 
 lib = torch.library.Library("paged_attention", "FRAGMENT")
 
 lib.define(
-    "reshape_and_cache(Tensor key, Tensor value, Tensor key_cache, Tensor value_cache, Tensor slot_mapping) -> None"
+    "reshape_and_cache(Tensor key, Tensor value, Tensor key_cache, Tensor value_cache, Tensor slot_mapping) -> (Tensor, Tensor)"
 )
-lib.impl("reshape_and_cache", cache_ops.reshape_and_cache, "CUDA")
 
 # needed for compile
-# @torch.library.impl(lib, "reshape_and_cache", "Meta")
-# def _reshape_and_cache_meta(key, value, key_cache, value_cache, slot_mapping):
-#     return key.contiguous(), value.contiguous(), key_cache.contiguous(), value_cache.contiguous(), slot_mapping.contiguous()
-#
-# @torch.library.impl(lib, "reshape_and_cache", "CUDA")
-# def _reshape_and_cache(key, value, key_cache, value_cache, slot_mapping):
-#     cache_ops.reshape_and_cache(key, value, key_cache, value_cache, slot_mapping)
-#     return key, value, key_cache, value_cache, slot_mapping
+@torch.library.impl(lib, "reshape_and_cache", "Meta")
+def _reshape_and_cache_meta(key, value, key_cache, value_cache, slot_mapping):
+    return key_cache, value_cache
+
+@torch.library.impl(lib, "reshape_and_cache", "CUDA")
+def _reshape_and_cache(key, value, key_cache, value_cache, slot_mapping):
+    cache_ops.reshape_and_cache(key, value, key_cache, value_cache, slot_mapping)
+    return key_cache, value_cache
 
 
 lib.define(
-    "paged_attention_v1(Tensor out, Tensor query, Tensor key_cache, Tensor value_cache, Tensor head_mapping, float scale, Tensor block_tables, Tensor context_lens, int block_size, int max_context_len, Tensor? alibi_slopes) -> None"
+    "paged_attention_v1(Tensor out, Tensor query, Tensor key_cache, Tensor value_cache, Tensor head_mapping, float scale, Tensor block_tables, Tensor context_lens, int block_size, SymInt max_context_len, Tensor? alibi_slopes) -> Tensor"
 )
-lib.impl("paged_attention_v1", attention_ops.paged_attention_v1, "CUDA")
 
 # needed for compile
-# @torch.library.impl(lib, "paged_attention_v1", "Meta")
-# def _paged_attention_v1_meta(out, query, key_cache, value_cache, head_mapping, scale, block_tables, context_lens, block_size, max_context_len, alibi_slopes):
-#     return None
+@torch.library.impl(lib, "paged_attention_v1", "Meta")
+def _paged_attention_v1_meta(out, query, key_cache, value_cache, head_mapping, scale, block_tables, context_lens, block_size, max_context_len, alibi_slopes=None):
+    return out
+
+@torch.library.impl(lib, "paged_attention_v1", "CUDA")
+def _paged_attention_v1(out, query, key_cache, value_cache, head_mapping, scale, block_tables, context_lens, block_size, max_context_len, alibi_slopes=None):
+    ops.paged_attention_v1(out, query, key_cache, value_cache, head_mapping, scale, block_tables, context_lens, block_size, max_context_len, alibi_slopes)
+    return out
 
 
 KVCache = Tuple[torch.Tensor, torch.Tensor]  # (key cache, value cache)
@@ -353,7 +356,7 @@ class PagedKVCache:
             "sequence_ids": sequence_ids,
             "context_lengths": self.get_context_lengths(sequence_ids),
             "max_sequence_length": max_sequence_length,
-            "position_offset": 0,
+            "position_offset": None,
             "slot_mapping": slot_mapping,
             "block_tables": self.get_block_tables(sequence_ids),
             "type": "paged_attention",
@@ -390,7 +393,7 @@ class PagedKVCache:
             "sequence_ids": sequence_ids,
             "context_lengths": self.get_context_lengths(sequence_ids),
             "max_sequence_length": max_sequence_length,
-            "position_offset": max_sequence_length - 1,
+            "position_offset": torch.tensor([max_sequence_length - 1], dtype=torch.int64, device="cuda").unsqueeze(0).repeat(len(sequence_ids), 1),
             "slot_mapping": slot_mapping,
             "block_tables": self.get_block_tables(sequence_ids),
             "type": "paged_attention",

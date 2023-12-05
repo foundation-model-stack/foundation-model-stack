@@ -256,7 +256,7 @@ class LLaMA(nn.Module):
             past_key_value_states = [None for _ in range(len(self.layers))]
 
         qlen = x_in.size(1)
-        klen = x_in.size(1)
+        filled_cache = False
 
         # if we are using the cache, the key length needs to be extended with the past keys length
         # todo: we probably don't need this here as we are only using the klen to check for is_causal_mask
@@ -266,23 +266,23 @@ class LLaMA(nn.Module):
                 cache_metadata = {}
 
             cache_type = cache_metadata.get("type", "default")
-            position_offset = 0
             if cache_type == "paged_attention":
                 # todo: we can support cache allocation in here, but for now this is fine
                 # todo: we are making an assumption that the user had already called allocate to get the cache_metadata
-                position_offset += cache_metadata["position_offset"]
+                position_ids = cache_metadata["position_offset"]
+                if position_ids is not None:
+                    filled_cache = True
             else:
                 if past_key_value_states[0] is not None:
-                    position_offset += past_key_value_states[0][0].size(-2)
+                    position_ids = torch.arange(0, qlen, dtype=torch.int64, device=x_in.device) + past_key_value_states[0][0].size(-2)
+                    filled_cache = True
 
                 cache_metadata["type"] = cache_type
-                cache_metadata["position_offset"] = position_offset
-            klen += position_offset
 
         # if mask is none, we need to specify causal mask
         if mask is None:
             # we are caching and can assume all 1s in the mask
-            if use_cache and klen != 1 and qlen == 1:
+            if use_cache and filled_cache and qlen == 1:
                 # b x h x qlen x kvlen
                 is_causal_mask = False
             else:

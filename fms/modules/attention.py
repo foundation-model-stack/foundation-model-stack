@@ -145,12 +145,12 @@ class MultiHeadAttention(nn.Module):
         # mask: batch_size x seq_len x seq_len
         batch_size, q_len, _ = q.size()
         kv_len = k.size(1)
-        position_offset = 0
         if use_cache:
             cache_type = cache_metadata.get("type", "default")
             is_generating = cache_metadata.get("is_generating", False)
             # todo: we are making an assumption here that the user provided a position_offset
-            position_offset += cache_metadata["position_offset"]
+            if position_ids is None:
+                position_ids = cache_metadata["position_offset"]
 
         # split emb_dim as nheads*emb_dim_per_head
         # b x h x qlen x ds
@@ -183,7 +183,6 @@ class MultiHeadAttention(nn.Module):
                     queries,
                     keys,
                     position_ids,
-                    position_offset,
                     use_cache,
                 )
 
@@ -197,7 +196,7 @@ class MultiHeadAttention(nn.Module):
                 value_to_cache = values.transpose(2, 1).reshape(
                     -1, self.kvheads, self.head_size
                 )
-                torch.ops.paged_attention.reshape_and_cache(
+                past_key_value_state = torch.ops.paged_attention.reshape_and_cache(
                     key_to_cache,
                     value_to_cache,
                     past_key_value_state[0],
@@ -246,7 +245,7 @@ class MultiHeadAttention(nn.Module):
 
             if self.position_encoder is not None:
                 attn_mask = self.position_encoder.adjusted_mask(
-                    mask, queries, keys, position_offset, use_cache
+                    mask, queries, keys, position_ids, use_cache
                 )
             else:
                 attn_mask = mask

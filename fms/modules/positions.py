@@ -16,7 +16,7 @@ class PositionEncoder:
         mask: torch.Tensor,
         q: torch.Tensor,
         k: torch.Tensor,
-        position_offset: int = 0,
+        position_ids: Optional[torch.LongTensor],
         use_cache=False,
     ) -> torch.Tensor:
         return mask
@@ -27,7 +27,6 @@ class PositionEncoder:
         q: torch.Tensor,
         k: torch.Tensor,
         position_ids: Optional[torch.LongTensor],
-        position_offset: int = 0,
         use_cache=False,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         return q, k
@@ -64,16 +63,16 @@ class Alibi(PositionEncoder):
         mask: torch.Tensor,
         q: torch.Tensor,
         k: torch.Tensor,
-        position_offset: int = 0,
+        position_ids: Optional[torch.LongTensor],
         use_cache=False,
     ) -> torch.Tensor:
         qlen = q.size(1)
         klen = k.size(1)
 
         # if we are using the cache, the key length needs to be extended with the past keys length
-        if use_cache:
-            klen += position_offset
-            qlen += position_offset
+        if use_cache and position_ids is not None:
+            klen += position_ids[-1]
+            qlen += position_ids[-1]
 
         # Automatically allocates on chosen cuda
         device = self.scales.device
@@ -215,7 +214,6 @@ class RotaryEmbedding(PositionEncoder):
         q: torch.Tensor,
         k: torch.Tensor,
         position_ids: Optional[torch.Tensor] = None,
-        position_offset: int = 0,
         use_cache=False,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
@@ -238,8 +236,6 @@ class RotaryEmbedding(PositionEncoder):
             position_ids = torch.arange(
                 0, q.size(2), dtype=torch.long, device=q.device
             ).repeat(q.size(0), 1)
-            if use_cache:
-                position_ids += position_offset
         seq_len = q.size(2)
 
         q_ = q.float().reshape(*q.size()[:-1], -1, 2)  # B H L D/2 2
