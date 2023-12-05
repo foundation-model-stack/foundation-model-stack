@@ -2,7 +2,7 @@ import itertools
 import os
 from collections import ChainMap
 from pathlib import Path
-from typing import Any, Callable, Dict, Mapping, MutableMapping, Optional, Union
+from typing import Any, Callable, Dict, Mapping, MutableMapping, Optional, Tuple, Union
 
 import torch
 
@@ -193,11 +193,14 @@ def load_state_dict(
         checkpoint_sds = []
         for ckp in checkpoints:
             with safe_open(
-                ckp, framework="pt", device=str(initial_device)
+                ckp, framework="pt", device="cpu"
             ) as ckp_f:  # type: ignore[attr-defined]
                 st_sd = {}
                 for key in ckp_f.keys():
-                    st_sd[key] = {"file": ckp, "orig_key": key}
+                    tensor_info = ckp_f.get_slice(key)
+                    st_sd[key] = torch.zeros(tensor_info.get_shape(), dtype=tensor_info.get_dtype(), device=torch.device("meta"))
+                    st_sd[key].st_file = ckp
+                    st_sd[key].st_key = key
                 checkpoint_sds.append(st_sd)
     else:
         checkpoint_sds = [
@@ -232,11 +235,14 @@ def load_safetensors_checkpoint(
     from safetensors import safe_open
 
     # First redo state_dict into a better structure for loading
-    weights_map: Dict[str, Dict[str, str]] = {}
+    weights_map: Dict[str, Dict[str, Tuple[str, Callable[[torch.Tensor], torch.Tensor]]]] = {}
     for weight_name, weight_info in state_dict.items():
-        if not weight_info["file"] in weights_map:
-            weights_map[weight_info["file"]] = {}
-        weights_map[weight_info["file"]][weight_name] = weight_info["orig_key"]
+        st_file = getattr(weight_info, "st_file")
+        st_key = getattr(weight_info, "st_key")
+        st_transform = getattr(weight_info, "transform_func", lambda x: x)
+        if not st_file in weights_map:
+            weights_map[st_file] = {}
+        weights_map[st_file][weight_name] = (st_key, st_transform)
 
     with torch.no_grad():
         for weights_file, weights_info in weights_map.items():
@@ -249,7 +255,7 @@ def load_safetensors_checkpoint(
 
 
 def _copy_colwise_st(
-    module: torch.nn.Module, weights, weight_name_map, rank, world_size, prefix
+    module: torch.nn.Module, weights, weight_info_map, rank, world_size, prefix
 ):
     """
     This function copies the correct shard of the weights for a colwise-TP'd module
@@ -271,9 +277,9 @@ def _copy_colwise_st(
     # Divide the weight matrix along the first dimension.
     output_size_per_partition = module.weight.shape[0]
     fms_weight_name = prefix + "weight"
-    if fms_weight_name in weight_name_map:
-        full_orig_name = weight_name_map[fms_weight_name]
-        tensor_slice = weights.get_slice(full_orig_name)
+    if fms_weight_name in weight_info_map:
+        st_name, st_func = weight_info_map[fms_weight_name]
+        tensor_slice = st_func(weights.get_tensor(st_name))
         tensor = tensor_slice[
             (rank * output_size_per_partition) : (
                 (rank + 1) * output_size_per_partition
@@ -283,9 +289,9 @@ def _copy_colwise_st(
         module.weight.copy_(tensor, non_blocking=True)
     if module.bias is not None:
         fms_bias_name = prefix + "bias"
-        if fms_bias_name in weight_name_map:
-            full_orig_name = weight_name_map[fms_bias_name]
-            tensor_slice = weights.get_slice(full_orig_name)
+        if fms_bias_name in weight_info_map:
+            st_name, st_func = weight_info_map[fms_bias_name]
+            tensor_slice = st_func(weights.get_tensor(st_name))
             tensor = tensor_slice[
                 (rank * output_size_per_partition) : (
                     (rank + 1) * output_size_per_partition
@@ -295,7 +301,7 @@ def _copy_colwise_st(
 
 
 def _copy_rowwise_st(
-    module: torch.nn.Module, weights, weight_name_map, rank, world_size, prefix
+    module: torch.nn.Module, weights, weight_info_map, rank, world_size, prefix
 ):
     """
     This function copies the correct shard of the weights for a rowwise-TP'd module
@@ -317,9 +323,9 @@ def _copy_rowwise_st(
     # Divide the weight matrix along the last dimension.
     output_size_per_partition = module.weight.shape[1]
     fms_weight_name = prefix + "weight"
-    if fms_weight_name in weight_name_map:
-        full_orig_name = weight_name_map[fms_weight_name]
-        tensor_slice = weights.get_slice(full_orig_name)
+    if fms_weight_name in weight_info_map:
+        st_name, st_func = weight_info_map[fms_weight_name]
+        tensor_slice = st_func(weights.get_tensor(st_name))
         tensor = tensor_slice[
             :,
             (rank * output_size_per_partition) : (
@@ -329,13 +335,13 @@ def _copy_rowwise_st(
         module.weight.copy_(tensor, non_blocking=True)
     if module.bias is not None:
         if rank == 0:
-            _copy_if_present_st(module.bias, weights, prefix + "bias", weight_name_map)
+            _copy_if_present_st(module.bias, weights, prefix + "bias", weight_info_map)
         else:
             module.bias.zero_()
 
 
 def _copy_embedding_st(
-    module: torch.nn.Module, weights, weight_name_map, rank, world_size, prefix
+    module: torch.nn.Module, weights, weight_info_map, rank, world_size, prefix
 ):
     """
     This function copies the correct shard of the weights for a TP'd embedding module
@@ -357,9 +363,9 @@ def _copy_embedding_st(
     # Divide the weight matrix along the last dimension.
     output_size_per_partition = module.weight.shape[1]
     fms_weight_name = prefix + "weight"
-    if fms_weight_name in weight_name_map:
-        full_orig_name = weight_name_map[fms_weight_name]
-        tensor_slice = weights.get_slice(full_orig_name)
+    if fms_weight_name in weight_info_map:
+        st_name, st_func = weight_info_map[fms_weight_name]
+        tensor_slice = st_func(weights.get_tensor(st_name))
         tensor = tensor_slice[
             :,
             (rank * output_size_per_partition) : (
@@ -369,16 +375,16 @@ def _copy_embedding_st(
         module.weight.copy_(tensor, non_blocking=True)
 
 
-def _copy_if_present_st(parameter, model_weights, fms_weight_name, weight_name_map):
-    if fms_weight_name in weight_name_map:
-        full_orig_name = weight_name_map[fms_weight_name]
-        parameter.copy_(model_weights.get_tensor(full_orig_name), non_blocking=True)
+def _copy_if_present_st(parameter, model_weights, fms_weight_name, weight_info_map):
+    if fms_weight_name in weight_info_map:
+        st_name, st_func = weight_info_map[fms_weight_name]
+        parameter.copy_(st_func(model_weights.get_tensor(st_name)), non_blocking=True)
 
 
 def _load_safetensors_checkpoint_impl(
     layer: torch.nn.Module,
     model_weights,
-    weight_name_map,
+    weight_info_map,
     rank=0,
     world_size=1,
     prefix="",
@@ -388,7 +394,7 @@ def _load_safetensors_checkpoint_impl(
         for name, parameter in layer.named_parameters():
             full_fms_name = prefix + name
             _copy_if_present_st(
-                parameter, model_weights, full_fms_name, weight_name_map
+                parameter, model_weights, full_fms_name, weight_info_map
             )
 
     for name, child in layer.named_children():
@@ -397,7 +403,7 @@ def _load_safetensors_checkpoint_impl(
                 _copy_colwise_st(
                     getattr(child, colwise_weight),
                     model_weights,
-                    weight_name_map,
+                    weight_info_map,
                     rank,
                     world_size,
                     f"{prefix}{name}.{colwise_weight}.",
@@ -406,7 +412,7 @@ def _load_safetensors_checkpoint_impl(
                 _copy_rowwise_st(
                     getattr(child, rowwise_weight),
                     model_weights,
-                    weight_name_map,
+                    weight_info_map,
                     rank,
                     world_size,
                     f"{prefix}{name}.{rowwise_weight}.",
@@ -415,7 +421,7 @@ def _load_safetensors_checkpoint_impl(
                 _copy_embedding_st(
                     getattr(child, embedding_weight),
                     model_weights,
-                    weight_name_map,
+                    weight_info_map,
                     rank,
                     world_size,
                     f"{prefix}{name}.{embedding_weight}.",
@@ -434,13 +440,13 @@ def _load_safetensors_checkpoint_impl(
                             param,
                             model_weights,
                             f"{prefix}{name}.{mod_name}.{param_name}",
-                            weight_name_map,
+                            weight_info_map,
                         )
         else:
             _load_safetensors_checkpoint_impl(
                 child,
                 model_weights,
-                weight_name_map,
+                weight_info_map,
                 rank,
                 world_size,
                 prefix + name + ".",
