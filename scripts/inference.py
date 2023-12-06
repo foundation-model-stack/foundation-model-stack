@@ -4,6 +4,7 @@ import os
 
 import torch
 from torch import distributed as dist
+import torch._inductor.config
 
 from fms.distributed.strategy import TensorParallelStrategy
 from fms.models import get_model
@@ -97,6 +98,7 @@ if args.compile:
     print("compiling model")
     # Bug with kv-cache in PT2.1
     torch._inductor.config.joint_graph_constant_folding = False
+    torch._inductor.config.allow_buffer_reuse = False
     # compiling can make first inference pass slow
     model = torch.compile(model, mode=args.compile_mode)
 

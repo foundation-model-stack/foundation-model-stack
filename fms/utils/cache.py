@@ -24,6 +24,7 @@ def _reshape_and_cache(key, value, key_cache, value_cache, slot_mapping):
     value_cache = value_cache.contiguous()
     slot_mapping = slot_mapping.contiguous()
     cache_ops.reshape_and_cache(key, value, key_cache, value_cache, slot_mapping)
+    torch.cuda.synchronize()
     return key_cache.contiguous(), value_cache.contiguous()
 
 # make_fallback(torch.ops.paged_attention.reshape_and_cache, require_contiguous)
@@ -32,7 +33,6 @@ lib.define(
     "paged_attention_v1(Tensor out, Tensor query, Tensor key_cache, Tensor value_cache, Tensor head_mapping, float scale, Tensor block_tables, Tensor context_lens, int block_size, SymInt max_context_len, Tensor? alibi_slopes) -> Tensor"
 )
 
-# needed for compile
 @torch.library.impl(lib, "paged_attention_v1", "Meta")
 def _paged_attention_v1_meta(out, query, key_cache, value_cache, head_mapping, scale, block_tables, context_lens, block_size, max_context_len, alibi_slopes=None):
     return out.contiguous()
@@ -48,6 +48,7 @@ def _paged_attention_v1(out, query, key_cache, value_cache, head_mapping, scale,
     context_lens = context_lens.contiguous()
 
     ops.paged_attention_v1(out, query, key_cache, value_cache, head_mapping, scale, block_tables, context_lens, block_size, max_context_len, alibi_slopes)
+    torch.cuda.synchronize()
     return out.contiguous()
 
 # make_fallback(torch.ops.paged_attention.paged_attention_v1, require_contiguous)

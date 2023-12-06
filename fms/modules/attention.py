@@ -195,7 +195,7 @@ class MultiHeadAttention(nn.Module):
                 )
                 value_to_cache = values.transpose(2, 1).reshape(
                     -1, self.kvheads, self.head_size
-                )
+                ) 
                 past_key_value_state = torch.ops.paged_attention.reshape_and_cache(
                     key_to_cache,
                     value_to_cache,
@@ -219,7 +219,7 @@ class MultiHeadAttention(nn.Module):
 
             # Pre-allocate the output tensor.
             attn = torch.empty_like(queries)
-            torch.ops.paged_attention.paged_attention_v1(
+            attn = torch.ops.paged_attention.paged_attention_v1(
                 attn,
                 # num_sequences x num_heads x head_size
                 queries,
