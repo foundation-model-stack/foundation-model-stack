@@ -2,6 +2,7 @@ import collections.abc
 from typing import Tuple, List, Dict, Optional, Union
 from vllm._C import cache_ops, ops
 import torch
+from torch._inductor.lowering import make_fallback, require_contiguous
 from dataclasses import dataclass
 
 lib = torch.library.Library("paged_attention", "FRAGMENT")
@@ -13,13 +14,19 @@ lib.define(
 # needed for compile
 @torch.library.impl(lib, "reshape_and_cache", "Meta")
 def _reshape_and_cache_meta(key, value, key_cache, value_cache, slot_mapping):
-    return key_cache, value_cache
+    return key_cache.contiguous(), value_cache.contiguous()
 
 @torch.library.impl(lib, "reshape_and_cache", "CUDA")
 def _reshape_and_cache(key, value, key_cache, value_cache, slot_mapping):
+    key = key.contiguous()
+    value = value.contiguous()
+    key_cache = key_cache.contiguous()
+    value_cache = value_cache.contiguous()
+    slot_mapping = slot_mapping.contiguous()
     cache_ops.reshape_and_cache(key, value, key_cache, value_cache, slot_mapping)
-    return key_cache, value_cache
+    return key_cache.contiguous(), value_cache.contiguous()
 
+# make_fallback(torch.ops.paged_attention.reshape_and_cache, require_contiguous)
 
 lib.define(
     "paged_attention_v1(Tensor out, Tensor query, Tensor key_cache, Tensor value_cache, Tensor head_mapping, float scale, Tensor block_tables, Tensor context_lens, int block_size, SymInt max_context_len, Tensor? alibi_slopes) -> Tensor"
@@ -28,12 +35,22 @@ lib.define(
 # needed for compile
 @torch.library.impl(lib, "paged_attention_v1", "Meta")
 def _paged_attention_v1_meta(out, query, key_cache, value_cache, head_mapping, scale, block_tables, context_lens, block_size, max_context_len, alibi_slopes=None):
-    return out
+    return out.contiguous()
 
 @torch.library.impl(lib, "paged_attention_v1", "CUDA")
 def _paged_attention_v1(out, query, key_cache, value_cache, head_mapping, scale, block_tables, context_lens, block_size, max_context_len, alibi_slopes=None):
+    out = out.contiguous()
+    query = query.contiguous()
+    key_cache = key_cache.contiguous()
+    value_cache = value_cache.contiguous()
+    head_mapping = head_mapping.contiguous()
+    block_tables = block_tables.contiguous()
+    context_lens = context_lens.contiguous()
+
     ops.paged_attention_v1(out, query, key_cache, value_cache, head_mapping, scale, block_tables, context_lens, block_size, max_context_len, alibi_slopes)
-    return out
+    return out.contiguous()
+
+# make_fallback(torch.ops.paged_attention.paged_attention_v1, require_contiguous)
 
 
 KVCache = Tuple[torch.Tensor, torch.Tensor]  # (key cache, value cache)
