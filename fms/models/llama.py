@@ -283,7 +283,6 @@ class LLaMA(nn.Module):
         present_key_value_states = []
 
         for i, layer in enumerate(self.layers):
-            # torch.cuda.memory._record_memory_history()
             output = layer(
                 x=x_in,
                 mask=mask,
@@ -293,7 +292,6 @@ class LLaMA(nn.Module):
                 is_causal_mask=is_causal_mask,
                 attn_algorithm=attn_algorithm,
             )
-            # torch.cuda.memory._dump_snapshot(f"/lustre/dwertheimer/memory_dump_layer_{i}.pth")
 
             if use_cache:
                 x_in, present_key_value_state = output
