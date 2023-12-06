@@ -1,6 +1,6 @@
 import collections.abc
 from typing import Tuple, List, Dict, Optional, Union
-from vllm._C import cache_ops, ops
+from vllm import cache_ops, attention_ops
 import torch
 from torch._inductor.lowering import make_fallback, require_contiguous
 from dataclasses import dataclass
@@ -24,7 +24,6 @@ def _reshape_and_cache(key, value, key_cache, value_cache, slot_mapping):
     value_cache = value_cache.contiguous()
     slot_mapping = slot_mapping.contiguous()
     cache_ops.reshape_and_cache(key, value, key_cache, value_cache, slot_mapping)
-    torch.cuda.synchronize()
     return key_cache.contiguous(), value_cache.contiguous()
 
 # make_fallback(torch.ops.paged_attention.reshape_and_cache, require_contiguous)
@@ -47,8 +46,7 @@ def _paged_attention_v1(out, query, key_cache, value_cache, head_mapping, scale,
     block_tables = block_tables.contiguous()
     context_lens = context_lens.contiguous()
 
-    ops.paged_attention_v1(out, query, key_cache, value_cache, head_mapping, scale, block_tables, context_lens, block_size, max_context_len, alibi_slopes)
-    torch.cuda.synchronize()
+    attention_ops.paged_attention_v1(out, query, key_cache, value_cache, head_mapping, scale, block_tables, context_lens, block_size, max_context_len, alibi_slopes)
     return out.contiguous()
 
 # make_fallback(torch.ops.paged_attention.paged_attention_v1, require_contiguous)
@@ -139,10 +137,11 @@ class CacheBlockGroup(List[CacheBlock]):
     def get_cache_block(self, position: int):
         return self[position // self.block_size]
 
-    def get_slot_mapping(self, position: Optional[int] = None) -> List[int]:
+    def get_slot_mapping(self, position: Optional[int] = None, max_sequence_length: Optional[int] = None) -> List[int]:
         slot_mapping = []
         start = position if position else 0
-        for position_i in range(start, self.get_sequence_length()):
+        end = max_sequence_length if max_sequence_length else self.get_sequence_length()
+        for position_i in range(start, end):
             block_number = self.get_cache_block(position_i).block_number
             block_offset = position_i % self.block_size
             slot = block_number * self.block_size + block_offset
@@ -191,15 +190,18 @@ class PagedKVCache:
         emb_dim: int,
         total_num_gpu_blocks: Optional[int] = None,
         block_size: int = 16,
+        tensor_parallel_size: int = 1,
+        device: Optional[str] = "cuda",
         dtype: torch.dtype = torch.float32,
     ):
         self.block_size = block_size
         self.cache: List[KVCache] = []
         element_size = torch.tensor([], dtype=dtype).element_size()
+        self.device = device
 
         if not total_num_gpu_blocks:
             total_num_gpu_blocks = get_max_gpu_blocks_available(
-                block_size, emb_dim, num_heads, num_layers, 0.7, dtype
+                block_size, emb_dim, num_heads // tensor_parallel_size if num_heads > 1 else num_heads, num_layers, 0.8, dtype
             )
         self.total_num_gpu_blocks = total_num_gpu_blocks
 
@@ -207,13 +209,13 @@ class PagedKVCache:
 
         x = self.block_size // element_size
         key_block_shape = (
-            num_heads,
+            num_heads // tensor_parallel_size if num_heads > 1 else num_heads,
             head_size // x,
             block_size,
             x,
         )
         value_block_shape = (
-            num_heads,
+            num_heads // tensor_parallel_size if num_heads > 1 else num_heads,
             head_size,
             block_size,
         )
@@ -221,12 +223,12 @@ class PagedKVCache:
             key_blocks = torch.empty(
                 size=(total_num_gpu_blocks, *key_block_shape),
                 dtype=dtype,
-                device="cuda",
+                device=self.device,
             )
             value_blocks = torch.empty(
                 size=(total_num_gpu_blocks, *value_block_shape),
                 dtype=dtype,
-                device="cuda",
+                device=self.device,
             )
             self.cache.append((key_blocks, value_blocks))
 
@@ -354,7 +356,7 @@ class PagedKVCache:
             "sequence_ids": sequence_ids,
             "context_lengths": context_lengths,
             "max_sequence_length": max_sequence_length,
-            "position_offset": None if is_prompt else torch.tensor([max_sequence_length - 1], dtype=torch.int64, device="cuda").unsqueeze(0).repeat(len(sequence_ids), 1),
+            "position_offset": None if is_prompt else torch.tensor([max_sequence_length-1], dtype=torch.int64, device="cuda").unsqueeze(0).repeat(len(sequence_ids), 1),
             "slot_mapping": slot_mapping,
             "block_tables": block_tables,
             "type": "paged_attention",

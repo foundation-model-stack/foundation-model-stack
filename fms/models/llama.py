@@ -274,7 +274,7 @@ class LLaMA(nn.Module):
                     filled_cache = True
             else:
                 if past_key_value_states[0] is not None:
-                    position_ids = torch.arange(0, qlen, dtype=torch.int64, device=x_in.device) + past_key_value_states[0][0].size(-2)
+                    position_ids = torch.arange(0, qlen, dtype=torch.int64, device=x_in.device).unsqueeze(0) + (past_key_value_states[0][0].size(-2) + 1)
                     filled_cache = True
 
                 cache_metadata["type"] = cache_type

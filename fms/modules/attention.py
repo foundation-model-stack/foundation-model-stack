@@ -150,7 +150,7 @@ class MultiHeadAttention(nn.Module):
             is_generating = cache_metadata.get("is_generating", False)
             # todo: we are making an assumption here that the user provided a position_offset
             if position_ids is None:
-                position_ids = cache_metadata["position_offset"]
+                position_ids = cache_metadata.get("position_offset", None)
 
         # split emb_dim as nheads*emb_dim_per_head
         # b x h x qlen x ds
@@ -195,7 +195,7 @@ class MultiHeadAttention(nn.Module):
                 )
                 value_to_cache = values.transpose(2, 1).reshape(
                     -1, self.kvheads, self.head_size
-                ) 
+                )
                 past_key_value_state = torch.ops.paged_attention.reshape_and_cache(
                     key_to_cache,
                     value_to_cache,
@@ -359,6 +359,7 @@ class TPMultiHeadAttention(MultiHeadAttention):
 
         self.rank = rank
         self.world_size = world_size
+        self.head_size = self.head_size // world_size
 
     @staticmethod
     def import_module(
@@ -401,6 +402,7 @@ class TPMultiHeadAttention(MultiHeadAttention):
         attn_algorithm=None,
         past_key_value_state=None,
         use_cache=False,
+        cache_metadata=None,
         is_self=True,
         is_causal_mask=False,
     ):
@@ -423,6 +425,7 @@ class TPMultiHeadAttention(MultiHeadAttention):
             attn_algorithm,
             past_key_value_state,
             use_cache,
+            cache_metadata,
             is_self,
             is_causal_mask,
         )

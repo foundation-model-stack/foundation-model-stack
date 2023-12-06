@@ -33,7 +33,7 @@ def generate(
     num_beams: int = 1,
     use_cache: bool = False,
     contiguous_cache: bool = False,
-    paged_kv_cache: Optional[PagedKVCache] = None
+    paged_kv_cache: Optional[PagedKVCache] = None,
 ):
     """
     A trivial generate function that can be used for validation/testing in
@@ -84,14 +84,21 @@ def generate(
         input_ids = next_input[:, -max_seq_len:]
 
         # cache allocation
-        if use_cache and paged_kv_cache:
-            # this is the prompt
-            if i == 0:
-                kwargs["cache_metadata"] = paged_kv_cache.allocate_initial_prompt(input_ids, sequence_ids)
-            else:
-                kwargs["cache_metadata"] = paged_kv_cache.allocate_generated_token(
-                    sequence_ids
-                )
+        if use_cache:
+            if paged_kv_cache:
+                # this is the prompt
+                if i == 0:
+                    kwargs["cache_metadata"] = paged_kv_cache.allocate_initial_prompt(input_ids, sequence_ids)
+                    # todo: need to make the mask something generic for generate, but keeping here for now for testing
+                    #  currently we make an assumption that the pad token is 0
+                    is_pad = input_ids == 0
+                    mask = is_pad.unsqueeze(-1) == is_pad.unsqueeze(-2)
+                    mask = mask.tril(diagonal=0)
+                    kwargs["mask"] = mask
+                else:
+                    kwargs["cache_metadata"] = paged_kv_cache.allocate_generated_token(
+                        sequence_ids
+                    )
 
         output = model(input_ids, **kwargs)
         if use_cache:
