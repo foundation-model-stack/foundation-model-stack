@@ -4,6 +4,7 @@ import os
 
 import torch
 from torch import distributed as dist
+import torch._inductor.config
 
 from fms.distributed.strategy import TensorParallelStrategy
 from fms.models import get_model
@@ -78,6 +79,23 @@ if args.deterministic:
 if args.distributed:
     dist.init_process_group()
 
+# print("loading model")
+# model = get_model("llama", "13b", args.model_path, source="meta", device_type="cuda", norm_eps=1e-6, checkpoint_sharding="tp", distributed_strategy="tp")
+# tokenizer = tokenizers.get_tokenizer(args.tokenizer)
+# model.eval()
+# torch.set_grad_enabled(False)
+# print("loading complete on rank", local_rank)
+#
+# kv_cache = PagedKVCache(
+#     model.config.nlayers,
+#     model.config.nheads if model.config.kvheads == 0 else model.config.kvheads,
+#     model.config.emb_dim,
+#     total_num_gpu_blocks=400,
+#     tensor_parallel_size=2,
+#     device=f"cuda:{int(os.environ['LOCAL_RANK'])}",
+#     dtype=model.shared.emb.weight.dtype,
+# )
+
 print("loading model")
 model = get_model("llama", "7b", args.model_path, source="hf", device_type="cuda", norm_eps=1e-6)
 tokenizer = tokenizers.get_tokenizer(args.tokenizer)
@@ -89,14 +107,17 @@ kv_cache = PagedKVCache(
     model.config.nlayers,
     model.config.nheads,
     model.config.emb_dim,
+    total_num_gpu_blocks=3818,
     dtype=model.shared.emb.weight.dtype,
 )
+# kv_cache = None
 
 
 if args.compile:
     print("compiling model")
     # Bug with kv-cache in PT2.1
     torch._inductor.config.joint_graph_constant_folding = False
+    torch._inductor.config.allow_buffer_reuse = False
     # compiling can make first inference pass slow
     model = torch.compile(model, mode=args.compile_mode)
 
@@ -116,7 +137,8 @@ def pad_prompt(prompt, pad_len, pad_token="<unk>"):
 
     pad_id = tokenizer.convert_tokens_to_ids(pad_token)
     pad_ids = [pad_id] * to_pad
-    return torch.cat((torch.tensor(pad_ids, device=device), prompt))
+    pads = torch.tensor(pad_ids, device=device)
+    return torch.cat((pads, prompt))
 
 
 if args.context_file is not None:
@@ -142,13 +164,15 @@ prompt1 = ids_for_prompt(prompt1)
 prompt2 = ids_for_prompt(prompt2)
 
 max_len = max([len(prompt) for prompt in [prompt1, prompt2]])
-prompt1 = pad_prompt(prompt1, max_len)
+
 # LLaMA 7B did better on the spanish prompt vs 13B.
 # TODO: add a better english prompt to demonstrate padding/batching.
+prompt1 = pad_prompt(prompt1, max_len)
 prompt2 = pad_prompt(prompt2, max_len)
 ids = torch.stack((prompt1, prompt2), dim=0)
 
-# ids = prompt1.unsqueeze(0)
+# ids = prompt2.unsqueeze(0)
+# kv_cache=None
 
 
 def print_result(result):
