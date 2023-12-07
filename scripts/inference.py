@@ -107,7 +107,7 @@ kv_cache = PagedKVCache(
     model.config.nlayers,
     model.config.nheads,
     model.config.emb_dim,
-    total_num_gpu_blocks=3818,
+    total_num_gpu_blocks=40,
     dtype=model.shared.emb.weight.dtype,
 )
 # kv_cache = None
@@ -164,13 +164,14 @@ prompt1 = ids_for_prompt(prompt1)
 prompt2 = ids_for_prompt(prompt2)
 
 max_len = max([len(prompt) for prompt in [prompt1, prompt2]])
-# prompt1 = pad_prompt(prompt1, max_len)
+
 # LLaMA 7B did better on the spanish prompt vs 13B.
 # TODO: add a better english prompt to demonstrate padding/batching.
-# prompt2 = pad_prompt(prompt2, max_len)
-# ids = torch.stack((prompt1, prompt2), dim=0)
+prompt1 = pad_prompt(prompt1, max_len)
+prompt2 = pad_prompt(prompt2, max_len)
+ids = torch.stack((prompt1, prompt2), dim=0)
 
-ids = prompt2.unsqueeze(0)
+# ids = prompt2.unsqueeze(0)
 # kv_cache=None
 
 

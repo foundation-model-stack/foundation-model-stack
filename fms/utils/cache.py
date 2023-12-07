@@ -137,11 +137,10 @@ class CacheBlockGroup(List[CacheBlock]):
     def get_cache_block(self, position: int):
         return self[position // self.block_size]
 
-    def get_slot_mapping(self, position: Optional[int] = None, max_sequence_length: Optional[int] = None) -> List[int]:
+    def get_slot_mapping(self, position: Optional[int] = None) -> List[int]:
         slot_mapping = []
         start = position if position else 0
-        end = max_sequence_length if max_sequence_length else self.get_sequence_length()
-        for position_i in range(start, end):
+        for position_i in range(start, self.get_sequence_length()):
             block_number = self.get_cache_block(position_i).block_number
             block_offset = position_i % self.block_size
             slot = block_number * self.block_size + block_offset
@@ -358,7 +357,6 @@ class PagedKVCache:
         )
         context_lengths = torch.tensor(context_lengths, dtype=torch.int, device="cuda")
         position_offset = torch.tensor(position_ids, dtype=torch.int64, device="cuda")
-        print(position_offset)
 
         return {
             "sequence_ids": sequence_ids,
