@@ -1,6 +1,6 @@
 import collections.abc
 from typing import Tuple, List, Dict, Optional, Union
-from vllm import cache_ops, attention_ops
+from vllm._C import cache_ops, ops
 import torch
 from torch._inductor.lowering import make_fallback, require_contiguous
 from dataclasses import dataclass
@@ -24,6 +24,7 @@ def _reshape_and_cache(key, value, key_cache, value_cache, slot_mapping):
     value_cache = value_cache.contiguous()
     slot_mapping = slot_mapping.contiguous()
     cache_ops.reshape_and_cache(key, value, key_cache, value_cache, slot_mapping)
+    torch.cuda.synchronize()
     return key_cache.contiguous(), value_cache.contiguous()
 
 # make_fallback(torch.ops.paged_attention.reshape_and_cache, require_contiguous)
@@ -45,8 +46,8 @@ def _paged_attention_v1(out, query, key_cache, value_cache, head_mapping, scale,
     head_mapping = head_mapping.contiguous()
     block_tables = block_tables.contiguous()
     context_lens = context_lens.contiguous()
-
-    attention_ops.paged_attention_v1(out, query, key_cache, value_cache, head_mapping, scale, block_tables, context_lens, block_size, max_context_len, alibi_slopes)
+    ops.paged_attention_v1(out, query, key_cache, value_cache, head_mapping, scale, block_tables, context_lens, block_size, max_context_len, alibi_slopes)
+    torch.cuda.synchronize()
     return out.contiguous()
 
 # make_fallback(torch.ops.paged_attention.paged_attention_v1, require_contiguous)
