@@ -322,8 +322,10 @@ class PagedKVCache:
         block_tables = []
         context_lengths = []
         max_sequence_length = self.get_max_sequence_length(sequence_ids)
+        remainder = max_sequence_length % self.block_size
         max_num_blocks = max_sequence_length // self.block_size
-        if max_sequence_length % self.block_size != 0:
+        position_ids = []
+        if remainder != 0:
             max_num_blocks += 1
         for sequence_id in sequence_ids:
             cbg = self.block_table_map[sequence_id]
@@ -331,9 +333,11 @@ class PagedKVCache:
             context_length = cbg.get_sequence_length()
             if is_prompt:
                 slot = cbg.get_slot_mapping()
-                slot = self.__pad_to_max_left(slot, max_sequence_length, -1)
+                slot = self.__pad_to_max_right(slot, max_sequence_length, -1)
+                position_ids_i = self.__pad_to_max_left([i for i in range(context_length)], max_sequence_length, 0)
             else:
                 slot = cbg.get_slot_mapping(context_length - 1)
+                position_ids_i = [context_length - 1]
 
             block_mapping = cbg.get_block_mapping()
             block_mapping = self.__pad_to_max_right(block_mapping, max_num_blocks, 0)
@@ -342,6 +346,7 @@ class PagedKVCache:
             slot_mapping.append(slot)
             block_tables.append(block_mapping)
             context_lengths.append(context_length)
+            position_ids.append(position_ids_i)
 
         slot_mapping = torch.tensor(slot_mapping, dtype=torch.long, device="cuda").view(
             -1
@@ -352,11 +357,14 @@ class PagedKVCache:
             device="cuda"
         )
         context_lengths = torch.tensor(context_lengths, dtype=torch.int, device="cuda")
+        position_offset = torch.tensor(position_ids, dtype=torch.int64, device="cuda")
+        print(position_offset)
+
         return {
             "sequence_ids": sequence_ids,
             "context_lengths": context_lengths,
             "max_sequence_length": max_sequence_length,
-            "position_offset": None if is_prompt else torch.tensor([max_sequence_length-1], dtype=torch.int64, device="cuda").unsqueeze(0).repeat(len(sequence_ids), 1),
+            "position_offset": position_offset,
             "slot_mapping": slot_mapping,
             "block_tables": block_tables,
             "type": "paged_attention",
