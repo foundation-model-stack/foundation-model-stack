@@ -33,7 +33,7 @@ def generate(
     num_beams: int = 1,
     use_cache: bool = False,
     contiguous_cache: bool = False,
-    paged_kv_cache: Optional[PagedKVCache] = None,
+    paged_kv_cache: Optional[PagedKVCache] = None
 ):
     """
     A trivial generate function that can be used for validation/testing in
