@@ -331,6 +331,8 @@ class LLaMA(nn.Module):
             out.append(cache)
         if include_embeds:
             out.append(output)
+        if len(out)==1:
+            return out[0]
         return out
 
 
