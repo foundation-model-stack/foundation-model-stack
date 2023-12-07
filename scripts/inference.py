@@ -107,7 +107,7 @@ kv_cache = PagedKVCache(
     model.config.nlayers,
     model.config.nheads,
     model.config.emb_dim,
-    total_num_gpu_blocks=40,
+    total_num_gpu_blocks=3818,
     dtype=model.shared.emb.weight.dtype,
 )
 # kv_cache = None

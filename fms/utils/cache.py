@@ -332,7 +332,7 @@ class PagedKVCache:
             context_length = cbg.get_sequence_length()
             if is_prompt:
                 slot = cbg.get_slot_mapping()
-                slot = self.__pad_to_max_right(slot, max_sequence_length, -1)
+                slot = self.__pad_to_max_left(slot, max_sequence_length, -1)
                 position_ids_i = self.__pad_to_max_left([i for i in range(context_length)], max_sequence_length, 0)
             else:
                 slot = cbg.get_slot_mapping(context_length - 1)
@@ -347,9 +347,7 @@ class PagedKVCache:
             context_lengths.append(context_length)
             position_ids.append(position_ids_i)
 
-        slot_mapping = torch.tensor(slot_mapping, dtype=torch.long, device="cuda").view(
-            -1
-        )
+        slot_mapping = torch.tensor(slot_mapping, dtype=torch.long, device="cuda")
         block_tables = torch.tensor(
             block_tables,
             dtype=torch.int,

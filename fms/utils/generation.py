@@ -99,6 +99,7 @@ def generate(
                     kwargs["cache_metadata"] = paged_kv_cache.allocate_generated_token(
                         sequence_ids
                     )
+                    kwargs["mask"] = None
 
         output = model(input_ids, **kwargs)
         if use_cache:
