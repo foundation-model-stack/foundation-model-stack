@@ -88,6 +88,10 @@ def generate(
             # this is the prompt
             if i == 0:
                 kwargs["cache_metadata"] = paged_kv_cache.allocate_initial_prompt(input_ids, sequence_ids)
+                is_pad = input_ids == 0
+                mask = is_pad.unsqueeze(-1) == is_pad.unsqueeze(-2)
+                mask = mask.tril(diagonal=0)
+                kwargs["mask"] = mask
             else:
                 kwargs["cache_metadata"] = paged_kv_cache.allocate_generated_token(
                     sequence_ids
