@@ -3,8 +3,8 @@ import itertools
 import os
 
 import torch
-from torch import distributed as dist
 import torch._inductor.config
+from torch import distributed as dist
 
 from fms.distributed.strategy import TensorParallelStrategy
 from fms.models import get_model
@@ -80,7 +80,9 @@ if args.distributed:
     dist.init_process_group()
 
 print("loading model")
-model = get_model("llama", "7b", args.model_path, source="hf", device_type="cuda", norm_eps=1e-6)
+model = get_model(
+    "llama", "7b", args.model_path, source="hf", device_type="cuda", norm_eps=1e-6
+)
 tokenizer = tokenizers.get_tokenizer(args.tokenizer)
 model.eval()
 torch.set_grad_enabled(False)
@@ -98,7 +100,6 @@ if args.compile:
     print("compiling model")
     # Bug with kv-cache in PT2.1
     torch._inductor.config.joint_graph_constant_folding = False
-    torch._inductor.config.allow_buffer_reuse = False
     # compiling can make first inference pass slow
     model = torch.compile(model, mode=args.compile_mode)
 
