@@ -142,12 +142,13 @@ def speculative_generate(
     A reference implementation of speculative decoding generation.
     Returns at least the specified number of tokens - the speculator may return a 
     few extra in the final step. 
-    Currently does not support batched input, and reproduces behavior of greedy decoding only.
+    If input is batched, continues generating until EVERY sequence has produced AT LEAST the required number of tokens. 
+    Currently reproduces behavior of greedy decoding only.
 
     Args:
         model: A function or nn.Module that takes a batch of input_ids and
             returns logits
-        input_ids: A 1xn tensor of token IDs
+        input_ids: A bxn or length n tensor of token IDs
         speculator: A function or nn.Module that takes a state vector and sampled token
             and returns a set of candidate suffixes
         max_seq_len: the sequence length of the base model
@@ -176,8 +177,7 @@ def speculative_generate(
     if not batched:
         input_ids = input_ids.unsqueeze(0)
 
-    result = input_ids
-    next_input = input_ids
+    result = list(input_ids) # [b] n
     kwargs = dict()
     kwargs["past_key_value_states"] = None
     kwargs["use_cache"] = True
@@ -187,74 +187,107 @@ def speculative_generate(
     _, past_key_value_states, embeds = output
     embeds = embeds[:,-1:]
     kwargs["past_key_value_states"] = past_key_value_states
-    next_input = next_input[:,-1:]
     
-    n_gen = 0
+    bsize = input_ids.size(0)
+    n_gen = torch.zeros(bsize, device=input_ids.device).int()
     n_steps = 0
     n_kv_s = past_key_value_states
-    while n_gen < new_tokens:
+    n_pads = torch.zeros_like(n_gen).int()
+    prompt_len = input_ids.size(1)-1
+    input_ids = input_ids[:,-1:]
+    n_adds = speculator.nheads + 1
+    while min(n_gen) < new_tokens:
         n_steps += 1
-        input_ids = next_input[:, -max_seq_len:]
         
         # Get candidate set of speculations
-        adds = speculator.generate_tree(embeds, input_ids, threshes, top_k)
-        
-        n_adds = speculator.nheads
-        adds = adds[0] # For now, non-batching and take only first sequence
-        input_ids = torch.cat([input_ids.expand(top_k,1), adds], dim=-1) 
+        adds = speculator.generate_tree(embeds, input_ids, threshes, top_k).transpose(0,1) # k b h
+        input_ids = torch.cat([input_ids.unsqueeze(0).expand(top_k,bsize,1), adds], dim=-1) # k b 1+h
+        input_ids = input_ids.view(-1, n_adds) # kb 1+h
 
         # Build custom attention mask
         mask = torch.ones(input_ids.size(1),input_ids.size(1)+n_kv_s[0][0].size(2), device=input_ids.device)
         mask = mask.tril(diagonal=mask.size(1)-mask.size(0))
-        mask = mask.unsqueeze(0).unsqueeze(0).log()
+        mask = mask.unsqueeze(0).unsqueeze(0) # 1 1 1+h 1+h+p
+        
+        # Mask off any left-pads
+        pad_mask = mask.repeat(bsize,1,1,1) # b 1 1+h 1+h+p
+        pad_mask = pad_mask.cumsum(3).sub(n_pads.view(-1,1,1,1)).clamp(0,1)
+        mask = mask.mul(pad_mask).repeat(top_k,1,1,1).log() # kb 1 1+h 1+h+p
+        
+        # Handle position_ids
+        pos_ids = torch.arange(n_adds, device=input_ids.device).repeat(bsize,1) # b 1+h
+        pos_ids += prompt_len - n_pads[:,None]
+        pos_ids = pos_ids.repeat(top_k, 1) # kb 1+h
         
         # Base model forward pass
-        output = model.forward(input_ids, include_embeds=True, mask=mask, **kwargs)
+        output = model.forward(input_ids, include_embeds=True, mask=mask, position_ids=pos_ids, **kwargs)
         logits, past_key_value_states, embeds = output
-        logits = logits[:, -n_adds-1:, :]
-        next_vals = torch.argmax(logits, dim=-1)
+        next_vals = torch.argmax(logits, dim=-1) # kb 1+h
         
         # Check correctness of speculator predictions
         test = input_ids.roll(-1, 1).eq(next_vals).cumprod(1)
-        n_correct = test.sum(1).clamp(0,n_adds) # clamp in case pred[0]==targ[-1]
-        best_guess = n_correct.argmax()
+        n_correct = test.sum(1).clamp(0,n_adds-1).view(top_k, bsize) # clamp in case pred[0]==targ[-1]
+        best_guess = n_correct.argmax(0) # b
+        best_guess_unflat = best_guess.unsqueeze(1).expand(bsize, n_adds).unsqueeze(0) # 1 b 1+h
         
         # Set global values to those of best guess
-        next_vals = next_vals[best_guess].unsqueeze(0)
-        n_correct = n_correct[best_guess]
-        embeds = embeds[best_guess].unsqueeze(0)
+        next_vals = next_vals.view(top_k, bsize, n_adds).gather(0, best_guess_unflat)[0] # b 1+h
+        n_correct = n_correct.gather(0, best_guess.unsqueeze(0))[0] # b
+        embeds = embeds.view(top_k, bsize, *embeds.size()[1:]).gather(
+            0, best_guess_unflat.unsqueeze(3).expand(-1,-1,-1,embeds.size(2)))[0] # b 1+h d
         
         if verbose:
-            print("Speculation:", decode_obo(input_ids[best_guess], vinv), "n_correct:", n_correct.item())
+            test = input_ids.view(top_k, bsize, n_adds).gather(0, best_guess_unflat)[0]
+            for i,line in enumerate(test):
+                print("Speculation:", decode_obo(line, vinv), "n_correct:", n_correct[i].item())
+        
         
         # Toss any wrong speculator tokens
-        next_vals = next_vals[:,:n_correct+1]
+        next_vals = list(next_vals)
+        next_vals = [next_vals[i][:n_correct[i]+1] for i in range(len(next_vals))] # [b] h'
         n_gen += n_correct+1
-        embeds = embeds[:,n_correct].unsqueeze(1)
-            
-        n_wrong = n_adds - n_correct
+        embeds = embeds.gather(1, n_correct.view(-1,1,1).expand(-1,-1,embeds.size(2))) # Grab last correct embed
+        
+        # Handle kv-cache
+        n_wrong = n_adds - 1 - n_correct
+        n_pads += n_wrong
+        extra_pads = min(n_pads)
+        prompt_len += n_adds - extra_pads
+        n_pads = n_pads-extra_pads
         # kv updates are required for torch.compile with
         # mode='reduce-overhead'
         n_kv_s = []
         for layer_idx in range(len(past_key_value_states)):
             n_kv_s.append([])
             for tensor_idx in range(2):
-                base = past_key_value_states[layer_idx][tensor_idx]
-                new = past_key_value_states[layer_idx][tensor_idx+2][best_guess].unsqueeze(0)
-                if n_wrong > 0:
-                    new = new[:,:,:-n_wrong]
-                base = torch.cat([base, new], dim=2)
+                # Concatenate best guess for each sequence to kv-cache
+                base = past_key_value_states[layer_idx][tensor_idx] # b h n d
+                new = past_key_value_states[layer_idx][tensor_idx+2] # kb h n d
+                new = new.view(top_k, bsize, *new.size()[1:]) # k b h n d
+                g = best_guess[None, :, None, None, None] # 1 b 1 1 1
+                new = new.gather(0, g.expand_as(new[:1]))[0] # b h n d
+                base = torch.cat([base, new], dim=2) # b h n d
+                
+                # Right-shift correct tokens to end of cache
+                roll_inds = torch.arange(base.size(2))[None, None, :, None] # 1 1 n 1
+                roll_inds = roll_inds.repeat(base.size(0), 1, 1, 1) # b 1 n 1
+                roll_inds = roll_inds.sub(n_wrong.view(-1,1,1,1)) % roll_inds.size(2) # Right-shift
+                roll_inds = roll_inds[:,:,extra_pads:] # Knock off any unneeded left-pads
+                base = base.gather(2, roll_inds.expand(-1,base.size(1),-1,base.size(3))) # Perform shift
+                
                 n_kv_s[layer_idx].append(
                     base.clone(memory_format=torch.contiguous_format).detach()
                 )
                 # torch._dynamo.mark_dynamic(n_kv_s[layer_idx][tensor_idx], 2)
         kwargs["past_key_value_states"] = n_kv_s
 
-        result = torch.cat((result, next_vals), dim=-1)
-        next_input = next_vals[:,-1].unsqueeze(-1)
+        # Update results
+        result = [torch.cat((result[i], next_vals[i]), dim=0) for i in range(bsize)]
+        input_ids = torch.stack([line[-1:] for line in next_vals], dim=0) # b 1
 
         if verbose:
-            print("Updated output:", decode_obo(result, vinv))
+            for line in result:
+                print("Updated output:", decode_obo(line, vinv))
             print()
         
     if not batched:
