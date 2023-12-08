@@ -160,17 +160,23 @@ else:
         "Provide a list of instructions for preparing chicken soup."
     )
     prompt2 = template.format("Explain some popular greetings in Spanish.")
+    prompt3 = template.format("Explain to me why ignorance is bliss.")
+    prompt4 = template.format("I have just come into a very large sum of money. I received the money from my parents who told me I could do whatever I want with it. My first thought was to go to a financial advisor. Provide me a list of things that I can do with my new found wealth.")
 
 prompt1 = ids_for_prompt(prompt1)
 prompt2 = ids_for_prompt(prompt2)
+prompt3 = ids_for_prompt(prompt3)
+prompt4 = ids_for_prompt(prompt4)
 
-max_len = max([len(prompt) for prompt in [prompt1, prompt2]])
+max_len = max([len(prompt) for prompt in [prompt1, prompt2, prompt3, prompt4]])
 
 # LLaMA 7B did better on the spanish prompt vs 13B.
 # TODO: add a better english prompt to demonstrate padding/batching.
 prompt1 = pad_prompt(prompt1, max_len)
 prompt2 = pad_prompt(prompt2, max_len)
-ids = torch.stack((prompt1, prompt2), dim=0)
+prompt3 = pad_prompt(prompt3, max_len)
+prompt4 = pad_prompt(prompt4, max_len)
+ids = torch.stack((prompt1, prompt2, prompt3, prompt4), dim=0)
 
 # ids = prompt2.unsqueeze(0)
 # kv_cache=None

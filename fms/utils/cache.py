@@ -4,7 +4,7 @@ import torch
 import torch._inductor.ir as ir
 import torch._inductor.lowering as lowering
 from torch._inductor.virtualized import V
-from vllm._C import cache_ops, ops
+from fms._C import cache_ops, ops
 
 
 lib = torch.library.Library("paged_attention", "FRAGMENT")
@@ -513,10 +513,10 @@ class PagedKVCache:
             context_lengths.append(context_length)
             position_ids.append(position_ids_i)
 
-        slot_mapping = torch.tensor(slot_mapping, dtype=torch.long, device="cuda")
-        block_tables = torch.tensor(block_tables, dtype=torch.int, device="cuda")
-        context_lengths = torch.tensor(context_lengths, dtype=torch.int, device="cuda")
-        position_offset = torch.tensor(position_ids, dtype=torch.int64, device="cuda")
+        slot_mapping = torch.tensor(slot_mapping, dtype=torch.long, device=self.device)
+        block_tables = torch.tensor(block_tables, dtype=torch.int, device=self.device)
+        context_lengths = torch.tensor(context_lengths, dtype=torch.int, device=self.device)
+        position_offset = torch.tensor(position_ids, dtype=torch.int64, device=self.device)
 
         return {
             "sequence_ids": sequence_ids,
