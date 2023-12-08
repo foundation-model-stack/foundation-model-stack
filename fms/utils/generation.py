@@ -3,6 +3,7 @@ from typing import Any, Callable, List, MutableMapping, Union, Optional
 import torch
 import torch.nn.functional as F
 
+
 def _make_cache_contiguous(past_key_value_states):
     # kv updates are required for torch.compile with
     # mode='reduce-overhead'
@@ -30,7 +31,7 @@ def generate(
     num_beams: int = 1,
     use_cache: bool = False,
     contiguous_cache: bool = False,
-    paged_kv_cache: Optional["PagedKVCache"] = None
+    paged_kv_cache: Optional["PagedKVCache"] = None,  # type: ignore
 ):
     """
     A trivial generate function that can be used for validation/testing in
@@ -85,7 +86,9 @@ def generate(
             if paged_kv_cache:
                 # this is the prompt
                 if i == 0:
-                    kwargs["cache_metadata"] = paged_kv_cache.allocate_initial_prompt(input_ids, sequence_ids)
+                    kwargs["cache_metadata"] = paged_kv_cache.allocate_initial_prompt(
+                        input_ids, sequence_ids
+                    )
                     # todo: need to make the mask something generic for generate, but keeping here for now for testing
                     #  currently we make an assumption that the pad token is 0
                     is_pad = input_ids == 0

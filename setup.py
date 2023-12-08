@@ -28,19 +28,18 @@ if CUDA_HOME is not None:
     CXX_FLAGS += [f"-D_GLIBCXX_USE_CXX11_ABI={ABI}"]
     NVCC_FLAGS += [f"-D_GLIBCXX_USE_CXX11_ABI={ABI}"]
 
-
     def get_nvcc_cuda_version(cuda_dir: str) -> Version:
         """Get the CUDA version from nvcc.
 
         Adapted from https://github.com/NVIDIA/apex/blob/8b7a1ff183741dd8f9b87e7bafd04cfde99cea28/setup.py
         """
-        nvcc_output = subprocess.check_output([cuda_dir + "/bin/nvcc", "-V"],
-                                              universal_newlines=True)
+        nvcc_output = subprocess.check_output(
+            [cuda_dir + "/bin/nvcc", "-V"], universal_newlines=True
+        )
         output = nvcc_output.split()
         release_idx = output.index("release") + 1
         nvcc_cuda_version = parse(output[release_idx].split(",")[0])
         return nvcc_cuda_version
-
 
     def get_torch_arch_list() -> Set[str]:
         # TORCH_CUDA_ARCH_LIST can have one or more architectures,
@@ -66,7 +65,8 @@ if CUDA_HOME is not None:
             raise RuntimeError(
                 "None of the CUDA architectures in `TORCH_CUDA_ARCH_LIST` env "
                 f"variable ({env_arch_list}) is supported. "
-                f"Supported CUDA architectures are: {valid_archs}.")
+                f"Supported CUDA architectures are: {valid_archs}."
+            )
         invalid_arch_list = torch_arch_list - valid_archs
         if invalid_arch_list:
             warnings.warn(
@@ -74,9 +74,9 @@ if CUDA_HOME is not None:
                 "excluded from the `TORCH_CUDA_ARCH_LIST` env variable "
                 f"({env_arch_list}). Supported CUDA architectures are: "
                 f"{valid_archs}.",
-                stacklevel=2)
+                stacklevel=2,
+            )
         return arch_list
-
 
     # First, check the TORCH_CUDA_ARCH_LIST environment variable.
     compute_capabilities = get_torch_arch_list()
@@ -88,7 +88,8 @@ if CUDA_HOME is not None:
             major, minor = torch.cuda.get_device_capability(i)
             if major < 7:
                 raise RuntimeError(
-                    "GPUs with compute capability below 7.0 are not supported.")
+                    "GPUs with compute capability below 7.0 are not supported."
+                )
             compute_capabilities.add(f"{major}.{minor}")
 
     nvcc_cuda_version = get_nvcc_cuda_version(CUDA_HOME)
@@ -105,10 +106,12 @@ if CUDA_HOME is not None:
     # Validate the NVCC CUDA version.
     if nvcc_cuda_version < Version("11.0"):
         raise RuntimeError("CUDA 11.0 or higher is required to build the package.")
-    if (nvcc_cuda_version < Version("11.1")
-            and any(cc.startswith("8.6") for cc in compute_capabilities)):
+    if nvcc_cuda_version < Version("11.1") and any(
+        cc.startswith("8.6") for cc in compute_capabilities
+    ):
         raise RuntimeError(
-            "CUDA 11.1 or higher is required for compute capability 8.6.")
+            "CUDA 11.1 or higher is required for compute capability 8.6."
+        )
     if nvcc_cuda_version < Version("11.8"):
         if any(cc.startswith("8.9") for cc in compute_capabilities):
             # CUDA 11.8 is required to generate the code targeting compute capability 8.9.
@@ -119,13 +122,16 @@ if CUDA_HOME is not None:
             warnings.warn(
                 "CUDA 11.8 or higher is required for compute capability 8.9. "
                 "Targeting compute capability 8.0 instead.",
-                stacklevel=2)
-            compute_capabilities = set(cc for cc in compute_capabilities
-                                       if not cc.startswith("8.9"))
+                stacklevel=2,
+            )
+            compute_capabilities = set(
+                cc for cc in compute_capabilities if not cc.startswith("8.9")
+            )
             compute_capabilities.add("8.0+PTX")
         if any(cc.startswith("9.0") for cc in compute_capabilities):
             raise RuntimeError(
-                "CUDA 11.8 or higher is required for compute capability 9.0.")
+                "CUDA 11.8 or higher is required for compute capability 9.0."
+            )
 
     # Add target compute capabilities to NVCC flags.
     for capability in compute_capabilities:
@@ -160,14 +166,17 @@ if CUDA_HOME is not None:
     ext_modules.append(fms_extension)
     cmdclass["build_ext"] = BuildExtension
 
+
 def get_path(*filepath) -> str:
     return os.path.join(ROOT_DIR, *filepath)
+
 
 def get_requirements() -> List[str]:
     """Get Python package dependencies from requirements.txt."""
     with open(get_path("requirements.txt")) as f:
         requirements = f.read().strip().split("\n")
     return requirements
+
 
 setup(
     name="ibm-fms",

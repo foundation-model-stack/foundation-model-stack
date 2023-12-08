@@ -63,7 +63,7 @@ class Alibi(PositionEncoder):
         mask: torch.Tensor,
         q: torch.Tensor,
         k: torch.Tensor,
-        position_ids: Optional[torch.LongTensor],
+        position_ids: Optional[torch.Tensor],
         use_cache=False,
     ) -> torch.Tensor:
         qlen = q.size(1)
@@ -71,8 +71,8 @@ class Alibi(PositionEncoder):
 
         # if we are using the cache, the key length needs to be extended with the past keys length
         if use_cache and position_ids is not None:
-            klen += position_ids[-1]
-            qlen += position_ids[-1]
+            klen += position_ids[-1]  # type: ignore
+            qlen += position_ids[-1]  # type: ignore
 
         # Automatically allocates on chosen cuda
         device = self.scales.device

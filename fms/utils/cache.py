@@ -4,7 +4,7 @@ import torch
 import torch._inductor.ir as ir
 import torch._inductor.lowering as lowering
 from torch._inductor.virtualized import V
-from fms._C import cache_ops, ops
+from fms._C import cache_ops, ops  # type: ignore
 
 
 lib = torch.library.Library("paged_attention", "FRAGMENT")
@@ -315,36 +315,6 @@ class CacheBlockGroup(List[CacheBlock]):
         return [cb.block_number for cb in self]
 
 
-SequenceIDsInput = Union[Dict, List[int], int]
-SlotMappingInput = Union[Dict, torch.Tensor]
-
-
-def sequence_id_input(inner_f):
-    def wrapper(self, sequence_ids: SequenceIDsInput, *args, **kwargs):
-        if isinstance(sequence_ids, Dict):
-            result = sequence_ids["sequence_ids"]
-        elif isinstance(sequence_ids, List):
-            result = sequence_ids
-        else:
-            result = [sequence_ids]
-        return inner_f(self, result, *args, **kwargs)
-
-    return wrapper
-
-
-def slot_mapping_input(inner_f):
-    def wrapper(self, slot_mapping: SlotMappingInput, *args, **kwargs):
-        if isinstance(slot_mapping, Dict):
-            result = slot_mapping["slot_mapping"]
-        elif isinstance(slot_mapping, List):
-            result = slot_mapping
-        else:
-            result = [slot_mapping]
-        return inner_f(self, result, *args, **kwargs)
-
-    return wrapper
-
-
 class PagedKVCache:
     def __init__(
         self,
@@ -364,7 +334,12 @@ class PagedKVCache:
 
         if not total_num_gpu_blocks:
             total_num_gpu_blocks = get_max_gpu_blocks_available(
-                block_size, emb_dim, num_heads // tensor_parallel_size if num_heads > 1 else num_heads, num_layers, 0.8, dtype
+                block_size,
+                emb_dim,
+                num_heads // tensor_parallel_size if num_heads > 1 else num_heads,
+                num_layers,
+                0.8,
+                dtype,
             )
         self.total_num_gpu_blocks = total_num_gpu_blocks
 
@@ -404,25 +379,13 @@ class PagedKVCache:
         # for now this will just assume we always have the same sequences in batch
         self.block_table_map: Dict[int, CacheBlockGroup] = {}
 
-    def get_max_sequence_length(
-        self, sequence_ids_or_cache_metadata: SequenceIDsInput
-    ) -> int:
-        max_sequence_length = None
-        sequence_ids = sequence_ids_or_cache_metadata
-        if isinstance(sequence_ids_or_cache_metadata, dict):
-            sequence_ids = sequence_ids_or_cache_metadata["sequence_ids"]
-            max_sequence_length = sequence_ids_or_cache_metadata.get(
-                "max_sequence_length", None
-            )
-
-        if max_sequence_length is None:
-            max_sequence_length = max(
-                [
-                    self.block_table_map[seq_id].get_sequence_length()
-                    for seq_id in sequence_ids
-                ]
-            )
-        return max_sequence_length
+    def get_max_sequence_length(self, sequence_ids: List[int]) -> int:
+        return max(
+            [
+                self.block_table_map[seq_id].get_sequence_length()
+                for seq_id in sequence_ids
+            ]
+        )
 
     def _allocate_block(self) -> CacheBlock:
         return self.free_blocks.pop()
@@ -435,8 +398,7 @@ class PagedKVCache:
     def __pad_to_max_right(x: List[int], max_len: int, pad: int) -> List[int]:
         return x + [pad] * (max_len - len(x))
 
-    @sequence_id_input
-    def is_generating(self, sequence_ids: SequenceIDsInput):
+    def is_generating(self, sequence_ids: List[int]):
         for sequence_id in sequence_ids:
             if (
                 sequence_id not in self.block_table_map
@@ -445,8 +407,7 @@ class PagedKVCache:
                 return False
         return True
 
-    @sequence_id_input
-    def is_initialized_with_prompt(self, sequence_ids: SequenceIDsInput):
+    def is_initialized_with_prompt(self, sequence_ids: List[int]):
         for sequence_id in sequence_ids:
             if (
                 sequence_id not in self.block_table_map
@@ -464,14 +425,13 @@ class PagedKVCache:
             self.free_blocks.append(cb)
         del self.block_table_map[sequence_id]
 
-    @sequence_id_input
-    def free_sequences(self, sequence_ids: SequenceIDsInput):
+    def free_sequences(self, sequence_ids: List[int]):
         for seq_id in sequence_ids:
             self.free(seq_id)
 
     def get_unassigned_sequence_ids(self, prompt_tensor: torch.Tensor) -> List[int]:
         # todo: there are better ways to do this, but this is fine for now
-        result = []
+        result: List[int] = []
         batch_size = prompt_tensor.size(0)
         seq_id = 0
         while len(result) < batch_size:
@@ -498,7 +458,9 @@ class PagedKVCache:
                 slot = cbg.get_slot_mapping()
                 slot = self.__pad_to_max_left(slot, max_sequence_length, -1)
                 # todo: investigate why we get incorrect answers using context length here rather than max_sequence_length on batch
-                position_ids_i = self.__pad_to_max_left([i for i in range(context_length)], max_sequence_length, 0)
+                position_ids_i = self.__pad_to_max_left(
+                    [i for i in range(context_length)], max_sequence_length, 0
+                )
             else:
                 slot = cbg.get_slot_mapping(context_length - 1)
                 # todo: investigate why we get incorrect answers using context length here rather than max_sequence_length on batch
@@ -513,18 +475,26 @@ class PagedKVCache:
             context_lengths.append(context_length)
             position_ids.append(position_ids_i)
 
-        slot_mapping = torch.tensor(slot_mapping, dtype=torch.long, device=self.device)
-        block_tables = torch.tensor(block_tables, dtype=torch.int, device=self.device)
-        context_lengths = torch.tensor(context_lengths, dtype=torch.int, device=self.device)
-        position_offset = torch.tensor(position_ids, dtype=torch.int64, device=self.device)
+        slot_mapping_tensor = torch.tensor(
+            slot_mapping, dtype=torch.long, device=self.device
+        )
+        block_tables_tensor = torch.tensor(
+            block_tables, dtype=torch.int, device=self.device
+        )
+        context_lengths_tensor = torch.tensor(
+            context_lengths, dtype=torch.int, device=self.device
+        )
+        position_offset_tensor = torch.tensor(
+            position_ids, dtype=torch.int64, device=self.device
+        )
 
         return {
             "sequence_ids": sequence_ids,
-            "context_lengths": context_lengths,
+            "context_lengths": context_lengths_tensor,
             "max_sequence_length": max_sequence_length,
-            "position_offset": position_offset,
-            "slot_mapping": slot_mapping,
-            "block_tables": block_tables,
+            "position_offset": position_offset_tensor,
+            "slot_mapping": slot_mapping_tensor,
+            "block_tables": block_tables_tensor,
             "type": "paged_attention",
             "is_generating": not is_prompt,
             "block_size": self.block_size,
@@ -542,8 +512,7 @@ class PagedKVCache:
 
         return self._get_cache_metadata(sequence_ids, is_prompt=True)
 
-    @sequence_id_input
-    def allocate_generated_token(self, sequence_ids: SequenceIDsInput) -> dict:
+    def allocate_generated_token(self, sequence_ids: List[int]) -> dict:
         for seq_id in sequence_ids:
             cache_block_group = self.block_table_map[seq_id]
             cache_block_group._is_generating = True

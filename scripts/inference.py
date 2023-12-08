@@ -161,7 +161,9 @@ else:
     )
     prompt2 = template.format("Explain some popular greetings in Spanish.")
     prompt3 = template.format("Explain to me why ignorance is bliss.")
-    prompt4 = template.format("I have just come into a very large sum of money. I received the money from my parents who told me I could do whatever I want with it. My first thought was to go to a financial advisor. Provide me a list of things that I can do with my new found wealth.")
+    prompt4 = template.format(
+        "I have just come into a very large sum of money. I received the money from my parents who told me I could do whatever I want with it. My first thought was to go to a financial advisor. Provide me a list of things that I can do with my new found wealth."
+    )
 
 prompt1 = ids_for_prompt(prompt1)
 prompt2 = ids_for_prompt(prompt2)

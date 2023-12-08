@@ -274,7 +274,9 @@ class LLaMA(nn.Module):
                     filled_cache = True
             else:
                 if past_key_value_states[0] is not None:
-                    position_ids = torch.arange(0, qlen, dtype=torch.int64, device=x_in.device).unsqueeze(0) + (past_key_value_states[0][0].size(-2) + 1)
+                    position_ids = torch.arange(
+                        0, qlen, dtype=torch.int64, device=x_in.device
+                    ).unsqueeze(0) + (past_key_value_states[0][0].size(-2) + 1)
                     filled_cache = True
 
                 cache_metadata["type"] = cache_type
@@ -333,7 +335,13 @@ class LLaMA(nn.Module):
         attn_algorithm=None,
     ):
         output, cache = self._helper(
-            x, mask, position_ids, past_key_value_states, use_cache, cache_metadata, attn_algorithm
+            x,
+            mask,
+            position_ids,
+            past_key_value_states,
+            use_cache,
+            cache_metadata,
+            attn_algorithm,
         )
 
         if only_last_token:
