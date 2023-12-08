@@ -3,9 +3,6 @@ from typing import Any, Callable, List, MutableMapping, Union, Optional
 import torch
 import torch.nn.functional as F
 
-from fms.utils.cache import PagedKVCache
-
-
 def _make_cache_contiguous(past_key_value_states):
     # kv updates are required for torch.compile with
     # mode='reduce-overhead'
@@ -33,7 +30,7 @@ def generate(
     num_beams: int = 1,
     use_cache: bool = False,
     contiguous_cache: bool = False,
-    paged_kv_cache: Optional[PagedKVCache] = None
+    paged_kv_cache: Optional["PagedKVCache"] = None
 ):
     """
     A trivial generate function that can be used for validation/testing in
