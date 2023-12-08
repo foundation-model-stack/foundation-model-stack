@@ -170,13 +170,20 @@ def get_requirements() -> List[str]:
     return requirements
 
 setup(
-    name="fms",
-    version="0.0.1",
-    author="Brian Vaughan, Joshua Rosenkranz, Antoni Viros i Martin, Davis Wertheimer, Supriyo Chakraborty, Raghu Kiran Ganti, ...",
-    author_email="bvaughan@ibm.com",
+    name="ibm-fms",
+    version="0.0.2",
+    author="Brian Vaughan, Joshua Rosenkranz, Antoni Viros i Martin, Davis Wertheimer, Supriyo Chakraborty, Raghu Kiran Ganti",
+    author_email="bvaughan@ibm.com, jmrosenk@us.ibm.com, aviros@ibm.com, Davis.Wertheimer@ibm.com, supriyo@us.ibm.com, rganti@us.ibm.com",
     description="IBM Foundation Model Stack",
     packages=find_packages(exclude=("csrc",)),
     install_requires=get_requirements(),
     ext_modules=ext_modules,
     cmdclass=cmdclass,
+    url="https://github.com/foundation-model-stack/foundation-model-stack",
+    extras_require={"hf": ["transformers >= 4.35.0"]},
+    license="Apache License 2.0",
+    classifiers=[
+        "Programming Language :: Python :: 3",
+        "License :: OSI Approved :: Apache Software License",
+    ],
 )
