@@ -1218,7 +1218,10 @@ class HFDecoderModelArchitecture(HFModelArchitecture):
             if k not in model_inputs:
                 model_inputs[k] = v
 
-        return self._prepare_inputs_for_generation(*args, **model_inputs,)
+        return self._prepare_inputs_for_generation(
+            *args,
+            **model_inputs,
+        )
 
     def _reorder_cache(self, past, beam_idx):
         """A method required by huggingface generate when beam search is used"""

@@ -65,13 +65,22 @@ parser.add_argument(
     help="Path to the tokenizer (e.g. ~/tokenizer.model)",
 )
 parser.add_argument(
-    "--seq_len", type=int, default=512, help="Sequence length of mock input",
+    "--seq_len",
+    type=int,
+    default=512,
+    help="Sequence length of mock input",
 )
 parser.add_argument(
-    "--batch_size", type=int, default=2, help="Batch size of mock input",
+    "--batch_size",
+    type=int,
+    default=2,
+    help="Batch size of mock input",
 )
 parser.add_argument(
-    "--max_new_tokens", type=int, default=256, help="Max number of tokens to generate",
+    "--max_new_tokens",
+    type=int,
+    default=256,
+    help="Max number of tokens to generate",
 )
 parser.add_argument(
     "--compile_mode",

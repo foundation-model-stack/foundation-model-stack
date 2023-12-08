@@ -85,7 +85,7 @@ class MultiHeadAttention(nn.Module):
         # Ensure softmax inputs are standard normal
         for layer in ["query", "key"]:
             nn.init.trunc_normal_(
-                getattr(self, layer).weight, mean=0.0, std=self.emb_dim ** -0.5
+                getattr(self, layer).weight, mean=0.0, std=self.emb_dim**-0.5
             )
         # Ensure projection layers have same scale (for normalized-step dataloaders like
         # AdamW / Sophia), and maintain input norm up to attention remix, in expectation
@@ -250,17 +250,7 @@ class MultiHeadAttention(nn.Module):
 
         # if use_cache=True, we return the hidden_state as well as the kv cache
         if use_cache:
-            return (
-                out,
-                (keys, values)
-                if not fat_cache
-                else (
-                    past_key_value_state[0],
-                    past_key_value_state[1],
-                    new_keys,
-                    new_values,
-                ),
-            )
+            return out, (keys, values) if not fat_cache else (past_key_value_state[0], past_key_value_state[1], new_keys, new_values)
         else:
             return out
 

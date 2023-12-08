@@ -109,7 +109,12 @@ class LMHeadMixin:
         pass
 
     @abc.abstractmethod
-    def _lm_head(self, input_ids: torch.Tensor, *args, **kwargs,) -> torch.Tensor:
+    def _lm_head(
+        self,
+        input_ids: torch.Tensor,
+        *args,
+        **kwargs,
+    ) -> torch.Tensor:
         """adapt your given pytorch native lm head to that of the one expected in huggingface. Note: This is not
         required if your lm_head simply takes in the input_ids and returns a torch.Tensor
 
@@ -188,7 +193,8 @@ class LMHeadModelLMHeadMixin(LMHeadMixin):
         shift_output = prediction[..., :-1, :].contiguous()
         shift_labels = labels[..., 1:].contiguous()
         return loss_fn(
-            shift_output.view(-1, self.config.vocab_size), shift_labels.view(-1),
+            shift_output.view(-1, self.config.vocab_size),
+            shift_labels.view(-1),
         )
 
     def _produce_lm_output(
@@ -234,7 +240,8 @@ class ConditionalGenerationLMHeadMixin(LMHeadMixin):
         loss_fn = nn.CrossEntropyLoss()
         inds = labels.view(-1).sub(self.config.pad_token_id).nonzero().squeeze(1)
         loss = loss_fn(
-            prediction.view(-1, self.config.vocab_size)[inds], labels.view(-1)[inds],
+            prediction.view(-1, self.config.vocab_size)[inds],
+            labels.view(-1)[inds],
         )
         return loss
 
@@ -305,7 +312,9 @@ class SequenceClassificationLMHeadMixin(LMHeadMixin):
         )
 
     def _get_empty_lm_head(
-        self, classifier_activation_fn: str, classifier_dropout: float,
+        self,
+        classifier_activation_fn: str,
+        classifier_dropout: float,
     ) -> nn.Module:
         return ClassificationHead(
             self.config.hidden_size,
@@ -370,7 +379,11 @@ class MaskedLMHeadMixin(LMHeadMixin):
     ]
 
     def __init__(
-        self, activation_fn: str = "gelu", norm_eps: float = 1e-12, *args, **kwargs,
+        self,
+        activation_fn: str = "gelu",
+        norm_eps: float = 1e-12,
+        *args,
+        **kwargs,
     ):
         """
         Initialize a MaskedLMHeadMixin
@@ -388,7 +401,10 @@ class MaskedLMHeadMixin(LMHeadMixin):
             a new MaskedLMHeadMixin
         """
         super().__init__(
-            _lm_head_params={"activation_fn": activation_fn, "norm_eps": norm_eps,},
+            _lm_head_params={
+                "activation_fn": activation_fn,
+                "norm_eps": norm_eps,
+            },
             *args,
             **kwargs,
         )

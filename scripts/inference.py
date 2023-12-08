@@ -33,7 +33,9 @@ parser.add_argument(
     help="Path to the tokenizer (e.g. ~/tokenizer.model)",
 )
 parser.add_argument(
-    "--no_use_cache", action="store_false", help="Disable the kv-cache (on by default)",
+    "--no_use_cache",
+    action="store_false",
+    help="Disable the kv-cache (on by default)",
 )
 parser.add_argument(
     "--compile",
