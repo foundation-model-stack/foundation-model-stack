@@ -250,17 +250,15 @@ class MultiHeadAttention(nn.Module):
 
         # if use_cache=True, we return the hidden_state as well as the kv cache
         if use_cache:
-            return (
-                out,
-                (keys, values)
-                if not fat_cache
-                else (
+            if fat_cache:
+                return out, (
                     past_key_value_state[0],
                     past_key_value_state[1],
                     new_keys,
                     new_values,
-                ),
-            )
+                )
+            else:
+                return out, (keys, values)
         else:
             return out
 

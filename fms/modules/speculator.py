@@ -39,13 +39,13 @@ class Speculator(nn.Module):
                 m.weight.data.fill_(1)
                 m.bias.data.zero_()
 
-    def generate_tree(self, state, ind, topk=[5, 4, 3], k=5):
+    def generate_suffixes(self, state, ind, topk=[5, 4, 3], n=5):
         """
         FOR INFERENCE
         ----
         Generate tree of candidate sequences given latest base model embedding (state) and chosen token (ind).
         Topk indicates # of tree "branches" at each head.
-        k pares down the candidate list from prod(topk) to the top k most confident.
+        n pares down the candidate list from prod(topk) to the top n most confident.
         """
         # state: b 1 d
         # ind: b 1
@@ -77,11 +77,11 @@ class Speculator(nn.Module):
             log_probs = log_probs.unsqueeze(2).expand(b, -1, topk[i])  # b k k'
             log_probs = log_probs.add(probs).reshape(b, -1)  # b kk'
 
-        # Take only top k best guesses
-        best_guesses = log_probs.topk(k, dim=1)[1]  # b k
+        # Take only top n best guesses
+        best_guesses = log_probs.topk(n, dim=1)[1]  # b k
         return out.gather(
             1, best_guesses.unsqueeze(2).expand(-1, -1, self.nheads)
-        )  # b k h
+        )  # b n h
 
     def forward(self, state, inds):
         """
