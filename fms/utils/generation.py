@@ -20,6 +20,43 @@ def _make_cache_contiguous(past_key_value_states):
     return n_kv_s
 
 
+def _repetition_penalty(input_ids, logits, penalty=1.0, compound=False):
+    """
+    Apply a repetition penalty to logits based on if the predicted outputs
+    have already appeared in input_ids.
+
+    Args:
+    input_ids: the prior sequence to avoid repeating.
+    logits: the predicted scores for the next token
+    penalty: values greater than 1 penalize repetition. Values less than 1
+                encourage repetition.
+    compound: In the original paper (https://arxiv.org/pdf/1909.05858.pdf) the
+                repetition penalty is only applied once if the token has been
+                seen previously. When compound=True, apply the penalty multiple
+                times, once per occurrance of the token.
+    """
+    if penalty == 1.0:
+        return logits
+
+    if compound:
+        # the penalty will be same size as logits (e.g. batch x vocab size)
+        result = torch.zeros_like(logits)
+        # we add 1 at the index of input_ids for each occurance of input_ids
+        result.scatter_add_(
+            dim=-1,
+            index=input_ids,
+            src=input_ids.new_ones((), dtype=logits.dtype).expand_as(input_ids),
+        )
+        # i.e. if the penalty is 1.2, an input_id that appears 2x would be penalized 1.2*1.2=1.44
+        penalty = penalty**result
+        result = torch.where(logits < 0, logits * penalty, logits / penalty)
+    else:
+        score = torch.gather(logits, -1, input_ids)
+        score = torch.where(score < 0, score * penalty, score / penalty)
+        result = logits.scatter(-1, input_ids, score)
+    return result
+
+
 def generate(
     model: Union[Callable, torch.nn.Module],
     input_ids: torch.Tensor,
@@ -31,6 +68,9 @@ def generate(
     num_beams: int = 1,
     use_cache: bool = False,
     contiguous_cache: bool = False,
+    repetition_penalty: float = 1.0,
+    compound_repetition_penalty: bool = False,
+    debug=False,
 ):
     """
     A trivial generate function that can be used for validation/testing in
@@ -51,6 +91,10 @@ def generate(
         num_beams: TODO: support beam search
         use_cache: requires that the model accept use_cache and
             past_key_value_states args in forward method.
+        repetition_penalty: A penalty to apply to repeatedly occurring tokens.
+                    Values greater than one discourage repetition.
+        compound_repetition_penalty: Whether to penalize more for multiple prior
+                    occurrances of a token.
     """
     batched = False
     if num_beams != 1:
@@ -85,10 +129,15 @@ def generate(
                 kwargs["past_key_value_states"] = past_key_value_states
         else:
             logits = output
+
         logits = logits[:, -1, :]
 
+        logits = _repetition_penalty(
+            result, logits, repetition_penalty, compound_repetition_penalty
+        )
+
         if do_sample:
-            # get logits from last value in sequence nad scale
+            # get logits from last value in sequence and scale
             logits = logits / temperature
             if top_k:
                 v, _ = torch.topk(logits, top_k)
