@@ -325,13 +325,13 @@ class LLaMA(nn.Module):
         if only_last_token:
             output = output[:, -1, :]
         preds = self.shared(output, reverse=True)
-        
+
         out = [preds]
         if use_cache:
             out.append(cache)
         if include_embeds:
             out.append(output)
-        if len(out)==1:
+        if len(out) == 1:
             return out[0]
         return out
 

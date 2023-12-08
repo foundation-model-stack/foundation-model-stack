@@ -47,7 +47,7 @@ class Alibi(PositionEncoder):
         Minimum scaling factor. Defaults to 2^-8 as in paper.
     """
 
-    def __init__(self, nheads, max_scale=0.5, min_scale=1 / (2**8)):
+    def __init__(self, nheads, max_scale=0.5, min_scale=1 / (2 ** 8)):
         super(Alibi, self).__init__()
         self.nheads = nheads
         start = math.log2(max_scale)
@@ -137,7 +137,7 @@ class RotaryEmbedding(PositionEncoder):
             # `math.log` does
             alpha = math.log(alpha) / math.log(2)
             alpha = math.ceil(alpha)
-            alpha = 2**alpha
+            alpha = 2 ** alpha
             alpha = int(alpha)
             return alpha
 
@@ -189,12 +189,7 @@ class RotaryEmbedding(PositionEncoder):
         freqs = torch.outer(t, freqs).float()
         self.max_seq_len_cached[dev_idx] = max_seq_len
         self.cached_freqs[dev_idx][alpha] = torch.stack(
-            [
-                torch.cos(freqs),
-                -torch.sin(freqs),
-                torch.sin(freqs),
-                torch.cos(freqs),
-            ],
+            [torch.cos(freqs), -torch.sin(freqs), torch.sin(freqs), torch.cos(freqs),],
             dim=2,
         ).view(*freqs.size(), 2, 2)
 

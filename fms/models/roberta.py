@@ -126,8 +126,7 @@ class RoBERTaHeadless(nn.Module):
         )
 
         self.position_embedding = self.distributed_strategy.distribute_module(
-            nn.Embedding(self.config.max_pos, self.config.emb_dim),
-            final_layers=True,
+            nn.Embedding(self.config.max_pos, self.config.emb_dim), final_layers=True,
         )
 
         self.enc_norm = self.distributed_strategy.distribute_module(
@@ -141,9 +140,7 @@ class RoBERTaHeadless(nn.Module):
     def reset_params(self):
         for layer in ["embedding", "position_embedding"]:
             nn.init.normal_(
-                getattr(self, layer).weight,
-                mean=0.0,
-                std=self.config.emb_dim**-0.5,
+                getattr(self, layer).weight, mean=0.0, std=self.config.emb_dim ** -0.5,
             )
 
     def forward(

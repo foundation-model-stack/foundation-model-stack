@@ -68,7 +68,7 @@ class FeedForwardBlock(nn.Module):
             nn.init.trunc_normal_(
                 getattr(self, layer).weight,
                 mean=0.0,
-                std=(2**0.5 * gain / self.w1.weight.numel() ** 0.5) ** 0.5,
+                std=(2 ** 0.5 * gain / self.w1.weight.numel() ** 0.5) ** 0.5,
             )
             if self.use_bias:
                 getattr(self, layer).bias.data.zero_()
@@ -210,7 +210,7 @@ class GatedLinearUnit(nn.Module):
             nn.init.trunc_normal_(
                 getattr(self, layer).weight,
                 mean=0.0,
-                std=(2 * gain**2 / self.grow_factor) ** (1 / 6) / self.width**0.5,
+                std=(2 * gain ** 2 / self.grow_factor) ** (1 / 6) / self.width ** 0.5,
             )
             if self.use_bias:
                 getattr(self, layer).bias.data.zero_()

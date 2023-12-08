@@ -62,11 +62,7 @@ class GPTBigCodeBlock(nn.Module):
         *,
         mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.Tensor] = None,
-        past_key_value_state: Optional[
-            Tuple[
-                torch.Tensor,
-            ]
-        ] = None,
+        past_key_value_state: Optional[Tuple[torch.Tensor,]] = None,
         use_cache: bool = False,
         is_causal_mask: bool = False,
         attn_algorithm: Optional[str] = None,
@@ -258,9 +254,7 @@ class GPTBigCodeHeadless(nn.Module):
 # Implements the decoder-only GPTBigCodeModel
 class GPTBigCode(nn.Module):
     def __init__(
-        self,
-        config: Optional[GPTBigCodeConfig] = None,
-        **kwargs,
+        self, config: Optional[GPTBigCodeConfig] = None, **kwargs,
     ):
         super(GPTBigCode, self).__init__()
         if config is not None:
@@ -299,11 +293,7 @@ class GPTBigCode(nn.Module):
         x: torch.LongTensor,
         mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
-        past_key_value_states: Optional[
-            Tuple[
-                torch.FloatTensor,
-            ]
-        ] = None,
+        past_key_value_states: Optional[Tuple[torch.FloatTensor,]] = None,
         use_cache: bool = False,
         attn_algorithm: Optional[str] = None,
     ):

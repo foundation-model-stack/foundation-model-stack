@@ -125,10 +125,7 @@ inductor_wrapper.WrapperCodeGen.codegen_free = wcg_codegen_free
 # This function is redefined from torch.distributed._functional_collectives.all_gather_tensor
 # to remove an assert that creates an extra graph break
 def _all_gather_tensor(
-    self: torch.Tensor,
-    gather_dim: int,
-    group: distfunc.RANK_TYPES,
-    tag: str = "",
+    self: torch.Tensor, gather_dim: int, group: distfunc.RANK_TYPES, tag: str = "",
 ):
     tag, rankset, group_size = distfunc._expand_group(group, tag)
     tensor = torch.ops.c10d_functional.all_gather_into_tensor(self, tag, rankset, group_size)  # type: ignore[attr-defined]
@@ -167,9 +164,7 @@ def _all_gather(input_: torch.Tensor) -> torch.Tensor:
     last_dim = input_.dim() - 1
     return (
         _all_gather_tensor(
-            input_.transpose(0, last_dim).contiguous(),
-            0,
-            list(range(world_size)),
+            input_.transpose(0, last_dim).contiguous(), 0, list(range(world_size)),
         )
         .transpose(0, last_dim)
         .contiguous()

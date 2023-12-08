@@ -64,10 +64,7 @@ class HFConfigFixtureMixin(metaclass=abc.ABCMeta):
 
     @abc.abstractmethod
     @pytest.fixture(scope="class", autouse=True)
-    def fms_hf_config(
-        self,
-        **kwargs,
-    ) -> PretrainedConfig:
+    def fms_hf_config(self, **kwargs,) -> PretrainedConfig:
         """this fixture represents and fms hf config"""
         pass
 
