@@ -189,10 +189,10 @@ def speculative_generate(
     kwargs["past_key_value_states"] = past_key_value_states
 
     bsize = input_ids.size(0)
-    n_gen = torch.zeros(bsize, device=input_ids.device).int()
+    n_gen = torch.zeros(bsize, device=input_ids.device, dtype=torch.int)
     n_steps = 0
     n_kv_s = past_key_value_states
-    n_pads = torch.zeros_like(n_gen).int()
+    n_pads = torch.zeros_like(n_gen, dtype=torch.int)
     prompt_len = input_ids.size(1) - 1
     input_ids = input_ids[:, -1:]
     n_adds = speculator.nheads + 1

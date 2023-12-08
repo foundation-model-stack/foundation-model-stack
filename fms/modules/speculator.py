@@ -11,11 +11,22 @@ class Speculator(nn.Module):
         self.nheads = n_heads
         self.emb_dim = emb_dim
         self.vsize = vocab_size
-        self.emb = nn.ModuleList([nn.Embedding(vocab_size, emb_dim) for _ in range(n_heads)])
-        self.proj = nn.ModuleList([nn.Linear(emb_dim * 2, emb_dim, bias=False) for _ in range(n_heads)])
-        self.head = nn.ModuleList([nn.Linear(emb_dim, vocab_size, bias=False) for _ in range(n_heads)])
+        self.emb = nn.ModuleList(
+            [nn.Embedding(vocab_size, emb_dim) for _ in range(n_heads)]
+        )
+        self.proj = nn.ModuleList(
+            [nn.Linear(emb_dim * 2, emb_dim, bias=False) for _ in range(n_heads)]
+        )
+        self.head = nn.ModuleList(
+            [nn.Linear(emb_dim, vocab_size, bias=False) for _ in range(n_heads)]
+        )
         self.ln = nn.ModuleList(
-            [LayerNormParameterized(emb_dim, elementwise_shift=True, elementwise_scale=True) for _ in range(n_heads)]
+            [
+                LayerNormParameterized(
+                    emb_dim, elementwise_shift=True, elementwise_scale=True
+                )
+                for _ in range(n_heads)
+            ]
         )
         self.a = nn.GELU()
         self.reset_params()
@@ -23,60 +34,63 @@ class Speculator(nn.Module):
     def reset_params(self):
         for m in self.modules():
             if isinstance(m, nn.Embedding) or isinstance(m, nn.Linear):
-                nn.init.trunc_normal_(m.weight, 0, 1 / self.emb_dim**0.5)
+                nn.init.trunc_normal_(m.weight, 0, 1 / self.emb_dim ** 0.5)
             elif isinstance(m, LayerNormParameterized):
                 m.weight.data.fill_(1)
                 m.bias.data.zero_()
-                
-    def generate_tree(self, state, ind, topk=[5,4,3], k=5):
-        '''
+
+    def generate_tree(self, state, ind, topk=[5, 4, 3], k=5):
+        """
         FOR INFERENCE
         ----
         Generate tree of candidate sequences given latest base model embedding (state) and chosen token (ind).
         Topk indicates # of tree "branches" at each head. 
         k pares down the candidate list from prod(topk) to the top k most confident. 
-        '''
+        """
         # state: b 1 d
         # ind: b 1
         # k indicates # of candidates
         # h indicates # of generated tokens
         b = state.size(0)
-        out = torch.LongTensor(b,1,0) # b k h
-        log_probs = torch.zeros(b,1) # b k
-        assert len(topk)==self.nheads, f"You must provide a topk number for each head ({self.nheads} heads, {len(topk)} provided)"
+        out = torch.LongTensor(b, 1, 0)  # b k h
+        log_probs = torch.zeros(b, 1)  # b k
+        assert (
+            len(topk) == self.nheads
+        ), f"You must provide a topk number for each head ({self.nheads} heads, {len(topk)} provided)"
         for i in range(self.nheads):
             # Project and predict
-            z = self.emb[i](ind) # b k d
-            z = torch.cat([state, z], dim=2) # b k 2d
-            state = self.a(self.ln[i](self.proj[i](z))) # b k d
-            probs = F.log_softmax(self.head[i](state), dim=2) # b k v
-            probs, preds = probs.topk(topk[i], dim=2) # b k k'
-            
+            z = self.emb[i](ind)  # b k d
+            z = torch.cat([state, z], dim=2)  # b k 2d
+            state = self.a(self.ln[i](self.proj[i](z)))  # b k d
+            probs = F.log_softmax(self.head[i](state), dim=2)  # b k v
+            probs, preds = probs.topk(topk[i], dim=2)  # b k k'
+
             # Update candidate set with new predictions
-            out = out.unsqueeze(2).expand(-1,-1,topk[i],-1) # b k k' h
-            out = torch.cat([out, preds.unsqueeze(3)], dim=3) # b k k' h+1
-            out = out.view(b, -1, i+1) # b kk' h+1
-            
+            out = out.unsqueeze(2).expand(-1, -1, topk[i], -1)  # b k k' h
+            out = torch.cat([out, preds.unsqueeze(3)], dim=3)  # b k k' h+1
+            out = out.view(b, -1, i + 1)  # b kk' h+1
+
             # Update state, log_probs and ind for new predictions
-            state = state.unsqueeze(2).expand(-1,-1,topk[i],-1) # b k k' d
-            state = state.reshape(b, -1, state.size(3)) # b kk' d
-            ind = preds.view(b, -1) # b kk'
-            log_probs = log_probs.unsqueeze(2).expand(b,-1,topk[i]) # b k k'
-            log_probs = log_probs.add(probs).reshape(b, -1) # b kk'
-            
+            state = state.unsqueeze(2).expand(-1, -1, topk[i], -1)  # b k k' d
+            state = state.reshape(b, -1, state.size(3))  # b kk' d
+            ind = preds.view(b, -1)  # b kk'
+            log_probs = log_probs.unsqueeze(2).expand(b, -1, topk[i])  # b k k'
+            log_probs = log_probs.add(probs).reshape(b, -1)  # b kk'
+
         # Take only top k best guesses
-        best_guesses = log_probs.topk(k, dim=1)[1] # b k
-        return out.gather(1, best_guesses.unsqueeze(2).expand(-1,-1,self.nheads)) # b k h
-            
+        best_guesses = log_probs.topk(k, dim=1)[1]  # b k
+        return out.gather(
+            1, best_guesses.unsqueeze(2).expand(-1, -1, self.nheads)
+        )  # b k h
 
     def forward(self, state, inds):
-        '''
+        """
         FOR TRAINING
         ----
         Since we're assuming all prior tokens are "correct", don't act recursively, just pull from provided inds.
         Produces self.nheads predicted tokens for each token embedding in state. 
         Inds requires self.nheads-1 extra tokens on the right to "simulate" recursive behavior for end positions.
-        '''
+        """
         # state: b n d
         # inds: b n+2 (..., pred token, n+2, n+3)
         out = []
