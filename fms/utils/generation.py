@@ -140,9 +140,9 @@ def speculative_generate(
 ):
     """
     A reference implementation of speculative decoding generation.
-    Returns at least the specified number of tokens - the speculator may return a 
-    few extra in the final step. 
-    If input is batched, continues generating until EVERY sequence has produced AT LEAST the required number of tokens. 
+    Returns at least the specified number of tokens - the speculator may return a
+    few extra in the final step.
+    If input is batched, continues generating until EVERY sequence has produced AT LEAST the required number of tokens.
     Currently reproduces behavior of greedy decoding only.
 
     Args:
@@ -154,8 +154,8 @@ def speculative_generate(
         max_seq_len: the sequence length of the base model
         new_tokens: number of tokens to generate
         top_k: only score the top k candidates from the speculator
-        threshes: use top k predictions from each head to generate speculator candidate pool 
-        verbose_dict: Optional HF tokenizer vocab dict. If provided, runs verbosely and prints 
+        threshes: use top k predictions from each head to generate speculator candidate pool
+        verbose_dict: Optional HF tokenizer vocab dict. If provided, runs verbosely and prints
             speculator behavior and scoring for each step
     """
 

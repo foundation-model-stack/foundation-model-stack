@@ -34,7 +34,7 @@ class Speculator(nn.Module):
     def reset_params(self):
         for m in self.modules():
             if isinstance(m, nn.Embedding) or isinstance(m, nn.Linear):
-                nn.init.trunc_normal_(m.weight, 0, 1 / self.emb_dim ** 0.5)
+                nn.init.trunc_normal_(m.weight, 0, 1 / self.emb_dim**0.5)
             elif isinstance(m, LayerNormParameterized):
                 m.weight.data.fill_(1)
                 m.bias.data.zero_()
@@ -44,8 +44,8 @@ class Speculator(nn.Module):
         FOR INFERENCE
         ----
         Generate tree of candidate sequences given latest base model embedding (state) and chosen token (ind).
-        Topk indicates # of tree "branches" at each head. 
-        k pares down the candidate list from prod(topk) to the top k most confident. 
+        Topk indicates # of tree "branches" at each head.
+        k pares down the candidate list from prod(topk) to the top k most confident.
         """
         # state: b 1 d
         # ind: b 1
@@ -88,7 +88,7 @@ class Speculator(nn.Module):
         FOR TRAINING
         ----
         Since we're assuming all prior tokens are "correct", don't act recursively, just pull from provided inds.
-        Produces self.nheads predicted tokens for each token embedding in state. 
+        Produces self.nheads predicted tokens for each token embedding in state.
         Inds requires self.nheads-1 extra tokens on the right to "simulate" recursive behavior for end positions.
         """
         # state: b n d
