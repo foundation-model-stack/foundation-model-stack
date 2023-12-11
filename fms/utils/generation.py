@@ -214,7 +214,7 @@ def speculative_generate(
         )  # k b h
         input_ids = torch.cat(
             [input_ids.unsqueeze(0).expand(top_k, bsize, 1), adds], dim=-1
-        )  # k b 1+h
+        ).int()  # k b 1+h
         input_ids = input_ids.view(-1, n_adds)  # kb 1+h
 
         # Build custom attention mask
