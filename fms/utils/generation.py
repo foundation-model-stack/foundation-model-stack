@@ -3,6 +3,8 @@ from typing import Any, Callable, List, MutableMapping, Union
 import torch
 import torch.nn.functional as F
 
+from fms.modules.speculator import Speculator
+
 
 def _make_cache_contiguous(past_key_value_states):
     # kv updates are required for torch.compile with
@@ -130,8 +132,8 @@ def truncate_after_eos(result, eos_token_id):
 
 def speculative_generate(
     model: Union[Callable, torch.nn.Module],
-    input_ids: torch.LongTensor,
-    speculator: Union[Callable, torch.nn.Module],
+    input_ids: torch.Tensor,
+    speculator: Speculator,
     max_seq_len: int = 2048,
     new_tokens: int = 256,
     top_k: int = 5,
@@ -178,7 +180,7 @@ def speculative_generate(
         input_ids = input_ids.unsqueeze(0)
 
     result = list(input_ids)  # [b] n
-    kwargs = dict()
+    kwargs: MutableMapping[str, Any] = dict()
     kwargs["past_key_value_states"] = None
     kwargs["use_cache"] = True
 
@@ -200,7 +202,9 @@ def speculative_generate(
         n_steps += 1
 
         # Get candidate set of speculations
-        adds = speculator.generate_suffixes(embeds, input_ids, threshes, top_k).transpose(
+        adds = speculator.generate_suffixes(
+            embeds, input_ids, threshes, top_k
+        ).transpose(
             0, 1
         )  # k b h
         input_ids = torch.cat(
@@ -230,7 +234,7 @@ def speculative_generate(
         pos_ids = pos_ids.repeat(top_k, 1)  # kb 1+h
 
         # Base model forward pass
-        output = model.forward(
+        output = model(
             input_ids, include_embeds=True, mask=mask, position_ids=pos_ids, **kwargs
         )
         logits, past_key_value_states, embeds = output
@@ -268,9 +272,9 @@ def speculative_generate(
                 )
 
         # Toss any wrong speculator tokens
-        next_vals = list(next_vals)
-        next_vals = [
-            next_vals[i][: n_correct[i] + 1] for i in range(len(next_vals))
+        next_vals_split = list(next_vals)
+        next_vals_split = [
+            next_vals_split[i][: n_correct[i] + 1] for i in range(len(next_vals_split))
         ]  # [b] h'
         n_gen += n_correct + 1
         embeds = embeds.gather(
@@ -317,8 +321,10 @@ def speculative_generate(
         kwargs["past_key_value_states"] = n_kv_s
 
         # Update results
-        result = [torch.cat((result[i], next_vals[i]), dim=0) for i in range(bsize)]
-        input_ids = torch.stack([line[-1:] for line in next_vals], dim=0)  # b 1
+        result = [
+            torch.cat((result[i], next_vals_split[i]), dim=0) for i in range(bsize)
+        ]
+        input_ids = torch.stack([line[-1:] for line in next_vals_split], dim=0)  # b 1
 
         if verbose:
             for line in result:
