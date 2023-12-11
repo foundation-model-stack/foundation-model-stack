@@ -145,6 +145,7 @@ def speculative_generate(
     Returns at least the specified number of tokens - the speculator may return a
     few extra in the final step.
     If input is batched, continues generating until EVERY sequence has produced AT LEAST the required number of tokens.
+    Input (and output) tokens beyond max_seq_len are simply dropped for a sliding-window approach.
     Currently reproduces behavior of greedy decoding only.
 
     Args:
@@ -185,6 +186,8 @@ def speculative_generate(
     kwargs["use_cache"] = True
 
     # Build kv cache and get initial state vector
+    n_adds = speculator.nheads + 1
+    input_ids = input_ids[:, -max_seq_len + n_adds :]
     output = model(input_ids[:, :-1], include_embeds=True, **kwargs)
     _, past_key_value_states, embeds = output
     embeds = embeds[:, -1:]
@@ -197,7 +200,6 @@ def speculative_generate(
     n_pads = torch.zeros_like(n_gen, dtype=torch.int)
     prompt_len = input_ids.size(1) - 1
     input_ids = input_ids[:, -1:]
-    n_adds = speculator.nheads + 1
     while min(n_gen) < new_tokens:
         n_steps += 1
 
@@ -310,6 +312,9 @@ def speculative_generate(
                 roll_inds = roll_inds[
                     :, :, extra_pads:
                 ]  # Knock off any unneeded left-pads
+                roll_inds = roll_inds[
+                    :, :, -max_seq_len + n_adds :
+                ]  # Knock off any tokens beyond max_seq_len
                 base = base.gather(
                     2, roll_inds.expand(-1, base.size(1), -1, base.size(3))
                 )  # Perform shift
