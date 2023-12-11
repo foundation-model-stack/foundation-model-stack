@@ -160,6 +160,9 @@ def speculative_generate(
         threshes: use top k predictions from each head to generate speculator candidate pool
         verbose_dict: Optional HF tokenizer vocab dict. If provided, runs verbosely and prints
             speculator behavior and scoring for each step
+    Returns:
+        result: List of id tensors, possibly different lengths if batching.
+        n_steps: Number of foward passes used to generate provided tokens.
     """
 
     verbose = False

@@ -6,7 +6,7 @@ from fms.modules.layernorm import LayerNormParameterized
 
 
 class Speculator(nn.Module):
-    def __init__(self, emb_dim=4096, vocab_size=32000, n_heads=4):
+    def __init__(self, emb_dim=4096, vocab_size=32000, n_heads=3):
         super().__init__()
         self.nheads = n_heads
         self.emb_dim = emb_dim
