@@ -178,8 +178,8 @@ class MultiHeadAttention(nn.Module):
                 fat_cache = True
                 new_keys = keys
                 new_values = values
-                past_keys = past_keys.expand(batch_size, -1, -1, -1)
-                past_vals = past_vals.expand(batch_size, -1, -1, -1)
+                past_keys = past_keys.repeat(batch_size//past_keys.size(0), 1, 1, 1)
+                past_vals = past_vals.repeat(batch_size//past_vals.size(0), 1, 1, 1)
             if is_self:
                 keys = torch.cat((past_keys, keys), dim=2)
                 values = torch.cat((past_vals, values), dim=2)
