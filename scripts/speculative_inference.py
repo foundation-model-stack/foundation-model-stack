@@ -174,7 +174,7 @@ def infer(ids):
         model,
         ids,
         speculator,
-        max_new_tokens=100,
+        new_tokens=100,
         max_seq_len=max_seq_len,
     )
     for i in range(len(result)):
