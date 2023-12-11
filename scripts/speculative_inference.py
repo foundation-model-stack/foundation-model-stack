@@ -83,7 +83,7 @@ tokenizer = tokenizers.get_tokenizer(args.tokenizer)
 model.eval()
 print("loading speculator")
 speculator = Speculator(model.width, model.config.src_vocab_size, n_heads=3)
-speculator.load_state_dict(torch.load(args.speculator_path, map_location=device))
+speculator.load_state_dict(torch.load(args.speculator_path, map_location=device)["model_state"])
 torch.set_grad_enabled(False)
 print("loading complete on rank", local_rank)
 
