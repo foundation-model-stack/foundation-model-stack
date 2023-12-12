@@ -160,7 +160,7 @@ def infer(ids):
 
     result, n_steps = speculative_generate(
         model,
-        ids.int(),
+        ids,
         speculator,
         new_tokens=100,
         max_seq_len=max_seq_len,

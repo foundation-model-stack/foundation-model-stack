@@ -199,7 +199,7 @@ def speculative_generate(
         # Build padded batched input tensor
         max_len = max([seq.size(0) for seq in input_ids])
         n_pads = [max_len - seq.size(0) for seq in input_ids]
-        n_pads = torch.Tensor(n_pads, device=input_ids[0].device).int()
+        n_pads = torch.Tensor(n_pads).to(device=input_ids[0].device, dtype=torch.int)
         input_ids = torch.stack(
             [F.pad(input_ids[i], (n_pads[i], 0)) for i in range(bsize)]
         )
