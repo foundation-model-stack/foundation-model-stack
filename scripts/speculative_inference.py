@@ -165,8 +165,11 @@ def infer(ids):
         new_tokens=100,
         max_seq_len=max_seq_len,
     )
-    for i in range(len(result)):
-        print_result(result[i], ids[i], n_steps)
+    if isinstance(ids, list):
+        for i in range(len(result)):
+            print_result(result[i], ids[i], n_steps)
+    elif isinstance(ids, torch.Tensor):
+        print_result(result, ids, n_steps)
 
 
 print("generating output", local_rank)
