@@ -279,9 +279,43 @@ class CacheBlockGroup(List[CacheBlock]):
         self.block_size = block_size
         self._is_generating = False
         self._is_initialized_with_prompt = False
+        self.prefix_groups = []
+        self.ref_count = 0
+
+    @classmethod
+    def from_prefix(cls, prefix: "CacheBlockGroup"):
+        cbg = cls(prefix.block_size)
+        cbg._is_generating = True
+        cbg._is_initialized_with_prompt = True
+
+        # increase the reference count of all cache block groups in the prefix group if any exist
+        for cbg_i in prefix.prefix_groups:
+            # cache-block-group will have reference to some other prefix groups
+            cbg.prefix_groups.append(cbg_i)
+            # prefix groups must have their reference count increased to know when freeing is allowed
+            cbg_i.ref_count += 1
+
+        # append the last prefix
+        cbg.prefix_groups.append(prefix)
+        # increase the reference count of the last prefix
+        prefix.ref_count += 1
+
+        return cbg
 
     def __getitem__(self, key):
-        return super(CacheBlockGroup, self).__getitem__(key)
+        if key < 0:
+            key = self.__len__() + key
+
+        offset = 0
+        # if there are prefix groups, find the proper cache block from that sequence group
+        for pg in self.prefix_groups:
+            if key >= offset + pg.get_sequence_length():
+                offset += pg.get_sequence_length()
+            else:
+                return list.__getitem__(pg, key - offset)
+
+        # if we have not yet found the key, subtract the offset from the key to get the cache block in this current group
+        return super(CacheBlockGroup, self).__getitem__(key - offset)
 
     def is_initialized_with_prompt(self):
         return self._is_initialized_with_prompt
@@ -310,6 +344,13 @@ class CacheBlockGroup(List[CacheBlock]):
             slot = block_number * self.block_size + block_offset
             slot_mapping.append(slot)
         return slot_mapping
+
+    def __iter__(self):
+        for pg in self.prefix_groups:
+            for cb in list.__iter__(pg):
+                yield cb
+        for cb in list.__iter__(self):
+            yield cb
 
     def get_block_mapping(self):
         return [cb.block_number for cb in self]
@@ -377,14 +418,11 @@ class PagedKVCache:
 
         # each sequence will be mapped to a cache block group
         # for now this will just assume we always have the same sequences in batch
-        self.block_table_map: Dict[int, CacheBlockGroup] = {}
+        self.cbg_map: Dict[int, CacheBlockGroup] = {}
 
     def get_max_sequence_length(self, sequence_ids: List[int]) -> int:
         return max(
-            [
-                self.block_table_map[seq_id].get_sequence_length()
-                for seq_id in sequence_ids
-            ]
+            [self.cbg_map[seq_id].get_sequence_length() for seq_id in sequence_ids]
         )
 
     def _allocate_block(self) -> CacheBlock:
@@ -401,8 +439,8 @@ class PagedKVCache:
     def is_generating(self, sequence_ids: List[int]):
         for sequence_id in sequence_ids:
             if (
-                sequence_id not in self.block_table_map
-                or not self.block_table_map[sequence_id].is_generating()
+                sequence_id not in self.cbg_map
+                or not self.cbg_map[sequence_id].is_generating()
             ):
                 return False
         return True
@@ -410,24 +448,37 @@ class PagedKVCache:
     def is_initialized_with_prompt(self, sequence_ids: List[int]):
         for sequence_id in sequence_ids:
             if (
-                sequence_id not in self.block_table_map
-                or not self.block_table_map[sequence_id].is_initialized_with_prompt()
+                sequence_id not in self.cbg_map
+                or not self.cbg_map[sequence_id].is_initialized_with_prompt()
             ):
                 return False
         return True
 
     def free(self, sequence_id: int):
-        if sequence_id not in self.block_table_map:
+        if sequence_id not in self.cbg_map:
             return
-        cbg = self.block_table_map[sequence_id]
+        cbg = self.cbg_map[sequence_id]
+
+        if cbg.ref_count != 0:
+            raise ValueError(
+                f"This sequence id is being reference by other sequences and cannot be freed"
+            )
+
+        # remove a reference count from all cache block groups that was a prefix as part of this sequence
+        for ref_cbg in cbg.prefix_groups:
+            ref_cbg.ref_count -= 1
+
         for cb in cbg:
             cb.num_tokens = 0
             self.free_blocks.append(cb)
-        del self.block_table_map[sequence_id]
+        del self.cbg_map[sequence_id]
 
     def free_sequences(self, sequence_ids: List[int]):
         for seq_id in sequence_ids:
             self.free(seq_id)
+
+    def get_unassigned_sequence_id(self) -> int:
+        return self.get_unassigned_sequence_ids(torch.empty(1, 1))[0]
 
     def get_unassigned_sequence_ids(self, prompt_tensor: torch.Tensor) -> List[int]:
         # todo: there are better ways to do this, but this is fine for now
@@ -435,7 +486,7 @@ class PagedKVCache:
         batch_size = prompt_tensor.size(0)
         seq_id = 0
         while len(result) < batch_size:
-            if seq_id not in self.block_table_map:
+            if seq_id not in self.cbg_map:
                 result.append(seq_id)
             seq_id += 1
         return result
@@ -451,19 +502,21 @@ class PagedKVCache:
         if remainder != 0:
             max_num_blocks += 1
         for sequence_id in sequence_ids:
-            cbg = self.block_table_map[sequence_id]
+            cbg = self.cbg_map[sequence_id]
 
             context_length = cbg.get_sequence_length()
             if is_prompt:
                 slot = cbg.get_slot_mapping()
                 slot = self.__pad_to_max_left(slot, max_sequence_length, -1)
                 # todo: investigate why we get incorrect answers using context length here rather than max_sequence_length on batch
+                #  looks to be a precision error... was not happening with larger batches
                 position_ids_i = self.__pad_to_max_left(
                     [i for i in range(context_length)], max_sequence_length, 0
                 )
             else:
                 slot = cbg.get_slot_mapping(context_length - 1)
                 # todo: investigate why we get incorrect answers using context length here rather than max_sequence_length on batch
+                #  looks to be a precision error... was not happening with larger batches
                 position_ids_i = [context_length - 1]
 
             block_mapping = cbg.get_block_mapping()
@@ -514,7 +567,7 @@ class PagedKVCache:
 
     def allocate_generated_token(self, sequence_ids: List[int]) -> dict:
         for seq_id in sequence_ids:
-            cache_block_group = self.block_table_map[seq_id]
+            cache_block_group = self.cbg_map[seq_id]
             cache_block_group._is_generating = True
 
             if cache_block_group.last_cache_block_is_full():
@@ -552,4 +605,20 @@ class PagedKVCache:
                 last_cache_block = self._allocate_block()
 
         cache_block_group._is_initialized_with_prompt = True
-        self.block_table_map[seq_id] = cache_block_group
+        self.cbg_map[seq_id] = cache_block_group
+
+    def add_child_sequence(self, parent_sequence_id: int) -> int:
+        parent_cbg = self.cbg_map[parent_sequence_id]
+
+        child_sequence_id = self.get_unassigned_sequence_id()
+        child_cbg = CacheBlockGroup.from_prefix(parent_cbg)
+        self.cbg_map[child_sequence_id] = child_cbg
+        return child_sequence_id
+
+    def add_child_sequences(
+        self, parent_sequence_id: int, num_sequences: int
+    ) -> list[int]:
+        child_sequence_ids = []
+        for _ in range(num_sequences):
+            child_sequence_ids.append(self.add_child_sequence(parent_sequence_id))
+        return child_sequence_ids
