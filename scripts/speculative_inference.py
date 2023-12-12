@@ -83,7 +83,9 @@ tokenizer = tokenizers.get_tokenizer(args.tokenizer)
 model.eval()
 print("loading speculator")
 speculator = Speculator(model.width, model.config.src_vocab_size, n_heads=3)
-speculator.load_state_dict(torch.load(args.speculator_path, map_location=device)["model_state"])
+speculator.load_state_dict(
+    torch.load(args.speculator_path, map_location=device)["model_state"]
+)
 torch.set_grad_enabled(False)
 print("loading complete on rank", local_rank)
 
@@ -102,16 +104,6 @@ def ids_for_prompt(prompt):
     ids = tokenizer.convert_tokens_to_ids(tokens)
     ids = torch.tensor(ids, dtype=torch.long, device=device)
     return ids
-
-
-def pad_prompt(prompt, pad_len, pad_token="<unk>"):
-    to_pad = pad_len - len(prompt)
-    if to_pad == 0:
-        return prompt
-
-    pad_id = tokenizer.convert_tokens_to_ids(pad_token)
-    pad_ids = [pad_id] * to_pad
-    return torch.cat((torch.tensor(pad_ids, device=device), prompt))
 
 
 if args.context_file is not None:
@@ -135,17 +127,12 @@ else:
 
 prompt1 = ids_for_prompt(prompt1)
 prompt2 = ids_for_prompt(prompt2)
-
 max_len = max([len(prompt) for prompt in [prompt1, prompt2]])
-prompt1 = pad_prompt(prompt1, max_len)
-# LLaMA 7B did better on the spanish prompt vs 13B.
-prompt2 = pad_prompt(prompt2, max_len)
-ids = torch.stack((prompt2, prompt1), dim=0)
 
-ids = [ids, prompt1.unsqueeze(0), prompt2.unsqueeze(0)]
+ids = [prompt1, prompt2, [prompt2, prompt1]]
 
 
-def print_result(result):
+def print_result(result, inp, n_steps):
     if local_rank != 0:
         return
     # stop at EOS token if present
@@ -155,6 +142,7 @@ def print_result(result):
     # print(result)
     # print(tokenizer.convert_ids_to_tokens(result))
     print(tokenizer.convert_tokens_to_string(tokenizer.convert_ids_to_tokens(result)))
+    print(f"{len(result) - len(inp)} tokens in {n_steps} steps")
     print()
 
 
@@ -178,8 +166,7 @@ def infer(ids):
         max_seq_len=max_seq_len,
     )
     for i in range(len(result)):
-        print_result(result[i])
-        print(f"{result[i].numel() - ids[i].numel()} tokens in {n_steps} steps")
+        print_result(result[i], ids[i], n_steps)
 
 
 print("generating output", local_rank)

@@ -52,7 +52,7 @@ class Speculator(nn.Module):
         # k indicates # of candidates
         # h indicates # of generated tokens
         b = state.size(0)
-        out = torch.empty(b, 1, 0, device=state.device)  # b k h
+        out = torch.empty(b, 1, 0, device=state.device).int()  # b k h
         log_probs = torch.zeros(b, 1, device=state.device)  # b k
         assert (
             len(topk) == self.nheads
