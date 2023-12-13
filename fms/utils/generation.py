@@ -209,7 +209,7 @@ def speculative_generate(
     kwargs["use_cache"] = True
 
     # Build kv cache and get initial state vector
-    n_adds = speculator.nheads + 1
+    n_adds = speculator.n_predict + 1
     inputs = inputs[:, -max_seq_len + n_adds :]
     output = model(
         inputs[:, :-1], include_embeds=True, position_ids=pos_ids, mask=mask, **kwargs
