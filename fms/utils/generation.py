@@ -132,7 +132,7 @@ def truncate_after_eos(result, eos_token_id):
 
 def speculative_generate(
     model: Union[Callable, torch.nn.Module],
-    input_ids: Union[torch.Tensor, List[torch.Tensor]],
+    input_ids: List[torch.Tensor],
     speculator: Speculator,
     max_seq_len: int = 2048,
     new_tokens: int = 256,
@@ -151,7 +151,7 @@ def speculative_generate(
     Args:
         model: A function or nn.Module that takes a batch of input_ids and
             returns logits
-        input_ids: A length n tensor of token IDs, or list of such tensors
+        input_ids: A list of 1-D tensors holding input prompt ids. For unbatched input, use a singleton list
         speculator: A function or nn.Module that takes a state vector and sampled token
             and returns a set of candidate suffixes
         max_seq_len: the sequence length of the base model
@@ -173,60 +173,36 @@ def speculative_generate(
     def decode_obo(x, vinv):
         return [vinv[z] for z in x.squeeze().tolist()]
 
-    batched = False
-    if type(input_ids) == torch.Tensor:
-        assert (
-            input_ids.dim() == 1
-        ), "Input tensor must be a single sequence. If batching, provide a list of tensors."
-    else:
-        assert type(input_ids) == list, "Input must be either a tensor or a list"
-        for seq in input_ids:
-            assert type(seq) == torch.Tensor, "Batched input must be a list of tensors"
-            assert seq.dim() == 1, "Input tensors must be single sequences"
-        batched = True
-
     # Construct batch(es) and initial inputs
-    if not batched:
-        bsize = 1
-        result = [input_ids]
-        input_ids = input_ids.unsqueeze(0)
-        mask = None
-        n_pads = torch.zeros(1, dtype=torch.int, device=input_ids.device)
-        pos_ids = None
-    else:
-        bsize = len(input_ids)
-        result = input_ids  # [b] n
-        # Build padded batched input tensor
-        max_len = max([seq.size(0) for seq in input_ids])
-        n_pads = [max_len - seq.size(0) for seq in input_ids]
-        n_pads = torch.Tensor(n_pads).to(device=input_ids[0].device, dtype=torch.int)
-        input_ids = torch.stack(
-            [F.pad(input_ids[i], (n_pads[i], 0)) for i in range(bsize)]
-        )
-        # Build padded causal mask
-        mask = torch.ones(
-            bsize,
-            1,
-            input_ids.size(1) - 1,
-            input_ids.size(1) - 1,
-            device=input_ids.device,
-        )
-        mask = mask.tril()  # b 1 n-1 n-1
-        # Mask off any left-pads
-        pad_mask = torch.arange(mask.size(3), device=mask.device).view(
-            1, 1, 1, -1
-        )  # 1 1 1 n-1
-        pad_mask = pad_mask.expand(bsize, 1, 1, -1)  # b 1 1 n-1
-        pad_mask = pad_mask.sub(n_pads.sub(1).view(-1, 1, 1, 1)).clamp(0, 1)
-        eye = torch.eye(mask.size(3), device=mask.device)[
-            None, None, :, :
-        ]  # 1 1 n-1 n-1
-        mask = mask.mul(pad_mask).logical_or(eye).log()  # b 1 n-1 n-1
-        # Handle position_ids
-        pos_ids = torch.arange(mask.size(3), device=input_ids.device).repeat(
-            bsize, 1
-        )  # b n-1
-        pos_ids -= n_pads[:, None]
+    bsize = len(input_ids)
+    result = input_ids  # [b] n
+    # Build padded batched input tensor
+    max_len = max([seq.size(0) for seq in input_ids])
+    n_pads = [max_len - seq.size(0) for seq in input_ids]
+    n_pads = torch.Tensor(n_pads).to(device=input_ids[0].device, dtype=torch.int)
+    input_ids = torch.stack([F.pad(input_ids[i], (n_pads[i], 0)) for i in range(bsize)])
+    # Build padded causal mask
+    mask = torch.ones(
+        bsize,
+        1,
+        input_ids.size(1) - 1,
+        input_ids.size(1) - 1,
+        device=input_ids.device,
+    )
+    mask = mask.tril()  # b 1 n-1 n-1
+    # Mask off any left-pads
+    pad_mask = torch.arange(mask.size(3), device=mask.device).view(
+        1, 1, 1, -1
+    )  # 1 1 1 n-1
+    pad_mask = pad_mask.expand(bsize, 1, 1, -1)  # b 1 1 n-1
+    pad_mask = pad_mask.sub(n_pads.sub(1).view(-1, 1, 1, 1)).clamp(0, 1)
+    eye = torch.eye(mask.size(3), device=mask.device)[None, None, :, :]  # 1 1 n-1 n-1
+    mask = mask.mul(pad_mask).logical_or(eye).log()  # b 1 n-1 n-1
+    # Handle position_ids
+    pos_ids = torch.arange(mask.size(3), device=input_ids.device).repeat(
+        bsize, 1
+    )  # b n-1
+    pos_ids -= n_pads[:, None]
 
     kwargs: MutableMapping[str, Any] = dict()
     kwargs["past_key_value_states"] = None
@@ -390,6 +366,4 @@ def speculative_generate(
                 print("Updated output:", decode_obo(line, vinv))
             print()
 
-    if not batched:
-        result = result[0]
     return result, n_steps

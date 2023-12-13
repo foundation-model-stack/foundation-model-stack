@@ -129,7 +129,7 @@ prompt1 = ids_for_prompt(prompt1)
 prompt2 = ids_for_prompt(prompt2)
 max_len = max([len(prompt) for prompt in [prompt1, prompt2]])
 
-ids = [prompt1, prompt2, [prompt2, prompt1]]
+ids = [[prompt1], [prompt2], [prompt2, prompt1]]
 
 
 def print_result(result, inp, n_steps):
@@ -165,11 +165,8 @@ def infer(ids):
         new_tokens=100,
         max_seq_len=max_seq_len,
     )
-    if isinstance(ids, list):
-        for i in range(len(result)):
-            print_result(result[i], ids[i], n_steps)
-    elif isinstance(ids, torch.Tensor):
-        print_result(result, ids, n_steps)
+    for i in range(len(result)):
+        print_result(result[i], ids[i], n_steps)
 
 
 print("generating output", local_rank)
