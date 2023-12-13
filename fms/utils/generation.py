@@ -178,16 +178,16 @@ def speculative_generate(
     result = input_ids  # [b] n
     # Build padded batched input tensor
     max_len = max([seq.size(0) for seq in input_ids])
-    n_pads = [max_len - seq.size(0) for seq in input_ids]
-    n_pads = torch.Tensor(n_pads).to(device=input_ids[0].device, dtype=torch.int)
-    input_ids = torch.stack([F.pad(input_ids[i], (n_pads[i], 0)) for i in range(bsize)])
+    n_pads_init = [max_len - seq.size(0) for seq in input_ids]
+    n_pads = torch.Tensor(n_pads_init).to(device=input_ids[0].device, dtype=torch.int)
+    inputs = torch.stack([F.pad(input_ids[i], (n_pads[i], 0)) for i in range(bsize)])
     # Build padded causal mask
     mask = torch.ones(
         bsize,
         1,
-        input_ids.size(1) - 1,
-        input_ids.size(1) - 1,
-        device=input_ids.device,
+        inputs.size(1) - 1,
+        inputs.size(1) - 1,
+        device=inputs.device,
     )
     mask = mask.tril()  # b 1 n-1 n-1
     # Mask off any left-pads
@@ -199,9 +199,7 @@ def speculative_generate(
     eye = torch.eye(mask.size(3), device=mask.device)[None, None, :, :]  # 1 1 n-1 n-1
     mask = mask.mul(pad_mask).logical_or(eye).log()  # b 1 n-1 n-1
     # Handle position_ids
-    pos_ids = torch.arange(mask.size(3), device=input_ids.device).repeat(
-        bsize, 1
-    )  # b n-1
+    pos_ids = torch.arange(mask.size(3), device=inputs.device).repeat(bsize, 1)  # b n-1
     pos_ids -= n_pads[:, None]
 
     kwargs: MutableMapping[str, Any] = dict()
@@ -210,42 +208,36 @@ def speculative_generate(
 
     # Build kv cache and get initial state vector
     n_adds = speculator.nheads + 1
-    input_ids = input_ids[:, -max_seq_len + n_adds :]
+    inputs = inputs[:, -max_seq_len + n_adds :]
     output = model(
-        input_ids[:, :-1],
-        include_embeds=True,
-        position_ids=pos_ids,
-        mask=mask,
-        **kwargs
+        inputs[:, :-1], include_embeds=True, position_ids=pos_ids, mask=mask, **kwargs
     )
     _, past_key_value_states, embeds = output
     embeds = embeds[:, -1:]
     kwargs["past_key_value_states"] = past_key_value_states
 
-    n_gen = torch.zeros(bsize, device=input_ids.device, dtype=torch.int)
+    n_gen = torch.zeros(bsize, device=inputs.device, dtype=torch.int)
     n_steps = 0
     n_kv_s = past_key_value_states
-    prompt_len = input_ids.size(1) - 1
-    input_ids = input_ids[:, -1:]
+    prompt_len = inputs.size(1) - 1
+    inputs = inputs[:, -1:]
     while min(n_gen) < new_tokens:
         n_steps += 1
 
         # Get candidate set of speculations
-        adds = speculator.generate_suffixes(
-            embeds, input_ids, threshes, top_k
-        ).transpose(
+        adds = speculator.generate_suffixes(embeds, inputs, threshes, top_k).transpose(
             0, 1
         )  # k b h
-        input_ids = torch.cat(
-            [input_ids.unsqueeze(0).expand(top_k, bsize, 1), adds], dim=-1
+        inputs = torch.cat(
+            [inputs.unsqueeze(0).expand(top_k, bsize, 1), adds], dim=-1
         ).int()  # k b 1+h
-        input_ids = input_ids.view(-1, n_adds)  # kb 1+h
+        inputs = inputs.view(-1, n_adds)  # kb 1+h
 
         # Build custom attention mask
         mask = torch.ones(
-            input_ids.size(1),
-            input_ids.size(1) + n_kv_s[0][0].size(2),
-            device=input_ids.device,
+            inputs.size(1),
+            inputs.size(1) + n_kv_s[0][0].size(2),
+            device=inputs.device,
         )
         mask = mask.tril(diagonal=mask.size(1) - mask.size(0))
         mask = mask.unsqueeze(0).unsqueeze(0)  # 1 1 1+h 1+h+p
@@ -259,21 +251,19 @@ def speculative_generate(
         mask = mask.mul(pad_mask).repeat(top_k, 1, 1, 1).log()  # kb 1 1+h 1+h+p
 
         # Handle position_ids
-        pos_ids = torch.arange(n_adds, device=input_ids.device).repeat(
-            bsize, 1
-        )  # b 1+h
+        pos_ids = torch.arange(n_adds, device=inputs.device).repeat(bsize, 1)  # b 1+h
         pos_ids += prompt_len - n_pads[:, None]
         pos_ids = pos_ids.repeat(top_k, 1)  # kb 1+h
 
         # Base model forward pass
         output = model(
-            input_ids, include_embeds=True, mask=mask, position_ids=pos_ids, **kwargs
+            inputs, include_embeds=True, mask=mask, position_ids=pos_ids, **kwargs
         )
         logits, past_key_value_states, embeds = output
         next_vals = torch.argmax(logits, dim=-1)  # kb 1+h
 
         # Check correctness of speculator predictions
-        test = input_ids.roll(-1, 1).eq(next_vals).cumprod(1)
+        test = inputs.roll(-1, 1).eq(next_vals).cumprod(1)
         n_correct = (
             test.sum(1).clamp(0, n_adds - 1).view(top_k, bsize)
         )  # clamp in case pred[0]==targ[-1]
@@ -294,7 +284,7 @@ def speculative_generate(
         ]  # b 1+h d
 
         if verbose:
-            test = input_ids.view(top_k, bsize, n_adds).gather(0, best_guess_unflat)[0]
+            test = inputs.view(top_k, bsize, n_adds).gather(0, best_guess_unflat)[0]
             for i, line in enumerate(test):
                 print(
                     "Speculation:",
@@ -359,7 +349,7 @@ def speculative_generate(
         result = [
             torch.cat((result[i], next_vals_split[i]), dim=0) for i in range(bsize)
         ]
-        input_ids = torch.stack([line[-1:] for line in next_vals_split], dim=0)  # b 1
+        inputs = torch.stack([line[-1:] for line in next_vals_split], dim=0)  # b 1
 
         if verbose:
             for line in result:
