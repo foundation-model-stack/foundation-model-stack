@@ -4,8 +4,8 @@
 # and may be used only by individuals with "write" access to
 # the repository (i.e. maintainers).
 #
-# The workflow looks dispatches another workflow named <command>-command
-# which must exist in the repository.
+# The workflow looks for and dispatches to another workflow
+# named <command>-command which must exist in the repository.
 #
 # Supported commands:
 # - /land: invokes the land-command workflow, to land (merge) PRs
