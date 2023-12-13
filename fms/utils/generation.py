@@ -72,7 +72,6 @@ def generate(
 
     if use_cache:
         if paged_kv_cache:
-            sequence_ids = paged_kv_cache.get_unassigned_sequence_ids(input_ids)
             kwargs["past_key_value_states"] = paged_kv_cache.cache
         else:
             kwargs["past_key_value_states"] = None
@@ -86,8 +85,8 @@ def generate(
             if paged_kv_cache:
                 # this is the prompt
                 if i == 0:
-                    kwargs["cache_metadata"] = paged_kv_cache.allocate_initial_prompt(
-                        input_ids, sequence_ids
+                    kwargs["cache_metadata"] = paged_kv_cache.allocate_prompt_tokens(
+                        torch.count_nonzero(input_ids.T, dim=0).tolist()
                     )
                     # todo: need to make the mask something generic for generate, but keeping here for now for testing
                     #  currently we make an assumption that the pad token is 0
@@ -95,9 +94,10 @@ def generate(
                     mask = is_pad.unsqueeze(-1) == is_pad.unsqueeze(-2)
                     mask = mask.tril(diagonal=0)
                     kwargs["mask"] = mask
+                    sequence_ids = kwargs["cache_metadata"]["sequence_ids"]
                 else:
-                    kwargs["cache_metadata"] = paged_kv_cache.allocate_generated_token(
-                        sequence_ids
+                    kwargs["cache_metadata"] = paged_kv_cache.allocate_generated_tokens(
+                        sequence_ids, [1 for _ in range(input_ids.size(0))]
                     )
                     kwargs["mask"] = None
 
