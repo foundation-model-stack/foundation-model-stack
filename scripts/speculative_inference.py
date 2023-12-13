@@ -8,6 +8,7 @@ from torch import distributed as dist
 from fms.models.llama import load_fms_llama
 from fms.modules.speculator import Speculator
 from fms.utils import generation, tokenizers
+from fms.utils.cache import PagedKVCache
 from fms.utils.generation import speculative_generate
 
 
@@ -66,6 +67,7 @@ args = parser.parse_args()
 
 local_rank = int(os.getenv("LOCAL_RANK", 0))
 device = torch.device(args.device_type, local_rank)
+torch.cuda.set_device(device)
 
 torch.set_default_device(device)
 torch.set_default_dtype(torch.half)
@@ -88,6 +90,14 @@ speculator.load_state_dict(
 )
 torch.set_grad_enabled(False)
 print("loading complete on rank", local_rank)
+print("initiating cache")
+kv_cache = PagedKVCache(
+    model.config.nlayers,
+    model.config.nheads,
+    model.config.emb_dim,
+    total_num_gpu_blocks=3818,
+    dtype=model.shared.emb.weight.dtype,
+)
 
 if args.compile:
     print("compiling model")
@@ -96,6 +106,7 @@ if args.compile:
     # compiling can make first inference pass slow
     model = torch.compile(model, mode=args.compile_mode)
     speculator = torch.compile(speculator, mode=args.compile_mode)
+
 
 
 def ids_for_prompt(prompt):
@@ -164,6 +175,7 @@ def infer(ids):
         speculator,
         new_tokens=100,
         max_seq_len=max_seq_len,
+        paged_kv_cache=kv_cache,
     )
     if isinstance(ids, list):
         for i in range(len(result)):

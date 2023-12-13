@@ -80,6 +80,21 @@ if args.deterministic:
 if args.distributed:
     dist.init_process_group()
 
+print("loading model")
+model = get_model("llama", "7b", args.model_path, source="hf", device_type="cuda", norm_eps=1e-6)
+tokenizer = tokenizers.get_tokenizer(args.tokenizer)
+model.eval()
+torch.set_grad_enabled(False)
+print("loading complete on rank", local_rank)
+
+kv_cache = PagedKVCache(
+    model.config.nlayers,
+    model.config.nheads,
+    model.config.emb_dim,
+    total_num_gpu_blocks=3818,
+    dtype=model.shared.emb.weight.dtype,
+)
+
 # print("loading model")
 # model = get_model("llama", "13b", args.model_path, source="meta", device_type="cuda", norm_eps=1e-6, checkpoint_sharding="tp", distributed_strategy="tp")
 # tokenizer = tokenizers.get_tokenizer(args.tokenizer)
@@ -97,24 +112,24 @@ if args.distributed:
 #     dtype=model.shared.emb.weight.dtype,
 # )
 
-print("loading model")
-model = get_model(
-    "llama", "13b", args.model_path, source="meta", checkpoint_sharding="tp", distributed_strategy="tp", device_type="cuda", norm_eps=1e-6
-)
-tokenizer = tokenizers.get_tokenizer(args.tokenizer)
-model.eval()
-torch.set_grad_enabled(False)
-print("loading complete on rank", local_rank)
-
-kv_cache = PagedKVCache(
-    model.config.nlayers,
-    model.config.nheads,
-    model.config.emb_dim,
-    total_num_gpu_blocks=600,
-    tensor_parallel_size=dist.get_world_size(),
-    dtype=model.shared.emb.weight.dtype,
-    device=device
-)
+# print("loading model")
+# model = get_model(
+#     "llama", "13b", args.model_path, source="meta", checkpoint_sharding="tp", distributed_strategy="tp", device_type="cuda", norm_eps=1e-6
+# )
+# tokenizer = tokenizers.get_tokenizer(args.tokenizer)
+# model.eval()
+# torch.set_grad_enabled(False)
+# print("loading complete on rank", local_rank)
+#
+# kv_cache = PagedKVCache(
+#     model.config.nlayers,
+#     model.config.nheads,
+#     model.config.emb_dim,
+#     total_num_gpu_blocks=600,
+#     tensor_parallel_size=dist.get_world_size(),
+#     dtype=model.shared.emb.weight.dtype,
+#     device=device
+# )
 # kv_cache = None
 
 

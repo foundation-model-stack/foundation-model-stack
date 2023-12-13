@@ -3,7 +3,7 @@ from typing import Any, Callable, List, MutableMapping, Union, Optional
 import torch
 import torch.nn.functional as F
 
-from modules.speculator import Speculator
+from fms.modules.speculator import Speculator
 
 
 def _make_cache_contiguous(past_key_value_states):
@@ -74,7 +74,7 @@ def generate(
 
     if use_cache:
         if paged_kv_cache:
-            sequence_ids = paged_kv_cache.get_unassigned_sequence_ids(input_ids)
+            sequence_ids = paged_kv_cache.get_unassigned_sequence_ids(input_ids.size(0))
             kwargs["past_key_value_states"] = paged_kv_cache.cache
         else:
             kwargs["past_key_value_states"] = None
@@ -99,7 +99,7 @@ def generate(
                     kwargs["mask"] = mask
                 else:
                     kwargs["cache_metadata"] = paged_kv_cache.allocate_generated_token(
-                        sequence_ids
+                        sequence_ids, 1
                     )
                     kwargs["mask"] = None
 
@@ -172,6 +172,7 @@ def speculative_generate(
     top_k: int = 5,
     threshes=[5, 3, 2],
     verbose_dict=None,
+    paged_kv_cache: Optional["PagedKVCache"] = None,  # type: ignore
 ):
     """
     A reference implementation of speculative decoding generation.
@@ -217,6 +218,7 @@ def speculative_generate(
             assert seq.dim() == 1, "Input tensors must be single sequences"
         batched = True
 
+    cache_metadata=None
     # Construct batch(es) and initial inputs
     if not batched:
         bsize = 1
@@ -225,6 +227,8 @@ def speculative_generate(
         mask = None
         n_pads = torch.zeros(1, dtype=torch.int, device=input_ids.device)
         pos_ids = None
+        cache_metadata = paged_kv_cache.allocate_initial_prompt(input_ids[:, :-1])
+        sequence_ids = cache_metadata['sequence_ids']
     else:
         bsize = len(input_ids)
         result = input_ids  # [b] n
@@ -261,17 +265,19 @@ def speculative_generate(
         pos_ids -= n_pads[:, None]
 
     kwargs: MutableMapping[str, Any] = dict()
-    kwargs["past_key_value_states"] = None
+    kwargs["past_key_value_states"] = None if not paged_kv_cache else paged_kv_cache.cache
     kwargs["use_cache"] = True
 
     # Build kv cache and get initial state vector
-    n_adds = speculator.nheads + 1
+    n_adds = 1#speculator.nheads + 1
     input_ids = input_ids[:, -max_seq_len + n_adds :]
+    print(cache_metadata)
     output = model(
         input_ids[:, :-1],
         include_embeds=True,
         position_ids=pos_ids,
         mask=mask,
+        cache_metadata=cache_metadata,
         **kwargs
     )
     _, past_key_value_states, embeds = output
@@ -286,6 +292,13 @@ def speculative_generate(
     while min(n_gen) < new_tokens:
         n_steps += 1
 
+        # create candidate sequences
+        child_sequence_ids = paged_kv_cache.add_child_sequences(sequence_ids[0], top_k)
+        print(child_sequence_ids)
+
+        # add n_adds tokens to each candidate
+        cache_metadata = paged_kv_cache.allocate_generated_token(child_sequence_ids, n_adds)
+
         # Get candidate set of speculations
         adds = speculator.generate_suffixes(
             embeds, input_ids, threshes, top_k
@@ -295,35 +308,11 @@ def speculative_generate(
         input_ids = torch.cat(
             [input_ids.unsqueeze(0).expand(top_k, bsize, 1), adds], dim=-1
         ).int()  # k b 1+h
-        input_ids = input_ids.view(-1, n_adds)  # kb 1+h
-
-        # Build custom attention mask
-        mask = torch.ones(
-            input_ids.size(1),
-            input_ids.size(1) + n_kv_s[0][0].size(2),
-            device=input_ids.device,
-        )
-        mask = mask.tril(diagonal=mask.size(1) - mask.size(0))
-        mask = mask.unsqueeze(0).unsqueeze(0)  # 1 1 1+h 1+h+p
-
-        # Mask off any left-pads
-        pad_mask = torch.arange(mask.size(3), device=mask.device).view(
-            1, 1, 1, -1
-        )  # 1 1 1 1+h+p
-        pad_mask = pad_mask.expand(bsize, 1, 1, -1)  # b 1 1 1+h+p
-        pad_mask = pad_mask.sub(n_pads.sub(1).view(-1, 1, 1, 1)).clamp(0, 1)
-        mask = mask.mul(pad_mask).repeat(top_k, 1, 1, 1).log()  # kb 1 1+h 1+h+p
-
-        # Handle position_ids
-        pos_ids = torch.arange(n_adds, device=input_ids.device).repeat(
-            bsize, 1
-        )  # b 1+h
-        pos_ids += prompt_len - n_pads[:, None]
-        pos_ids = pos_ids.repeat(top_k, 1)  # kb 1+h
-
+        input_ids = input_ids.view(-1, 1 + speculator.nheads)  # kb 1+h
+        input_ids = input_ids[:, :n_adds]
         # Base model forward pass
         output = model(
-            input_ids, include_embeds=True, mask=mask, position_ids=pos_ids, **kwargs
+            input_ids, include_embeds=True, cache_metadata=cache_metadata, **kwargs
         )
         logits, past_key_value_states, embeds = output
         next_vals = torch.argmax(logits, dim=-1)  # kb 1+h
@@ -359,57 +348,25 @@ def speculative_generate(
                     n_correct[i].item(),
                 )
 
+        # free all worst candidates
+        paged_kv_cache.free_sequences(child_sequence_ids[:best_guess.item()] + child_sequence_ids[best_guess.item() + 1:])
+
+        # decrease the context length of the seqeunce which used to be sequence length + n_adds by the number of incorrect tokens
+        # example:
+        # initial sequence length = 10
+        # speculate 5 tokens
+        # new length after allocation is 15
+        # 3 are correct
+        # remove incorrect
+        # new length after adjustment is 14
+        paged_kv_cache.remove_tokens(child_sequence_ids[best_guess.item()], n_adds - n_correct - 1)
+        n_gen += n_correct + 1
         # Toss any wrong speculator tokens
         next_vals_split = list(next_vals)
         next_vals_split = [
             next_vals_split[i][: n_correct[i] + 1] for i in range(len(next_vals_split))
         ]  # [b] h'
-        n_gen += n_correct + 1
-        embeds = embeds.gather(
-            1, n_correct.view(-1, 1, 1).expand(-1, -1, embeds.size(2))
-        )  # Grab last correct embed
-
-        # Handle kv-cache
-        n_wrong = n_adds - 1 - n_correct
-        n_pads += n_wrong
-        extra_pads = min(n_pads)
-        prompt_len += n_adds - extra_pads
-        n_pads = n_pads - extra_pads
-        # kv updates are required for torch.compile with
-        # mode='reduce-overhead'
-        n_kv_s = []
-        for layer_idx in range(len(past_key_value_states)):
-            n_kv_s.append([])
-            for tensor_idx in range(2):
-                # Concatenate best guess for each sequence to kv-cache
-                base = past_key_value_states[layer_idx][tensor_idx]  # b h n d
-                new = past_key_value_states[layer_idx][tensor_idx + 2]  # kb h n d
-                new = new.view(top_k, bsize, *new.size()[1:])  # k b h n d
-                g = best_guess[None, :, None, None, None]  # 1 b 1 1 1
-                new = new.gather(0, g.expand_as(new[:1]))[0]  # b h n d
-                base = torch.cat([base, new], dim=2)  # b h n d
-
-                # Right-shift correct tokens to end of cache
-                roll_inds = torch.arange(base.size(2))[None, None, :, None]  # 1 1 n 1
-                roll_inds = roll_inds.repeat(base.size(0), 1, 1, 1)  # b 1 n 1
-                roll_inds = roll_inds.sub(n_wrong.view(-1, 1, 1, 1)) % roll_inds.size(
-                    2
-                )  # Right-shift
-                roll_inds = roll_inds[
-                    :, :, extra_pads:
-                ]  # Knock off any unneeded left-pads
-                roll_inds = roll_inds[
-                    :, :, -max_seq_len + n_adds :
-                ]  # Knock off any tokens beyond max_seq_len
-                base = base.gather(
-                    2, roll_inds.expand(-1, base.size(1), -1, base.size(3))
-                )  # Perform shift
-
-                n_kv_s[layer_idx].append(
-                    base.clone(memory_format=torch.contiguous_format).detach()
-                )
-                # torch._dynamo.mark_dynamic(n_kv_s[layer_idx][tensor_idx], 2)
-        kwargs["past_key_value_states"] = n_kv_s
+        kwargs["past_key_value_states"] = past_key_value_states
 
         # Update results
         result = [

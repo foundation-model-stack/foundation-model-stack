@@ -333,6 +333,7 @@ class LLaMA(nn.Module):
         cache_metadata=None,
         only_last_token=False,
         attn_algorithm=None,
+        include_embeds=False,
     ):
         output, cache = self._helper(
             x,
@@ -348,10 +349,14 @@ class LLaMA(nn.Module):
             output = output[:, -1, :]
         preds = self.shared(output, reverse=True)
 
+        out = [preds]
         if use_cache:
-            return preds, cache
-        else:
-            return preds
+            out.append(cache)
+        if include_embeds:
+            out.append(output)
+        if len(out) == 1:
+            return out[0]
+        return out
 
 
 # Register common LLaMA variants with the model registration API
