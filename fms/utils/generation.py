@@ -180,7 +180,7 @@ def speculative_generate(
     max_len = max([seq.size(0) for seq in input_ids])
     n_pads_init = [max_len - seq.size(0) for seq in input_ids]
     n_pads = torch.Tensor(n_pads_init).to(device=input_ids[0].device, dtype=torch.int)
-    inputs = torch.stack([F.pad(input_ids[i], (n_pads[i], 0)) for i in range(bsize)])
+    inputs = torch.stack([F.pad(input_ids[i], (n_pads_init[i], 0)) for i in range(bsize)])
     # Build padded causal mask
     mask = torch.ones(
         bsize,
