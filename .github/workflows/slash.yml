@@ -4,6 +4,10 @@
 # and may be used only by individuals with "write" access to
 # the repository (i.e. maintainers).
 #
+# Slash commands must be placed at the very beginning of the
+# first line of a comment. More details are available in the
+# action docs: https://github.com/peter-evans/slash-command-dispatch/tree/main?tab=readme-ov-file#how-comments-are-parsed-for-slash-commands
+#
 # The workflow looks for and dispatches to another workflow
 # named <command>-command which must exist in the repository.
 #
