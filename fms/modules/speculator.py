@@ -6,26 +6,26 @@ from fms.modules.layernorm import LayerNormParameterized
 
 
 class Speculator(nn.Module):
-    def __init__(self, emb_dim=4096, vocab_size=32000, n_heads=3):
+    def __init__(self, emb_dim=4096, vocab_size=32000, n_predict=3):
         super().__init__()
-        self.nheads = n_heads
+        self.n_predict = n_predict
         self.emb_dim = emb_dim
         self.vsize = vocab_size
         self.emb = nn.ModuleList(
-            [nn.Embedding(vocab_size, emb_dim) for _ in range(n_heads)]
+            [nn.Embedding(vocab_size, emb_dim) for _ in range(n_predict)]
         )
         self.proj = nn.ModuleList(
-            [nn.Linear(emb_dim * 2, emb_dim, bias=False) for _ in range(n_heads)]
+            [nn.Linear(emb_dim * 2, emb_dim, bias=False) for _ in range(n_predict)]
         )
         self.head = nn.ModuleList(
-            [nn.Linear(emb_dim, vocab_size, bias=False) for _ in range(n_heads)]
+            [nn.Linear(emb_dim, vocab_size, bias=False) for _ in range(n_predict)]
         )
         self.ln = nn.ModuleList(
             [
                 LayerNormParameterized(
                     emb_dim, elementwise_shift=True, elementwise_scale=True
                 )
-                for _ in range(n_heads)
+                for _ in range(n_predict)
             ]
         )
         self.a = nn.GELU()
@@ -55,9 +55,9 @@ class Speculator(nn.Module):
         out = torch.empty(b, 1, 0, device=state.device).int()  # b k h
         log_probs = torch.zeros(b, 1, device=state.device)  # b k
         assert (
-            len(topk) == self.nheads
-        ), f"You must provide a topk number for each head ({self.nheads} heads, {len(topk)} provided)"
-        for i in range(self.nheads):
+            len(topk) == self.n_predict
+        ), f"You must provide a topk number for each head ({self.n_predict} heads, {len(topk)} provided)"
+        for i in range(self.n_predict):
             # Project and predict
             z = self.emb[i](ind)  # b k d
             z = torch.cat([state, z], dim=2)  # b k 2d
@@ -80,7 +80,7 @@ class Speculator(nn.Module):
         # Take only top n best guesses
         best_guesses = log_probs.topk(n, dim=1)[1]  # b k
         return out.gather(
-            1, best_guesses.unsqueeze(2).expand(-1, -1, self.nheads)
+            1, best_guesses.unsqueeze(2).expand(-1, -1, self.n_predict)
         )  # b n h
 
     def forward(self, state, inds):
@@ -88,13 +88,13 @@ class Speculator(nn.Module):
         FOR TRAINING
         ----
         Since we're assuming all prior tokens are "correct", don't act recursively, just pull from provided inds.
-        Produces self.nheads predicted tokens for each token embedding in state.
-        Inds requires self.nheads-1 extra tokens on the right to "simulate" recursive behavior for end positions.
+        Produces self.n_predict predicted tokens for each token embedding in state.
+        Inds requires self.n_predict-1 extra tokens on the right to "simulate" recursive behavior for end positions.
         """
         # state: b n d
         # inds: b n+2 (..., pred token, n+2, n+3)
         out = []
-        for i in range(self.nheads):
+        for i in range(self.n_predict):
             h_inds = inds[:, i : i + state.size(1)]
             z = self.emb[i](h_inds)  # b n d
             z = torch.cat([state, z], dim=2)  # b n 2d

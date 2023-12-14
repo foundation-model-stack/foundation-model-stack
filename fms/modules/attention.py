@@ -196,13 +196,13 @@ class MultiHeadAttention(nn.Module):
                 value_to_cache = values.transpose(2, 1).reshape(
                     -1, self.kvheads, self.head_size
                 )
-                past_key_value_state = torch.ops.paged_attention.reshape_and_cache(
-                    key_to_cache,
-                    value_to_cache,
-                    past_key_value_state[0],
-                    past_key_value_state[1],
-                    cache_metadata["slot_mapping"],
-                )
+                # past_key_value_state = torch.ops.paged_attention.reshape_and_cache(
+                #     key_to_cache,
+                #     value_to_cache,
+                #     past_key_value_state[0],
+                #     past_key_value_state[1],
+                #     cache_metadata["slot_mapping"],
+                # )
             # fall back to simple torch.cat
             else:
                 if past_key_value_state is not None:
@@ -217,8 +217,18 @@ class MultiHeadAttention(nn.Module):
         if use_cache and cache_type == "paged_attention" and is_generating:
             queries = queries.transpose(2, 1).reshape(-1, self.nheads, self.head_size)
 
+            # 5x4
+            # -> 20x1
+            # [ [1,2,3], [4,5,6] ]
+            # [ [1,2,3], [1,2,3], [4,5,6], [4,5,6] ]
+            # [ 5, 10 ]
+            # [ 5, 4, 3, 10, 9, 8]
             # Pre-allocate the output tensor.
             attn = torch.empty_like(queries)
+            context_lengths = cache_metadata["context_lengths"]
+            context_lengths = context_lengths.unsqueeze(1).expand(-1, q_len)
+            context_lengths = context_lengths.sub(context_lengths.sign().cumsum(1).flip([1]).sub(1)).int()
+            block_tables = cache_metadata["block_tables"].repeat_interleave(q_len, dim=0)
             attn = torch.ops.paged_attention.paged_attention_v1(
                 attn,
                 # num_sequences x num_heads x head_size
@@ -227,12 +237,14 @@ class MultiHeadAttention(nn.Module):
                 past_key_value_state[1],
                 self.head_mapping,
                 (self.emb_dim // self.nheads) ** -0.5,
-                cache_metadata["block_tables"],
-                cache_metadata["context_lengths"],
+                block_tables,
+                context_lengths,
                 cache_metadata["block_size"],
                 cache_metadata["max_sequence_length"],
                 None,
             )
+            # 20x1
+            # -> 5x4
             attn = attn.view(batch_size, q_len, self.nheads * self.emb_v_per_head)
         # otherwise we always fall back into SDPA as this is either a prompt or it is a single contiguous cache
         else:

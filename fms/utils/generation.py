@@ -206,77 +206,51 @@ def speculative_generate(
     def decode_obo(x, vinv):
         return [vinv[z] for z in x.squeeze().tolist()]
 
-    batched = False
-    if type(input_ids) == torch.Tensor:
-        assert (
-            input_ids.dim() == 1
-        ), "Input tensor must be a single sequence. If batching, provide a list of tensors."
-    else:
-        assert type(input_ids) == list, "Input must be either a tensor or a list"
-        for seq in input_ids:
-            assert type(seq) == torch.Tensor, "Batched input must be a list of tensors"
-            assert seq.dim() == 1, "Input tensors must be single sequences"
-        batched = True
-
-    cache_metadata=None
     # Construct batch(es) and initial inputs
-    if not batched:
-        bsize = 1
-        result = [input_ids]
-        input_ids = input_ids.unsqueeze(0)
-        mask = None
-        n_pads = torch.zeros(1, dtype=torch.int, device=input_ids.device)
-        pos_ids = None
-        cache_metadata = paged_kv_cache.allocate_initial_prompt(input_ids[:, :-1])
-        sequence_ids = cache_metadata['sequence_ids']
-    else:
-        bsize = len(input_ids)
-        result = input_ids  # [b] n
-        # Build padded batched input tensor
-        max_len = max([seq.size(0) for seq in input_ids])
-        n_pads = [max_len - seq.size(0) for seq in input_ids]
-        n_pads = torch.Tensor(n_pads).to(device=input_ids[0].device, dtype=torch.int)
-        input_ids = torch.stack(
-            [F.pad(input_ids[i], (n_pads[i], 0)) for i in range(bsize)]
-        )
-        # Build padded causal mask
-        mask = torch.ones(
-            bsize,
-            1,
-            input_ids.size(1) - 1,
-            input_ids.size(1) - 1,
-            device=input_ids.device,
-        )
-        mask = mask.tril()  # b 1 n-1 n-1
-        # Mask off any left-pads
-        pad_mask = torch.arange(mask.size(3), device=mask.device).view(
-            1, 1, 1, -1
-        )  # 1 1 1 n-1
-        pad_mask = pad_mask.expand(bsize, 1, 1, -1)  # b 1 1 n-1
-        pad_mask = pad_mask.sub(n_pads.sub(1).view(-1, 1, 1, 1)).clamp(0, 1)
-        eye = torch.eye(mask.size(3), device=mask.device)[
-            None, None, :, :
-        ]  # 1 1 n-1 n-1
-        mask = mask.mul(pad_mask).logical_or(eye).log()  # b 1 n-1 n-1
-        # Handle position_ids
-        pos_ids = torch.arange(mask.size(3), device=input_ids.device).repeat(
-            bsize, 1
-        )  # b n-1
-        pos_ids -= n_pads[:, None]
+    bsize = len(input_ids)
+    result = input_ids  # [b] n
+    # Build padded batched input tensor
+    max_len = max([seq.size(0) for seq in input_ids])
+    n_pads_init = [max_len - seq.size(0) for seq in input_ids]
+    n_pads = torch.Tensor(n_pads_init).to(device=input_ids[0].device, dtype=torch.int)
+    inputs = torch.stack(
+        [F.pad(input_ids[i], (n_pads_init[i], 0)) for i in range(bsize)]
+    )
+    cache_metadata = paged_kv_cache.allocate_initial_prompt(inputs[:, :-1])
+    sequence_ids = cache_metadata['sequence_ids']
+    # Build padded causal mask
+    mask = torch.ones(
+        bsize,
+        1,
+        inputs.size(1) - 1,
+        inputs.size(1) - 1,
+        device=inputs.device,
+    )
+    mask = mask.tril()  # b 1 n-1 n-1
+    # Mask off any left-pads
+    pad_mask = torch.arange(mask.size(3), device=mask.device).view(
+        1, 1, 1, -1
+    )  # 1 1 1 n-1
+    pad_mask = pad_mask.expand(bsize, 1, 1, -1)  # b 1 1 n-1
+    pad_mask = pad_mask.sub(n_pads.sub(1).view(-1, 1, 1, 1)).clamp(0, 1)
+    eye = torch.eye(mask.size(3), device=mask.device)[None, None, :, :]  # 1 1 n-1 n-1
+    mask = mask.mul(pad_mask).logical_or(eye).log()  # b 1 n-1 n-1
+    # Handle position_ids
+    pos_ids = torch.arange(mask.size(3), device=inputs.device).repeat(bsize, 1)  # b n-1
+    pos_ids -= n_pads[:, None]
 
     kwargs: MutableMapping[str, Any] = dict()
     kwargs["past_key_value_states"] = None if not paged_kv_cache else paged_kv_cache.cache
     kwargs["use_cache"] = True
 
     # Build kv cache and get initial state vector
-    n_adds = 1#speculator.nheads + 1
-    input_ids = input_ids[:, -max_seq_len + n_adds :]
-    print(cache_metadata)
+    n_adds = speculator.n_predict + 1
+    inputs = inputs[:, -max_seq_len + n_adds :]
     output = model(
-        input_ids[:, :-1],
+        inputs[:, :-1],
         include_embeds=True,
         position_ids=pos_ids,
-        mask=mask,
+        # mask=mask,
         cache_metadata=cache_metadata,
         **kwargs
     )
@@ -284,41 +258,37 @@ def speculative_generate(
     embeds = embeds[:, -1:]
     kwargs["past_key_value_states"] = past_key_value_states
 
-    n_gen = torch.zeros(bsize, device=input_ids.device, dtype=torch.int)
+    n_gen = torch.zeros(bsize, device=inputs.device, dtype=torch.int)
     n_steps = 0
     n_kv_s = past_key_value_states
-    prompt_len = input_ids.size(1) - 1
-    input_ids = input_ids[:, -1:]
+    prompt_len = inputs.size(1) - 1
+    inputs = inputs[:, -1:]
     while min(n_gen) < new_tokens:
         n_steps += 1
 
         # create candidate sequences
         child_sequence_ids = paged_kv_cache.add_child_sequences(sequence_ids[0], top_k)
-        print(child_sequence_ids)
 
         # add n_adds tokens to each candidate
         cache_metadata = paged_kv_cache.allocate_generated_token(child_sequence_ids, n_adds)
 
         # Get candidate set of speculations
-        adds = speculator.generate_suffixes(
-            embeds, input_ids, threshes, top_k
-        ).transpose(
+        adds = speculator.generate_suffixes(embeds, inputs, threshes, top_k).transpose(
             0, 1
         )  # k b h
-        input_ids = torch.cat(
-            [input_ids.unsqueeze(0).expand(top_k, bsize, 1), adds], dim=-1
+        inputs = torch.cat(
+            [inputs.unsqueeze(0).expand(top_k, bsize, 1), adds], dim=-1
         ).int()  # k b 1+h
-        input_ids = input_ids.view(-1, 1 + speculator.nheads)  # kb 1+h
-        input_ids = input_ids[:, :n_adds]
+        inputs = inputs.view(-1, n_adds)  # kb 1+h
         # Base model forward pass
         output = model(
-            input_ids, include_embeds=True, cache_metadata=cache_metadata, **kwargs
+            inputs, include_embeds=True, cache_metadata=cache_metadata, position_ids=cache_metadata['position_offset'], **kwargs
         )
         logits, past_key_value_states, embeds = output
         next_vals = torch.argmax(logits, dim=-1)  # kb 1+h
 
         # Check correctness of speculator predictions
-        test = input_ids.roll(-1, 1).eq(next_vals).cumprod(1)
+        test = inputs.roll(-1, 1).eq(next_vals).cumprod(1)
         n_correct = (
             test.sum(1).clamp(0, n_adds - 1).view(top_k, bsize)
         )  # clamp in case pred[0]==targ[-1]
@@ -339,7 +309,7 @@ def speculative_generate(
         ]  # b 1+h d
 
         if verbose:
-            test = input_ids.view(top_k, bsize, n_adds).gather(0, best_guess_unflat)[0]
+            test = inputs.view(top_k, bsize, n_adds).gather(0, best_guess_unflat)[0]
             for i, line in enumerate(test):
                 print(
                     "Speculation:",
@@ -350,35 +320,30 @@ def speculative_generate(
 
         # free all worst candidates
         paged_kv_cache.free_sequences(child_sequence_ids[:best_guess.item()] + child_sequence_ids[best_guess.item() + 1:])
+        sequence_ids = [child_sequence_ids[best_guess.item()]]
 
         # decrease the context length of the seqeunce which used to be sequence length + n_adds by the number of incorrect tokens
-        # example:
-        # initial sequence length = 10
-        # speculate 5 tokens
-        # new length after allocation is 15
-        # 3 are correct
-        # remove incorrect
-        # new length after adjustment is 14
-        paged_kv_cache.remove_tokens(child_sequence_ids[best_guess.item()], n_adds - n_correct - 1)
-        n_gen += n_correct + 1
+        paged_kv_cache.remove_tokens(sequence_ids[0], n_adds - n_correct - 1)
         # Toss any wrong speculator tokens
         next_vals_split = list(next_vals)
         next_vals_split = [
             next_vals_split[i][: n_correct[i] + 1] for i in range(len(next_vals_split))
         ]  # [b] h'
+        n_gen += n_correct + 1
+        embeds = embeds.gather(
+            1, n_correct.view(-1, 1, 1).expand(-1, -1, embeds.size(2))
+        )  # Grab last correct embed
         kwargs["past_key_value_states"] = past_key_value_states
 
         # Update results
         result = [
             torch.cat((result[i], next_vals_split[i]), dim=0) for i in range(bsize)
         ]
-        input_ids = torch.stack([line[-1:] for line in next_vals_split], dim=0)  # b 1
+        inputs = torch.stack([line[-1:] for line in next_vals_split], dim=0)  # b 1
 
         if verbose:
             for line in result:
                 print("Updated output:", decode_obo(line, vinv))
             print()
 
-    if not batched:
-        result = result[0]
     return result, n_steps
