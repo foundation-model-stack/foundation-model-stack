@@ -94,27 +94,28 @@ from fms import models
 def get_ckp_format(model_path: Union[str, Path]) -> str:
     """
     Returns the checkpoint format of a model checkpoint. If format
-    is not supported, returns "unk"
+    is not recognized, assumes regular pytorch and returns "pt"
 
     Args:
     model_path: the path to find the weights.
     """
     model_path = Path(os.path.expanduser(model_path))
-    if model_path.suffix == ".pth" or len(sorted(model_path.glob("*.pth"))) > 0:
-        return "pt"
-    if model_path.suffix == ".bin" or len(sorted(model_path.glob("*.bin"))) > 0:
-        return "hf"
     if (
         model_path.suffix == ".safetensors"
         or len(sorted(model_path.glob("*.safetensors"))) > 0
     ):
         return "st"
-    return "unk"
+    if model_path.suffix == ".pth" or len(sorted(model_path.glob("*.pth"))) > 0:
+        return "pt"
+    if model_path.suffix == ".bin" or len(sorted(model_path.glob("*.bin"))) > 0:
+        return "hf"
+    return "pt_all"
 
 
 def load_state_dict(
     model_path: Union[str, Path],
-    checkpoint_format: str,
+    *,
+    checkpoint_format: Optional[str] = None,
     distributed_strategy: Optional[str] = None,
     checkpoint_sharding: Optional[str] = None,
     initial_device: torch.device = torch.device("cpu"),
@@ -148,12 +149,20 @@ def load_state_dict(
         raise ValueError(f"FSDP checkpoints can only be loaded into an FSDP model")
 
     model_path = Path(os.path.expanduser(model_path))
+
+    if checkpoint_format is None:
+        # Try finding the checkpoint format internally
+        checkpoint_format = get_ckp_format(model_path)
+
     if checkpoint_format == "pt":
         glob_pattern = "*.pth"
     elif checkpoint_format == "hf":
         glob_pattern = "*.bin"
     elif checkpoint_format == "st":
         glob_pattern = "*.safetensors"
+    elif checkpoint_format == "pt_all":
+        # Assume whatever file(s) are PT checkpoint(s)
+        glob_pattern = "*"
     else:
         raise ValueError(f"Unsupported checkpoint format {checkpoint_format}")
     if model_path.is_file():

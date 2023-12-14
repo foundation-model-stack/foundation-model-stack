@@ -291,7 +291,7 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
             position_encoder,
             gain,
         )
-        TPModule.setup_tp(self, rank, world_size)
+        self.setup_tp(rank, world_size)
 
     def list_colwise_weights(self) -> List[str]:
         colwise_weights = ["query"]
@@ -302,9 +302,6 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
 
     def list_rowwise_weights(self) -> List[str]:
         return ["dense"]
-
-    def list_embedding_weights(self) -> List[str]:
-        return []
 
     @staticmethod
     def import_module(

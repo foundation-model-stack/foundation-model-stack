@@ -210,8 +210,15 @@ def _load_state_dict_into_model(
     model, state_dict, device, rank, world_size, checkpoint_format
 ):
     if checkpoint_format == "st":
-        # In this case state_dict contains info about what files to open and how to
-        # match FMS weights to original weight names
+        # In this case state_dict contains some extra information:
+        # 1. Each tensor in the state dict is in a meta device to save memory
+        # 2. Each tensor has 3 extra parameters appended to it:
+        #   - st_file: the safetensors checkpoint to load the weights from
+        #   - st_key: the key(s) in the ST checkpoint needed for this weight
+        #   - transform_func: a function that transforms the weights represented
+        #     by st_key in the st_file checkpoint into the FMS weight in the state dict
+        # This is all the information needed to properly load, transform, and
+        # optionally TP partition the weights coming from a ST checkpoint
         serialization.load_safetensors_checkpoint(
             model, state_dict, device, rank, world_size
         )

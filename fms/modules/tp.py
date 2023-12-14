@@ -14,6 +14,16 @@ from fms.distributed.tensorparallel import (
 
 
 class TPModule(nn.Module, metaclass=ABCMeta):
+    """
+    This is an abstract class that any nn.Module can implement to enable
+    Tensor Parallel. On top of inheriting from this class, the TP module
+    will have to implement list_colwise_weights, list_rowwise_weights,
+    list_embedding_weights, and import_module for their relevant weights.
+    Finally, the module must call setup_tp at the end of their __init__
+    function. See examples in attention.py, feedforward.py and embedding.py
+
+    """
+
     rank: int
     world_size: int
 
@@ -21,15 +31,12 @@ class TPModule(nn.Module, metaclass=ABCMeta):
         self.rank = rank
         self.world_size = world_size
 
-    @abstractmethod
     def list_colwise_weights(self) -> List[str]:
         return []
 
-    @abstractmethod
     def list_rowwise_weights(self) -> List[str]:
         return []
 
-    @abstractmethod
     def list_embedding_weights(self) -> List[str]:
         return []
 

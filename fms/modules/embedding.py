@@ -200,7 +200,7 @@ class TPWordEmbedding(WordEmbedding, TPModule):
             )
             if tie_weights:
                 self.head.weight = self.emb.weight
-        TPModule.setup_tp(self, rank, world_size)
+        self.setup_tp(rank, world_size)
 
     @staticmethod
     def import_module(we: WordEmbedding, group: ProcessGroup) -> "TPWordEmbedding":
@@ -221,9 +221,6 @@ class TPWordEmbedding(WordEmbedding, TPModule):
     def list_colwise_weights(self) -> List[str]:
         if self.reversible and not self.tie_weights:
             return ["head"]
-        return []
-
-    def list_rowwise_weights(self) -> List[str]:
         return []
 
     def list_embedding_weights(self) -> List[str]:

@@ -124,16 +124,13 @@ class TPFeedForwardBlock(FeedForwardBlock, TPModule):
             use_bias,
             gain,
         )
-        TPModule.setup_tp(self, rank, world_size)
+        self.setup_tp(rank, world_size)
 
     def list_colwise_weights(self) -> List[str]:
         return ["w1"]
 
     def list_rowwise_weights(self) -> List[str]:
         return ["w2"]
-
-    def list_embedding_weights(self) -> List[str]:
-        return []
 
     @staticmethod
     def import_module(
@@ -273,16 +270,13 @@ class TPGatedLinearUnit(GatedLinearUnit, TPModule):
             use_bias,
             gain,
         )
-        TPModule.setup_tp(self, rank, world_size)
+        self.setup_tp(rank, world_size)
 
     def list_colwise_weights(self) -> List[str]:
         return ["w1", "wg"]
 
     def list_rowwise_weights(self) -> List[str]:
         return ["w2"]
-
-    def list_embedding_weights(self) -> List[str]:
-        return []
 
     @staticmethod
     def import_module(glu: GatedLinearUnit, group: ProcessGroup) -> "TPGatedLinearUnit":
