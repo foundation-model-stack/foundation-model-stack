@@ -285,12 +285,12 @@ def get_model(
             checkpoint_format = serialization.get_ckp_format(model_path)
         fms_sd = serialization.load_state_dict(
             model_path,
-            checkpoint_format,
-            distributed_strategy,
-            checkpoint_sharding,
-            initial_device,
-            local_rank,
-            world_size,
+            checkpoint_format=checkpoint_format,
+            distributed_strategy=distributed_strategy,
+            checkpoint_sharding=checkpoint_sharding,
+            initial_device=initial_device,
+            rank=local_rank,
+            world_size=world_size,
         )
         fms_sd = serialization.get_adapted(architecture, source, fms_sd)
     else:
