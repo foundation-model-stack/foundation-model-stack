@@ -3,6 +3,9 @@ from typing import Any, Callable, List, MutableMapping, Union, Optional
 import torch
 import torch.nn.functional as F
 
+from fms.modules.positions import compute_position_ids
+from fms.utils.cache import ExpandableCacheData
+
 
 def _make_cache_contiguous(past_key_value_states):
     # kv updates are required for torch.compile with
@@ -71,47 +74,52 @@ def generate(
     kwargs["use_cache"] = use_cache
 
     if use_cache:
-        if paged_kv_cache:
-            kwargs["past_key_value_states"] = paged_kv_cache.cache
-        else:
-            kwargs["past_key_value_states"] = None
+        kwargs["cache_data"] = None
+        past_key_value_states = None
 
     for i in range(max_new_tokens):
 
         input_ids = next_input[:, -max_seq_len:]
 
-        # cache allocation
+        # compute the mask
+        if not use_cache or i == 0:
+            is_pad = input_ids == 0
+            mask = is_pad.unsqueeze(-1) == is_pad.unsqueeze(-2)
+            kwargs["mask"] = mask.tril(diagonal=0)
+        else:
+            kwargs["mask"] = None
+
+        # get the cache data and position ids if using cache
+        # TODO: The context lengths which can determine the position ids can be handled by the cache manager, but since
+        #  there is not yet an implementation for ExpandableKVCacheManager, for now we will do this management here
         if use_cache:
-            if paged_kv_cache:
-                # this is the prompt
-                if i == 0:
-                    kwargs["cache_metadata"] = paged_kv_cache.allocate_prompt_tokens(
-                        torch.count_nonzero(input_ids.T, dim=0).tolist()
-                    )
-                    # todo: need to make the mask something generic for generate, but keeping here for now for testing
-                    #  currently we make an assumption that the pad token is 0
-                    is_pad = input_ids == 0
-                    mask = is_pad.unsqueeze(-1) == is_pad.unsqueeze(-2)
-                    mask = mask.tril(diagonal=0)
-                    kwargs["mask"] = mask
-                    sequence_ids = kwargs["cache_metadata"]["sequence_ids"]
+            if i == 0:
+                context_lengths = [0 for _ in range(input_ids.size(0))]
+                num_tokens_per_sequence = torch.count_nonzero(input_ids.T, dim=0).tolist()
+                if paged_kv_cache:
+                    cache_data = paged_kv_cache.allocate_prompt_tokens(num_tokens_per_sequence)
+                    sequence_ids = cache_data.sequence_ids
                 else:
-                    kwargs["cache_metadata"] = paged_kv_cache.allocate_generated_tokens(
-                        sequence_ids, [1 for _ in range(input_ids.size(0))]
+                    cache_data = ExpandableCacheData(data=None)
+            else:
+                context_lengths = [l + n for l, n in zip(context_lengths, num_tokens_per_sequence)]
+                num_tokens_per_sequence = [1 for _ in range(input_ids.size(0))]
+                if paged_kv_cache:
+                    cache_data = paged_kv_cache.allocate_generated_tokens(
+                        sequence_ids, num_tokens_per_sequence
                     )
-                    kwargs["mask"] = None
+                else:
+                    if contiguous_cache:
+                        past_key_value_states = _make_cache_contiguous(past_key_value_states)
+
+                    cache_data = ExpandableCacheData(data=past_key_value_states)
+
+            kwargs["cache_data"] = cache_data
+            kwargs["position_ids"] = torch.tensor(compute_position_ids(num_tokens_per_sequence, context_lengths), device=input_ids.device)
 
         output = model(input_ids, **kwargs)
         if use_cache:
             logits, past_key_value_states = output
-            # TODO: this should go away when reduce-overhead issues are fixed, or
-            # maybe could be moved into model code to be more portable.
-            if contiguous_cache:
-                kwargs["past_key_value_states"] = _make_cache_contiguous(
-                    past_key_value_states
-                )
-            else:
-                kwargs["past_key_value_states"] = past_key_value_states
         else:
             logits = output
         logits = logits[:, -1, :]

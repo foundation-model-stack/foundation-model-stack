@@ -109,9 +109,8 @@ class LLaMABlock(nn.Module):
         *,
         mask=None,
         position_ids=None,
-        past_key_value_state=None,
+        cache_data_layer=None,
         use_cache=False,
-        cache_metadata=None,
         is_causal_mask=False,
         attn_algorithm=None,
     ):
@@ -126,11 +125,10 @@ class LLaMABlock(nn.Module):
             mask=mask,
             position_ids=position_ids,
             attn_algorithm=attn_algorithm,
-            past_key_value_state=past_key_value_state,
+            cache_data_layer=cache_data_layer,
             use_cache=use_cache,
             is_self=True,
             is_causal_mask=is_causal_mask,
-            cache_metadata=cache_metadata,
         )
         cache = None
         if use_cache:
@@ -243,17 +241,10 @@ class LLaMA(nn.Module):
         x_in,
         mask=None,
         position_ids=None,
-        past_key_value_states=None,
+        cache_data=None,
         use_cache=False,
-        cache_metadata: Optional[dict] = None,
         attn_algorithm=None,
     ):
-        # Embed the given vocabulary indices using the given attention mask, with pre-/post-norm and dropout as specified
-        # x_in: batch_size x seq_len
-        # mask: batch_size x seq_len x seq_len
-        # bias: nheads x seq_len x seq_len
-        if past_key_value_states is None or len(past_key_value_states) == 0:
-            past_key_value_states = [None for _ in range(len(self.layers))]
 
         qlen = x_in.size(1)
         filled_cache = False
@@ -262,24 +253,10 @@ class LLaMA(nn.Module):
         # todo: we probably don't need this here as we are only using the klen to check for is_causal_mask
         #  might be better to just set is_generating in the cache_metadata and compute the position_offset in attention
         if use_cache:
-            if not cache_metadata:
-                cache_metadata = {}
-
-            cache_type = cache_metadata.get("type", "default")
-            if cache_type == "paged_attention":
-                # todo: we can support cache allocation in here, but for now this is fine
-                # todo: we are making an assumption that the user had already called allocate to get the cache_metadata
-                position_ids = cache_metadata["position_offset"]
-                if position_ids is not None:
-                    filled_cache = True
-            else:
-                if past_key_value_states[0] is not None:
-                    position_ids = torch.arange(
-                        0, qlen, dtype=torch.int64, device=x_in.device
-                    ).unsqueeze(0) + (past_key_value_states[0][0].size(-2) + 1)
-                    filled_cache = True
-
-                cache_metadata["type"] = cache_type
+            if not cache_data:
+                from fms.utils.cache import ExpandableCacheData
+                cache_data = ExpandableCacheData(data=None)
+            filled_cache = cache_data.is_filled()
 
         # if mask is none, we need to specify causal mask
         if mask is None:
@@ -302,11 +279,10 @@ class LLaMA(nn.Module):
                 x=x_in,
                 mask=mask,
                 position_ids=position_ids,
-                past_key_value_state=past_key_value_states[i],
+                cache_data_layer=None if cache_data is None else cache_data.get_layer(i),
                 use_cache=use_cache,
                 is_causal_mask=is_causal_mask,
                 attn_algorithm=attn_algorithm,
-                cache_metadata=cache_metadata,
             )
 
             if use_cache:
@@ -328,9 +304,8 @@ class LLaMA(nn.Module):
         x,
         mask=None,
         position_ids=None,
-        past_key_value_states=None,
+        cache_data=None,
         use_cache=False,
-        cache_metadata=None,
         only_last_token=False,
         attn_algorithm=None,
     ):
@@ -338,9 +313,8 @@ class LLaMA(nn.Module):
             x,
             mask,
             position_ids,
-            past_key_value_states,
+            cache_data,
             use_cache,
-            cache_metadata,
             attn_algorithm,
         )
 

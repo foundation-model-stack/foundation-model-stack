@@ -14,6 +14,7 @@ from fms.distributed.tensorparallel import (
     reduce_from_tensor_model_parallel_region,
 )
 from fms.modules.positions import PositionEncoder
+from fms.utils.cache import PagedAttentionCacheDataLayer
 
 
 class MultiHeadAttention(nn.Module):
@@ -116,9 +117,8 @@ class MultiHeadAttention(nn.Module):
         mask=None,
         position_ids=None,
         attn_algorithm=None,
-        past_key_value_state=None,
+        cache_data_layer=None,
         use_cache=False,
-        cache_metadata=None,
         is_self=True,
         is_causal_mask=False,
     ):
@@ -145,12 +145,6 @@ class MultiHeadAttention(nn.Module):
         # mask: batch_size x seq_len x seq_len
         batch_size, q_len, _ = q.size()
         kv_len = k.size(1)
-        if use_cache:
-            cache_type = cache_metadata.get("type", "default")
-            is_generating = cache_metadata.get("is_generating", False)
-            # todo: we are making an assumption here that the user provided a position_offset
-            if position_ids is None:
-                position_ids = cache_metadata.get("position_offset", None)
 
         # split emb_dim as nheads*emb_dim_per_head
         # b x h x qlen x ds
@@ -188,33 +182,11 @@ class MultiHeadAttention(nn.Module):
 
         # store the values in kv-cache
         if use_cache:
-            # we need to use low level kernels for storing paged attention
-            if cache_type == "paged_attention":
-                key_to_cache = keys.transpose(2, 1).reshape(
-                    -1, self.kvheads, self.head_size
-                )
-                value_to_cache = values.transpose(2, 1).reshape(
-                    -1, self.kvheads, self.head_size
-                )
-                past_key_value_state = torch.ops.paged_attention.reshape_and_cache(
-                    key_to_cache,
-                    value_to_cache,
-                    past_key_value_state[0],
-                    past_key_value_state[1],
-                    cache_metadata["slot_mapping"],
-                )
-            # fall back to simple torch.cat
-            else:
-                if past_key_value_state is not None:
-                    if is_self:
-                        keys = torch.cat((past_key_value_state[0], keys), dim=2)
-                        values = torch.cat((past_key_value_state[1], values), dim=2)
-                    else:
-                        keys = past_key_value_state[0]
-                        values = past_key_value_state[1]
+            keys, values = cache_data_layer.store(keys, values)
 
         # use the special paged_attention call if use_cache=True, its type is paged_attention, and it is generating
-        if use_cache and cache_type == "paged_attention" and is_generating:
+        # todo: should we add sdpa logic to cache
+        if use_cache and isinstance(cache_data_layer, PagedAttentionCacheDataLayer) and cache_data_layer.is_generating:
             queries = queries.transpose(2, 1).reshape(-1, self.nheads, self.head_size)
 
             # Pre-allocate the output tensor.
@@ -223,19 +195,20 @@ class MultiHeadAttention(nn.Module):
                 attn,
                 # num_sequences x num_heads x head_size
                 queries,
-                past_key_value_state[0],
-                past_key_value_state[1],
+                keys,
+                values,
                 self.head_mapping,
                 (self.emb_dim // self.nheads) ** -0.5,
-                cache_metadata["block_tables"],
-                cache_metadata["context_lengths"],
-                cache_metadata["block_size"],
-                cache_metadata["max_sequence_length"],
+                cache_data_layer.block_mapping,
+                cache_data_layer.context_lengths,
+                cache_data_layer.block_size,
+                cache_data_layer.max_sequence_length,
                 None,
             )
             attn = attn.view(batch_size, q_len, self.nheads * self.emb_v_per_head)
         # otherwise we always fall back into SDPA as this is either a prompt or it is a single contiguous cache
         else:
+
             # Merge rel pos bias and mask into single float mask
             if mask is not None:
                 # Our expected mask format is bs x q_len x k_len, so to make it broadcastable
@@ -303,9 +276,6 @@ class MultiHeadAttention(nn.Module):
 
         # if use_cache=True, we return the hidden_state as well as the kv cache
         if use_cache:
-            if cache_type == "paged_attention":
-                keys, values = past_key_value_state
-
             return out, (keys, values)
         else:
             return out

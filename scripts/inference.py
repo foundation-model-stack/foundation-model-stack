@@ -10,7 +10,7 @@ from fms.distributed.strategy import TensorParallelStrategy
 from fms.models import get_model
 from fms.models.llama import load_fms_llama
 from fms.utils import generation, tokenizers
-from fms.utils.cache import PagedKVCache
+from fms.utils.cache import PagedKVCacheManager
 from fms.utils.generation import generate
 
 
@@ -87,7 +87,7 @@ model.eval()
 torch.set_grad_enabled(False)
 print("loading complete on rank", local_rank)
 
-kv_cache = PagedKVCache(
+kv_cache = PagedKVCacheManager(
     model.config.nlayers,
     model.config.nheads,
     model.config.emb_dim,

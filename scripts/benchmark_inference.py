@@ -10,7 +10,7 @@ from torch._dynamo import OptimizedModule
 from fms import models
 
 from fms.utils import generation, print0, tokenizers
-from fms.utils.cache import PagedKVCache
+from fms.utils.cache import PagedKVCacheManager
 import numpy as np
 
 # torch.manual_seed(42)  # pytorch random seed
@@ -189,7 +189,7 @@ ids = torch.randint(
 
 repeat = 3
 
-kv_cache = PagedKVCache(
+kv_cache = PagedKVCacheManager(
     model.config.nlayers,
     model.config.nheads,
     model.config.emb_dim,

@@ -1,3 +1,5 @@
+import abc
+import dataclasses
 import queue
 from itertools import chain
 from typing import Dict, List, Optional, Tuple, Union
@@ -218,6 +220,139 @@ class PagedAttnKernel(ir.FallbackKernel):
             MutationOutput(kernel_input.layout, kernel_input, packed)
 
 
+@dataclasses.dataclass
+class CacheDataLayer(metaclass=abc.ABCMeta):
+    data_layer: Tuple[torch.Tensor, torch.Tensor]
+
+    @abc.abstractmethod
+    def store(self, key: torch.Tensor, value: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        pass
+
+@dataclasses.dataclass
+class CacheData(metaclass=abc.ABCMeta):
+    data: List[Tuple[torch.Tensor, torch.Tensor]]
+
+    @abc.abstractmethod
+    def get_layer(self, layer_index: int) -> CacheDataLayer:
+        pass
+
+    @abc.abstractmethod
+    def is_filled(self) -> bool:
+        pass
+
+    @abc.abstractmethod
+    def compute_position_ids(self, num_tokens_per_sequence: List[int]) -> List[List[int]]:
+        pass
+
+
+@dataclasses.dataclass
+class ExpandableCacheDataLayer(CacheDataLayer):
+    data_layer: Tuple[torch.Tensor, torch.Tensor]
+
+    def store(self, keys: torch.Tensor, values: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        if self.data_layer is not None:
+            keys = torch.cat((self.data_layer[0], keys), dim=2)
+            values = torch.cat((self.data_layer[1], values), dim=2)
+        return keys, values
+
+@dataclasses.dataclass
+class ExpandableCacheData(CacheData):
+    data: Optional[List[Tuple[torch.Tensor, torch.Tensor]]]
+
+    def get_layer(self, layer_index: int) -> ExpandableCacheDataLayer:
+        return ExpandableCacheDataLayer(
+            data_layer=self.data[layer_index] if self.data else None,
+        )
+
+    def is_filled(self) -> bool:
+        return self.data and self.data[0] is not None
+
+    def compute_position_ids(self, num_tokens_per_sequence: List[int]):
+        max_num_tokens = max(num_tokens_per_sequence)
+        offset = 0
+        if self.is_filled():
+            offset = self.data[0][0].size(-2) + 1
+        position_ids = [[offset + i for i in range(max_num_tokens)] for _ in num_tokens_per_sequence]
+        return position_ids
+
+@dataclasses.dataclass
+class PagedAttentionCacheDataLayer(CacheDataLayer):
+    data_layer: Tuple[torch.Tensor, torch.Tensor]
+    max_sequence_length: int
+    context_lengths: torch.Tensor
+    slot_mapping: torch.Tensor
+    block_mapping: torch.Tensor
+    block_size: int
+    num_heads: int # this could be kvheads or num_heads
+    head_size: int
+    is_generating: bool
+
+    def store(self, keys: torch.Tensor, values: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        key_to_cache = keys.transpose(2, 1).reshape(
+            -1, self.num_heads, self.head_size
+        )
+        value_to_cache = values.transpose(2, 1).reshape(
+            -1, self.num_heads, self.head_size
+        )
+
+        keys_cache_output, values_cache_output = torch.ops.paged_attention.reshape_and_cache(
+            key_to_cache,
+            value_to_cache,
+            self.data_layer[0],
+            self.data_layer[1],
+            self.slot_mapping
+        )
+
+        if self.is_generating:
+            return keys_cache_output, values_cache_output
+        else:
+            return keys, values
+
+
+@dataclasses.dataclass
+class PagedAttentionCacheData(CacheData):
+    data: List[Tuple[torch.Tensor, torch.Tensor]]
+    max_sequence_length: int
+    context_lengths: torch.Tensor
+    slot_mapping: torch.Tensor
+    block_mapping: torch.Tensor
+    block_size: int
+    num_heads: int # this could be kvheads or num_heads
+    head_size: int
+    is_generating: bool
+    sequence_ids: List[int]
+
+    def get_layer(self, layer_index: int) -> PagedAttentionCacheDataLayer:
+        return PagedAttentionCacheDataLayer(
+            data_layer=self.data[layer_index],
+            max_sequence_length=self.max_sequence_length,
+            context_lengths=self.context_lengths,
+            slot_mapping=self.slot_mapping,
+            block_mapping=self.block_mapping,
+            block_size=self.block_size,
+            num_heads=self.num_heads,
+            head_size=self.head_size,
+            is_generating=self.is_generating,
+        )
+
+    def is_filled(self) -> bool:
+        return self.is_generating
+
+    def compute_position_ids(self, num_tokens_per_sequence: List[int]) -> List[List[int]]:
+        max_tokens = max(num_tokens_per_sequence)
+        position_ids = []
+        for seq_i, num_tokens in enumerate(num_tokens_per_sequence):
+            if not self.is_generating:
+                position_ids_i = [i for i in range(num_tokens)]
+            else:
+                start = self.context_lengths[seq_i].item() - 1
+                position_ids_i = [i for i in range(start, start + num_tokens)]
+
+            position_ids_i = [0 for _ in range(max_tokens - num_tokens)] + position_ids_i
+            position_ids.append(position_ids_i)
+        return position_ids
+
+
 KVCache = Tuple[torch.Tensor, torch.Tensor]  # (key cache, value cache)
 
 
@@ -351,8 +486,21 @@ class CacheBlockGroup(List[CacheBlock]):
     def get_block_mapping(self):
         return [cb.block_number for cb in self]
 
+class KVCacheManager(metaclass=abc.ABCMeta):
 
-class PagedKVCache:
+    def allocate_prompt_tokens(
+        self, num_tokens_per_sequence: List[int]
+    ) -> CacheData:
+        pass
+
+    def allocate_generated_tokens(self, sequence_ids: List[int], num_tokens_per_sequence: List[int]) -> CacheData:
+        pass
+
+# todo: ExpandableKVCacheManager
+
+
+
+class PagedKVCacheManager(KVCacheManager):
     def __init__(
         self,
         num_layers: int,
@@ -368,6 +516,7 @@ class PagedKVCache:
         self.cache: List[KVCache] = []
         element_size = torch.tensor([], dtype=dtype).element_size()
         self.device = device
+        self.num_heads = num_heads // tensor_parallel_size if num_heads > 1 else num_heads
 
         if not total_num_gpu_blocks:
             total_num_gpu_blocks = get_max_gpu_blocks_available(
@@ -380,18 +529,18 @@ class PagedKVCache:
             )
         self.total_num_gpu_blocks = total_num_gpu_blocks
 
-        head_size = emb_dim // num_heads
+        self.head_size = emb_dim // num_heads
 
         x = self.block_size // element_size
         key_block_shape = (
-            num_heads // tensor_parallel_size if num_heads > 1 else num_heads,
-            head_size // x,
+            self.num_heads,
+            self.head_size // x,
             block_size,
             x,
         )
         value_block_shape = (
-            num_heads // tensor_parallel_size if num_heads > 1 else num_heads,
-            head_size,
+            self.num_heads,
+            self.head_size,
             block_size,
         )
         for _ in range(num_layers):
@@ -481,14 +630,13 @@ class PagedKVCache:
     def _get_unassigned_sequence_ids(self, num_sequences: int) -> List[int]:
         return [self.unused_keys.get_nowait() for _ in range(num_sequences)]
 
-    def _get_cache_metadata(self, sequence_ids: List[int], is_prompt: bool, num_tokens_per_sequence: Optional[List[int]] = None) -> dict:
+    def _get_cache_metadata(self, sequence_ids: List[int], is_prompt: bool, num_tokens_per_sequence: Optional[List[int]] = None) -> PagedAttentionCacheData:
         slot_mapping = []
         block_tables = []
         context_lengths = []
         max_sequence_length = self.get_max_sequence_length(sequence_ids)
         remainder = max_sequence_length % self.block_size
         max_num_blocks = max_sequence_length // self.block_size
-        position_ids = []
         if remainder != 0:
             max_num_blocks += 1
         i = 0
@@ -499,18 +647,10 @@ class PagedKVCache:
             if is_prompt:
                 slot = cbg.get_slot_mapping()
                 slot = self.__pad_to_max_left(slot, max_sequence_length, -1)
-                # todo: investigate why we get incorrect answers using context length here rather than max_sequence_length on batch
-                #  looks to be a precision error... was not happening with larger batches
-                position_ids_i = self.__pad_to_max_left(
-                    [i for i in range(context_length)], max_sequence_length, 0
-                )
             else:
                 num_tokens = num_tokens_per_sequence[i]
                 start = context_length - num_tokens
                 slot = cbg.get_slot_mapping(start)
-                # todo: investigate why we get incorrect answers using context length here rather than max_sequence_length on batch
-                #  looks to be a precision error... was not happening with larger batches
-                position_ids_i = [i for i in range(start, start + num_tokens)]
                 i += 1
 
             block_mapping = cbg.get_block_mapping()
@@ -520,7 +660,6 @@ class PagedKVCache:
             slot_mapping.append(slot)
             block_tables.append(block_mapping)
             context_lengths.append(context_length)
-            position_ids.append(position_ids_i)
 
         slot_mapping_tensor = torch.tensor(
             slot_mapping, dtype=torch.long, device=self.device
@@ -531,25 +670,23 @@ class PagedKVCache:
         context_lengths_tensor = torch.tensor(
             context_lengths, dtype=torch.int, device=self.device
         )
-        position_offset_tensor = torch.tensor(
-            position_ids, dtype=torch.int64, device=self.device
-        )
 
-        return {
-            "sequence_ids": sequence_ids,
-            "context_lengths": context_lengths_tensor,
-            "max_sequence_length": max_sequence_length,
-            "position_offset": position_offset_tensor,
-            "slot_mapping": slot_mapping_tensor,
-            "block_tables": block_tables_tensor,
-            "type": "paged_attention",
-            "is_generating": not is_prompt,
-            "block_size": self.block_size,
-        }
+        return PagedAttentionCacheData(
+            data=self.cache,
+            max_sequence_length=max_sequence_length,
+            context_lengths=context_lengths_tensor,
+            slot_mapping=slot_mapping_tensor,
+            block_mapping=block_tables_tensor,
+            block_size=self.block_size,
+            num_heads=self.num_heads,
+            head_size=self.head_size,
+            is_generating=not is_prompt,
+            sequence_ids=sequence_ids
+        )
 
     def allocate_prompt_tokens(
         self, num_tokens_per_sequence: List[int]
-    ) -> dict:
+    ) -> PagedAttentionCacheData:
         sequence_ids = self._get_unassigned_sequence_ids(len(num_tokens_per_sequence))
 
         for seq_id, num_tokens in zip(sequence_ids, num_tokens_per_sequence):
@@ -557,7 +694,7 @@ class PagedKVCache:
 
         return self._get_cache_metadata(sequence_ids, is_prompt=True)
 
-    def allocate_generated_tokens(self, sequence_ids: List[int], num_tokens_per_sequence: List[int]) -> dict:
+    def allocate_generated_tokens(self, sequence_ids: List[int], num_tokens_per_sequence: List[int]) -> PagedAttentionCacheData:
         for seq_id, num_tokens in zip(sequence_ids, num_tokens_per_sequence):
             cache_block_group = self.cbg_map[seq_id]
             cache_block_group._is_generating = True
