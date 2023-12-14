@@ -249,8 +249,8 @@ def speculative_generate(
     output = model(
         inputs[:, :-1],
         include_embeds=True,
-        position_ids=pos_ids,
-        # mask=mask,
+        position_ids=cache_metadata['position_offset'],
+        mask=mask,
         cache_metadata=cache_metadata,
         **kwargs
     )
@@ -323,7 +323,7 @@ def speculative_generate(
         sequence_ids = [child_sequence_ids[best_guess.item()]]
 
         # decrease the context length of the seqeunce which used to be sequence length + n_adds by the number of incorrect tokens
-        paged_kv_cache.remove_tokens(sequence_ids[0], n_adds - n_correct - 1)
+        paged_kv_cache.remove_tokens(sequence_ids[0], n_adds - n_correct.item() - 1)
         # Toss any wrong speculator tokens
         next_vals_split = list(next_vals)
         next_vals_split = [

@@ -196,13 +196,13 @@ class MultiHeadAttention(nn.Module):
                 value_to_cache = values.transpose(2, 1).reshape(
                     -1, self.kvheads, self.head_size
                 )
-                # past_key_value_state = torch.ops.paged_attention.reshape_and_cache(
-                #     key_to_cache,
-                #     value_to_cache,
-                #     past_key_value_state[0],
-                #     past_key_value_state[1],
-                #     cache_metadata["slot_mapping"],
-                # )
+                past_key_value_state = torch.ops.paged_attention.reshape_and_cache(
+                    key_to_cache,
+                    value_to_cache,
+                    past_key_value_state[0],
+                    past_key_value_state[1],
+                    cache_metadata["slot_mapping"],
+                )
             # fall back to simple torch.cat
             else:
                 if past_key_value_state is not None:

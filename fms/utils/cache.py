@@ -359,7 +359,10 @@ class CacheBlockGroup(List[CacheBlock]):
             return 0
 
     def get_cache_block(self, position: int):
-        return self[position // self.block_size]
+        try:
+            return self[position // self.block_size]
+        except:
+            return self[position // self.block_size]
 
     def get_slot_mapping(self, position: Optional[int] = None) -> List[int]:
         slot_mapping = []
@@ -487,10 +490,12 @@ class PagedKVCache:
         # remove a reference count from all cache block groups that was a prefix as part of this sequence
         if cbg.prefix is not None:
             cbg.prefix.ref_count -= 1
+            prefix_block_numbers = set(cbg.prefix.get_block_mapping())
 
         for cb in cbg:
-            cb.num_tokens = 0
-            self.free_blocks.append(cb)
+            if cbg.prefix is not None and cb.block_number not in prefix_block_numbers:
+                cb.num_tokens = 0
+                self.free_blocks.append(cb)
         self.unused_keys.put_nowait(sequence_id)
         del self.cbg_map[sequence_id]
 
@@ -584,12 +589,13 @@ class PagedKVCache:
             cache_block_group = self.cbg_map[seq_id]
             cache_block_group._is_generating = True
 
-            if cache_block_group.last_cache_block_is_full():
-                last_block = self._allocate_block()
-                last_block.append_num_tokens(num_tokens)
-                cache_block_group.append(last_block)
-            else:
-                cache_block_group[-1].append_num_tokens(num_tokens)
+            for i in range(num_tokens):
+                if cache_block_group.last_cache_block_is_full():
+                    last_block = self._allocate_block()
+                    last_block.append_num_tokens(1)
+                    cache_block_group.append(last_block)
+                else:
+                    cache_block_group[-1].append_num_tokens(1)
 
         return self._get_cache_metadata(sequence_ids, is_prompt=False, num_tokens=num_tokens)
 
