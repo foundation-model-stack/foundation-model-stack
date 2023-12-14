@@ -82,7 +82,7 @@ model = load_fms_llama(args.model_path)
 tokenizer = tokenizers.get_tokenizer(args.tokenizer)
 model.eval()
 print("loading speculator")
-speculator = Speculator(model.width, model.config.src_vocab_size, n_heads=3)
+speculator = Speculator(model.width, model.config.src_vocab_size, n_predict=3)
 speculator.load_state_dict(
     torch.load(args.speculator_path, map_location=device)["model_state"]
 )
