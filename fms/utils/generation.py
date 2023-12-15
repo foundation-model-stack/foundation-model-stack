@@ -301,7 +301,7 @@ def speculative_generate(
 
         # Set global values to those of best guess
         next_vals = next_vals.view(bsize, top_k, n_adds).gather(1, best_guess_unflat).squeeze(1)  # b 1+h
-        n_correct = n_correct.gather(0, best_guess.unsqueeze(0))[0]  # b
+        n_correct = n_correct.gather(1, best_guess.unsqueeze(1)).squeeze(1)  # b
         embeds = embeds.view(bsize, top_k, *embeds.size()[1:]).gather(
             1, best_guess_unflat.unsqueeze(3).expand(-1, -1, -1, embeds.size(2))
         ).squeeze(1)  # b 1+h d
@@ -351,5 +351,13 @@ def speculative_generate(
             for line in result:
                 print("Updated output:", decode_obo(line, vinv))
             print()
+
+    for parent_sequence_id in parent_sequence_ids:
+        prefix = paged_kv_cache.cbg_map[parent_sequence_id].prefix
+        paged_kv_cache.free(parent_sequence_id)
+        while prefix is not None:
+            paged_kv_cache.free(prefix.sequence_id)
+            prefix = prefix.prefix
+
 
     return result, n_steps

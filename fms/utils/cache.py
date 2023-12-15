@@ -282,8 +282,9 @@ class CacheBlock:
 
 
 class CacheBlockGroup(List[CacheBlock]):
-    def __init__(self, block_size: int):
+    def __init__(self, sequence_id: int, block_size: int):
         super().__init__()
+        self.sequence_id = sequence_id
         self.block_size = block_size
         self._is_generating = False
         self._is_initialized_with_prompt = False
@@ -292,8 +293,8 @@ class CacheBlockGroup(List[CacheBlock]):
         self._skip_last_prefix_cb = False
 
     @classmethod
-    def from_prefix(cls, prefix: "CacheBlockGroup"):
-        cbg = cls(prefix.block_size)
+    def from_prefix(cls, sequence_id: int, prefix: "CacheBlockGroup"):
+        cbg = cls(sequence_id, prefix.block_size)
         cbg._is_generating = True
         cbg._is_initialized_with_prompt = True
 
@@ -475,7 +476,7 @@ class PagedKVCache:
             prefix_block_numbers = set(cbg.prefix.get_block_mapping())
 
         for cb in cbg:
-            if cbg.prefix is not None and cb.block_number not in prefix_block_numbers:
+            if cbg.prefix is None or (cbg.prefix is not None and cb.block_number not in prefix_block_numbers):
                 cb.num_tokens = 0
                 self.free_blocks.append(cb)
         self.unused_keys.put_nowait(sequence_id)
@@ -582,7 +583,7 @@ class PagedKVCache:
 
     def _allocate_prompt_sequence(self, seq_id: int, tokens: List[int]):
         tokens = [x for x in tokens if x != 0]
-        cache_block_group: CacheBlockGroup = CacheBlockGroup(self.block_size)
+        cache_block_group: CacheBlockGroup = CacheBlockGroup(seq_id, self.block_size)
 
         # one block allocation will happen automatically as the group always starts empty
         last_cache_block = self._allocate_block()
@@ -612,7 +613,7 @@ class PagedKVCache:
         parent_cbg = self.cbg_map[parent_sequence_id]
 
         child_sequence_id = self.get_unassigned_sequence_id()
-        child_cbg = CacheBlockGroup.from_prefix(parent_cbg)
+        child_cbg = CacheBlockGroup.from_prefix(child_sequence_id, parent_cbg)
         key_caches = [key_cache for key_cache, _ in self.cache]
         value_caches = [value_cache for _, value_cache in self.cache]
 
