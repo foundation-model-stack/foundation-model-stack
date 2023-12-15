@@ -277,6 +277,9 @@ class CacheBlock:
     def subtract_num_tokens(self, num_tokens: int):
         self.num_tokens -= num_tokens
 
+    def __repr__(self):
+        return f"CacheBlock(block_number={self.block_number}, block_size={self.block_size}, num_tokens={self.num_tokens})"
+
 
 class CacheBlockGroup(List[CacheBlock]):
     def __init__(self, block_size: int):
@@ -305,28 +308,6 @@ class CacheBlockGroup(List[CacheBlock]):
 
         return cbg
 
-    # def __getitem__(self, key):
-    #     # todo: this is currently O(n)
-    #     if key < 0:
-    #         key = self.__len__() + key
-    #
-    #     for i, cb in enumerate(self.__iter__()):
-    #         if i == key:
-    #             return cb
-    #     raise KeyError(f"cannot find a cache block at index {key}")
-
-    # def __iter__(self):
-    #     if self.prefix is not None:
-    #         prefix_length = len(self.prefix)
-    #         for i, cb in enumerate(chain(self.prefix.__iter__(), list.__iter__(self))):
-    #             if not self._skip_last_prefix_cb or i != prefix_length - 1:
-    #                 yield cb
-    #     else:
-    #         yield from list.__iter__(self)
-    #
-    # def __len__(self):
-    #     return sum(1 for _ in self.__iter__())
-
     def remove_tokens(self, num_tokens: int) -> List[CacheBlock]:
         # remove tokens and return the blocks to be freed
         if num_tokens > list.__len__(self):
@@ -335,12 +316,16 @@ class CacheBlockGroup(List[CacheBlock]):
         blocks_to_free = []
         for cb in reversed(self):
             if cb.num_tokens < num_tokens_to_remove:
+                num_tokens_to_remove -= cb.num_tokens
                 cb.num_tokens = 0
                 blocks_to_free.append(cb)
-                num_tokens_to_remove -= cb.num_tokens
             else:
+                # if its equal to num tokens, we don't need to free the block as it can just be re-used
                 cb.subtract_num_tokens(num_tokens_to_remove)
                 break
+        # remove the blocks from this CacheBlockGroup that are to be freed in the cache manager
+        for _ in blocks_to_free:
+            self.pop()
         return blocks_to_free
 
     def is_initialized_with_prompt(self):
@@ -354,15 +339,12 @@ class CacheBlockGroup(List[CacheBlock]):
 
     def get_sequence_length(self):
         if self.prefix or list.__len__(self) != 0:
-            return sum([cb.num_tokens for cb in self.__iter__()])
+            return sum([cb.num_tokens for cb in self])
         else:
             return 0
 
     def get_cache_block(self, position: int):
-        try:
-            return self[position // self.block_size]
-        except:
-            return self[position // self.block_size]
+        return self[position // self.block_size]
 
     def get_slot_mapping(self, position: Optional[int] = None) -> List[int]:
         slot_mapping = []
@@ -540,7 +522,6 @@ class PagedKVCache:
 
             block_mapping = cbg.get_block_mapping()
             block_mapping = self.__pad_to_max_right(block_mapping, max_num_blocks, 0)
-            max_num_blocks = max(max_num_blocks, len(block_mapping))
 
             slot_mapping.append(slot)
             block_tables.append(block_mapping)
@@ -658,23 +639,3 @@ class PagedKVCache:
         blocks_to_free = self.cbg_map[sequence_id].remove_tokens(num_tokens)
         for cb in blocks_to_free:
             self.free_blocks.append(cb)
-
-
-#
-# offset = 0
-# # if we have a prefix we need to check if key would be found in prefix
-# if self.prefix:
-#     offset = len(self.prefix.prefix) if self.prefix.prefix else 0
-#     index = key - offset
-#
-#     # if the current index cannot be found in this prefix, we must get the prefix item which may fall to its prefix
-#     if index < 0:
-#         return self.prefix[key]
-#     # check if the current index can be found in the groups list
-#     elif index < list.__len__(self.prefix):
-#         return list.__getitem__(self.prefix, index)
-#     # the key will exist in this list so set the offset to the length of the prefix
-#     else:
-#         offset = len(self.prefix)
-# # if we fall to here, then we no longer have a prefix and can just grab the key
-# return list.__getitem__(self, key - offset)

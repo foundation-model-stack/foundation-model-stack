@@ -140,8 +140,9 @@ prompt1 = ids_for_prompt(prompt1)
 prompt2 = ids_for_prompt(prompt2)
 max_len = max([len(prompt) for prompt in [prompt1, prompt2]])
 
-ids = [[prompt1], [prompt2], [prompt2, prompt1]]
-
+# ids = [[prompt1]]
+# ids = [[prompt1], [prompt2], [prompt2, prompt1]]
+ids = [[prompt2, prompt1]]
 
 def print_result(result, inp, n_steps):
     if local_rank != 0:

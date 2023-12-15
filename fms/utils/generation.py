@@ -217,7 +217,7 @@ def speculative_generate(
         [F.pad(input_ids[i], (n_pads_init[i], 0)) for i in range(bsize)]
     )
     cache_metadata = paged_kv_cache.allocate_initial_prompt(inputs[:, :-1])
-    sequence_ids = cache_metadata['sequence_ids']
+    parent_sequence_ids = cache_metadata['sequence_ids']
     # Build padded causal mask
     mask = torch.ones(
         bsize,
@@ -260,17 +260,21 @@ def speculative_generate(
 
     n_gen = torch.zeros(bsize, device=inputs.device, dtype=torch.int)
     n_steps = 0
-    n_kv_s = past_key_value_states
-    prompt_len = inputs.size(1) - 1
     inputs = inputs[:, -1:]
     while min(n_gen) < new_tokens:
         n_steps += 1
 
         # create candidate sequences
-        child_sequence_ids = paged_kv_cache.add_child_sequences(sequence_ids[0], top_k)
+        child_sequence_ids_list = []
+        child_sequence_ids_flattened = []
+        # each parent will have top_k child sequences
+        for parent_sequence_id in parent_sequence_ids:
+            child_sequence_ids = paged_kv_cache.add_child_sequences(parent_sequence_id, top_k)
+            child_sequence_ids_list.append(child_sequence_ids)
+            child_sequence_ids_flattened.extend(child_sequence_ids)
 
         # add n_adds tokens to each candidate
-        cache_metadata = paged_kv_cache.allocate_generated_token(child_sequence_ids, n_adds)
+        cache_metadata = paged_kv_cache.allocate_generated_token(child_sequence_ids_flattened, n_adds)
 
         # Get candidate set of speculations
         adds = speculator.generate_suffixes(embeds, inputs, threshes, top_k).transpose(
@@ -318,12 +322,20 @@ def speculative_generate(
                     n_correct[i].item(),
                 )
 
-        # free all worst candidates
-        paged_kv_cache.free_sequences(child_sequence_ids[:best_guess.item()] + child_sequence_ids[best_guess.item() + 1:])
-        sequence_ids = [child_sequence_ids[best_guess.item()]]
+        # free all worst candidates and keep best candidates as parents
+        parent_sequence_ids = []
+        for parent_index, child_sequence_ids in enumerate(child_sequence_ids_list):
+            best_index = best_guess[parent_index].item()
 
-        # decrease the context length of the seqeunce which used to be sequence length + n_adds by the number of incorrect tokens
-        paged_kv_cache.remove_tokens(sequence_ids[0], n_adds - n_correct.item() - 1)
+            # free all bad candidates
+            paged_kv_cache.free_sequences(child_sequence_ids[:best_index] + child_sequence_ids[best_index + 1:])
+
+            # decrease the context length of the sequence which used to be sequence length + n_adds by the number of incorrect tokens
+            # for the correct candidate
+            best_sequence_id = child_sequence_ids[best_index]
+            parent_sequence_ids.append(best_sequence_id)
+            paged_kv_cache.remove_tokens(best_sequence_id, n_adds - n_correct[parent_index].item() - 1)
+
         # Toss any wrong speculator tokens
         next_vals_split = list(next_vals)
         next_vals_split = [
