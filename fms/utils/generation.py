@@ -277,43 +277,37 @@ def speculative_generate(
         cache_metadata = paged_kv_cache.allocate_generated_token(child_sequence_ids_flattened, n_adds)
 
         # Get candidate set of speculations
-        adds = speculator.generate_suffixes(embeds, inputs, threshes, top_k).transpose(
-            0, 1
-        )  # k b h
+        adds = speculator.generate_suffixes(embeds, inputs, threshes, top_k)  # b k h
         inputs = torch.cat(
-            [inputs.unsqueeze(0).expand(top_k, bsize, 1), adds], dim=-1
-        ).int()  # k b 1+h
-        inputs = inputs.view(-1, n_adds)  # kb 1+h
+            [inputs.unsqueeze(1).expand(bsize, top_k, 1), adds], dim=-1
+        ).int()  # b k 1+h
+        inputs = inputs.view(-1, n_adds)  # bk 1+h
         # Base model forward pass
         output = model(
             inputs, include_embeds=True, cache_metadata=cache_metadata, position_ids=cache_metadata['position_offset'], **kwargs
         )
         logits, past_key_value_states, embeds = output
-        next_vals = torch.argmax(logits, dim=-1)  # kb 1+h
+        next_vals = torch.argmax(logits, dim=-1)  # bk 1+h
 
         # Check correctness of speculator predictions
         test = inputs.roll(-1, 1).eq(next_vals).cumprod(1)
         n_correct = (
-            test.sum(1).clamp(0, n_adds - 1).view(top_k, bsize)
+            test.sum(1).clamp(0, n_adds - 1).view(bsize, top_k)
         )  # clamp in case pred[0]==targ[-1]
-        best_guess = n_correct.argmax(0)  # b
+        best_guess = n_correct.argmax(1)  # b
         best_guess_unflat = (
-            best_guess.unsqueeze(1).expand(bsize, n_adds).unsqueeze(0)
-        )  # 1 b 1+h
+            best_guess.unsqueeze(1).expand(bsize, n_adds).unsqueeze(1)
+        )  # b 1 1+h
 
         # Set global values to those of best guess
-        next_vals = next_vals.view(top_k, bsize, n_adds).gather(0, best_guess_unflat)[
-            0
-        ]  # b 1+h
+        next_vals = next_vals.view(bsize, top_k, n_adds).gather(1, best_guess_unflat).squeeze(1)  # b 1+h
         n_correct = n_correct.gather(0, best_guess.unsqueeze(0))[0]  # b
-        embeds = embeds.view(top_k, bsize, *embeds.size()[1:]).gather(
-            0, best_guess_unflat.unsqueeze(3).expand(-1, -1, -1, embeds.size(2))
-        )[
-            0
-        ]  # b 1+h d
+        embeds = embeds.view(bsize, top_k, *embeds.size()[1:]).gather(
+            1, best_guess_unflat.unsqueeze(3).expand(-1, -1, -1, embeds.size(2))
+        ).squeeze(1)  # b 1+h d
 
         if verbose:
-            test = inputs.view(top_k, bsize, n_adds).gather(0, best_guess_unflat)[0]
+            test = inputs.view(bsize, top_k, n_adds).gather(1, best_guess_unflat).squeeze(1)
             for i, line in enumerate(test):
                 print(
                     "Speculation:",
