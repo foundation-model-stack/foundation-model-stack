@@ -126,3 +126,31 @@ def test_nested_restartable():
 
     i = iter(ds)
     assert next(i) == 3
+
+
+def test_packing_ds():
+    data = [[1, 2, 3], [4, 5, 6, 7], [8, 9]]
+    ds = _MockDS(data)
+    ds = datasets.RestartableFromMapDataset(ds)
+    pds = datasets.PackedSequenceDataset(ds, 2)
+
+    i = iter(pds)
+    assert next(i) == [1, 2]
+
+    sd = pds.state_dict()
+
+    assert next(i) == [3, 4]
+    assert next(i) == [5, 6]
+    assert next(i) == [7, 8]
+
+    ds = _MockDS(data)
+    ds = datasets.RestartableFromMapDataset(ds)
+    pds = datasets.PackedSequenceDataset(ds, 2)
+
+    pds.load_state_dict(sd)
+
+    assert pds.state_dict() == sd
+
+    i = iter(pds)
+    assert next(i) == [3, 4]
+    assert next(i) == [5, 6]

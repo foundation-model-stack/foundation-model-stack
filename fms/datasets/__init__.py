@@ -1,4 +1,4 @@
-from typing import Callable, Mapping
+from typing import Any, Callable, List, Mapping
 
 from torch.utils.data import Dataset, IterableDataset
 
@@ -123,3 +123,18 @@ class RestartableFromMapDataset(SavableDataset, IterableDataset):
 
     def __len__(self):
         return len(self._map_ds)
+
+
+class PackedSequenceDataset(Dataset, SavableDataset):
+    def __init__(self, dataset: SavableDataset, max_seq_len: int):
+        self.dataset = dataset
+        self.max_seq_len = max_seq_len
+        self.buffer: List[Any] = []
+
+    def __iter__(self):
+        for example in self.dataset:
+            self.buffer.extend(example)
+            while len(self.buffer) >= self.max_seq_len:
+                next_val = self.buffer[: self.max_seq_len]
+                self.buffer = self.buffer[self.max_seq_len :]
+                yield next_val
