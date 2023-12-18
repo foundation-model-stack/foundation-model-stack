@@ -1,8 +1,10 @@
+import urllib
 from typing import Optional, Tuple
+
+import requests
 import torch
 from torch.utils.data import Dataset
-import requests
-import urllib
+
 from fms.utils import tokenizers
 
 
