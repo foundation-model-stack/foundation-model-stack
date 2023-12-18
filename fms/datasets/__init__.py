@@ -1,4 +1,4 @@
-from typing import Callable, Mapping
+from typing import Any, Callable, List, Mapping
 
 from torch.utils.data import Dataset, IterableDataset
 
@@ -38,7 +38,7 @@ def _state_dict_save_helper(target):
         if isinstance(attr, str) and (not len(attr) or attr[0] == "_"):
             continue
 
-        if isinstance(dict_attrs[attr], DatasetStateDictMixin):
+        if isinstance(dict_attrs[attr], SavableDataset):
             sub_dict = dict_attrs[attr].state_dict()
             for sub_attr in sub_dict:
                 result[f"{attr}.{sub_attr}"] = sub_dict[sub_attr]
@@ -68,14 +68,14 @@ def _state_dict_load_helper(target, state_dict):
         if "." in attr:
             attr_name, sub_attr = attr.split(".", 1)
             sub_dict = {sub_attr: state_dict[attr]}
-            if isinstance(dict_attrs[attr_name], DatasetStateDictMixin):
+            if isinstance(dict_attrs[attr_name], SavableDataset):
                 # Make sure we use any overriden load_state_dict in nested datasets
                 dict_attrs[attr_name].load_state_dict(sub_dict)
             else:
                 _state_dict_load_helper(dict_attrs[attr_name], sub_dict)
         elif attr not in dict_attrs:
             raise KeyError(f"Unexpected key {attr} in state dict")
-        elif isinstance(dict_attrs[attr], DatasetStateDictMixin):
+        elif isinstance(dict_attrs[attr], SavableDataset):
             dict_attrs[attr].load_state_dict(state_dict[attr])
         elif isinstance(dict_attrs[attr], dict):
             _state_dict_load_helper(dict_attrs[attr], state_dict[attr])
@@ -83,7 +83,7 @@ def _state_dict_load_helper(target, state_dict):
             dict_attrs[attr] = state_dict[attr]
 
 
-class DatasetStateDictMixin:
+class SavableDataset:
     """
     In large-scale pre-training, because we typically only train for only a
     single epoch, we often need to be able to retain the state of the dataset
@@ -102,7 +102,7 @@ class DatasetStateDictMixin:
     def state_dict(self):
         return _state_dict_save_helper(self)
 
-    # In cases where the instance of DataPipeStateDictMixin composes another
+    # In cases where the instance of SavableDataset composes another
     # DataSet, an explicit implementation of this function will be needed.
     # This default implementation doesn't know the type of the serialized
     # dataset, so can't construct it.
@@ -110,7 +110,7 @@ class DatasetStateDictMixin:
         _state_dict_load_helper(self, state_dict)
 
 
-class RestartableFromMapDataset(DatasetStateDictMixin, IterableDataset):
+class RestartableFromMapDataset(SavableDataset, IterableDataset):
     def __init__(self, map_ds):
         super().__init__()
         self._map_ds = map_ds
@@ -125,11 +125,11 @@ class RestartableFromMapDataset(DatasetStateDictMixin, IterableDataset):
         return len(self._map_ds)
 
 
-class PackedSequenceDataset(Dataset, DatasetStateDictMixin):
-    def __init__(self, dataset: DatasetStateDictMixin, max_seq_len: int):
+class PackedSequenceDataset(Dataset, SavableDataset):
+    def __init__(self, dataset: SavableDataset, max_seq_len: int):
         self.dataset = dataset
         self.max_seq_len = max_seq_len
-        self.buffer = []
+        self.buffer: List[Any] = []
 
     def __iter__(self):
         for example in self.dataset:
