@@ -95,7 +95,7 @@ def test_restartable():
     assert next(i) == 3
 
 
-class _MockNested(Dataset, datasets.DatasetStateDictMixin):
+class _MockNested(Dataset, datasets.SavableDataset):
     def __init__(self, dataset):
         self.dataset = dataset
 
@@ -114,7 +114,6 @@ def test_nested_restartable():
     assert next(i) == 1
     assert next(i) == 2
     sd = ds.state_dict()
-    print(sd)
 
     assert next(i) == 3
     assert next(i) == 4
