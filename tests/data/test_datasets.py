@@ -95,7 +95,7 @@ def test_restartable():
     assert next(i) == 3
 
 
-class _MockNested(Dataset, datasets.DatasetStateDictMixin):
+class _MockNested(Dataset, datasets.SavableDataset):
     def __init__(self, dataset):
         self.dataset = dataset
 
@@ -114,7 +114,6 @@ def test_nested_restartable():
     assert next(i) == 1
     assert next(i) == 2
     sd = ds.state_dict()
-    print(sd)
 
     assert next(i) == 3
     assert next(i) == 4
@@ -127,3 +126,31 @@ def test_nested_restartable():
 
     i = iter(ds)
     assert next(i) == 3
+
+
+def test_packing_ds():
+    data = [[1, 2, 3], [4, 5, 6, 7], [8, 9]]
+    ds = _MockDS(data)
+    ds = datasets.RestartableFromMapDataset(ds)
+    pds = datasets.PackedSequenceDataset(ds, 2)
+
+    i = iter(pds)
+    assert next(i) == [1, 2]
+
+    sd = pds.state_dict()
+
+    assert next(i) == [3, 4]
+    assert next(i) == [5, 6]
+    assert next(i) == [7, 8]
+
+    ds = _MockDS(data)
+    ds = datasets.RestartableFromMapDataset(ds)
+    pds = datasets.PackedSequenceDataset(ds, 2)
+
+    pds.load_state_dict(sd)
+
+    assert pds.state_dict() == sd
+
+    i = iter(pds)
+    assert next(i) == [3, 4]
+    assert next(i) == [5, 6]
