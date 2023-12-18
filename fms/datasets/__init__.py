@@ -123,3 +123,18 @@ class RestartableFromMapDataset(DatasetStateDictMixin, IterableDataset):
 
     def __len__(self):
         return len(self._map_ds)
+
+
+class PackedSequenceDataset(Dataset, DatasetStateDictMixin):
+    def __init__(self, dataset: DatasetStateDictMixin, max_seq_len: int):
+        self.dataset = dataset
+        self.max_seq_len = max_seq_len
+        self.buffer = []
+
+    def __iter__(self):
+        for example in self.dataset:
+            self.buffer.extend(example)
+            while len(self.buffer) >= self.max_seq_len:
+                next_val = self.buffer[: self.max_seq_len]
+                self.buffer = self.buffer[self.max_seq_len :]
+                yield next_val
