@@ -1,4 +1,4 @@
-from typing import Callable, List, Mapping
+from typing import Any, Callable, List, Mapping
 
 from torch.utils.data import Dataset, IterableDataset
 
