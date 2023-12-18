@@ -1,10 +1,12 @@
-from fms import datasets
-from fms.datasets.text import CausalTextDatasetFromString
-from fms.datasets.instructions import JsonInstructions
-from fms.utils import tokenizers
 import tempfile
+
 import torch
 from torch.utils.data import Dataset
+
+from fms import datasets
+from fms.datasets.instructions import JsonInstructions
+from fms.datasets.text import CausalTextDatasetFromString
+from fms.utils import tokenizers
 
 
 sample_json = """[{
@@ -82,7 +84,46 @@ def test_restartable():
     assert next(i) == 2
     sd = rds.state_dict()
 
+    assert next(i) == 3
+    assert next(i) == 4
+
     rds = datasets.RestartableFromMapDataset(_MockDS(data))
     rds.load_state_dict(sd)
+    assert rds.state_dict() == sd
+
     i = iter(rds)
+    assert next(i) == 3
+
+
+class _MockNested(Dataset, datasets.DatasetStateDictMixin):
+    def __init__(self, dataset):
+        self.dataset = dataset
+
+    def __iter__(self):
+        return iter(self.dataset)
+
+
+def test_nested_restartable():
+    data = [1, 2, 3, 4, 5]
+
+    ds = _MockDS(data)
+    ds = datasets.RestartableFromMapDataset(ds)
+    ds = _MockNested(ds)
+
+    i = iter(ds)
+    assert next(i) == 1
+    assert next(i) == 2
+    sd = ds.state_dict()
+    print(sd)
+
+    assert next(i) == 3
+    assert next(i) == 4
+
+    ds = _MockDS(data)
+    ds = datasets.RestartableFromMapDataset(ds)
+    ds = _MockNested(ds)
+    ds.load_state_dict(sd)
+    assert ds.state_dict() == sd
+
+    i = iter(ds)
     assert next(i) == 3
