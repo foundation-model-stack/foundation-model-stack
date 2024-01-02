@@ -97,7 +97,7 @@ if args.distributed:
     dist.init_process_group()
 
 print("loading model")
-model = get_model(args.architecture, args.variant, model_path=args.model_path, source=args.model_path_source, device_type=args.device_type, checkpoint_sharding=args.checkpoint_sharding)
+model = get_model(args.architecture, args.variant, model_path=args.model_path, source=args.model_path_source, device_type=args.device_type, checkpoint_sharding=args.checkpoint_sharding, norm_eps=1e-6)
 tokenizer = tokenizers.get_tokenizer(args.tokenizer)
 model.eval()
 torch.set_grad_enabled(False)
