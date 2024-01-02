@@ -62,11 +62,7 @@ class GPTBigCodeBlock(nn.Module):
         *,
         mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.Tensor] = None,
-        past_key_value_state: Optional[
-            Tuple[
-                torch.Tensor,
-            ]
-        ] = None,
+        past_key_value_state: Optional[Tuple[torch.Tensor,]] = None,
         use_cache: bool = False,
         is_causal_mask: bool = False,
         attn_algorithm: Optional[str] = None,
