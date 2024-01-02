@@ -62,7 +62,11 @@ class GPTBigCodeBlock(nn.Module):
         *,
         mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.Tensor] = None,
-        past_key_value_state: Optional[Tuple[torch.Tensor,]] = None,
+        past_key_value_state: Optional[
+            Tuple[
+                torch.Tensor,
+            ]
+        ] = None,
         use_cache: bool = False,
         is_causal_mask: bool = False,
         attn_algorithm: Optional[str] = None,
@@ -134,7 +138,7 @@ class GPTBigCodeHeadless(nn.Module):
         is_pad: torch.Tensor,
         use_cache: bool,
         past_key_value_states: Optional[
-            List[Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]
+            List[Optional[Tuple[torch.Tensor, torch.Tensor]]]
         ] = None,
     ):
         """compute the position ids if the use happened not to give any"""
@@ -156,7 +160,7 @@ class GPTBigCodeHeadless(nn.Module):
         mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_value_states: Optional[
-            List[Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]
+            List[Optional[Tuple[torch.Tensor, torch.Tensor]]]
         ] = None,
         use_cache: bool = False,
         attn_algorithm: Optional[str] = None,
@@ -295,7 +299,7 @@ class GPTBigCode(nn.Module):
         x: torch.LongTensor,
         mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
-        past_key_value_states: Optional[Tuple[torch.FloatTensor,]] = None,
+        past_key_value_states: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
         use_cache: bool = False,
         attn_algorithm: Optional[str] = None,
     ):
