@@ -1,19 +1,19 @@
 import math
 import re
 from dataclasses import dataclass
-from typing import Optional, OrderedDict, Mapping, Any
+from typing import Any, Mapping, Optional, OrderedDict
 
 import torch
 import torch.nn as nn
 
-from fms.distributed.strategy import DistributedStrategy, NoOpStrategy
 from fms import models
+from fms.distributed.strategy import DistributedStrategy, NoOpStrategy
 from fms.modules.attention import MultiHeadAttention
 from fms.modules.feedforward import FeedForwardBlock
+from fms.modules.head import ClassificationHead
+from fms.utils import serialization
 from fms.utils.activation import str_to_activation
 from fms.utils.config import ModelConfig
-from fms.utils import serialization
-from fms.modules.head import ClassificationHead
 
 
 @dataclass
@@ -153,7 +153,6 @@ class RoBERTaHeadless(nn.Module):
         position_ids: Optional[torch.Tensor] = None,
         attn_algorithm: Optional[str] = None,
     ):
-
         if mask is None:
             if x is None:
                 raise ValueError("cannot create a mask when x is None")
@@ -205,7 +204,6 @@ class RoBERTa(nn.Module):
         distributed_strategy: DistributedStrategy = NoOpStrategy,
         **kwargs,
     ):
-
         super(RoBERTa, self).__init__()
         if config is not None:
             self.config = config

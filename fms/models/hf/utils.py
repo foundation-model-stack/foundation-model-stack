@@ -1,17 +1,18 @@
 from typing import Union
+
+import torch
+import torch.nn as nn
 from transformers import (
     AutoConfig,
     AutoModel,
     AutoModelForCausalLM,
     AutoModelForMaskedLM,
 )
-import torch
-import torch.nn as nn
 
 
 def register_fms_models():
     """Register all FMS models with huggingface AutoModels"""
-    from fms.models.hf import _headless_models, _causal_lm_models, _masked_lm_models
+    from fms.models.hf import _causal_lm_models, _headless_models, _masked_lm_models
 
     for model_cls in _headless_models:
         # register config

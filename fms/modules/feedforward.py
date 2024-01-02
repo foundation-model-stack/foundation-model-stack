@@ -1,10 +1,11 @@
 from typing import Optional
+
 import torch
 import torch.distributed
 import torch.nn as nn
 from torch.distributed.distributed_c10d import ProcessGroup
-from fms import distributed
 
+from fms import distributed
 from fms.distributed.tensorparallel import (
     apply_colwise_tp,
     apply_rowwise_tp,

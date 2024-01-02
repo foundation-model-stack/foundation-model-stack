@@ -1,5 +1,6 @@
-import pytest
 import time
+
+import pytest
 import torch
 
 from fms.utils.tensors import ExpandableTensor

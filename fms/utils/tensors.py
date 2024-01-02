@@ -1,6 +1,7 @@
+import functools
+
 import torch
 
-import functools
 
 _HANDLED_FUNCTIONS = {}
 

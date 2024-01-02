@@ -5,12 +5,12 @@ import torch.nn as nn
 from transformers import PretrainedConfig
 from transformers.modeling_outputs import BaseModelOutputWithPastAndCrossAttentions
 
-from fms.models.roberta import RoBERTaHeadless, RoBERTa, RoBERTaConfig
 from fms.models.hf.lm_head_mixins import (
-    SequenceClassificationLMHeadMixin,
     MaskedLMHeadMixin,
+    SequenceClassificationLMHeadMixin,
 )
 from fms.models.hf.modeling_hf_adapter import HFEncoder, HFEncoderModelArchitecture
+from fms.models.roberta import RoBERTa, RoBERTaConfig, RoBERTaHeadless
 
 
 class HFAdaptedRoBERTaConfig(PretrainedConfig):
@@ -110,7 +110,6 @@ class HFAdaptedRoBERTaEncoder(HFEncoder):
 
 
 class HFAdaptedRoBERTaHeadless(HFEncoderModelArchitecture):
-
     # attributes required by HF
     config_class = HFAdaptedRoBERTaConfig
     base_model_prefix = "hf_adapted_roberta"
