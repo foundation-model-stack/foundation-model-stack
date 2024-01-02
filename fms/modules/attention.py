@@ -14,7 +14,6 @@ from fms.distributed.tensorparallel import (
     reduce_from_tensor_model_parallel_region,
 )
 from fms.modules.positions import PositionEncoder
-from fms.utils.cache.paged import PagedAttentionCacheDataLayer
 
 
 class MultiHeadAttention(nn.Module):
@@ -160,7 +159,7 @@ class MultiHeadAttention(nn.Module):
         # b x kvlen x d
         # b x kvlen x h x ds
         # b x h x kvlen x ds
-        if is_self or past_key_value_state is None:
+        if is_self:
             keys = self.key(k).view(
                 batch_size, kv_len, self.kvheads, self.emb_kq_per_head
             )
@@ -186,7 +185,12 @@ class MultiHeadAttention(nn.Module):
 
         # use the special paged_attention call if use_cache=True, its type is paged_attention, and it is generating
         # todo: should we add sdpa logic to cache
-        if use_cache and cache_data_layer and isinstance(cache_data_layer, PagedAttentionCacheDataLayer) and cache_data_layer.is_generating:
+        if (
+            use_cache
+            and cache_data_layer
+            and hasattr(cache_data_layer, "block_mapping")
+            and cache_data_layer.is_generating
+        ):
             queries = queries.transpose(2, 1).reshape(-1, self.nheads, self.head_size)
 
             # Pre-allocate the output tensor.

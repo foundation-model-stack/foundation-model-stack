@@ -9,7 +9,12 @@ import torch._inductor.lowering as lowering
 from torch._inductor.virtualized import V
 from fms._C import cache_ops, ops  # type: ignore
 
-from fms.utils.cache import CacheDataLayer, CacheDataWithMetadata, KVCacheManager, KVCache
+from fms.utils.cache import (
+    CacheDataLayer,
+    CacheDataWithMetadata,
+    KVCacheManager,
+    KVCache,
+)
 
 lib = torch.library.Library("paged_attention", "FRAGMENT")
 
@@ -219,6 +224,7 @@ class PagedAttnKernel(ir.FallbackKernel):
             V.graph.mark_buffer_mutated(kernel_input.get_name())
             MutationOutput(kernel_input.layout, kernel_input, packed)
 
+
 @dataclasses.dataclass
 class PagedAttentionCacheDataLayer(CacheDataLayer):
     data_layer: Tuple[torch.Tensor, torch.Tensor]
@@ -227,24 +233,27 @@ class PagedAttentionCacheDataLayer(CacheDataLayer):
     slot_mapping: torch.Tensor
     block_mapping: torch.Tensor
     block_size: int
-    num_heads: int # this could be kvheads or num_heads
+    num_heads: int  # this could be kvheads or num_heads
     head_size: int
     is_generating: bool
 
-    def store(self, keys: torch.Tensor, values: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        key_to_cache = keys.transpose(2, 1).reshape(
-            -1, self.num_heads, self.head_size
-        )
+    def store(
+        self, keys: torch.Tensor, values: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        key_to_cache = keys.transpose(2, 1).reshape(-1, self.num_heads, self.head_size)
         value_to_cache = values.transpose(2, 1).reshape(
             -1, self.num_heads, self.head_size
         )
 
-        keys_cache_output, values_cache_output = torch.ops.paged_attention.reshape_and_cache(
+        (
+            keys_cache_output,
+            values_cache_output,
+        ) = torch.ops.paged_attention.reshape_and_cache(
             key_to_cache,
             value_to_cache,
             self.data_layer[0],
             self.data_layer[1],
-            self.slot_mapping
+            self.slot_mapping,
         )
 
         if self.is_generating:
@@ -261,7 +270,7 @@ class PagedAttentionCacheData(CacheDataWithMetadata):
     slot_mapping: torch.Tensor
     block_mapping: torch.Tensor
     block_size: int
-    num_heads: int # this could be kvheads or num_heads
+    num_heads: int  # this could be kvheads or num_heads
     head_size: int
     is_generating: bool
     sequence_ids: List[int]
@@ -373,7 +382,9 @@ class CacheBlockGroup(List[CacheBlock]):
     def remove_tokens(self, num_tokens: int) -> List[CacheBlock]:
         # remove tokens and return the blocks to be freed
         if num_tokens > list.__len__(self):
-            raise ValueError("the number of tokens to remove is greater than what exists in this cache block group not including the prefix")
+            raise ValueError(
+                "the number of tokens to remove is greater than what exists in this cache block group not including the prefix"
+            )
         num_tokens_to_remove = num_tokens
         blocks_to_free = []
         for cb in reversed(self):
@@ -439,7 +450,9 @@ class PagedKVCacheManager(KVCacheManager):
         self.cache: List[KVCache] = []
         element_size = torch.tensor([], dtype=dtype).element_size()
         self.device = device
-        self.num_heads = num_heads // tensor_parallel_size if num_heads > 1 else num_heads
+        self.num_heads = (
+            num_heads // tensor_parallel_size if num_heads > 1 else num_heads
+        )
 
         if not total_num_gpu_blocks:
             total_num_gpu_blocks = get_max_gpu_blocks_available(
@@ -539,7 +552,9 @@ class PagedKVCacheManager(KVCacheManager):
             prefix_block_numbers = set(cbg.prefix.get_block_mapping())
 
         for cb in cbg:
-            if cbg.prefix is None or (cbg.prefix is not None and cb.block_number not in prefix_block_numbers):
+            if cbg.prefix is None or (
+                cbg.prefix is not None and cb.block_number not in prefix_block_numbers
+            ):
                 cb.num_tokens = 0
                 self.free_blocks.append(cb)
         self.unused_keys.put_nowait(sequence_id)
@@ -555,7 +570,12 @@ class PagedKVCacheManager(KVCacheManager):
     def _get_unassigned_sequence_ids(self, num_sequences: int) -> List[int]:
         return [self.unused_keys.get_nowait() for _ in range(num_sequences)]
 
-    def _get_cache_metadata(self, sequence_ids: List[int], is_prompt: bool, num_tokens_per_sequence: Optional[List[int]] = None) -> PagedAttentionCacheData:
+    def _get_cache_metadata(
+        self,
+        sequence_ids: List[int],
+        is_prompt: bool,
+        num_tokens_per_sequence: Optional[List[int]] = None,
+    ) -> PagedAttentionCacheData:
         slot_mapping = []
         block_tables = []
         context_lengths = []
@@ -605,7 +625,7 @@ class PagedKVCacheManager(KVCacheManager):
             num_heads=self.num_heads,
             head_size=self.head_size,
             is_generating=not is_prompt,
-            sequence_ids=sequence_ids
+            sequence_ids=sequence_ids,
         )
 
     def allocate_prompt_tokens(
@@ -618,7 +638,9 @@ class PagedKVCacheManager(KVCacheManager):
 
         return self._get_cache_metadata(sequence_ids, is_prompt=True)
 
-    def allocate_generated_tokens(self, sequence_ids: List[int], num_tokens_per_sequence: List[int]) -> PagedAttentionCacheData:
+    def allocate_generated_tokens(
+        self, sequence_ids: List[int], num_tokens_per_sequence: List[int]
+    ) -> PagedAttentionCacheData:
         for seq_id, num_tokens in zip(sequence_ids, num_tokens_per_sequence):
             cache_block_group = self.cbg_map[seq_id]
             cache_block_group._is_generating = True
@@ -631,7 +653,11 @@ class PagedKVCacheManager(KVCacheManager):
                 else:
                     cache_block_group[-1].append_num_tokens(1)
 
-        return self._get_cache_metadata(sequence_ids, is_prompt=False, num_tokens_per_sequence=num_tokens_per_sequence)
+        return self._get_cache_metadata(
+            sequence_ids,
+            is_prompt=False,
+            num_tokens_per_sequence=num_tokens_per_sequence,
+        )
 
     def _allocate_prompt_sequence(self, seq_id: int, num_tokens: int):
         cache_block_group: CacheBlockGroup = CacheBlockGroup(seq_id, self.block_size)
@@ -670,7 +696,11 @@ class PagedKVCacheManager(KVCacheManager):
 
         if not parent_cbg.last_cache_block_is_full():
             new_block_to_copy = self._allocate_block()
-            cache_ops.copy_blocks(key_caches, value_caches, {parent_cbg[-1].block_number: [new_block_to_copy.block_number]})
+            cache_ops.copy_blocks(
+                key_caches,
+                value_caches,
+                {parent_cbg[-1].block_number: [new_block_to_copy.block_number]},
+            )
             new_block_to_copy.append_num_tokens(parent_cbg[-1].num_tokens)
             child_cbg.pop()
             child_cbg.append(new_block_to_copy)

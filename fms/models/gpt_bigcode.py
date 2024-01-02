@@ -197,7 +197,9 @@ class GPTBigCodeHeadless(nn.Module):
             output = layer(
                 x=x,
                 mask=mask,
-                cache_data_layer=None if cache_data is None else cache_data.get_layer(i),
+                cache_data_layer=None
+                if cache_data is None
+                else cache_data.get_layer(i),
                 use_cache=use_cache,
                 is_causal_mask=is_causal_mask,
                 attn_algorithm=attn_algorithm,

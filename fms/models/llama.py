@@ -277,7 +277,9 @@ class LLaMA(nn.Module):
                 x=x_in,
                 mask=mask,
                 position_ids=position_ids,
-                cache_data_layer=None if cache_data is None else cache_data.get_layer(i),
+                cache_data_layer=None
+                if cache_data is None
+                else cache_data.get_layer(i),
                 use_cache=use_cache,
                 is_causal_mask=is_causal_mask,
                 attn_algorithm=attn_algorithm,

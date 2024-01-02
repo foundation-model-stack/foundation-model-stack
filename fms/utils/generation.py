@@ -85,7 +85,7 @@ def generate(
                 model.config.emb_dim,
                 tensor_parallel_size=dist.get_world_size(),
                 dtype=torch.get_default_dtype(),
-                device=model.device
+                device=model.device,
             )
 
     for i in range(max_new_tokens):
@@ -103,20 +103,28 @@ def generate(
         # get the cache data and position ids if using cache
         if use_cache:
             if i == 0:
-                num_tokens_per_sequence = torch.count_nonzero(input_ids.T, dim=0).tolist()
-                cache_data = kv_cache_manager.allocate_prompt_tokens(num_tokens_per_sequence)
+                num_tokens_per_sequence = torch.count_nonzero(
+                    input_ids.T, dim=0
+                ).tolist()
+                cache_data = kv_cache_manager.allocate_prompt_tokens(
+                    num_tokens_per_sequence
+                )
                 # context lengths here actually have the real lengths, but we want to start at 0 for first iteration
                 # might want to have 2 variables for this, but for now, just keep as is
                 context_lengths = None
             else:
                 num_tokens_per_sequence = [1 for _ in range(input_ids.size(0))]
-                cache_data = kv_cache_manager.allocate_generated_tokens(sequence_ids, num_tokens_per_sequence)
+                cache_data = kv_cache_manager.allocate_generated_tokens(
+                    sequence_ids, num_tokens_per_sequence
+                )
                 context_lengths = cache_data.context_lengths
 
                 # todo: is this supported?
                 # if contiguous_cache:
             sequence_ids = cache_data.sequence_ids
-            position_ids = compute_position_ids(num_tokens_per_sequence, context_lengths)
+            position_ids = compute_position_ids(
+                num_tokens_per_sequence, context_lengths
+            )
 
             kwargs["cache_data"] = cache_data
             kwargs["position_ids"] = torch.tensor(position_ids, device=input_ids.device)
@@ -150,7 +158,7 @@ def generate(
     if not batched:
         result = result[0]
 
-    if use_cache and callable(getattr(kv_cache_manager, 'free_sequences', None)):
+    if use_cache and callable(getattr(kv_cache_manager, "free_sequences", None)):
         kv_cache_manager.free_sequences(sequence_ids)
 
     return result

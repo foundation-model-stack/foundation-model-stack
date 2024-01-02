@@ -1208,7 +1208,9 @@ class HFDecoderModelArchitecture(HFModelArchitecture):
 
         model_inputs.update(
             {
-                "past_key_values": None if past_key_values is None or len(past_key_values) == 0 else OutOfPlaceCacheData(data=past_key_values),
+                "past_key_values": None
+                if past_key_values is None or len(past_key_values) == 0
+                else OutOfPlaceCacheData(data=past_key_values),
                 "use_cache": use_cache,
                 "position_ids": position_ids,
                 "attention_mask": attention_mask,
