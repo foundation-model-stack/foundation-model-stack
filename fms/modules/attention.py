@@ -195,6 +195,10 @@ class MultiHeadAttention(nn.Module):
 
             # Pre-allocate the output tensor.
             attn = torch.empty_like(queries)
+            context_lengths = cache_data_layer.context_lengths
+            context_lengths = context_lengths.unsqueeze(1).expand(-1, q_len)
+            context_lengths = context_lengths.sub(context_lengths.sign().cumsum(1).flip([1]).sub(1)).int()
+            block_mappings = cache_data_layer.block_mapping.repeat_interleave(q_len, dim=0)
             attn = torch.ops.paged_attention.paged_attention_v1(
                 attn,
                 # num_sequences x num_heads x head_size
@@ -203,8 +207,8 @@ class MultiHeadAttention(nn.Module):
                 values,
                 self.head_mapping,
                 (self.emb_dim // self.nheads) ** -0.5,
-                cache_data_layer.block_mapping,
-                cache_data_layer.context_lengths,
+                block_mappings,
+                context_lengths,
                 cache_data_layer.block_size,
                 cache_data_layer.max_sequence_length,
                 None,

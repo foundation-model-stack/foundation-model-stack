@@ -5,8 +5,10 @@ import torch.nn.functional as F
 from torch import distributed as dist
 
 from fms.modules.positions import compute_position_ids
+from fms.modules.speculator import Speculator
 from fms.utils.cache import KVCacheManager, CacheDataWithMetadata
 from fms.utils.cache.expandable import ExpandableKVCacheManager
+from fms.utils.cache.paged import PagedKVCacheManager
 
 
 def _make_cache_contiguous(past_key_value_states):
@@ -183,3 +185,206 @@ def truncate_after_eos(result, eos_token_id):
         eos_idx = eos_idx[0].item()
         result = result[: eos_idx + 1]
     return result
+
+
+def speculative_generate(
+    model: Union[Callable, torch.nn.Module],
+    input_ids: Union[torch.Tensor, List[torch.Tensor]],
+    speculator: Speculator,
+    max_seq_len: int = 2048,
+    new_tokens: int = 256,
+    top_k: int = 5,
+    threshes=[5, 3, 2],
+    verbose_dict=None,
+    kv_cache_manager: PagedKVCacheManager = None,
+):
+    """
+    A reference implementation of speculative decoding generation.
+    Returns at least the specified number of tokens - the speculator may return a
+    few extra in the final step.
+    If input is batched, continues generating until EVERY sequence has produced AT LEAST the required number of tokens.
+    Input (and output) tokens beyond max_seq_len are simply dropped for a sliding-window approach.
+    Currently reproduces behavior of greedy decoding only.
+    Args:
+        model: A function or nn.Module that takes a batch of input_ids and
+            returns logits
+        input_ids: A length n tensor of token IDs, or list of such tensors
+        speculator: A function or nn.Module that takes a state vector and sampled token
+            and returns a set of candidate suffixes
+        max_seq_len: the sequence length of the base model
+        new_tokens: number of tokens to generate
+        top_k: only score the top k candidates from the speculator
+        threshes: use top k predictions from each head to generate speculator candidate pool
+        verbose_dict: Optional HF tokenizer vocab dict. If provided, runs verbosely and prints
+            speculator behavior and scoring for each step
+    Returns:
+        result: List of id tensors, possibly different lengths if batching.
+        n_steps: Number of foward passes used to generate provided tokens.
+    """
+
+    verbose = False
+    if verbose_dict is not None:
+        verbose = True
+        vinv = {v: k for k, v in verbose_dict.items()}
+
+    def decode_obo(x, vinv):
+        return [vinv[z] for z in x.squeeze().tolist()]
+
+    # Construct batch(es) and initial inputs
+    bsize = len(input_ids)
+    result = input_ids  # [b] n
+    # Build padded batched input tensor
+    max_len = max([seq.size(0) for seq in input_ids])
+    n_pads_init = [max_len - seq.size(0) for seq in input_ids]
+    n_pads = torch.Tensor(n_pads_init).to(device=input_ids[0].device, dtype=torch.int)
+    inputs = torch.stack(
+        [F.pad(input_ids[i], (n_pads_init[i], 0)) for i in range(bsize)]
+    )
+    num_tokens_per_sequence = torch.count_nonzero(
+        inputs[:, :-1].T, dim=0
+    ).tolist()
+    cache_data = kv_cache_manager.allocate_prompt_tokens(num_tokens_per_sequence)
+    parent_sequence_ids = cache_data.sequence_ids
+    # Build padded causal mask
+    mask = torch.ones(
+        bsize,
+        1,
+        inputs.size(1) - 1,
+        inputs.size(1) - 1,
+        device=inputs.device,
+    )
+    mask = mask.tril()  # b 1 n-1 n-1
+    # Mask off any left-pads
+    pad_mask = torch.arange(mask.size(3), device=mask.device).view(
+        1, 1, 1, -1
+    )  # 1 1 1 n-1
+    pad_mask = pad_mask.expand(bsize, 1, 1, -1)  # b 1 1 n-1
+    pad_mask = pad_mask.sub(n_pads.sub(1).view(-1, 1, 1, 1)).clamp(0, 1)
+    eye = torch.eye(mask.size(3), device=mask.device)[None, None, :, :]  # 1 1 n-1 n-1
+    mask = mask.mul(pad_mask).logical_or(eye).log()  # b 1 n-1 n-1
+    # Handle position_ids
+    pos_ids = torch.arange(mask.size(3), device=inputs.device).repeat(bsize, 1)  # b n-1
+    pos_ids -= n_pads[:, None]
+
+    kwargs: MutableMapping[str, Any] = dict()
+    kwargs["use_cache"] = True
+
+    # Build kv cache and get initial state vector
+    n_adds = speculator.n_predict + 1
+    inputs = inputs[:, -max_seq_len + n_adds :]
+    position_ids = torch.tensor(compute_position_ids(num_tokens_per_sequence), dtype=torch.int64, device=inputs.device)
+    output = model(
+        inputs[:, :-1],
+        include_embeds=True,
+        position_ids=position_ids,
+        mask=mask,
+        cache_data=cache_data,
+        **kwargs
+    )
+    _, past_key_value_states, embeds = output
+    embeds = embeds[:, -1:]
+
+    n_gen = torch.zeros(bsize, device=inputs.device, dtype=torch.int)
+    n_steps = 0
+    inputs = inputs[:, -1:]
+    while min(n_gen) < new_tokens:
+        n_steps += 1
+
+        # create candidate sequences
+        child_sequence_ids_list = []
+        child_sequence_ids_flattened = []
+        num_tokens_per_sequence = [n_adds for _ in range(inputs.size(0) * top_k)]
+        # each parent will have top_k child sequences
+        for parent_sequence_id in parent_sequence_ids:
+            child_sequence_ids = kv_cache_manager.add_child_sequences(parent_sequence_id, top_k)
+            child_sequence_ids_list.append(child_sequence_ids)
+            child_sequence_ids_flattened.extend(child_sequence_ids)
+
+        # add n_adds tokens to each candidate
+        cache_data = kv_cache_manager.allocate_generated_tokens(child_sequence_ids_flattened, num_tokens_per_sequence)
+        position_ids = torch.tensor(compute_position_ids(num_tokens_per_sequence, cache_data.context_lengths.tolist()), dtype=torch.int64, device=inputs.device)
+
+        # Get candidate set of speculations
+        adds = speculator.generate_suffixes(embeds, inputs, threshes, top_k)  # b k h
+        inputs = torch.cat(
+            [inputs.unsqueeze(1).expand(bsize, top_k, 1), adds], dim=-1
+        ).int()  # b k 1+h
+        inputs = inputs.view(-1, n_adds)  # bk 1+h
+        # Base model forward pass
+        output = model(
+            inputs, include_embeds=True, position_ids=position_ids, cache_data=cache_data, **kwargs
+        )
+        logits, past_key_value_states, embeds = output
+        next_vals = torch.argmax(logits, dim=-1)  # bk 1+h
+
+        # Check correctness of speculator predictions
+        test = inputs.roll(-1, 1).eq(next_vals).cumprod(1)
+        n_correct = (
+            test.sum(1).clamp(0, n_adds - 1).view(bsize, top_k)
+        )  # clamp in case pred[0]==targ[-1]
+        best_guess = n_correct.argmax(1)  # b
+        best_guess_unflat = (
+            best_guess.unsqueeze(1).expand(bsize, n_adds).unsqueeze(1)
+        )  # b 1 1+h
+
+        # Set global values to those of best guess
+        next_vals = next_vals.view(bsize, top_k, n_adds).gather(1, best_guess_unflat).squeeze(1)  # b 1+h
+        n_correct = n_correct.gather(1, best_guess.unsqueeze(1)).squeeze(1)  # b
+        embeds = embeds.view(bsize, top_k, *embeds.size()[1:]).gather(
+            1, best_guess_unflat.unsqueeze(3).expand(-1, -1, -1, embeds.size(2))
+        ).squeeze(1)  # b 1+h d
+
+        if verbose:
+            test = inputs.view(bsize, top_k, n_adds).gather(1, best_guess_unflat).squeeze(1)
+            for i, line in enumerate(test):
+                print(
+                    "Speculation:",
+                    decode_obo(line, vinv),
+                    "n_correct:",
+                    n_correct[i].item(),
+                )
+
+        # free all worst candidates and keep best candidates as parents
+        parent_sequence_ids = []
+        for parent_index, child_sequence_ids in enumerate(child_sequence_ids_list):
+            best_index = best_guess[parent_index].item()
+
+            # free all bad candidates
+            kv_cache_manager.free_sequences(child_sequence_ids[:best_index] + child_sequence_ids[best_index + 1:])
+
+            # decrease the context length of the sequence which used to be sequence length + n_adds by the number of incorrect tokens
+            # for the correct candidate
+            best_sequence_id = child_sequence_ids[best_index]
+            parent_sequence_ids.append(best_sequence_id)
+            kv_cache_manager.remove_tokens(best_sequence_id, n_adds - n_correct[parent_index].item() - 1)
+
+        # Toss any wrong speculator tokens
+        next_vals_split = list(next_vals)
+        next_vals_split = [
+            next_vals_split[i][: n_correct[i] + 1] for i in range(len(next_vals_split))
+        ]  # [b] h'
+        n_gen += n_correct + 1
+        embeds = embeds.gather(
+            1, n_correct.view(-1, 1, 1).expand(-1, -1, embeds.size(2))
+        )  # Grab last correct embed
+
+        # Update results
+        result = [
+            torch.cat((result[i], next_vals_split[i]), dim=0) for i in range(bsize)
+        ]
+        inputs = torch.stack([line[-1:] for line in next_vals_split], dim=0)  # b 1
+
+        if verbose:
+            for line in result:
+                print("Updated output:", decode_obo(line, vinv))
+            print()
+
+    for parent_sequence_id in parent_sequence_ids:
+        prefix = kv_cache_manager.cbg_map[parent_sequence_id].prefix
+        kv_cache_manager.free(parent_sequence_id)
+        while prefix is not None:
+            kv_cache_manager.free(prefix.sequence_id)
+            prefix = prefix.prefix
+
+
+    return result, n_steps
