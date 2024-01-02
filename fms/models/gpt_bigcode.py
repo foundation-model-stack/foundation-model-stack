@@ -134,7 +134,7 @@ class GPTBigCodeHeadless(nn.Module):
         self,
         x: torch.LongTensor,
         mask: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.LongTensor] = None,
+        position_ids: Optional[torch.Tensor] = None,
         cache_data: Optional[CacheData] = None,
         use_cache: bool = False,
         attn_algorithm: Optional[str] = None,

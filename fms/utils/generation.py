@@ -5,7 +5,7 @@ import torch.nn.functional as F
 from torch import distributed as dist
 
 from fms.modules.positions import compute_position_ids
-from fms.utils.cache import KVCacheManager
+from fms.utils.cache import KVCacheManager, CacheDataWithMetadata
 from fms.utils.cache.expandable import ExpandableKVCacheManager
 
 
@@ -80,12 +80,12 @@ def generate(
         if kv_cache_manager is None:
             # TODO: standardized way of getting nlayers, nheads, emb_dim
             kv_cache_manager = ExpandableKVCacheManager(
-                model.config.nlayers,
-                model.config.nheads,
-                model.config.emb_dim,
+                model.config.nlayers,  # type: ignore
+                model.config.nheads,  # type: ignore
+                model.config.emb_dim,  # type: ignore
                 tensor_parallel_size=dist.get_world_size(),
                 dtype=torch.get_default_dtype(),
-                device=model.device,
+                device=model.device,  # type: ignore
             )
 
     for i in range(max_new_tokens):
@@ -101,27 +101,27 @@ def generate(
             kwargs["mask"] = None
 
         # get the cache data and position ids if using cache
-        if use_cache:
+        if use_cache and kv_cache_manager:
             if i == 0:
                 num_tokens_per_sequence = torch.count_nonzero(
                     input_ids.T, dim=0
                 ).tolist()
-                cache_data = kv_cache_manager.allocate_prompt_tokens(
-                    num_tokens_per_sequence
+                cache_data: CacheDataWithMetadata = (
+                    kv_cache_manager.allocate_prompt_tokens(num_tokens_per_sequence)
                 )
                 # context lengths here actually have the real lengths, but we want to start at 0 for first iteration
                 # might want to have 2 variables for this, but for now, just keep as is
-                context_lengths = None
+                context_lengths: Optional[List[int]] = None
             else:
                 num_tokens_per_sequence = [1 for _ in range(input_ids.size(0))]
                 cache_data = kv_cache_manager.allocate_generated_tokens(
                     sequence_ids, num_tokens_per_sequence
                 )
-                context_lengths = cache_data.context_lengths
+                context_lengths = cache_data.context_lengths.tolist()
 
                 # todo: is this supported?
                 # if contiguous_cache:
-            sequence_ids = cache_data.sequence_ids
+            sequence_ids: List[int] = cache_data.sequence_ids
             position_ids = compute_position_ids(
                 num_tokens_per_sequence, context_lengths
             )
@@ -158,8 +158,12 @@ def generate(
     if not batched:
         result = result[0]
 
-    if use_cache and callable(getattr(kv_cache_manager, "free_sequences", None)):
-        kv_cache_manager.free_sequences(sequence_ids)
+    if (
+        use_cache
+        and kv_cache_manager
+        and callable(getattr(kv_cache_manager, "free_sequences", None))
+    ):
+        kv_cache_manager.free_sequences(sequence_ids)  # type: ignore
 
     return result
 

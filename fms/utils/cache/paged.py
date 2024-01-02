@@ -359,7 +359,7 @@ class CacheBlockGroup(List[CacheBlock]):
         self.block_size = block_size
         self._is_generating = False
         self._is_initialized_with_prompt = False
-        self.prefix = None
+        self.prefix: Optional[CacheBlockGroup] = None
         self.ref_count = 0
 
     @classmethod
@@ -493,7 +493,7 @@ class PagedKVCacheManager(KVCacheManager):
             self.cache.append((key_blocks, value_blocks))
 
         self.free_blocks: List[CacheBlock] = []
-        self.unused_keys = queue.Queue(len(self.free_blocks))
+        self.unused_keys: queue.Queue[int] = queue.Queue(len(self.free_blocks))
         for i in range(total_num_gpu_blocks):
             self.free_blocks.append(CacheBlock(i, block_size))
             self.unused_keys.put_nowait(i)
@@ -593,7 +593,7 @@ class PagedKVCacheManager(KVCacheManager):
                 slot = cbg.get_slot_mapping()
                 slot = self.__pad_to_max_left(slot, max_sequence_length, -1)
             else:
-                num_tokens = num_tokens_per_sequence[i]
+                num_tokens = num_tokens_per_sequence[i]  # type: ignore
                 start = context_length - num_tokens
                 slot = cbg.get_slot_mapping(start)
                 i += 1

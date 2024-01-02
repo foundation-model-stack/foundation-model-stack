@@ -1,4 +1,4 @@
-from typing import Tuple, List, Optional, Union
+from typing import Tuple, List, Optional, Union, Dict
 
 from fms.utils.cache import CacheDataLayer, CacheDataWithMetadata, KVCacheManager
 import dataclasses
@@ -22,15 +22,15 @@ class InPlaceCacheDataLayer(CacheDataLayer):
 
 @dataclasses.dataclass
 class InPlaceCacheData(CacheDataWithMetadata):
-    data: Optional[List[Tuple[torch.Tensor, torch.Tensor]]]
+    data: List[Tuple[torch.Tensor, torch.Tensor]]
+    sequence_ids: List[int]
     max_sequence_length: int
     context_lengths: torch.Tensor
-    sequence_ids: List[int]
     is_generating: bool
 
     def get_layer(self, layer_index: int) -> InPlaceCacheDataLayer:
         return InPlaceCacheDataLayer(
-            data_layer=self.data[layer_index] if self.data else None,
+            data_layer=self.data[layer_index],
         )
 
     def is_filled(self) -> bool:
@@ -48,9 +48,7 @@ class ExpandableKVCacheManager(KVCacheManager):
         device: Optional[Union[str, torch.device]] = "cpu",
         dtype: torch.dtype = torch.float32,
     ):
-        self.cache: List[Optional[Tuple[torch.Tensor, torch.Tensor]]] = [
-            None for _ in range(num_layers)
-        ]
+        self.cache: List[Tuple[torch.Tensor, torch.Tensor]] = []
         self.num_layers = num_layers
         self.num_heads = (
             num_heads // tensor_parallel_size if num_heads > 1 else num_heads
@@ -58,7 +56,7 @@ class ExpandableKVCacheManager(KVCacheManager):
         self.head_size = emb_dim // num_heads
         self.device = device
         self.dtype = dtype
-        self.context_map = {}
+        self.context_map: Dict[int, int] = {}
 
     def allocate_prompt_tokens(
         self, num_tokens_per_sequence: List[int]
@@ -142,12 +140,12 @@ class ExpandableKVCacheManager(KVCacheManager):
                 torch.cat((self.cache[i][1], empty_tensor_v), dim=2),
             )
 
-        context_lengths = torch.tensor(
+        context_lengths_tensor = torch.tensor(
             context_lengths, dtype=torch.int32, device=self.device
         )
         return InPlaceCacheData(
             data=self.cache,
-            context_lengths=context_lengths,
+            context_lengths=context_lengths_tensor,
             max_sequence_length=max_sequence_length,
             sequence_ids=sequence_ids,
             is_generating=True,

@@ -31,17 +31,22 @@ class CacheData(metaclass=abc.ABCMeta):
 @dataclasses.dataclass
 class CacheDataWithMetadata(CacheData):
     data: List[Tuple[torch.Tensor, torch.Tensor]]
+    sequence_ids: List[int]
     max_sequence_length: int
     context_lengths: torch.Tensor
 
 
 class KVCacheManager(metaclass=abc.ABCMeta):
-    def allocate_prompt_tokens(self, num_tokens_per_sequence: List[int]) -> CacheData:
+    @abc.abstractmethod
+    def allocate_prompt_tokens(
+        self, num_tokens_per_sequence: List[int]
+    ) -> CacheDataWithMetadata:
         pass
 
+    @abc.abstractmethod
     def allocate_generated_tokens(
         self, sequence_ids: List[int], num_tokens_per_sequence: List[int]
-    ) -> CacheData:
+    ) -> CacheDataWithMetadata:
         pass
 
 
@@ -65,7 +70,7 @@ class OutOfPlaceCacheDataLayer(CacheDataLayer):
 
 
 class OutOfPlaceCacheData(CacheData):
-    def __init__(self, data: List[Optional[Tuple[torch.Tensor, torch.Tensor]]]):
+    def __init__(self, data: List[Tuple[torch.Tensor, torch.Tensor]]):
         self.data = data
 
     def get_layer(self, layer_index: int) -> OutOfPlaceCacheDataLayer:
