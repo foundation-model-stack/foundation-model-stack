@@ -4,6 +4,8 @@ from typing import List, Optional, Tuple
 
 import torch
 import torch.nn as nn
+
+from fms.utils.cache import CacheData, CacheDataLayer
 from fms.utils.config import ModelConfig
 from fms.modules.feedforward import FeedForwardBlock
 from fms.utils.activation import str_to_activation
@@ -62,17 +64,11 @@ class GPTBigCodeBlock(nn.Module):
         *,
         mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.Tensor] = None,
-        past_key_value_state: Optional[
-            Tuple[
-                torch.Tensor,
-            ]
-        ] = None,
+        cache_data_layer: Optional[CacheDataLayer] = None,
         use_cache: bool = False,
-        cache_metadata: Optional[dict] = None,
         is_causal_mask: bool = False,
         attn_algorithm: Optional[str] = None,
     ):
-        self_attn_past_key_value = past_key_value_state
 
         # first we do MHA and Add&Norm
         residual = x
@@ -85,9 +81,8 @@ class GPTBigCodeBlock(nn.Module):
             mask=mask,
             position_ids=position_ids,
             attn_algorithm=attn_algorithm,
-            past_key_value_state=self_attn_past_key_value,
+            cache_data_layer=cache_data_layer,
             use_cache=use_cache,
-            cache_metadata=cache_metadata,
             is_self=True,
             is_causal_mask=is_causal_mask,
         )
@@ -135,37 +130,13 @@ class GPTBigCodeHeadless(nn.Module):
         if self.config.p_dropout:
             self.dropout = nn.Dropout(self.config.p_dropout)
 
-    def _compute_position_ids(
-        self,
-        is_pad: torch.Tensor,
-        use_cache: bool,
-        past_key_value_states: Optional[
-            List[Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]
-        ] = None,
-    ):
-        """compute the position ids if the use happened not to give any"""
-        position_ids = ((~is_pad).cumsum(1) - 1).clamp(min=0)
-
-        # Compute position_ids based on cache config
-        if (
-            use_cache
-            and past_key_value_states is not None
-            and past_key_value_states[0] is not None
-        ):
-            position_ids += past_key_value_states[0][0].size(-2)
-
-        return position_ids
-
     def forward(
         self,
         x: torch.LongTensor,
         mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
-        past_key_value_states: Optional[
-            List[Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]
-        ] = None,
+        cache_data: Optional[CacheData] = None,
         use_cache: bool = False,
-        cache_metadata: Optional[dict] = None,
         attn_algorithm: Optional[str] = None,
     ):
         # Embed the given vocabulary indices using the given attention mask, with pre-/post-norm and dropout as specified
@@ -174,44 +145,23 @@ class GPTBigCodeHeadless(nn.Module):
         # bias: nheads x seq_len x seq_len
 
         qlen = x.size(1)
-        klen = x.size(1)
-
-        if past_key_value_states is None or len(past_key_value_states) == 0:
-            past_key_value_states = [None for _ in range(len(self.layers))]
+        filled_cache = False
 
         # if we are using the cache, the key length needs to be extended with the past keys length
         if use_cache:
-            if not cache_metadata:
-                cache_metadata = {}
+            if cache_data:
+                filled_cache = cache_data.is_filled()
 
-            cache_type = cache_metadata.get("type", "default")
-            position_offset = 0
-            if cache_type == "paged_attention":
-                # todo: we can support cache allocation in here, but for now this is fine
-                # todo: we are making an assumption that the user had already called allocate to get the cache_metadata
-                position_offset += cache_metadata["position_offset"]
-            else:
-                if past_key_value_states[0] is not None:
-                    position_offset += past_key_value_states[0][0].size(-2)
-
-                cache_metadata["type"] = cache_type
-                cache_metadata["position_offset"] = position_offset
-            klen += position_offset
-
-        # if mask is none, we need to compute mask
-        is_causal_mask = False
+        # if mask is none, we need to specify causal mask
         if mask is None:
-            if x is None:
-                raise ValueError("cannot create a mask when x is None")
             # we are caching and can assume all 1s in the mask
-            if use_cache and klen != 1 and qlen == 1:
+            if use_cache and filled_cache and qlen == 1:
                 # b x h x qlen x kvlen
-                mask = torch.ones(qlen, klen, device=x.device)
+                is_causal_mask = False
             else:
-                pad_id: int = self.config.pad_id
-                is_pad: torch.Tensor = x == pad_id
-                mask = is_pad.unsqueeze(-1) == is_pad.unsqueeze(-2)
-                mask = mask.tril(diagonal=0)
+                is_causal_mask = True
+        else:
+            is_causal_mask = False
 
         x_emb = self.embedding(x)
 
@@ -224,9 +174,7 @@ class GPTBigCodeHeadless(nn.Module):
             is_pad = x == self.config.pad_id
 
         if position_ids is None:
-            position_ids = self._compute_position_ids(
-                is_pad, use_cache, past_key_value_states
-            )
+            position_ids = ((~is_pad).cumsum(1) - 1).clamp(min=0)
 
         # look up position embeddings
         position_out = self.position_embedding(position_ids)
@@ -249,10 +197,9 @@ class GPTBigCodeHeadless(nn.Module):
             output = layer(
                 x=x,
                 mask=mask,
-                is_causal_mask=is_causal_mask,
-                past_key_value_state=past_key_value_states[i],
+                cache_data_layer=None if cache_data is None else cache_data.get_layer(i),
                 use_cache=use_cache,
-                cache_metadata=cache_metadata,
+                is_causal_mask=is_causal_mask,
                 attn_algorithm=attn_algorithm,
             )
 
@@ -314,22 +261,16 @@ class GPTBigCode(nn.Module):
         x: torch.LongTensor,
         mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
-        past_key_value_states: Optional[
-            Tuple[
-                torch.FloatTensor,
-            ]
-        ] = None,
+        cache_data: Optional[CacheData] = None,
         use_cache: bool = False,
-        cache_metadata: Optional[dict] = None,
         attn_algorithm: Optional[str] = None,
     ):
         output, cache = self.base_model(
             x,
             mask,
             position_ids=position_ids,
-            past_key_value_states=past_key_value_states,
+            cache_data=cache_data,
             use_cache=use_cache,
-            cache_metadata=cache_metadata,
             attn_algorithm=attn_algorithm,
         )
 
