@@ -252,13 +252,13 @@ class RotaryEmbedding(PositionEncoder):
         return q_out.type_as(q).contiguous(), k_out.type_as(k).contiguous()
 
 def compute_position_ids(num_tokens_per_sequence: List[int], context_lengths: Optional[List[int]] = None) -> List[List[int]]:
-    if not context_lengths:
-        context_lengths = [0 for _ in num_tokens_per_sequence]
-
     max_tokens = max(num_tokens_per_sequence)
     position_ids = []
     for seq_i, num_tokens in enumerate(num_tokens_per_sequence):
-        start = context_lengths[seq_i]
+        if context_lengths is None:
+            start = 0
+        else:
+            start = context_lengths[seq_i] - 1
         position_ids_i = [0 for _ in range(max_tokens - num_tokens)] + [i for i in range(start, start + num_tokens)]
         position_ids.append(position_ids_i)
     return position_ids

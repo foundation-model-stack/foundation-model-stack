@@ -1,7 +1,6 @@
 import abc
 import dataclasses
 import queue
-from itertools import chain
 from typing import Dict, List, Optional, Tuple, Union
 
 import torch
@@ -10,6 +9,7 @@ import torch._inductor.lowering as lowering
 from torch._inductor.virtualized import V
 from fms._C import cache_ops, ops  # type: ignore
 
+from fms.utils.cache import CacheDataLayer, CacheDataWithMetadata, KVCacheManager, KVCache
 
 lib = torch.library.Library("paged_attention", "FRAGMENT")
 
@@ -219,62 +219,6 @@ class PagedAttnKernel(ir.FallbackKernel):
             V.graph.mark_buffer_mutated(kernel_input.get_name())
             MutationOutput(kernel_input.layout, kernel_input, packed)
 
-
-@dataclasses.dataclass
-class CacheDataLayer(metaclass=abc.ABCMeta):
-    data_layer: Tuple[torch.Tensor, torch.Tensor]
-
-    @abc.abstractmethod
-    def store(self, key: torch.Tensor, value: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        pass
-
-@dataclasses.dataclass
-class CacheData(metaclass=abc.ABCMeta):
-    data: List[Tuple[torch.Tensor, torch.Tensor]]
-
-    @abc.abstractmethod
-    def get_layer(self, layer_index: int) -> CacheDataLayer:
-        pass
-
-    @abc.abstractmethod
-    def is_filled(self) -> bool:
-        pass
-
-    @abc.abstractmethod
-    def compute_position_ids(self, num_tokens_per_sequence: List[int]) -> List[List[int]]:
-        pass
-
-
-@dataclasses.dataclass
-class ExpandableCacheDataLayer(CacheDataLayer):
-    data_layer: Tuple[torch.Tensor, torch.Tensor]
-
-    def store(self, keys: torch.Tensor, values: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        if self.data_layer is not None:
-            keys = torch.cat((self.data_layer[0], keys), dim=2)
-            values = torch.cat((self.data_layer[1], values), dim=2)
-        return keys, values
-
-@dataclasses.dataclass
-class ExpandableCacheData(CacheData):
-    data: Optional[List[Tuple[torch.Tensor, torch.Tensor]]]
-
-    def get_layer(self, layer_index: int) -> ExpandableCacheDataLayer:
-        return ExpandableCacheDataLayer(
-            data_layer=self.data[layer_index] if self.data else None,
-        )
-
-    def is_filled(self) -> bool:
-        return self.data and self.data[0] is not None
-
-    def compute_position_ids(self, num_tokens_per_sequence: List[int]):
-        max_num_tokens = max(num_tokens_per_sequence)
-        offset = 0
-        if self.is_filled():
-            offset = self.data[0][0].size(-2) + 1
-        position_ids = [[offset + i for i in range(max_num_tokens)] for _ in num_tokens_per_sequence]
-        return position_ids
-
 @dataclasses.dataclass
 class PagedAttentionCacheDataLayer(CacheDataLayer):
     data_layer: Tuple[torch.Tensor, torch.Tensor]
@@ -310,7 +254,7 @@ class PagedAttentionCacheDataLayer(CacheDataLayer):
 
 
 @dataclasses.dataclass
-class PagedAttentionCacheData(CacheData):
+class PagedAttentionCacheData(CacheDataWithMetadata):
     data: List[Tuple[torch.Tensor, torch.Tensor]]
     max_sequence_length: int
     context_lengths: torch.Tensor
@@ -337,23 +281,6 @@ class PagedAttentionCacheData(CacheData):
 
     def is_filled(self) -> bool:
         return self.is_generating
-
-    def compute_position_ids(self, num_tokens_per_sequence: List[int]) -> List[List[int]]:
-        max_tokens = max(num_tokens_per_sequence)
-        position_ids = []
-        for seq_i, num_tokens in enumerate(num_tokens_per_sequence):
-            if not self.is_generating:
-                position_ids_i = [i for i in range(num_tokens)]
-            else:
-                start = self.context_lengths[seq_i].item() - 1
-                position_ids_i = [i for i in range(start, start + num_tokens)]
-
-            position_ids_i = [0 for _ in range(max_tokens - num_tokens)] + position_ids_i
-            position_ids.append(position_ids_i)
-        return position_ids
-
-
-KVCache = Tuple[torch.Tensor, torch.Tensor]  # (key cache, value cache)
 
 
 def get_cache_block_size(block_size, head_size, num_heads, num_layers, dtype) -> int:
@@ -412,10 +339,14 @@ class CacheBlock:
     def subtract_num_tokens(self, num_tokens: int):
         self.num_tokens -= num_tokens
 
+    def __repr__(self):
+        return f"CacheBlock(block_number={self.block_number}, block_size={self.block_size}, num_tokens={self.num_tokens})"
+
 
 class CacheBlockGroup(List[CacheBlock]):
-    def __init__(self, block_size: int):
+    def __init__(self, sequence_id: int, block_size: int):
         super().__init__()
+        self.sequence_id = sequence_id
         self.block_size = block_size
         self._is_generating = False
         self._is_initialized_with_prompt = False
@@ -423,8 +354,8 @@ class CacheBlockGroup(List[CacheBlock]):
         self.ref_count = 0
 
     @classmethod
-    def from_prefix(cls, prefix: "CacheBlockGroup"):
-        cbg = cls(prefix.block_size)
+    def from_prefix(cls, sequence_id: int, prefix: "CacheBlockGroup"):
+        cbg = cls(sequence_id, prefix.block_size)
         cbg._is_generating = True
         cbg._is_initialized_with_prompt = True
 
@@ -447,12 +378,17 @@ class CacheBlockGroup(List[CacheBlock]):
         blocks_to_free = []
         for cb in reversed(self):
             if cb.num_tokens < num_tokens_to_remove:
+                num_tokens_to_remove -= cb.num_tokens
                 cb.num_tokens = 0
                 blocks_to_free.append(cb)
                 num_tokens_to_remove -= cb.num_tokens
             else:
+                # if its equal to num tokens, we don't need to free the block as it can just be re-used
                 cb.subtract_num_tokens(num_tokens_to_remove)
                 break
+        # remove the blocks from this CacheBlockGroup that are to be freed in the cache manager
+        for _ in blocks_to_free:
+            self.pop()
         return blocks_to_free
 
     def is_initialized_with_prompt(self):
@@ -486,19 +422,6 @@ class CacheBlockGroup(List[CacheBlock]):
     def get_block_mapping(self):
         return [cb.block_number for cb in self]
 
-class KVCacheManager(metaclass=abc.ABCMeta):
-
-    def allocate_prompt_tokens(
-        self, num_tokens_per_sequence: List[int]
-    ) -> CacheData:
-        pass
-
-    def allocate_generated_tokens(self, sequence_ids: List[int], num_tokens_per_sequence: List[int]) -> CacheData:
-        pass
-
-# todo: ExpandableKVCacheManager
-
-
 
 class PagedKVCacheManager(KVCacheManager):
     def __init__(
@@ -509,7 +432,7 @@ class PagedKVCacheManager(KVCacheManager):
         total_num_gpu_blocks: Optional[int] = None,
         block_size: int = 16,
         tensor_parallel_size: int = 1,
-        device: Optional[str] = "cuda",
+        device: Optional[Union[str, torch.device]] = "cuda",
         dtype: torch.dtype = torch.float32,
     ):
         self.block_size = block_size
@@ -613,10 +536,12 @@ class PagedKVCacheManager(KVCacheManager):
         # remove a reference count from all cache block groups that was a prefix as part of this sequence
         if cbg.prefix is not None:
             cbg.prefix.ref_count -= 1
+            prefix_block_numbers = set(cbg.prefix.get_block_mapping())
 
         for cb in cbg:
-            cb.num_tokens = 0
-            self.free_blocks.append(cb)
+            if cbg.prefix is None or (cbg.prefix is not None and cb.block_number not in prefix_block_numbers):
+                cb.num_tokens = 0
+                self.free_blocks.append(cb)
         self.unused_keys.put_nowait(sequence_id)
         del self.cbg_map[sequence_id]
 
@@ -655,7 +580,6 @@ class PagedKVCacheManager(KVCacheManager):
 
             block_mapping = cbg.get_block_mapping()
             block_mapping = self.__pad_to_max_right(block_mapping, max_num_blocks, 0)
-            max_num_blocks = max(max_num_blocks, len(block_mapping))
 
             slot_mapping.append(slot)
             block_tables.append(block_mapping)
@@ -699,17 +623,18 @@ class PagedKVCacheManager(KVCacheManager):
             cache_block_group = self.cbg_map[seq_id]
             cache_block_group._is_generating = True
 
-            if cache_block_group.last_cache_block_is_full():
-                last_block = self._allocate_block()
-                last_block.append_num_tokens(num_tokens)
-                cache_block_group.append(last_block)
-            else:
-                cache_block_group[-1].append_num_tokens(num_tokens)
+            for i in range(num_tokens):
+                if cache_block_group.last_cache_block_is_full():
+                    last_block = self._allocate_block()
+                    last_block.append_num_tokens(1)
+                    cache_block_group.append(last_block)
+                else:
+                    cache_block_group[-1].append_num_tokens(1)
 
         return self._get_cache_metadata(sequence_ids, is_prompt=False, num_tokens_per_sequence=num_tokens_per_sequence)
 
     def _allocate_prompt_sequence(self, seq_id: int, num_tokens: int):
-        cache_block_group: CacheBlockGroup = CacheBlockGroup(self.block_size)
+        cache_block_group: CacheBlockGroup = CacheBlockGroup(seq_id, self.block_size)
 
         # one block allocation will happen automatically as the group always starts empty
         last_cache_block = self._allocate_block()
@@ -739,7 +664,7 @@ class PagedKVCacheManager(KVCacheManager):
         parent_cbg = self.cbg_map[parent_sequence_id]
 
         child_sequence_id = self._get_unassigned_sequence_id()
-        child_cbg = CacheBlockGroup.from_prefix(parent_cbg)
+        child_cbg = CacheBlockGroup.from_prefix(child_sequence_id, parent_cbg)
         key_caches = [key_cache for key_cache, _ in self.cache]
         value_caches = [value_cache for _, value_cache in self.cache]
 

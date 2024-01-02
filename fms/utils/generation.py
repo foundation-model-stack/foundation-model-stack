@@ -2,9 +2,11 @@ from typing import Any, Callable, List, MutableMapping, Union, Optional
 
 import torch
 import torch.nn.functional as F
+from torch import distributed as dist
 
 from fms.modules.positions import compute_position_ids
-from fms.utils.cache import ExpandableCacheData
+from fms.utils.cache import KVCacheManager
+from fms.utils.cache.expandable import ExpandableKVCacheManager
 
 
 def _make_cache_contiguous(past_key_value_states):
@@ -33,8 +35,8 @@ def generate(
     do_sample: bool = True,
     num_beams: int = 1,
     use_cache: bool = False,
+    kv_cache_manager: Optional[KVCacheManager] = None,
     contiguous_cache: bool = False,
-    paged_kv_cache: Optional["PagedKVCache"] = None,  # type: ignore
 ):
     """
     A trivial generate function that can be used for validation/testing in
@@ -75,7 +77,16 @@ def generate(
 
     if use_cache:
         kwargs["cache_data"] = None
-        past_key_value_states = None
+        if kv_cache_manager is None:
+            # TODO: standardized way of getting nlayers, nheads, emb_dim
+            kv_cache_manager = ExpandableKVCacheManager(
+                model.config.nlayers,
+                model.config.nheads,
+                model.config.emb_dim,
+                tensor_parallel_size=dist.get_world_size(),
+                dtype=torch.get_default_dtype(),
+                device=model.device
+            )
 
     for i in range(max_new_tokens):
 
@@ -90,36 +101,29 @@ def generate(
             kwargs["mask"] = None
 
         # get the cache data and position ids if using cache
-        # TODO: The context lengths which can determine the position ids can be handled by the cache manager, but since
-        #  there is not yet an implementation for ExpandableKVCacheManager, for now we will do this management here
         if use_cache:
             if i == 0:
-                context_lengths = [0 for _ in range(input_ids.size(0))]
                 num_tokens_per_sequence = torch.count_nonzero(input_ids.T, dim=0).tolist()
-                if paged_kv_cache:
-                    cache_data = paged_kv_cache.allocate_prompt_tokens(num_tokens_per_sequence)
-                    sequence_ids = cache_data.sequence_ids
-                else:
-                    cache_data = ExpandableCacheData(data=None)
+                cache_data = kv_cache_manager.allocate_prompt_tokens(num_tokens_per_sequence)
+                # context lengths here actually have the real lengths, but we want to start at 0 for first iteration
+                # might want to have 2 variables for this, but for now, just keep as is
+                context_lengths = None
             else:
-                context_lengths = [l + n for l, n in zip(context_lengths, num_tokens_per_sequence)]
                 num_tokens_per_sequence = [1 for _ in range(input_ids.size(0))]
-                if paged_kv_cache:
-                    cache_data = paged_kv_cache.allocate_generated_tokens(
-                        sequence_ids, num_tokens_per_sequence
-                    )
-                else:
-                    if contiguous_cache:
-                        past_key_value_states = _make_cache_contiguous(past_key_value_states)
+                cache_data = kv_cache_manager.allocate_generated_tokens(sequence_ids, num_tokens_per_sequence)
+                context_lengths = cache_data.context_lengths
 
-                    cache_data = ExpandableCacheData(data=past_key_value_states)
+                # todo: is this supported?
+                # if contiguous_cache:
+            sequence_ids = cache_data.sequence_ids
+            position_ids = compute_position_ids(num_tokens_per_sequence, context_lengths)
 
             kwargs["cache_data"] = cache_data
-            kwargs["position_ids"] = torch.tensor(compute_position_ids(num_tokens_per_sequence, context_lengths), device=input_ids.device)
+            kwargs["position_ids"] = torch.tensor(position_ids, device=input_ids.device)
 
         output = model(input_ids, **kwargs)
         if use_cache:
-            logits, past_key_value_states = output
+            logits, _ = output
         else:
             logits = output
         logits = logits[:, -1, :]
@@ -146,8 +150,8 @@ def generate(
     if not batched:
         result = result[0]
 
-    if use_cache and paged_kv_cache:
-        paged_kv_cache.free_sequences(sequence_ids)
+    if use_cache and callable(getattr(kv_cache_manager, 'free_sequences', None)):
+        kv_cache_manager.free_sequences(sequence_ids)
 
     return result
 

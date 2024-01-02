@@ -10,7 +10,6 @@ from fms.distributed.strategy import TensorParallelStrategy
 from fms.models import get_model
 from fms.models.llama import load_fms_llama
 from fms.utils import generation, tokenizers
-from fms.utils.cache import PagedKVCacheManager
 from fms.utils.generation import generate
 
 
@@ -29,6 +28,20 @@ parser.add_argument(
     required=True,
     help="Path to the directory containing LLaMa weights (.pth files sharded by tensor parallel rank, not HF weights)",
 )
+parser.add_argument("--model_path_source", type=str, default="meta", help="The source format of the model weights. E.g. meta, hf")
+parser.add_argument(
+    "--architecture",
+    type=str,
+    default="llama",
+    help="The model architecture to benchmark",
+)
+parser.add_argument(
+    "--variant",
+    type=str,
+    default="7b",
+    help="The model variant (configuration) to benchmark. E.g. 7b, 13b, 70b.",
+)
+parser.add_argument("--checkpoint_sharding", type=str, default=None, help="type of weight sharding. E.g. tensor-parallel (tp), None")
 parser.add_argument(
     "--tokenizer",
     type=str,
@@ -36,10 +49,13 @@ parser.add_argument(
     help="Path to the tokenizer (e.g. ~/tokenizer.model)",
 )
 parser.add_argument(
-    "--no_use_cache",
-    action="store_false",
-    help="Disable the kv-cache (on by default)",
+    "--cache_type",
+    type=str,
+    help="type of cache",
+    default="none",
+    choices=["paged", "expandable"]
 )
+
 parser.add_argument(
     "--compile",
     action="store_true",
@@ -81,57 +97,11 @@ if args.distributed:
     dist.init_process_group()
 
 print("loading model")
-model = get_model("llama", "7b", args.model_path, source="hf", device_type="cuda", norm_eps=1e-6)
+model = get_model(args.architecture, args.variant, model_path=args.model_path, source=args.model_path_source, device_type=args.device_type, checkpoint_sharding=args.checkpoint_sharding)
 tokenizer = tokenizers.get_tokenizer(args.tokenizer)
 model.eval()
 torch.set_grad_enabled(False)
 print("loading complete on rank", local_rank)
-
-kv_cache = PagedKVCacheManager(
-    model.config.nlayers,
-    model.config.nheads,
-    model.config.emb_dim,
-    total_num_gpu_blocks=3818,
-    dtype=model.shared.emb.weight.dtype,
-)
-
-# print("loading model")
-# model = get_model("llama", "13b", args.model_path, source="meta", device_type="cuda", norm_eps=1e-6, checkpoint_sharding="tp", distributed_strategy="tp")
-# tokenizer = tokenizers.get_tokenizer(args.tokenizer)
-# model.eval()
-# torch.set_grad_enabled(False)
-# print("loading complete on rank", local_rank)
-#
-# kv_cache = PagedKVCache(
-#     model.config.nlayers,
-#     model.config.nheads if model.config.kvheads == 0 else model.config.kvheads,
-#     model.config.emb_dim,
-#     total_num_gpu_blocks=400,
-#     tensor_parallel_size=2,
-#     device=f"cuda:{int(os.environ['LOCAL_RANK'])}",
-#     dtype=model.shared.emb.weight.dtype,
-# )
-
-# print("loading model")
-# model = get_model(
-#     "llama", "13b", args.model_path, source="meta", checkpoint_sharding="tp", distributed_strategy="tp", device_type="cuda", norm_eps=1e-6
-# )
-# tokenizer = tokenizers.get_tokenizer(args.tokenizer)
-# model.eval()
-# torch.set_grad_enabled(False)
-# print("loading complete on rank", local_rank)
-#
-# kv_cache = PagedKVCache(
-#     model.config.nlayers,
-#     model.config.nheads,
-#     model.config.emb_dim,
-#     total_num_gpu_blocks=600,
-#     tensor_parallel_size=dist.get_world_size(),
-#     dtype=model.shared.emb.weight.dtype,
-#     device=device
-# )
-# kv_cache = None
-
 
 if args.compile:
     print("compiling model")
@@ -198,10 +168,6 @@ prompt3 = pad_prompt(prompt3, max_len)
 prompt4 = pad_prompt(prompt4, max_len)
 ids = torch.stack((prompt1, prompt2, prompt3, prompt4), dim=0)
 
-# ids = prompt2.unsqueeze(0)
-# kv_cache=None
-
-
 def print_result(result):
     if local_rank != 0:
         return
@@ -233,7 +199,7 @@ def infer(use_cache, do_sample):
         ids,
         max_new_tokens=100,
         use_cache=use_cache,
-        paged_kv_cache=kv_cache,
+        kv_cache_manager=kv_cache_manager,
         do_sample=do_sample,
         max_seq_len=max_seq_len,
     )
@@ -243,8 +209,24 @@ def infer(use_cache, do_sample):
 
 print("generating output", local_rank)
 do_sample = [False]
-use_cache = [
-    args.no_use_cache
-]  # True/False are identical with greedy iff `torch.use_deterministic_algorithms(True)`
-for sample, cache in itertools.product(do_sample, use_cache):
+cache_type = args.cache_type
+kv_cache_manager = None
+if cache_type == "paged":
+    from fms.utils.cache.paged import PagedKVCacheManager
+    use_cache = True
+    kv_cache_manager = PagedKVCacheManager(
+        model.config.nlayers,
+        model.config.nheads,
+        model.config.emb_dim,
+        tensor_parallel_size=dist.get_world_size() if args.distributed else 1,
+        dtype=torch.get_default_dtype(),
+        device=device
+    )
+elif cache_type == "expandable":
+    use_cache = True
+else:
+    use_cache = False
+
+
+for sample, cache in itertools.product(do_sample, [use_cache]):
     infer(cache, sample)

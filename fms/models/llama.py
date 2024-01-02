@@ -253,10 +253,8 @@ class LLaMA(nn.Module):
         # todo: we probably don't need this here as we are only using the klen to check for is_causal_mask
         #  might be better to just set is_generating in the cache_metadata and compute the position_offset in attention
         if use_cache:
-            if not cache_data:
-                from fms.utils.cache import ExpandableCacheData
-                cache_data = ExpandableCacheData(data=None)
-            filled_cache = cache_data.is_filled()
+            if cache_data:
+                filled_cache = cache_data.is_filled()
 
         # if mask is none, we need to specify causal mask
         if mask is None:
