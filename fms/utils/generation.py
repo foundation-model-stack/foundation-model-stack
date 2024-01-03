@@ -127,7 +127,7 @@ def generate(
             )
 
             kwargs["cache_data"] = cache_data
-            kwargs["position_ids"] = torch.tensor(position_ids, device=input_ids.device)
+            kwargs["position_ids"] = torch.tensor(position_ids, dtype=torch.long, device=input_ids.device)
 
         output = model(input_ids, **kwargs)
         if use_cache:

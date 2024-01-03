@@ -8,14 +8,11 @@ import torch
 from torch import distributed as dist
 from torch._dynamo import OptimizedModule
 from fms import models
+from fms.modules.positions import compute_position_ids
 
 from fms.utils import generation, print0, tokenizers
+from fms.utils.cache import OutOfPlaceCacheData
 from fms.utils.cache.paged import PagedKVCacheManager
-import numpy as np
-
-# torch.manual_seed(42)  # pytorch random seed
-# np.random.seed(42)  # numpy random seed
-# torch.backends.cudnn.deterministic = True
 
 # Example running llama 7B on one A100:
 #
@@ -118,6 +115,11 @@ parser.add_argument(
     help="Do not run the kv-cache benchmarks",
 )
 parser.add_argument(
+    "--skip_paged_kvcache_runs",
+    action="store_true",
+    help="Do not run the paged kv-cache benchmarks",
+)
+parser.add_argument(
     "--skip_nokvcache_runs",
     action="store_true",
     help="Do not run the no kv-cache benchmarks",
@@ -169,32 +171,28 @@ ids = torch.randint(
 # of the first token without cache, plus the cost of all subsequent tokens with
 # cache. I.e. the amortized per-token cost would depend on the number of tokens
 # generated.
-# logits, cache = model.forward(ids, use_cache=True)
-# logits = logits[:, -1, :]
-# next_val = torch.argmax(logits, dim=-1).unsqueeze(0).t()
-# next_input = torch.cat((ids, next_val), dim=-1)
+logits, cache = model.forward(ids, use_cache=True)
+logits = logits[:, -1, :]
+next_val = torch.argmax(logits, dim=-1).unsqueeze(0).t()
+next_input = torch.cat((ids, next_val), dim=-1)
 
 # not still needed
-# del logits
+del logits
+position_ids = torch.tensor(
+    compute_position_ids([1 for _ in range(BATCH_SIZE)], [SEQ_LEN for _ in range(BATCH_SIZE)]),
+    dtype=torch.long
+)
+expected, _ = model.forward(
+    next_val, cache_data=OutOfPlaceCacheData(cache), use_cache=True, only_last_token=True, position_ids=position_ids
+)
+expected = torch.argmax(expected, dim=-1)
 
-# expected, _ = model.forward(
-#     next_val, kv_cache=cache, use_cache=True, only_last_token=True
-# )
-# expected = torch.argmax(expected, dim=-1)
-#
-# expected2 = model.forward(next_input, only_last_token=True)
-# expected2 = torch.argmax(expected2, dim=-1)
-#
-# torch.testing.assert_close(expected, expected2)
+expected2 = model.forward(next_input, only_last_token=True)
+expected2 = torch.argmax(expected2, dim=-1)
+
+torch.testing.assert_close(expected, expected2)
 
 repeat = 3
-
-kv_cache = PagedKVCacheManager(
-    model.config.nlayers,
-    model.config.nheads,
-    model.config.emb_dim,
-    dtype=model.shared.emb.weight.dtype,
-)
 
 
 # The function we're measuring, with or without caching.
@@ -209,18 +207,18 @@ kv_cache = PagedKVCacheManager(
 def one_token(model, use_cache):
     if use_cache:
         actual, _ = model.forward(
-            None, past_key_value_states=None, use_cache=True, only_last_token=True
+            next_val, cache_data=OutOfPlaceCacheData(cache), use_cache=True, only_last_token=True
         )
     else:
-        actual = model.forward(None, only_last_token=True)
+        actual = model.forward(next_input, only_last_token=True)
     actual = torch.argmax(actual, dim=-1)
     if local_rank == 0 and not args.skip_correctness_check:
-        torch.testing.assert_close(actual, None)
+        torch.testing.assert_close(actual, expected)
     else:
         torch.cuda.synchronize()
 
 
-def end_to_end(model, use_cache, expected=None):
+def end_to_end(model, use_cache, expected=None, kv_cache_manager=None):
     result = generation.generate(
         model,
         ids,
@@ -231,7 +229,7 @@ def end_to_end(model, use_cache, expected=None):
         and isinstance(
             model, OptimizedModule
         ),  # this is needed for reduce-overhead to work correctly for now
-        paged_kv_cache=kv_cache if use_cache else None,
+        kv_cache_manager=kv_cache_manager,
     )
     if local_rank == 0:
         assert (
@@ -245,7 +243,7 @@ def end_to_end(model, use_cache, expected=None):
 
 
 e2e_expected_cache = end_to_end(model, True)
-e2e_expected_nocache = end_to_end(model, True)
+e2e_expected_nocache = end_to_end(model, False)
 
 
 def log_result(result):
@@ -265,10 +263,17 @@ def bench_one(use_cache):
     )
 
 
-def bench_end_to_end(use_cache, expected):
-    print0(f"- with use_cache={use_cache}")
+def bench_end_to_end(use_cache, expected, kv_cache_manager=None):
+    cache_type = ""
+    if use_cache:
+        if kv_cache_manager is None:
+            cache_type = "kv_cache_manager=expandable"
+        else:
+            cache_type = "kv_cache_manager=paged"
+
+    print0(f"- with use_cache={use_cache} {cache_type}")
     result = timeit.repeat(
-        lambda: end_to_end(model, use_cache, expected), number=1, repeat=repeat
+        lambda: end_to_end(model, use_cache, expected, kv_cache_manager), number=1, repeat=repeat
     )
     log_result(result)
 
@@ -292,6 +297,17 @@ if not args.skip_eager_runs:
             bench_end_to_end(True, e2e_expected_cache)
         if not args.skip_nokvcache_runs:
             bench_end_to_end(False, e2e_expected_nocache)
+
+        if not args.skip_paged_kvcache_runs:
+            kv_cache_manager = PagedKVCacheManager(
+                model.config.nlayers,
+                model.config.nheads,
+                model.config.emb_dim,
+                tensor_parallel_size=dist.get_world_size() if args.distributed else 1,
+                dtype=torch.get_default_dtype(),
+                device=device,
+            )
+            bench_end_to_end(True, e2e_expected_nocache, kv_cache_manager)
 
 if not args.skip_compile_runs:
     print0("Compiling model...")
