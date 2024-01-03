@@ -1,3 +1,4 @@
+import time
 from typing import Any, Callable, List, MutableMapping, Union, Optional
 
 import torch
@@ -94,6 +95,9 @@ def generate(
 
         input_ids = next_input[:, -max_seq_len:]
 
+        if i == 1:
+            start_time = time.time()
+
         # compute the mask
         if not use_cache or i == 0:
             is_pad = input_ids == 0
@@ -101,6 +105,9 @@ def generate(
             kwargs["mask"] = mask.tril(diagonal=0)
         else:
             kwargs["mask"] = None
+            # is_pad = result == 0
+            # mask = is_pad.unsqueeze(-1)
+            # kwargs["mask"] = mask
 
         # get the cache data and position ids if using cache
         if use_cache and kv_cache_manager:
@@ -167,7 +174,8 @@ def generate(
     ):
         kv_cache_manager.free_sequences(sequence_ids)  # type: ignore
 
-    return result
+    end_time = time.time()
+    return result, max_new_tokens, (end_time - start_time)
 
 
 def truncate_after_eos(result, eos_token_id):
@@ -287,6 +295,7 @@ def speculative_generate(
     n_gen = torch.zeros(bsize, device=inputs.device, dtype=torch.int)
     n_steps = 0
     inputs = inputs[:, -1:]
+    start_time = time.time()
     while min(n_gen) < new_tokens:
         n_steps += 1
 
@@ -386,5 +395,5 @@ def speculative_generate(
             kv_cache_manager.free(prefix.sequence_id)
             prefix = prefix.prefix
 
-
-    return result, n_steps
+    end_time = time.time()
+    return result, n_steps, (end_time - start_time)
