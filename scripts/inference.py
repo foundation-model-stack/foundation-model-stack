@@ -63,7 +63,7 @@ parser.add_argument(
     type=str,
     help="type of cache",
     default="none",
-    choices=["paged", "expandable"],
+    choices=["paged", "expandable", "none"],
 )
 
 parser.add_argument(
@@ -127,6 +127,28 @@ if args.compile:
     torch._inductor.config.joint_graph_constant_folding = False
     # compiling can make first inference pass slow
     model = torch.compile(model, mode=args.compile_mode)
+
+# cache setup
+cache_type = args.cache_type
+kv_cache_manager = None
+if cache_type == "paged":
+    from fms.utils.cache.paged import PagedKVCacheManager
+
+    use_cache = True
+    kv_cache_manager = PagedKVCacheManager(
+        model.config.nlayers,
+        model.config.nheads,
+        model.config.emb_dim,
+        tensor_parallel_size=dist.get_world_size() if args.distributed else 1,
+        dtype=torch.get_default_dtype(),
+        device=device,
+    )
+elif cache_type == "expandable":
+    use_cache = True
+elif cache_type == "none":
+    use_cache = False
+else:
+    raise ValueError("cache_type needs to be one of paged, expandable, or none")
 
 
 def ids_for_prompt(prompt):
@@ -228,25 +250,6 @@ def infer(use_cache, do_sample):
 
 print("generating output", local_rank)
 do_sample = [False]
-cache_type = args.cache_type
-kv_cache_manager = None
-if cache_type == "paged":
-    from fms.utils.cache.paged import PagedKVCacheManager
-
-    use_cache = True
-    kv_cache_manager = PagedKVCacheManager(
-        model.config.nlayers,
-        model.config.nheads,
-        model.config.emb_dim,
-        tensor_parallel_size=dist.get_world_size() if args.distributed else 1,
-        dtype=torch.get_default_dtype(),
-        device=device,
-    )
-elif cache_type == "expandable":
-    use_cache = True
-else:
-    use_cache = False
-
 
 for sample, cache in itertools.product(do_sample, [use_cache]):
     infer(cache, sample)

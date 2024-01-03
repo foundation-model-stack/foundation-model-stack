@@ -83,9 +83,9 @@ def generate(
                 model.config.nlayers,  # type: ignore
                 model.config.nheads,  # type: ignore
                 model.config.emb_dim,  # type: ignore
-                tensor_parallel_size=dist.get_world_size(),
+                tensor_parallel_size=dist.get_world_size() if dist.is_initialized() else 1,
                 dtype=torch.get_default_dtype(),
-                device=model.device,  # type: ignore
+                device=input_ids.device,
             )
 
     for i in range(max_new_tokens):
