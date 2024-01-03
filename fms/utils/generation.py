@@ -98,7 +98,9 @@ def generate(
             mask = is_pad.unsqueeze(-1) == is_pad.unsqueeze(-2)
             kwargs["mask"] = mask.tril(diagonal=0)
         else:
-            kwargs["mask"] = None
+            is_not_pad = result != 0
+            mask = is_not_pad.unsqueeze(-2)
+            kwargs["mask"] = mask
 
         # get the cache data and position ids if using cache
         if use_cache and kv_cache_manager:
