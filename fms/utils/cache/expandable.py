@@ -9,6 +9,9 @@ import torch
 class InPlaceCacheDataLayer(CacheDataLayer):
     data_layer: Tuple[torch.Tensor, torch.Tensor]
 
+    def get_cache_type(self) -> str:
+        return "in-place"
+
     def store(
         self, keys: torch.Tensor, values: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor]:

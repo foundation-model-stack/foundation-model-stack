@@ -188,7 +188,7 @@ class MultiHeadAttention(nn.Module):
         if (
             use_cache
             and cache_data_layer
-            and hasattr(cache_data_layer, "block_mapping")
+            and cache_data_layer.get_cache_type() == "paged-attention"
             and cache_data_layer.is_generating
         ):
             queries = queries.transpose(2, 1).reshape(-1, self.nheads, self.head_size)

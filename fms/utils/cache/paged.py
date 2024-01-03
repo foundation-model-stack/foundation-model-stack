@@ -237,6 +237,9 @@ class PagedAttentionCacheDataLayer(CacheDataLayer):
     head_size: int
     is_generating: bool
 
+    def get_cache_type(self) -> str:
+        return "paged-attention"
+
     def store(
         self, keys: torch.Tensor, values: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor]:
