@@ -60,8 +60,11 @@ class CacheData(metaclass=abc.ABCMeta):
     data: List[Tuple[torch.Tensor, torch.Tensor]]
         data is represented as a List of tuples of Tensors where each index in the list corresponds to a layer in the
         cache, and each position in the tuple corresponds to the key and value cache block for that layer
+    max_sequence_length: int
+        max sequence length of all sequences stored in this cache data
     """
     data: List[Tuple[torch.Tensor, torch.Tensor]]
+    max_sequence_length: int
 
     @abc.abstractmethod
     def get_layer(self, layer_index: int) -> CacheDataLayer:
@@ -102,17 +105,17 @@ class CacheDataWithMetadata(CacheData):
     data: List[Tuple[torch.Tensor, torch.Tensor]]
         data is represented as a List of tuples of Tensors where each index in the list corresponds to a layer in the
         cache, and each position in the tuple corresponds to the key and value cache block for that layer
+    max_sequence_length: int
+        max sequence length of all sequences corresponding to the sequence ids in this cache data
     sequence_ids: List[int]
         the integer ids associated with each sequence, these will correspond by index with the input ids passed to the
         model
-    max_sequence_length: int
-        the max sequence length of all sequences in the batch denoted by the sequence ids
     context_lengths: torch.Tensor
         a 1d tensor corresponding to the length of each sequence in the batch denoted by the sequence ids
     """
     data: List[Tuple[torch.Tensor, torch.Tensor]]
-    sequence_ids: List[int]
     max_sequence_length: int
+    sequence_ids: List[int]
     context_lengths: torch.Tensor
 
 
@@ -191,6 +194,7 @@ class OutOfPlaceCacheDataLayer(CacheDataLayer):
 class OutOfPlaceCacheData(CacheData):
     def __init__(self, data: List[Tuple[torch.Tensor, torch.Tensor]]):
         self.data = data
+        self.max_sequence_length = 0 if self.data[0] is None else self.data[0][0].size(2)
 
     def get_layer(self, layer_index: int) -> OutOfPlaceCacheDataLayer:
         return OutOfPlaceCacheDataLayer(data_layer=self.data[layer_index])

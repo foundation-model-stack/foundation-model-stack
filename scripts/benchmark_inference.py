@@ -178,19 +178,20 @@ next_input = torch.cat((ids, next_val), dim=-1)
 
 # not still needed
 del logits
+cache_data = OutOfPlaceCacheData(cache)
 position_ids = torch.tensor(
-    compute_position_ids([1 for _ in range(BATCH_SIZE)], [SEQ_LEN for _ in range(BATCH_SIZE)]),
+    compute_position_ids([1 for _ in range(BATCH_SIZE)], [cache_data.max_sequence_length+1 for _ in range(BATCH_SIZE)]),
     dtype=torch.long
 )
 expected, _ = model.forward(
-    next_val, cache_data=OutOfPlaceCacheData(cache), use_cache=True, only_last_token=True, position_ids=position_ids
+    next_val, cache_data=cache_data, use_cache=True, only_last_token=True, position_ids=position_ids
 )
 expected = torch.argmax(expected, dim=-1)
 
 expected2 = model.forward(next_input, only_last_token=True)
 expected2 = torch.argmax(expected2, dim=-1)
 
-# torch.testing.assert_close(expected, expected2)
+torch.testing.assert_close(expected, expected2)
 
 repeat = 3
 
