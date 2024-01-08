@@ -428,11 +428,16 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
             # here we are using 128 as this value fits with all popular models
             #   7B, 13B, 70B to recover the number of heads
             nheads = int(temp.size(0) / 128)
-            temp = (
-                temp.view(nheads, 2, -1, temp.size(1))
-                .transpose(1, 2)
-                .reshape(*temp.size())
-            )
+
+            def transform_func(tensor):
+                return (
+                    tensor.view(nheads, 2, -1, tensor.size(1))
+                    .transpose(1, 2)
+                    .reshape(*tensor.size())
+                )
+
+            temp = transform_func(temp)
+            temp.transform_func = transform_func
             new_sd[new_name] = temp
 
     return new_sd

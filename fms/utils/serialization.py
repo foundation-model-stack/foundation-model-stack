@@ -1,8 +1,13 @@
-from collections import ChainMap, OrderedDict
+import itertools
 import os
+from collections import ChainMap
 from pathlib import Path
-from typing import Any, Callable, List, Mapping, MutableMapping, Optional, Union
+from typing import Any, Callable, Dict, Mapping, MutableMapping, Optional, Tuple, Union
+
 import torch
+
+from fms.modules.tp import TPModule
+
 
 __adapters: MutableMapping[str, MutableMapping[str, Callable[[Mapping], Mapping]]] = {}
 
@@ -86,8 +91,31 @@ def get_adapted(
 from fms import models
 
 
+def get_ckp_format(model_path: Union[str, Path]) -> str:
+    """
+    Returns the checkpoint format of a model checkpoint. If format
+    is not recognized, assumes regular pytorch and returns "pt"
+
+    Args:
+    model_path: the path to find the weights.
+    """
+    model_path = Path(os.path.expanduser(model_path))
+    if (
+        model_path.suffix == ".safetensors"
+        or len(sorted(model_path.glob("*.safetensors"))) > 0
+    ):
+        return "st"
+    if model_path.suffix == ".pth" or len(sorted(model_path.glob("*.pth"))) > 0:
+        return "pt"
+    if model_path.suffix == ".bin" or len(sorted(model_path.glob("*.bin"))) > 0:
+        return "hf"
+    return "pt_all"
+
+
 def load_state_dict(
     model_path: Union[str, Path],
+    *,
+    checkpoint_format: Optional[str] = None,
     distributed_strategy: Optional[str] = None,
     checkpoint_sharding: Optional[str] = None,
     initial_device: torch.device = torch.device("cpu"),
@@ -99,8 +127,14 @@ def load_state_dict(
     the intended (possibly distributed) use-case, and returns the state dict
     if needed.
 
+    If model_path is a directory, it'll try to load, in this order, pytorch
+    models (.pth format), HF models (.bin format), and safetensors
+    (.safetensors format).
+
     Args:
     model_path: the path to find the weights. If not set, return None.
+    checkpoint_format: how the checkpoint files are saved: None, 'pt',
+            'hf', or 'st'. If None, guess based on files.
     distributed_strategy: the kind of possibly-distributed model in which we
             intend to load these weights. E.g. tp, fsdp, None. Used for
             validation.
@@ -109,25 +143,49 @@ def load_state_dict(
     initial_device: where the state dict will be loaded. if meta, return None.
     """
     if model_path is None or initial_device.type == "meta":
-        return {}
-    # TODO: Add support for tp-sharding a non-sharded state dict.
-    if (
-        distributed_strategy == "tp" or checkpoint_sharding == "tp"
-    ) and distributed_strategy != checkpoint_sharding:
-        raise ValueError(
-            f"TP-sharded models are currently only compatible with TP-sharded checkpoints. Attempting to load {checkpoint_sharding} to {distributed_strategy}"
-        )
+        return {}  # type: ignore
+    # TODO: Add support for tp-sharding a non-sharded state dict for pt, hf formats.
     if checkpoint_sharding == "fsdp" and distributed_strategy not in ["fsdp", "hsdp"]:
         raise ValueError(f"FSDP checkpoints can only be loaded into an FSDP model")
 
     model_path = Path(os.path.expanduser(model_path))
-    if not model_path.is_dir():
-        checkpoints = [model_path]
+
+    if checkpoint_format is None:
+        # Try finding the checkpoint format internally
+        checkpoint_format = get_ckp_format(model_path)
+
+    if checkpoint_format == "pt":
+        glob_pattern = "*.pth"
+    elif checkpoint_format == "hf":
+        glob_pattern = "*.bin"
+    elif checkpoint_format == "st":
+        glob_pattern = "*.safetensors"
+    elif checkpoint_format == "pt_all":
+        # Assume whatever file(s) are PT checkpoint(s)
+        glob_pattern = "*"
     else:
-        # TODO: add support for safetensors.
-        checkpoints = sorted(model_path.glob("*.pth"))
-        if not len(checkpoints):
-            checkpoints = sorted(model_path.glob("*.bin"))
+        raise ValueError(f"Unsupported checkpoint format {checkpoint_format}")
+    if model_path.is_file():
+        checkpoints = [model_path]
+        assert (
+            model_path.suffix == glob_pattern[1:]
+        ), f"Checkpoint {model_path} is not a {checkpoint_format} checkpoint"
+    else:
+        checkpoints = sorted(model_path.glob(glob_pattern))
+
+    # Check if the requested file format matches the file format
+    assert (
+        len(checkpoints) > 0
+    ), f"Can't find the requested checkpoint data at {model_path} for format {checkpoint_format}"
+
+    if (
+        (distributed_strategy == "tp" or checkpoint_sharding == "tp")
+        and distributed_strategy != checkpoint_sharding
+        and checkpoint_format != "st"
+    ):
+        raise ValueError(
+            f"TP-sharded models are currently only compatible with TP-sharded checkpoints unless you are using a safetensors checkpoint. Attempting to load {checkpoint_sharding} to {distributed_strategy}"
+        )
 
     if checkpoint_sharding is not None and checkpoint_sharding != "layer":
         assert world_size == len(
@@ -136,12 +194,275 @@ def load_state_dict(
 
         checkpoints = [checkpoints[rank]]
 
-    checkpoint_sds = [
-        torch.load(ckpt_path, map_location="cpu") for ckpt_path in checkpoints
-    ]
+    if checkpoint_format == "st":
+        from safetensors import safe_open  # type: ignore
+
+        # For safetensors, delay loading the weights until information about the model
+        # is available for sharding
+        checkpoint_sds = []
+        for ckp in checkpoints:
+            with safe_open(
+                ckp, framework="pt", device="cpu"
+            ) as ckp_f:  # type: ignore[attr-defined]
+                st_sd = {}
+                for key in ckp_f.keys():
+                    tensor_info = ckp_f.get_slice(key)
+                    st_sd[key] = torch.zeros(
+                        tensor_info.get_shape(),
+                        dtype=tensor_info.get_dtype(),
+                        device=torch.device("meta"),
+                    )
+                    st_sd[key].st_file = ckp  # type: ignore[attr-defined]
+                    st_sd[key].st_key = key  # type: ignore[attr-defined]
+                checkpoint_sds.append(st_sd)
+    else:
+        checkpoint_sds = [
+            torch.load(ckpt_path, map_location="cpu") for ckpt_path in checkpoints
+        ]
     assert len(checkpoint_sds[0]), f"Unable to load checkpoint data at {model_path}"
     if len(checkpoint_sds) == 1:
         return checkpoint_sds[0]
     else:
         # layer-sharded checkpoints, e.g. as used in HF
         return ChainMap(*checkpoint_sds)
+
+
+def load_safetensors_checkpoint(
+    model: torch.nn.Module, state_dict: Mapping[str, Any], device, rank, world_size
+):
+    """
+    This function loads a safetensors unsharded checkpoint into a model (possibly TP)
+    with an arbitrary number of ranks.
+
+    Args
+    ====
+    model: torch.nn.Module
+        Model where the weights will be loaded
+    state_dict: Mapping[str, any]
+        Dictionary mapping FMS weight names to files and their weight names
+    rank: int
+        Rank of the current process
+    world_size: int
+        Total number of TP processes
+    """
+    from safetensors import safe_open
+
+    # First redo state_dict into a better structure for loading
+    weights_map: Dict[
+        str, Dict[str, Tuple[str, Callable[[torch.Tensor], torch.Tensor]]]
+    ] = {}
+    for weight_name, weight_info in state_dict.items():
+        st_file = getattr(weight_info, "st_file")
+        st_key = getattr(weight_info, "st_key")
+        st_transform = getattr(weight_info, "transform_func", lambda x: x)
+        if not st_file in weights_map:
+            weights_map[st_file] = {}
+        weights_map[st_file][weight_name] = (st_key, st_transform)
+
+    with torch.no_grad():
+        for weights_file, weights_info in weights_map.items():
+            with safe_open(
+                weights_file, framework="pt", device=str(device)
+            ) as model_weights:  # type: ignore[attr-defined]
+                _load_safetensors_checkpoint_impl(
+                    model, model_weights, weights_info, rank, world_size, ""
+                )
+
+
+def _copy_colwise_st(
+    module: torch.nn.Module, weights, weight_info_map, rank, world_size, prefix
+):
+    """
+    This function copies the correct shard of the weights for a colwise-TP'd module
+    according to the rank of the process and the world_size.
+
+    Args
+    ====
+    module: torch.nn.Module
+        Module that has had TP applied
+    weights:
+        safetensors weights object
+    rank: int
+        Rank of the current process
+    world_size: int
+        Total number of TP processes
+    prefix: str
+        Where to find the weight in the weights object
+    """
+    # Divide the weight matrix along the first dimension.
+    output_size_per_partition = module.weight.shape[0]
+    fms_weight_name = prefix + "weight"
+    if fms_weight_name in weight_info_map:
+        st_name, st_func = weight_info_map[fms_weight_name]
+        tensor_slice = st_func(weights.get_tensor(st_name))
+        tensor = tensor_slice[
+            (rank * output_size_per_partition) : (
+                (rank + 1) * output_size_per_partition
+            ),
+            :,
+        ]
+        module.weight.copy_(tensor, non_blocking=True)
+    if module.bias is not None:
+        fms_bias_name = prefix + "bias"
+        if fms_bias_name in weight_info_map:
+            st_name, st_func = weight_info_map[fms_bias_name]
+            tensor_slice = st_func(weights.get_tensor(st_name))
+            tensor = tensor_slice[
+                (rank * output_size_per_partition) : (
+                    (rank + 1) * output_size_per_partition
+                )
+            ]
+            module.bias.copy_(tensor, non_blocking=True)
+
+
+def _copy_rowwise_st(
+    module: torch.nn.Module, weights, weight_info_map, rank, world_size, prefix
+):
+    """
+    This function copies the correct shard of the weights for a rowwise-TP'd module
+    according to the rank of the process and the world_size.
+
+    Args
+    ====
+    module: torch.nn.Module
+        Module that has had TP applied
+    weights:
+        safetensors weights object
+    rank: int
+        Rank of the current process
+    world_size: int
+        Total number of TP processes
+    prefix: str
+        Where to find the weight in the weights object
+    """
+    # Divide the weight matrix along the last dimension.
+    output_size_per_partition = module.weight.shape[1]
+    fms_weight_name = prefix + "weight"
+    if fms_weight_name in weight_info_map:
+        st_name, st_func = weight_info_map[fms_weight_name]
+        tensor_slice = st_func(weights.get_tensor(st_name))
+        tensor = tensor_slice[
+            :,
+            (rank * output_size_per_partition) : (
+                (rank + 1) * output_size_per_partition
+            ),
+        ]
+        module.weight.copy_(tensor, non_blocking=True)
+    if module.bias is not None:
+        if rank == 0:
+            _copy_if_present_st(module.bias, weights, prefix + "bias", weight_info_map)
+        else:
+            module.bias.zero_()
+
+
+def _copy_embedding_st(
+    module: torch.nn.Module, weights, weight_info_map, rank, world_size, prefix
+):
+    """
+    This function copies the correct shard of the weights for a TP'd embedding module
+    according to the rank of the process and the world_size.
+
+    Args
+    ====
+    module: torch.nn.Module
+        Module that has had TP applied
+    weights:
+        safetensors weights object
+    rank: int
+        Rank of the current process
+    world_size: int
+        Total number of TP processes
+    prefix: str
+        Where to find the weight in the weights object
+    """
+    # Divide the weight matrix along the last dimension.
+    output_size_per_partition = module.weight.shape[1]
+    fms_weight_name = prefix + "weight"
+    if fms_weight_name in weight_info_map:
+        st_name, st_func = weight_info_map[fms_weight_name]
+        tensor_slice = st_func(weights.get_tensor(st_name))
+        tensor = tensor_slice[
+            :,
+            (rank * output_size_per_partition) : (
+                (rank + 1) * output_size_per_partition
+            ),
+        ]
+        module.weight.copy_(tensor, non_blocking=True)
+
+
+def _copy_if_present_st(parameter, model_weights, fms_weight_name, weight_info_map):
+    if fms_weight_name in weight_info_map:
+        st_name, st_func = weight_info_map[fms_weight_name]
+        parameter.copy_(st_func(model_weights.get_tensor(st_name)), non_blocking=True)
+
+
+def _load_safetensors_checkpoint_impl(
+    layer: torch.nn.Module,
+    model_weights,
+    weight_info_map,
+    rank=0,
+    world_size=1,
+    prefix="",
+):
+    # If we're on a leaf module and no TP has happened just copy the weights
+    if len(list(layer.children())) == 0:
+        for name, parameter in layer.named_parameters():
+            full_fms_name = prefix + name
+            _copy_if_present_st(
+                parameter, model_weights, full_fms_name, weight_info_map
+            )
+
+    for name, child in layer.named_children():
+        if isinstance(child, TPModule):
+            for colwise_weight in child.list_colwise_weights():
+                _copy_colwise_st(
+                    getattr(child, colwise_weight),
+                    model_weights,
+                    weight_info_map,
+                    rank,
+                    world_size,
+                    f"{prefix}{name}.{colwise_weight}.",
+                )
+            for rowwise_weight in child.list_rowwise_weights():
+                _copy_rowwise_st(
+                    getattr(child, rowwise_weight),
+                    model_weights,
+                    weight_info_map,
+                    rank,
+                    world_size,
+                    f"{prefix}{name}.{rowwise_weight}.",
+                )
+            for embedding_weight in child.list_embedding_weights():
+                _copy_embedding_st(
+                    getattr(child, embedding_weight),
+                    model_weights,
+                    weight_info_map,
+                    rank,
+                    world_size,
+                    f"{prefix}{name}.{embedding_weight}.",
+                )
+            tp_sharded_modules = list(
+                itertools.chain(
+                    child.list_colwise_weights(),
+                    child.list_rowwise_weights(),
+                    child.list_embedding_weights(),
+                )
+            )
+            for mod_name, module in child.named_children():
+                if not mod_name in tp_sharded_modules:
+                    for param_name, param in module.named_parameters(recurse=False):
+                        _copy_if_present_st(
+                            param,
+                            model_weights,
+                            f"{prefix}{name}.{mod_name}.{param_name}",
+                            weight_info_map,
+                        )
+        else:
+            _load_safetensors_checkpoint_impl(
+                child,
+                model_weights,
+                weight_info_map,
+                rank,
+                world_size,
+                prefix + name + ".",
+            )

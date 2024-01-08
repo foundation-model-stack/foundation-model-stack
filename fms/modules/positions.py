@@ -13,12 +13,12 @@ class PositionEncoder:
     # Override to adjust the mask e.g. for Alibi
     def adjusted_mask(
         self,
-        mask: torch.Tensor,
+        mask: Optional[torch.Tensor],
         q: torch.Tensor,
         k: torch.Tensor,
-        past_kv_state: torch.Tensor,
+        past_kv_state: Optional[Tuple[torch.Tensor, torch.Tensor]],
         use_cache=False,
-    ) -> torch.Tensor:
+    ) -> Optional[torch.Tensor]:
         return mask
 
     # Override to adjust q/k's e.g. for rotary embeddings
@@ -27,7 +27,7 @@ class PositionEncoder:
         q: torch.Tensor,
         k: torch.Tensor,
         position_ids: Optional[torch.LongTensor],
-        past_kv_state: torch.Tensor,
+        past_kv_state: Optional[Tuple[torch.Tensor, torch.Tensor]],
         use_cache=False,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         return q, k
@@ -61,12 +61,12 @@ class Alibi(PositionEncoder):
 
     def adjusted_mask(
         self,
-        mask: torch.Tensor,
+        mask: Optional[torch.Tensor],
         q: torch.Tensor,
         k: torch.Tensor,
-        past_kv_state: torch.Tensor,
+        past_kv_state: Optional[Tuple[torch.Tensor, torch.Tensor]],
         use_cache=False,
-    ) -> torch.Tensor:
+    ) -> Optional[torch.Tensor]:
         qlen = q.size(1)
         klen = k.size(1)
 
@@ -215,7 +215,7 @@ class RotaryEmbedding(PositionEncoder):
         q: torch.Tensor,
         k: torch.Tensor,
         position_ids: Optional[torch.Tensor] = None,
-        past_kv_state: Optional[torch.Tensor] = None,
+        past_kv_state: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
         use_cache=False,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """

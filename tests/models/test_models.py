@@ -1,8 +1,10 @@
-from collections import ChainMap
 import tempfile
+from collections import ChainMap
 from pathlib import Path
+
 import pytest
 import torch
+
 from fms import models
 from fms.utils import serialization
 
@@ -33,7 +35,7 @@ def test_load():
     m = models._get_model_instance("llama", "micro")
     sd = m.state_dict()
 
-    with tempfile.NamedTemporaryFile() as f:
+    with tempfile.NamedTemporaryFile(suffix=".pth") as f:
         torch.save(sd, f.name)
         loaded = models.get_model("llama", "micro", f.name)
 
@@ -57,7 +59,8 @@ def test_load():
         for i in range(len(dicts)):
             path = Path(d) / f"{i}.pth"
             torch.save(dicts[i], path)
-        newsd = serialization.load_state_dict(d)
+        ckp_format = serialization.get_ckp_format(d)
+        newsd = serialization.load_state_dict(d, ckp_format)
         as_loaded = models.get_model("llama", "micro", d).state_dict()
         # this style load, layer-sharded, has to stitch together the state dicts.
         assert type(newsd) == ChainMap

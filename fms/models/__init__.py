@@ -1,25 +1,25 @@
 from contextlib import nullcontext
 from functools import partial
 from typing import Any, Callable, Mapping, MutableMapping, Optional
+
 import torch
 from torch import nn
+from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
+    CheckpointImpl,
+    apply_activation_checkpointing,
+    checkpoint_wrapper,
+)
+from torch.distributed.distributed_c10d import ProcessGroup
+from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+from torch.distributed.fsdp import MixedPrecision, ShardingStrategy
+
 from fms import distributed
 from fms.distributed.strategy import (
     TensorParallelStrategy,
     UniformModelParallelStrategy,
 )
-from torch.distributed.fsdp import (
-    FullyShardedDataParallel as FSDP,
-    ShardingStrategy,
-    MixedPrecision,
-)
-from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
-    checkpoint_wrapper,
-    CheckpointImpl,
-    apply_activation_checkpointing,
-)
-from torch.distributed.distributed_c10d import ProcessGroup
 from fms.utils import serialization
+
 
 __models: MutableMapping[str, MutableMapping[str, Callable[[], nn.Module]]] = {}
 
@@ -160,9 +160,7 @@ def _fsdp_wrap(
     # initializes parameters that are on meta devices
     def init_fn(x: nn.Module):
         if not rank0:
-            return x.to_empty(device=device, recurse=False)
-        else:
-            return x
+            x.to_empty(device=device, recurse=False)
 
     # TODO: enable other policies
     mp_policy = MixedPrecision(
@@ -208,6 +206,26 @@ def _is_dp(distributed_strategy):
     return distributed_strategy in {"fsdp", "hsdp", "ddp"}
 
 
+def _load_state_dict_into_model(
+    model, state_dict, device, rank, world_size, checkpoint_format
+):
+    if checkpoint_format == "st":
+        # In this case state_dict contains some extra information:
+        # 1. Each tensor in the state dict is in a meta device to save memory
+        # 2. Each tensor has 3 extra parameters appended to it:
+        #   - st_file: the safetensors checkpoint to load the weights from
+        #   - st_key: the key(s) in the ST checkpoint needed for this weight
+        #   - transform_func: a function that transforms the weights represented
+        #     by st_key in the st_file checkpoint into the FMS weight in the state dict
+        # This is all the information needed to properly load, transform, and
+        # optionally TP partition the weights coming from a ST checkpoint
+        serialization.load_safetensors_checkpoint(
+            model, state_dict, device, rank, world_size
+        )
+    else:
+        model.load_state_dict(state_dict, strict=False)
+
+
 def get_model(
     architecture: str,
     variant: str,
@@ -216,6 +234,7 @@ def get_model(
     device_type: str = "cpu",
     distributed_strategy: Optional[str] = None,
     checkpoint_sharding: Optional[str] = None,
+    checkpoint_format: Optional[str] = None,
     group: Optional[ProcessGroup] = None,
     **kwargs,
 ):
@@ -232,6 +251,8 @@ def get_model(
     distributed_strategy: None, 'fsdp', 'hsdp', 'tp', or 'mp'.
     checkpoint_sharding: how the checkpoint files are sharded: None, 'tp',
                 'fsdp', or 'layer'. If None, guess based on files.
+    checkpoint_format: how the checkpoint files are saved: None, 'pt',
+                'hf', or 'st'. If None, guess based on files.
     source: If the weights in the state dict didn't come from an FMS model,
                 `source` specifies which conversion function might be needed.
                 See `serialization.list_sources(architecture)`
@@ -243,7 +264,10 @@ def get_model(
         if world_size > 1:
             distributed_strategy = "tp"
 
-    device = torch.device(device_type, local_rank)
+    if device_type == "cuda":
+        device = torch.device(device_type, local_rank)
+    else:
+        device = torch.device(device_type)
 
     if (
         _is_dp(distributed_strategy)
@@ -257,13 +281,16 @@ def get_model(
         initial_device = device
 
     if model_path is not None:
+        if checkpoint_format is None:
+            checkpoint_format = serialization.get_ckp_format(model_path)
         fms_sd = serialization.load_state_dict(
             model_path,
-            distributed_strategy,
-            checkpoint_sharding,
-            initial_device,
-            local_rank,
-            world_size,
+            checkpoint_format=checkpoint_format,
+            distributed_strategy=distributed_strategy,
+            checkpoint_sharding=checkpoint_sharding,
+            initial_device=initial_device,
+            rank=local_rank,
+            world_size=world_size,
         )
         fms_sd = serialization.get_adapted(architecture, source, fms_sd)
     else:
@@ -281,6 +308,7 @@ def get_model(
                 devices, _guess_num_layers(fms_sd)
             )
 
+    # Create the model
     fms_model = _get_model_instance(
         architecture, variant, device=initial_device, extra_args=extra_args
     )
@@ -295,17 +323,20 @@ def get_model(
     )
 
     if pre_load and local_rank == 0 and len(fms_sd):
-        fms_model.load_state_dict(fms_sd, strict=False)
+        _load_state_dict_into_model(
+            fms_model, fms_sd, device, local_rank, world_size, checkpoint_format
+        )
 
     # post-init distribution
     if _is_dp(distributed_strategy):
         fms_model = _fsdp_wrap(fms_model, distributed_strategy, device, local_rank == 0)
 
     if not pre_load and len(fms_sd):
-        fms_model.load_state_dict(fms_sd, strict=False)
+        _load_state_dict_into_model(
+            fms_model, fms_sd, device, local_rank, world_size, checkpoint_format
+        )
 
     return fms_model
 
 
-from fms.models import llama
-from fms.models import roberta
+from fms.models import llama, roberta
