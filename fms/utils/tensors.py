@@ -1,9 +1,10 @@
+from typing import Dict
+
 import torch
 
 import functools
 
 _HANDLED_FUNCTIONS = {}
-
 
 def _implements(torch_function):
     """Register a torch function override"""
@@ -134,3 +135,21 @@ class ExpandableTensor(torch.Tensor):
             args = [a._tensor() if type(a) == ExpandableTensor else a for a in args]
             return func(*args, **kwargs)
         return _HANDLED_FUNCTIONS[func](*args, **kwargs)
+
+    def __tensor_flatten__(self):
+        ctx = {
+            "dim": self._dim,
+        }
+
+        inner_tensors = ["_underlying_tensor"]
+        return inner_tensors, ctx
+
+    @staticmethod
+    def __tensor_unflatten__(inner_tensors: Dict, meta, outer_size, outer_stride):
+        underlying_tensor = inner_tensors["_underlying_tensor"]
+        dim = meta["dim"]
+
+        return ExpandableTensor(
+            underlying_tensor,
+            dim=dim
+        )

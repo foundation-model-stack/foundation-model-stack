@@ -395,7 +395,6 @@ class CacheBlockGroup(List[CacheBlock]):
                 num_tokens_to_remove -= cb.num_tokens
                 cb.num_tokens = 0
                 blocks_to_free.append(cb)
-                num_tokens_to_remove -= cb.num_tokens
             else:
                 # if its equal to num tokens, we don't need to free the block as it can just be re-used
                 cb.subtract_num_tokens(num_tokens_to_remove)

@@ -4,6 +4,8 @@ from fms.utils.cache import CacheDataLayer, CacheDataWithMetadata, KVCacheManage
 import dataclasses
 import torch
 
+from fms.utils.tensors import ExpandableTensor
+
 
 @dataclasses.dataclass
 class InPlaceCacheDataLayer(CacheDataLayer):
@@ -95,7 +97,7 @@ class ExpandableKVCacheManager(KVCacheManager):
                 dtype=self.dtype,
                 device=self.device,
             )
-            self.cache.append((empty_tensor_k, empty_tensor_v))
+            self.cache.append((ExpandableTensor(empty_tensor_k, dim=2), ExpandableTensor(empty_tensor_v, dim=2)))
 
         return InPlaceCacheData(
             data=self.cache,

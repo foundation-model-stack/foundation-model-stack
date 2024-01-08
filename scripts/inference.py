@@ -6,9 +6,7 @@ import torch
 import torch._inductor.config
 from torch import distributed as dist
 
-from fms.distributed.strategy import TensorParallelStrategy
 from fms.models import get_model
-from fms.models.llama import load_fms_llama
 from fms.utils import generation, tokenizers
 from fms.utils.generation import generate
 
