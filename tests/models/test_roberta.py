@@ -1,13 +1,13 @@
 import pytest
 
+from fms.models.roberta import RoBERTa, RoBERTaConfig
 from fms.testing._internal.model_test_suite import (
     ConfigFixtureMixin,
-    ModelFixtureMixin,
+    ModelCompileTestSuite,
     ModelConfigTestSuite,
     ModelConsistencyTestSuite,
-    ModelCompileTestSuite,
+    ModelFixtureMixin,
 )
-from fms.models.roberta import RoBERTaConfig, RoBERTa
 
 
 class RoBERTaFixtures(ConfigFixtureMixin, ModelFixtureMixin):

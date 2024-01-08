@@ -1,13 +1,15 @@
+import os
 from abc import abstractmethod
 from datetime import datetime
-import os
 from pathlib import Path
 from typing import Dict, List, Optional
+
 import torch
 from torch import distributed as dist
 from torch import nn
+
 from fms import utils
-from fms.utils import print0, generation
+from fms.utils import generation, print0
 
 
 class TrainerPlugin:

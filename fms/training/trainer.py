@@ -1,10 +1,12 @@
 from contextlib import nullcontext
 from typing import List, Optional
+
 import torch
-from torch.cuda import amp
 from torch import nn
-from torch.utils.data import DataLoader, DistributedSampler
+from torch.cuda import amp
 from torch.optim import Optimizer
+from torch.utils.data import DataLoader, DistributedSampler
+
 from fms.training.plugins import TrainerPlugin
 from fms.utils import print0
 
