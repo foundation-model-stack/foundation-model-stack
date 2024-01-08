@@ -22,7 +22,7 @@ def _make_cache_contiguous(past_key_value_states):
 
 def generate(
     model: Union[Callable, torch.nn.Module],
-    input_ids: torch.Tensor,
+    input_ids: Union[torch.Tensor, List[torch.Tensor]],
     max_seq_len: int = 2048,
     max_new_tokens: int = 256,
     temperature: float = 1.0,
@@ -31,17 +31,23 @@ def generate(
     num_beams: int = 1,
     use_cache: bool = False,
     contiguous_cache: bool = False,
+    pad_id: int = 0,
 ):
     """
     A trivial generate function that can be used for validation/testing in
     cases where HF is not available.
     We could add implementations for other types of generation, but this is
     enough for making sure a model is working.
-    Does not implement batching nor beam search, but those could be added.
+    Does not implement beam search, but could be added.
 
     Args:
         model: A function or nn.Module that takes a batch of input_ids and
             returns logits
+        input_ids: torch.Tensor or list[torch.Tensor]
+            the input ids to the model. If the input_ids are a tensor with dimensionality greater than 1, it will be
+            assumed to be a batch where each sequence is the same length. If the input_ids are a list of tensors, this
+            will make the assumption that batch generation is being done and if sequences are of different length, a
+            mask will be used.
         prefix: A tensor of token IDs.
         max_seq_len: the sequence length of the model
         max_new_tokens: max tokens to generate
@@ -51,13 +57,24 @@ def generate(
         num_beams: TODO: support beam search
         use_cache: requires that the model accept use_cache and
             past_key_value_states args in forward method.
+        pad_id: int
+            the pad token id to use in case of batch generation where sequences are of different lengths
     """
     batched = False
+    requires_padding = False
     if num_beams != 1:
         raise NotImplementedError("generate() does yet not support beam search")
-    if type(input_ids) == torch.Tensor:
+    if isinstance(input_ids, torch.Tensor):
+        # TODO: nested tensors
         if input_ids.dim() != 1:
             batched = True
+    elif isinstance(input_ids, list):
+        max_length = max(p.size(0) for p in input_ids)
+        requires_padding = any(p.size(0) < max_length for p in input_ids)
+        if requires_padding:
+            input_ids = [torch.cat((torch.tensor([pad_id] * (max_length - p.size(0)), device=p.device, dtype=torch.long), p)) for p in input_ids]
+        input_ids = torch.stack(input_ids, dim=0)
+        batched = True
     else:
         raise RuntimeError("generate() requires a tensor of token ids as the prefix")
 
@@ -70,8 +87,23 @@ def generate(
     kwargs["past_key_value_states"] = None
     kwargs["use_cache"] = use_cache
 
-    for _ in range(max_new_tokens):
+    for i in range(max_new_tokens):
         input_ids = next_input[:, -max_seq_len:]
+
+        # compute the attention mask
+        # always need a mask if this is the prompt or if not using a cache
+        if i == 0 or not use_cache:
+            is_pad = input_ids == pad_id
+            mask = is_pad.unsqueeze(-1) == is_pad.unsqueeze(-2)
+            kwargs["mask"] = mask.tril(diagonal=0)
+        # otherwise if the batch required padding, we need to account for the padding tokens when using cache
+        elif requires_padding:
+            is_not_pad = result != pad_id
+            mask = is_not_pad.unsqueeze(-2)
+            kwargs["mask"] = mask
+        else:
+            kwargs["mask"] = None
+
         output = model(input_ids, **kwargs)
         if use_cache:
             logits, past_key_value_states = output
