@@ -1,8 +1,10 @@
-from collections import ChainMap, OrderedDict
 import os
+from collections import ChainMap, OrderedDict
 from pathlib import Path
 from typing import Any, Callable, List, Mapping, MutableMapping, Optional, Union
+
 import torch
+
 
 __adapters: MutableMapping[str, MutableMapping[str, Callable[[Mapping], Mapping]]] = {}
 

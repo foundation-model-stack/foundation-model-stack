@@ -5,8 +5,8 @@ import torch
 import torch.nn as nn
 from numpy import sign
 from torch.distributed.distributed_c10d import ProcessGroup
-from fms import distributed
 
+from fms import distributed
 from fms.distributed.tensorparallel import (
     all_gather_from_tensor_model_parallel_region,
     apply_colwise_tp,

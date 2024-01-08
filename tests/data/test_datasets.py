@@ -1,9 +1,11 @@
-from fms import datasets
-from fms.datasets.text import CausalTextDatasetFromString
-from fms.datasets.instructions import JsonInstructions
-from fms.utils import tokenizers
 import tempfile
+
 import torch
+
+from fms import datasets
+from fms.datasets.instructions import JsonInstructions
+from fms.datasets.text import CausalTextDatasetFromString
+from fms.utils import tokenizers
 
 
 sample_json = """[{
