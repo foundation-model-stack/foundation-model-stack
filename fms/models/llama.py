@@ -27,7 +27,6 @@ from fms.utils.activation import str_to_activation
 from fms.utils.config import ModelConfig
 from fms.utils.tokenizers import _has_hf, get_tokenizer
 
-
 # params emb_dim heads layers lr
 #  7B    4096    32    32     3.0E-04
 # 13B    5120    40    40     3.0E-04
@@ -110,17 +109,11 @@ class LLaMABlock(nn.Module):
         *,
         mask=None,
         position_ids=None,
-        past_key_value_state=None,
+        cache_data_layer=None,
         use_cache=False,
         is_causal_mask=False,
         attn_algorithm=None,
     ):
-        # if the cache is not empty, we need to get the kv cache for self and cross attention
-        self_attn_past_key_value = past_key_value_state
-        # if past_key_value_state is not None:
-        #     self_attn_past_key_value = past_key_value_state[:2]
-        # else:
-        #     self_attn_past_key_value = None
 
         # first we do MHA and Add&Norm
         residual = x
@@ -132,7 +125,7 @@ class LLaMABlock(nn.Module):
             mask=mask,
             position_ids=position_ids,
             attn_algorithm=attn_algorithm,
-            past_key_value_state=self_attn_past_key_value,
+            cache_data_layer=cache_data_layer,
             use_cache=use_cache,
             is_self=True,
             is_causal_mask=is_causal_mask,
@@ -248,28 +241,25 @@ class LLaMA(nn.Module):
         x_in,
         mask=None,
         position_ids=None,
-        past_key_value_states=None,
+        cache_data=None,
         use_cache=False,
         attn_algorithm=None,
     ):
-        # Embed the given vocabulary indices using the given attention mask, with pre-/post-norm and dropout as specified
-        # x_in: batch_size x seq_len
-        # mask: batch_size x seq_len x seq_len
-        # bias: nheads x seq_len x seq_len
-        if past_key_value_states is None or len(past_key_value_states) == 0:
-            past_key_value_states = [None for _ in range(len(self.layers))]
 
         qlen = x_in.size(1)
-        klen = x_in.size(1)
+        filled_cache = False
 
         # if we are using the cache, the key length needs to be extended with the past keys length
-        if use_cache and past_key_value_states[0] is not None:
-            klen += past_key_value_states[0][0].size(-2)
+        # todo: we probably don't need this here as we are only using the klen to check for is_causal_mask
+        #  might be better to just set is_generating in the cache_metadata and compute the position_offset in attention
+        if use_cache:
+            if cache_data:
+                filled_cache = cache_data.is_filled()
 
         # if mask is none, we need to specify causal mask
         if mask is None:
             # we are caching and can assume all 1s in the mask
-            if use_cache and klen != 1 and qlen == 1:
+            if use_cache and filled_cache and qlen == 1:
                 # b x h x qlen x kvlen
                 is_causal_mask = False
             else:
@@ -287,7 +277,9 @@ class LLaMA(nn.Module):
                 x=x_in,
                 mask=mask,
                 position_ids=position_ids,
-                past_key_value_state=past_key_value_states[i],
+                cache_data_layer=None
+                if cache_data is None
+                else cache_data.get_layer(i),
                 use_cache=use_cache,
                 is_causal_mask=is_causal_mask,
                 attn_algorithm=attn_algorithm,
@@ -312,13 +304,18 @@ class LLaMA(nn.Module):
         x,
         mask=None,
         position_ids=None,
-        past_key_value_states=None,
+        cache_data=None,
         use_cache=False,
         only_last_token=False,
         attn_algorithm=None,
     ):
         output, cache = self._helper(
-            x, mask, position_ids, past_key_value_states, use_cache, attn_algorithm
+            x,
+            mask,
+            position_ids,
+            cache_data,
+            use_cache,
+            attn_algorithm,
         )
 
         if only_last_token:
@@ -473,12 +470,12 @@ def load_fms_llama(model_path: str, group=None, **kwargs):
     if world_size > 1:
         print("using tensor parallel")
         extra_args["distributed_strategy"] = TensorParallelStrategy()
-    elif torch.cuda.device_count() > 1:
-        print("using model parallel")
-        devices = [i for i in range(torch.cuda.device_count())]
-        extra_args["distributed_strategy"] = UniformModelParallelStrategy(
-            devices, params["n_layers"]
-        )
+    # elif torch.cuda.device_count() > 1:
+    #     print("using model parallel")
+    #     devices = [i for i in range(torch.cuda.device_count())]
+    #     extra_args["distributed_strategy"] = UniformModelParallelStrategy(
+    #         devices, params["n_layers"]
+    #     )
 
     if "n_kv_heads" in params:
         extra_args["kvheads"] = params["n_kv_heads"]

@@ -2,7 +2,7 @@ from abc import abstractmethod
 from datetime import datetime
 import os
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Union
 import torch
 from torch import distributed as dist
 from torch import nn
@@ -188,7 +188,7 @@ class Checkpointer(TrainerPlugin):
 
     def __init__(
         self,
-        save_dir: str | Path = Path("./checkpoints"),
+        save_dir: Union[str, Path] = Path("./checkpoints"),
         steps: Optional[int] = None,
         name: Optional[str] = None,
         group: Optional[dist.ProcessGroup] = None,

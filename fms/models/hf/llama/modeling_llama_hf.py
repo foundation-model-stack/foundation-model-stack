@@ -9,6 +9,7 @@ from fms.models.hf.llama.configuration_llama_hf import HFAdaptedLLaMAConfig
 from fms.models.hf.lm_head_mixins import LMHeadModelLMHeadMixin
 from fms.models.hf.modeling_hf_adapter import HFDecoder, HFDecoderModelArchitecture
 from fms.models.llama import LLaMA
+from fms.utils.cache import CacheData
 
 
 class HFAdaptedLLaMADecoder(HFDecoder):
@@ -22,7 +23,7 @@ class HFAdaptedLLaMADecoder(HFDecoder):
         input_ids: Optional[torch.LongTensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
-        past_key_values: Optional[Tuple[torch.Tensor]] = None,
+        past_key_values: Optional[CacheData] = None,
         use_cache: Optional[bool] = None,
         attn_algorithm: Optional[
             str
@@ -34,7 +35,7 @@ class HFAdaptedLLaMADecoder(HFDecoder):
             x_in=input_ids,
             mask=attention_mask,
             position_ids=position_ids,
-            past_key_value_states=past_key_values,
+            cache_data=past_key_values,
             use_cache=use_cache,
             attn_algorithm=attn_algorithm,
         )

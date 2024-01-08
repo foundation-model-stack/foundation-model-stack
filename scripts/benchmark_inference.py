@@ -8,9 +8,11 @@ import torch
 from torch import distributed as dist
 from torch._dynamo import OptimizedModule
 from fms import models
+from fms.modules.positions import compute_position_ids
 
 from fms.utils import generation, print0, tokenizers
-
+from fms.utils.cache import OutOfPlaceCacheData
+from fms.utils.cache.paged import PagedKVCacheManager
 
 # Example running llama 7B on one A100:
 #
@@ -113,6 +115,11 @@ parser.add_argument(
     help="Do not run the kv-cache benchmarks",
 )
 parser.add_argument(
+    "--skip_paged_kvcache_runs",
+    action="store_true",
+    help="Do not run the paged kv-cache benchmarks",
+)
+parser.add_argument(
     "--skip_nokvcache_runs",
     action="store_true",
     help="Do not run the no kv-cache benchmarks",
@@ -171,9 +178,20 @@ next_input = torch.cat((ids, next_val), dim=-1)
 
 # not still needed
 del logits
-
+cache_data = OutOfPlaceCacheData(cache)
+position_ids = torch.tensor(
+    compute_position_ids(
+        [1 for _ in range(BATCH_SIZE)],
+        [cache_data.max_sequence_length + 1 for _ in range(BATCH_SIZE)],
+    ),
+    dtype=torch.long,
+)
 expected, _ = model.forward(
-    next_val, past_key_value_states=cache, use_cache=True, only_last_token=True
+    next_val,
+    cache_data=cache_data,
+    use_cache=True,
+    only_last_token=True,
+    position_ids=position_ids,
 )
 expected = torch.argmax(expected, dim=-1)
 
@@ -197,7 +215,10 @@ repeat = 3
 def one_token(model, use_cache):
     if use_cache:
         actual, _ = model.forward(
-            next_val, past_key_value_states=cache, use_cache=True, only_last_token=True
+            next_val,
+            cache_data=OutOfPlaceCacheData(cache),
+            use_cache=True,
+            only_last_token=True,
         )
     else:
         actual = model.forward(next_input, only_last_token=True)
@@ -208,7 +229,7 @@ def one_token(model, use_cache):
         torch.cuda.synchronize()
 
 
-def end_to_end(model, use_cache, expected=None):
+def end_to_end(model, use_cache, expected=None, kv_cache_manager=None):
     result = generation.generate(
         model,
         ids,
@@ -219,6 +240,7 @@ def end_to_end(model, use_cache, expected=None):
         and isinstance(
             model, OptimizedModule
         ),  # this is needed for reduce-overhead to work correctly for now
+        kv_cache_manager=kv_cache_manager,
     )
     if local_rank == 0:
         assert (
@@ -232,7 +254,7 @@ def end_to_end(model, use_cache, expected=None):
 
 
 e2e_expected_cache = end_to_end(model, True)
-e2e_expected_nocache = end_to_end(model, True)
+e2e_expected_nocache = end_to_end(model, False)
 
 
 def log_result(result):
@@ -252,13 +274,33 @@ def bench_one(use_cache):
     )
 
 
-def bench_end_to_end(use_cache, expected):
-    print0(f"- with use_cache={use_cache}")
+def bench_end_to_end(use_cache, expected, kv_cache_manager=None):
+    cache_type = ""
+    if use_cache:
+        if kv_cache_manager is None:
+            cache_type = "kv_cache_manager=expandable"
+        else:
+            cache_type = "kv_cache_manager=paged"
+
+    print0(f"- with use_cache={use_cache} {cache_type}")
     result = timeit.repeat(
-        lambda: end_to_end(model, use_cache, expected), number=1, repeat=repeat
+        lambda: end_to_end(model, use_cache, expected, kv_cache_manager),
+        number=1,
+        repeat=repeat,
     )
     log_result(result)
 
+
+if not args.skip_paged_kvcache_runs:
+    kv_cache_manager = PagedKVCacheManager(
+        model.config.nlayers,
+        model.config.nheads,
+        model.config.emb_dim,
+        tensor_parallel_size=dist.get_world_size() if args.distributed else 1,
+        dtype=torch.get_default_dtype(),
+        total_num_gpu_blocks=500,
+        device=device,
+    )
 
 print0(
     f"Results for batch size {BATCH_SIZE}, sequence length {SEQ_LEN}, new tokens generated {MAX_NEW_TOKENS}"
@@ -279,6 +321,8 @@ if not args.skip_eager_runs:
             bench_end_to_end(True, e2e_expected_cache)
         if not args.skip_nokvcache_runs:
             bench_end_to_end(False, e2e_expected_nocache)
+        if not args.skip_paged_kvcache_runs:
+            bench_end_to_end(True, e2e_expected_nocache, kv_cache_manager)
 
 if not args.skip_compile_runs:
     print0("Compiling model...")
@@ -321,6 +365,8 @@ if not args.skip_compile_runs:
             end_to_end(model, True, e2e_expected_cache)
         if not args.skip_nokvcache_runs:
             end_to_end(model, False, e2e_expected_nocache)
+        if not args.skip_paged_kvcache_runs:
+            end_to_end(model, True, e2e_expected_nocache, kv_cache_manager)
         print(f"Model has warmed up e2e in rank {local_rank}")
 
         print0("(Compiled) End-to-end sequence generation")
@@ -328,3 +374,5 @@ if not args.skip_compile_runs:
             bench_end_to_end(True, e2e_expected_cache)
         if not args.skip_nokvcache_runs:
             bench_end_to_end(False, e2e_expected_nocache)
+        if not args.skip_paged_kvcache_runs:
+            bench_end_to_end(True, e2e_expected_nocache, kv_cache_manager)

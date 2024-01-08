@@ -1,4 +1,4 @@
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Union
 import torch
 from torch.utils.data import Dataset
 import requests
@@ -20,7 +20,7 @@ class CausalTextDatasetFromString(Dataset):
         tokenizer: tokenizers.BaseTokenizer,
         seq_len: int = 1024,
         pad_token: Optional[str] = None,
-        device: torch.device | str = "cpu",
+        device: Union[torch.device, str] = "cpu",
         ignore_index: int = -100,
     ):
         tokens = tokenizer.tokenize(text)

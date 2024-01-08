@@ -1,8 +1,7 @@
 import math
-from typing import MutableMapping, Optional, Tuple
+from typing import MutableMapping, Optional, Tuple, List
 
 import torch
-from torch import nn
 
 
 class PositionEncoder:
@@ -16,7 +15,7 @@ class PositionEncoder:
         mask: torch.Tensor,
         q: torch.Tensor,
         k: torch.Tensor,
-        past_kv_state: torch.Tensor,
+        position_ids: Optional[torch.LongTensor],
         use_cache=False,
     ) -> torch.Tensor:
         return mask
@@ -27,7 +26,6 @@ class PositionEncoder:
         q: torch.Tensor,
         k: torch.Tensor,
         position_ids: Optional[torch.LongTensor],
-        past_kv_state: torch.Tensor,
         use_cache=False,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         return q, k
@@ -64,16 +62,16 @@ class Alibi(PositionEncoder):
         mask: torch.Tensor,
         q: torch.Tensor,
         k: torch.Tensor,
-        past_kv_state: torch.Tensor,
+        position_ids: Optional[torch.Tensor],
         use_cache=False,
     ) -> torch.Tensor:
         qlen = q.size(1)
         klen = k.size(1)
 
         # if we are using the cache, the key length needs to be extended with the past keys length
-        if use_cache and past_kv_state is not None and past_kv_state[0] is not None:
-            klen += past_kv_state[0][0].size(-2)
-            qlen += past_kv_state[0][1].size(-2)
+        if use_cache and position_ids is not None:
+            klen += position_ids[-1]  # type: ignore
+            qlen += position_ids[-1]  # type: ignore
 
         # Automatically allocates on chosen cuda
         device = self.scales.device
@@ -215,7 +213,6 @@ class RotaryEmbedding(PositionEncoder):
         q: torch.Tensor,
         k: torch.Tensor,
         position_ids: Optional[torch.Tensor] = None,
-        past_kv_state: Optional[torch.Tensor] = None,
         use_cache=False,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
@@ -238,10 +235,8 @@ class RotaryEmbedding(PositionEncoder):
             position_ids = torch.arange(
                 0, q.size(2), dtype=torch.long, device=q.device
             ).repeat(q.size(0), 1)
-            if use_cache and past_kv_state is not None:
-                position_ids += past_kv_state[0].size(2)
-
         seq_len = q.size(2)
+
         q_ = q.float().reshape(*q.size()[:-1], -1, 2)  # B H L D/2 2
         k_ = k.float().reshape(*k.size()[:-1], -1, 2)  # B H L D/2 2
 
@@ -255,3 +250,20 @@ class RotaryEmbedding(PositionEncoder):
         k_out = freqs.mul(k_.unsqueeze(-2)).sum(5).flatten(3)
 
         return q_out.type_as(q).contiguous(), k_out.type_as(k).contiguous()
+
+
+def compute_position_ids(
+    num_tokens_per_sequence: List[int], context_lengths: Optional[List[int]] = None
+) -> List[List[int]]:
+    max_tokens = max(num_tokens_per_sequence)
+    position_ids = []
+    for seq_i, num_tokens in enumerate(num_tokens_per_sequence):
+        if context_lengths is None:
+            start = 0
+        else:
+            start = context_lengths[seq_i] - 1
+        position_ids_i = [0 for _ in range(max_tokens - num_tokens)] + [
+            i for i in range(start, start + num_tokens)
+        ]
+        position_ids.append(position_ids_i)
+    return position_ids

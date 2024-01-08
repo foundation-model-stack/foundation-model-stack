@@ -67,25 +67,26 @@ class TestGPTBigCode(
     def headless_model(self, model: GPTBigCode) -> GPTBigCodeHeadless:
         return model.base_model
 
-    def test_compute_position_ids(self, headless_model: GPTBigCodeHeadless):
-        is_pad = torch.zeros(2, 4).bool()
-        actual = headless_model._compute_position_ids(is_pad, False, None)
-        expected = torch.tensor([[0, 1, 2, 3], [0, 1, 2, 3]])
-        assert actual.tolist() == expected.tolist()
-
-    def test_compute_position_ids_with_pads(self, headless_model: GPTBigCodeHeadless):
-        is_pad = torch.tensor([[1, 1, 0, 0], [0, 0, 0, 0]]).bool()
-        actual = headless_model._compute_position_ids(is_pad, False, None)
-        expected = torch.tensor([[0, 0, 0, 1], [0, 1, 2, 3]])
-        assert actual.tolist() == expected.tolist()
-
-    def test_compute_position_ids_with_cache(self, headless_model: GPTBigCodeHeadless):
-        is_pad = torch.tensor([[0], [0]]).bool()
-        kv = torch.rand(2, headless_model.config.nheads, 3, 1)
-        past_key_value_states = [(kv, kv)]
-        # should be 3 here as position should be index of last token in k would be 2, so next would be 3
-        actual = torch.tensor(torch.tensor([[3], [3]]))
-        expected = headless_model._compute_position_ids(
-            is_pad, True, past_key_value_states
-        )
-        assert actual.tolist() == expected.tolist()
+    # 1/2/24 (paged_attn): NO longer needed as position ids will be computed outside if using cache
+    # def test_compute_position_ids(self, headless_model: GPTBigCodeHeadless):
+    #     is_pad = torch.zeros(2, 4).bool()
+    #     actual = headless_model._compute_position_ids(is_pad, False, None)
+    #     expected = torch.tensor([[0, 1, 2, 3], [0, 1, 2, 3]])
+    #     assert actual.tolist() == expected.tolist()
+    #
+    # def test_compute_position_ids_with_pads(self, headless_model: GPTBigCodeHeadless):
+    #     is_pad = torch.tensor([[1, 1, 0, 0], [0, 0, 0, 0]]).bool()
+    #     actual = headless_model._compute_position_ids(is_pad, False, None)
+    #     expected = torch.tensor([[0, 0, 0, 1], [0, 1, 2, 3]])
+    #     assert actual.tolist() == expected.tolist()
+    #
+    # def test_compute_position_ids_with_cache(self, headless_model: GPTBigCodeHeadless):
+    #     is_pad = torch.tensor([[0], [0]]).bool()
+    #     kv = torch.rand(2, headless_model.config.nheads, 3, 1)
+    #     past_key_value_states = [(kv, kv)]
+    #     # should be 3 here as position should be index of last token in k would be 2, so next would be 3
+    #     actual = torch.tensor(torch.tensor([[3], [3]]))
+    #     expected = headless_model._compute_position_ids(
+    #         is_pad, True, past_key_value_states
+    #     )
+    #     assert actual.tolist() == expected.tolist()

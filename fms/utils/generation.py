@@ -1,7 +1,12 @@
-from typing import Any, Callable, List, MutableMapping, Union
+from typing import Any, Callable, List, MutableMapping, Union, Optional
 
 import torch
 import torch.nn.functional as F
+from torch import distributed as dist
+
+from fms.modules.positions import compute_position_ids
+from fms.utils.cache import KVCacheManager, CacheDataWithMetadata
+from fms.utils.cache.expandable import ExpandableKVCacheManager
 
 
 def _make_cache_contiguous(past_key_value_states):
@@ -30,6 +35,7 @@ def generate(
     do_sample: bool = True,
     num_beams: int = 1,
     use_cache: bool = False,
+    kv_cache_manager: Optional[KVCacheManager] = None,
     contiguous_cache: bool = False,
 ):
     """
@@ -67,22 +73,71 @@ def generate(
     result = input_ids
     next_input = input_ids
     kwargs: MutableMapping[str, Any] = dict()
-    kwargs["past_key_value_states"] = None
     kwargs["use_cache"] = use_cache
 
-    for _ in range(max_new_tokens):
+    if use_cache:
+        kwargs["cache_data"] = None
+        if kv_cache_manager is None:
+            # TODO: standardized way of getting nlayers, nheads, emb_dim
+            kv_cache_manager = ExpandableKVCacheManager(
+                model.config.nlayers,  # type: ignore
+                model.config.nheads,  # type: ignore
+                model.config.emb_dim,  # type: ignore
+                tensor_parallel_size=dist.get_world_size()
+                if dist.is_initialized()
+                else 1,
+                dtype=torch.get_default_dtype(),
+                device=input_ids.device,
+            )
+
+    for i in range(max_new_tokens):
+
         input_ids = next_input[:, -max_seq_len:]
+
+        # compute the mask
+        if not use_cache or i == 0:
+            is_pad = input_ids == 0
+            mask = is_pad.unsqueeze(-1) == is_pad.unsqueeze(-2)
+            kwargs["mask"] = mask.tril(diagonal=0)
+        else:
+            is_not_pad = result != 0
+            mask = is_not_pad.unsqueeze(-2)
+            kwargs["mask"] = mask
+
+        # get the cache data and position ids if using cache
+        if use_cache and kv_cache_manager:
+            if i == 0:
+                num_tokens_per_sequence = torch.count_nonzero(
+                    input_ids.T, dim=0
+                ).tolist()
+                cache_data: CacheDataWithMetadata = (
+                    kv_cache_manager.allocate_prompt_tokens(num_tokens_per_sequence)
+                )
+                # context lengths here actually have the real lengths, but we want to start at 0 for first iteration
+                # might want to have 2 variables for this, but for now, just keep as is
+                context_lengths: Optional[List[int]] = None
+            else:
+                num_tokens_per_sequence = [1 for _ in range(input_ids.size(0))]
+                cache_data = kv_cache_manager.allocate_generated_tokens(
+                    sequence_ids, num_tokens_per_sequence
+                )
+                context_lengths = cache_data.context_lengths.tolist()
+
+                # todo: is this supported?
+                # if contiguous_cache:
+            sequence_ids: List[int] = cache_data.sequence_ids
+            position_ids = compute_position_ids(
+                num_tokens_per_sequence, context_lengths
+            )
+
+            kwargs["cache_data"] = cache_data
+            kwargs["position_ids"] = torch.tensor(
+                position_ids, dtype=torch.long, device=input_ids.device
+            )
+
         output = model(input_ids, **kwargs)
         if use_cache:
-            logits, past_key_value_states = output
-            # TODO: this should go away when reduce-overhead issues are fixed, or
-            # maybe could be moved into model code to be more portable.
-            if contiguous_cache:
-                kwargs["past_key_value_states"] = _make_cache_contiguous(
-                    past_key_value_states
-                )
-            else:
-                kwargs["past_key_value_states"] = past_key_value_states
+            logits, _ = output
         else:
             logits = output
         logits = logits[:, -1, :]
@@ -108,6 +163,14 @@ def generate(
 
     if not batched:
         result = result[0]
+
+    if (
+        use_cache
+        and kv_cache_manager
+        and callable(getattr(kv_cache_manager, "free_sequences", None))
+    ):
+        kv_cache_manager.free_sequences(sequence_ids)  # type: ignore
+
     return result
 
 

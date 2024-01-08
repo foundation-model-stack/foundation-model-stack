@@ -1,4 +1,5 @@
-from typing import Optional
+import math
+from typing import Optional, Tuple, List
 
 import torch
 from torch import nn
@@ -79,6 +80,13 @@ class MultiHeadAttention(nn.Module):
             torch.backends.cuda.mem_efficient_sdp_enabled()
         )
         self.previous_math: bool = torch.backends.cuda.math_sdp_enabled()
+        self.head_size = emb_dim // nheads
+        self.head_mapping = torch.repeat_interleave(
+            torch.arange(
+                self.kvheads, dtype=torch.int32, device=self.query.weight.device
+            ),
+            self.nheads // self.kvheads,
+        )
         self.reset_params(gain)
 
     def reset_params(self, gain=1):
@@ -108,7 +116,7 @@ class MultiHeadAttention(nn.Module):
         mask=None,
         position_ids=None,
         attn_algorithm=None,
-        past_key_value_state=None,
+        cache_data_layer=None,
         use_cache=False,
         is_self=True,
         is_causal_mask=False,
@@ -151,7 +159,7 @@ class MultiHeadAttention(nn.Module):
         # b x kvlen x d
         # b x kvlen x h x ds
         # b x h x kvlen x ds
-        if is_self or past_key_value_state is None:
+        if is_self:
             keys = self.key(k).view(
                 batch_size, kv_len, self.kvheads, self.emb_kq_per_head
             )
@@ -165,77 +173,109 @@ class MultiHeadAttention(nn.Module):
             # You want to apply rotary embeddings pre-cache
             if self.position_encoder is not None:
                 queries, keys = self.position_encoder.adjusted_qk(
-                    queries, keys, position_ids, past_key_value_state, use_cache
+                    queries,
+                    keys,
+                    position_ids,
+                    use_cache,
                 )
 
-        # if you want to use caching and past_key_value_state is not None meaning you have values in your cache
-        if use_cache and past_key_value_state is not None:
-            if is_self:
-                keys = torch.cat((past_key_value_state[0], keys), dim=2)
-                values = torch.cat((past_key_value_state[1], values), dim=2)
+        # store the values in kv-cache
+        if use_cache and cache_data_layer:
+            keys, values = cache_data_layer.store(keys, values)
+
+        # use the special paged_attention call if use_cache=True, its type is paged_attention, and it is generating
+        # todo: should we add sdpa logic to cache
+        if (
+            use_cache
+            and cache_data_layer
+            and cache_data_layer.get_cache_type() == "paged-attention"
+            and cache_data_layer.is_generating
+        ):
+            queries = queries.transpose(2, 1).reshape(-1, self.nheads, self.head_size)
+
+            # Pre-allocate the output tensor.
+            attn = torch.empty_like(queries)
+            attn = torch.ops.paged_attention.paged_attention_v1(
+                attn,
+                # num_sequences x num_heads x head_size
+                queries,
+                keys,
+                values,
+                self.head_mapping,
+                (self.emb_dim // self.nheads) ** -0.5,
+                cache_data_layer.block_mapping,
+                cache_data_layer.context_lengths,
+                cache_data_layer.block_size,
+                cache_data_layer.max_sequence_length,
+                None,
+            )
+            attn = attn.view(batch_size, q_len, self.nheads * self.emb_v_per_head)
+        # otherwise we always fall back into SDPA as this is either a prompt or it is a single contiguous cache
+        else:
+
+            # Merge rel pos bias and mask into single float mask
+            if mask is not None:
+                # Our expected mask format is bs x q_len x k_len, so to make it broadcastable
+                # we need to create the nheads dimension
+                while len(mask.size()) != 4:  # expects bs (x nheads) x q_len x kv_len
+                    mask = mask.unsqueeze(1)
+
+            if self.position_encoder is not None:
+                attn_mask = self.position_encoder.adjusted_mask(
+                    mask, queries, keys, position_ids, use_cache
+                )
             else:
-                keys = past_key_value_state[0]
-                values = past_key_value_state[1]
+                attn_mask = mask
 
-        # Merge rel pos bias and mask into single float mask
-        if mask is not None:
-            # Our expected mask format is bs x q_len x k_len, so to make it broadcastable
-            # we need to create the nheads dimension
-            while len(mask.size()) != 4:  # expects bs (x nheads) x q_len x kv_len
-                mask = mask.unsqueeze(1)
+            # Expand kv so black-box attn will work
+            expansion = self.nheads // self.kvheads
+            # k/v: b h l d
+            if expansion != 1:
+                keys_e = (
+                    keys.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
+                )
+                values_e = (
+                    values.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
+                )
+            else:
+                keys_e = keys
+                values_e = values
 
-        if self.position_encoder is not None:
-            attn_mask = self.position_encoder.adjusted_mask(
-                mask, queries, keys, past_key_value_state, use_cache
+            if attn_algorithm:
+                # Pick which fused attn kernels will run.
+                use_flash = attn_algorithm == "flash"
+                use_mem_efficient = attn_algorithm == "mem"
+                use_math = attn_algorithm == "math"
+
+                torch.backends.cuda.enable_flash_sdp(use_flash)
+                torch.backends.cuda.enable_mem_efficient_sdp(use_mem_efficient)
+                torch.backends.cuda.enable_math_sdp(use_math)
+
+            attn = F.scaled_dot_product_attention(
+                queries,
+                keys_e,
+                values_e,
+                attn_mask=attn_mask,
+                dropout_p=self.p_dropout if self.training else 0.0,
+                is_causal=is_causal_mask,
             )
-        else:
-            attn_mask = mask
 
-        # Expand kv so black-box attn will work
-        expansion = self.nheads // self.kvheads
-        # k/v: b h l d
-        if expansion != 1:
-            keys_e = keys.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
-            values_e = (
-                values.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
+            if attn_algorithm:
+                torch.backends.cuda.enable_flash_sdp(self.previous_flash)
+                torch.backends.cuda.enable_mem_efficient_sdp(
+                    self.previous_mem_efficient
+                )
+                torch.backends.cuda.enable_math_sdp(self.previous_math)
+
+            # attn: bs x seq_len x nheads*emb_v_per_head
+            # attn: b x h x qlen x ds
+            # attn after permute: b x qlen x h x ds
+            # b x qlen x (d)
+            attn = (
+                attn.transpose(2, 1)
+                .contiguous()
+                .view(batch_size, q_len, self.nheads * self.emb_v_per_head)
             )
-        else:
-            keys_e = keys
-            values_e = values
-
-        if attn_algorithm:
-            # Pick which fused attn kernels will run.
-            use_flash = attn_algorithm == "flash"
-            use_mem_efficient = attn_algorithm == "mem"
-            use_math = attn_algorithm == "math"
-
-            torch.backends.cuda.enable_flash_sdp(use_flash)
-            torch.backends.cuda.enable_mem_efficient_sdp(use_mem_efficient)
-            torch.backends.cuda.enable_math_sdp(use_math)
-
-        attn = F.scaled_dot_product_attention(
-            queries,
-            keys_e,
-            values_e,
-            attn_mask=attn_mask,
-            dropout_p=self.p_dropout if self.training else 0.0,
-            is_causal=is_causal_mask,
-        )
-
-        if attn_algorithm:
-            torch.backends.cuda.enable_flash_sdp(self.previous_flash)
-            torch.backends.cuda.enable_mem_efficient_sdp(self.previous_mem_efficient)
-            torch.backends.cuda.enable_math_sdp(self.previous_math)
-
-        # attn: bs x seq_len x nheads*emb_v_per_head
-        # attn: b x h x qlen x ds
-        # attn after permute: b x qlen x h x ds
-        # b x qlen x (d)
-        attn = (
-            attn.transpose(2, 1)
-            .contiguous()
-            .view(batch_size, q_len, self.nheads * self.emb_v_per_head)
-        )
         out = self.dense(attn)
 
         # if use_cache=True, we return the hidden_state as well as the kv cache
@@ -293,6 +333,7 @@ class TPMultiHeadAttention(MultiHeadAttention):
 
         self.rank = rank
         self.world_size = world_size
+        self.head_size = self.head_size // world_size
 
     @staticmethod
     def import_module(
@@ -333,7 +374,7 @@ class TPMultiHeadAttention(MultiHeadAttention):
         mask=None,
         position_ids=None,
         attn_algorithm=None,
-        past_key_value_state=None,
+        cache_data_layer=None,
         use_cache=False,
         is_self=True,
         is_causal_mask=False,
@@ -355,7 +396,7 @@ class TPMultiHeadAttention(MultiHeadAttention):
             mask,
             position_ids,
             attn_algorithm,
-            past_key_value_state,
+            cache_data_layer,
             use_cache,
             is_self,
             is_causal_mask,
