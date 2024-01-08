@@ -1,8 +1,11 @@
-from torch.utils.data import Dataset, IterableDataset
 from typing import Callable, Mapping
-from fms.datasets.instructions import JsonInstructions
+
+from torch.utils.data import Dataset, IterableDataset
+
 from fms.datasets import text
+from fms.datasets.instructions import JsonInstructions
 from fms.utils.tokenizers import BaseTokenizer
+
 
 __dataset_factory: Mapping[str, Callable[[str, BaseTokenizer], Dataset] | type] = {
     "instruction": JsonInstructions,
@@ -36,7 +39,9 @@ def _state_dict_save_helper(target):
             continue
 
         if isinstance(dict_attrs[attr], DatasetStateDictMixin):
-            result[attr] = dict_attrs[attr].state_dict()
+            sub_dict = dict_attrs[attr].state_dict()
+            for sub_attr in sub_dict:
+                result[f"{attr}.{sub_attr}"] = sub_dict[sub_attr]
         # We don't serialize any dataset that doesn't have this mixin.
         elif isinstance(dict_attrs[attr], Dataset):
             raise TypeError(
@@ -63,9 +68,9 @@ def _state_dict_load_helper(target, state_dict):
         if "." in attr:
             attr_name, sub_attr = attr.split(".", 1)
             sub_dict = {sub_attr: state_dict[attr]}
-            if isinstance(dict_attrs[attr], DatasetStateDictMixin):
+            if isinstance(dict_attrs[attr_name], DatasetStateDictMixin):
                 # Make sure we use any overriden load_state_dict in nested datasets
-                dict_attrs[attr].load_state_dict(sub_dict)
+                dict_attrs[attr_name].load_state_dict(sub_dict)
             else:
                 _state_dict_load_helper(dict_attrs[attr_name], sub_dict)
         elif attr not in dict_attrs:
@@ -87,7 +92,7 @@ class DatasetStateDictMixin:
     IterableDatasets that implement this interface are expected to be
     re-startable (pick up where they left off).
 
-    If you need a restartable MapDataPipe, wrap it in a
+    If you need a restartable MapDataSet, wrap it in a
     RestartableFromMapDataset.
 
     The default implementation may not work for your dataset, so override
@@ -97,10 +102,10 @@ class DatasetStateDictMixin:
     def state_dict(self):
         return _state_dict_save_helper(self)
 
-    # In cases where the instance of DataPipeStateDictMixin composes another
-    # DataPipe, an explicit implementation of this function will be needed.
+    # In cases where the instance of DatasetStateDictMixin composes another
+    # DataSet, an explicit implementation of this function will be needed.
     # This default implementation doesn't know the type of the serialized
-    # datapipe, so can't construct it.
+    # dataset, so can't construct it.
     def load_state_dict(self, state_dict):
         _state_dict_load_helper(self, state_dict)
 

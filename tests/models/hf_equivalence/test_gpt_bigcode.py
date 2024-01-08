@@ -6,8 +6,8 @@ from fms.models.hf.gpt_bigcode.modeling_gpt_bigcode_hf import (
     HFAdaptedGPTBigCodeForCausalLM,
 )
 from fms.testing.comparison import (
-    ModelSignatureParams,
     HFModelSignatureParams,
+    ModelSignatureParams,
     compare_model_signatures,
 )
 

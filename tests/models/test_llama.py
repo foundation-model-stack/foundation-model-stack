@@ -2,11 +2,11 @@ import pytest
 
 from fms.models.llama import LLaMA, LLaMAConfig
 from fms.testing._internal.model_test_suite import (
+    ConfigFixtureMixin,
+    ModelCompileTestSuite,
     ModelConfigTestSuite,
     ModelConsistencyTestSuite,
-    ConfigFixtureMixin,
     ModelFixtureMixin,
-    ModelCompileTestSuite,
 )
 from fms.utils.config import ModelConfig
 

@@ -14,6 +14,7 @@ from torch._dynamo.testing import CompileCounterWithBackend
 from fms.testing.comparison import get_signature
 from fms.utils.config import ModelConfig
 
+
 _FAILED_CONFIG_LOAD_MSG = """
 Failed to load the configuration. This could occur if there was a change in the configuration and the implementation of 
 the ModelConfig is not accounting for it.
