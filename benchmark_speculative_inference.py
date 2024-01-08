@@ -109,7 +109,7 @@ print("Model loaded!")
 data = torch.load(args.data_path)
 print("Data prepared!")
 
-test = Speculator(n_predict=3, emb_dim=model.config.emb_dim)
+test = Speculator(n_heads=3, emb_dim=model.config.emb_dim)
 test.load_state_dict(
     torch.load(
         args.speculator_path,
