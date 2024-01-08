@@ -957,15 +957,6 @@ class HFDecoderModelArchitecture(HFModelArchitecture):
         self.decoder.set_input_embeddings(value)
         super().set_input_embeddings(value)
 
-    def _set_gradient_checkpointing(self, module, value=False):
-        if isinstance(module, HFDecoder):
-            if hasattr(module.model, "gradient_checkpointing"):
-                module.model.gradient_checkpointing = value
-            else:
-                raise NotImplementedError(
-                    "gradient_checkpoint does not exist in the underlying model"
-                )
-
     def create_hf_attention_mask(
         self, input_ids: torch.LongTensor
     ) -> torch.FloatTensor:
@@ -1316,15 +1307,6 @@ class HFEncoderModelArchitecture(HFModelArchitecture, _EncoderArchitectureMixin)
         super().__init__(embedding=embedding, config=config, *args, **kwargs)
         self.encoder = encoder
 
-    def _set_gradient_checkpointing(self, module, value=False):
-        if isinstance(module, HFEncoder):
-            if hasattr(module.model, "gradient_checkpointing"):
-                module.model.gradient_checkpointing = value
-            else:
-                raise NotImplementedError(
-                    "gradient_checkpoint does not exist in the underlying model"
-                )
-
     def set_input_embeddings(self, value: nn.Module):
         self.encoder.set_input_embeddings(value)
         super().set_input_embeddings(value)
@@ -1507,16 +1489,6 @@ class HFEncoderDecoderModelArchitecture(
     def set_input_embeddings(self, value: nn.Module):
         self.encoder.set_input_embeddings(value)
         super().set_input_embeddings(value)
-
-    def _set_gradient_checkpointing(self, module, value=False):
-        if isinstance(module, HFEncoder):
-            if hasattr(module.model, "gradient_checkpointing"):
-                module.model.gradient_checkpointing = value
-            else:
-                raise NotImplementedError(
-                    "gradient_checkpoint does not exist in the encoder model"
-                )
-        super()._set_gradient_checkpointing(module, value)
 
     def forward(
         self,
