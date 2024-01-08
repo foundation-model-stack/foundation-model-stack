@@ -11,7 +11,7 @@ jobs:
         with:
           options: "--check --verbose"
           src: "."
-          version: "~= 22.3.0"
+          version: ">= 23.3.0"
       - uses: isort/isort-action@master
         with:
           sort-paths: fms
