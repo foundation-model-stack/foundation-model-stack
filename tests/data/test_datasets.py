@@ -4,6 +4,7 @@ from fms.datasets.instructions import JsonInstructions
 from fms.utils import tokenizers
 import tempfile
 import torch
+from torch.utils.data import Dataset
 
 
 sample_json = """[{
@@ -58,3 +59,30 @@ def test_dataset_getter():
         input, _ = result[0]
         assert input[0].item() == ord("a")
         assert input.shape[0] == 9
+
+
+class _MockDS(Dataset):
+    def __init__(self, data):
+        self.data = data
+
+    def __getitem__(self, idx):
+        return self.data[idx]
+
+    def __len__(self):
+        return len(self.data)
+
+
+def test_restartable():
+    data = [1, 2, 3, 4, 5]
+    ds = _MockDS(data)
+    rds = datasets.RestartableFromMapDataset(ds)
+    assert len(rds) == 5
+    i = iter(rds)
+    assert next(i) == 1
+    assert next(i) == 2
+    sd = rds.state_dict()
+
+    rds = datasets.RestartableFromMapDataset(_MockDS(data))
+    rds.load_state_dict(sd)
+    i = iter(rds)
+    assert next(i) == 3
