@@ -233,7 +233,7 @@ def speculative_generate(
         n_steps += 1
 
         # Get candidate set of speculations
-        adds = speculator.generate_suffixes(embeds, inputs, threshes, top_k).transpose(
+        adds = speculator.generate_tree(embeds, inputs, threshes, top_k).transpose(
             0, 1
         )  # k b h
         inputs = torch.cat(
