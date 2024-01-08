@@ -1,5 +1,6 @@
 from typing import Any, Callable, List, MutableMapping, Union
 
+import time
 import torch
 import torch.nn.functional as F
 
@@ -196,6 +197,12 @@ def speculative_generate(
     prompt_len = input_ids.size(1)-1
     input_ids = input_ids[:,-1:]
     n_adds = speculator.nheads + 1
+    def _time():
+        torch.cuda.synchronize()
+        return time.time()
+    start_time = _time()
+    fields = ["forward_pass", "cache_management"]
+    times = {k:0 for k in fields}
     while min(n_gen) < new_tokens:
         n_steps += 1
         
@@ -220,9 +227,11 @@ def speculative_generate(
         pos_ids = pos_ids.repeat(top_k, 1) # kb 1+h
         
         # Base model forward pass
+        _start = _time()
         output = model.forward(input_ids, include_embeds=True, mask=mask, position_ids=pos_ids, **kwargs)
         logits, past_key_value_states, embeds = output
         next_vals = torch.argmax(logits, dim=-1) # kb 1+h
+        times["forward_pass"] += _time()-_start
         
         # Check correctness of speculator predictions
         test = input_ids.roll(-1, 1).eq(next_vals).cumprod(1)
@@ -249,6 +258,7 @@ def speculative_generate(
         embeds = embeds.gather(1, n_correct.view(-1,1,1).expand(-1,-1,embeds.size(2))) # Grab last correct embed
         
         # Handle kv-cache
+        _start = _time()
         n_wrong = n_adds - 1 - n_correct
         n_pads += n_wrong
         extra_pads = min(n_pads)
@@ -280,6 +290,7 @@ def speculative_generate(
                 )
                 # torch._dynamo.mark_dynamic(n_kv_s[layer_idx][tensor_idx], 2)
         kwargs["past_key_value_states"] = n_kv_s
+        times["cache_management"] += _time()-_start
 
         # Update results
         result = [torch.cat((result[i], next_vals[i]), dim=0) for i in range(bsize)]
@@ -292,4 +303,5 @@ def speculative_generate(
         
     if not batched:
         result = result[0]
-    return result, n_steps
+    end_time = _time()
+    return result, n_steps, (end_time - start_time), times
