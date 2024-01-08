@@ -1,4 +1,5 @@
 from typing import Any, Callable, List, MutableMapping, Union
+from fms.modules.speculator import Speculator
 
 import time
 import torch
