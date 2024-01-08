@@ -1,4 +1,4 @@
-from typing import Any, Callable, List, MutableMapping, Union
+from typing import Any, Callable, List, MutableMapping, Union, Optional
 
 import torch
 import torch.nn.functional as F
@@ -18,6 +18,66 @@ def _make_cache_contiguous(past_key_value_states):
             )
             # torch._dynamo.mark_dynamic(n_kv_s[layer_idx][tensor_idx], 2)
     return n_kv_s
+
+def left_pad(input_ids: torch.Tensor, max_length: int, pad_id: int = 0) -> torch.Tensor:
+    """
+    left pad an input_ids tensor
+
+    Parameters
+    ----------
+    input_ids: torch.Tensor
+        input ids corresponding to a single sequence in a batch
+    max_length: int
+        the max length to pad to
+    pad_id: int
+        the token to set as a pad in the resulting tensor
+
+    Returns
+    -------
+    torch.Tensor
+        a left padded tensor
+    """
+    pads_tensor = torch.tensor(
+        [pad_id] * (max_length - input_ids.size(0)),
+        device=input_ids.device,
+        dtype=torch.long,
+    )
+    return torch.cat((pads_tensor, input_ids))
+
+def __create_attention_mask(input_ids: torch.Tensor, use_cache: bool, is_prompt: bool, pad_id: int = -1) -> Optional[torch.Tensor]:
+    """
+    Optionally create an attention mask if one is required
+
+    Parameters
+    ----------
+    input_ids: torch.Tensor
+        the input ids to the model's forward method
+    use_cache: bool
+        if True caching is being used, otherwise caching is not being used
+    is_prompt: bool
+        if True, input_ids correspond to the prompt, otherwise input_ids contain generated tokens
+    pad_id: int
+        the pad id used when padding. If the pad_id is -1, no padding is being used, otherwise assume some padding
+
+    Returns
+    -------
+    Optional[torch.Tensor]
+        if is_prompt, no use_cache, batch required padding => a bool Tensor is created for the mask
+        otherwise None is returns and the mask will be handled internally as part of sdpa
+    """
+    # compute the attention mask
+    # always need a mask if this is the prompt or if not using a cache
+    if is_prompt or not use_cache:
+        is_pad = input_ids == pad_id
+        mask = is_pad.unsqueeze(-1) == is_pad.unsqueeze(-2)
+        mask = mask.tril(diagonal=0)
+    # otherwise if the batch required padding, we need to account for the padding tokens when using cache
+    elif pad_id != -1:
+        is_not_pad = input_ids != pad_id
+        mask = is_not_pad.unsqueeze(-2)
+    else:
+        mask = None
+    return mask
 
 
 def generate(
@@ -72,19 +132,7 @@ def generate(
         max_length = max(p.size(0) for p in input_ids)
         requires_padding = any(p.size(0) < max_length for p in input_ids)
         if requires_padding:
-            input_ids = [
-                torch.cat(
-                    (
-                        torch.tensor(
-                            [pad_id] * (max_length - p.size(0)),
-                            device=p.device,
-                            dtype=torch.long,
-                        ),
-                        p,
-                    )
-                )
-                for p in input_ids
-            ]
+            input_ids = [left_pad(p, max_length, pad_id) for p in input_ids]
         input_ids = torch.stack(input_ids, dim=0)
         batched = True
     else:
@@ -99,22 +147,19 @@ def generate(
     kwargs["past_key_value_states"] = None
     kwargs["use_cache"] = use_cache
 
+    if not requires_padding:
+        pad_id = -1
+
     for i in range(max_new_tokens):
         input_ids = next_input[:, -max_seq_len:]
 
-        # compute the attention mask
-        # always need a mask if this is the prompt or if not using a cache
-        if i == 0 or not use_cache:
-            is_pad = input_ids == pad_id
-            mask = is_pad.unsqueeze(-1) == is_pad.unsqueeze(-2)
-            kwargs["mask"] = mask.tril(diagonal=0)
-        # otherwise if the batch required padding, we need to account for the padding tokens when using cache
-        elif requires_padding:
-            is_not_pad = result != pad_id
-            mask = is_not_pad.unsqueeze(-2)
-            kwargs["mask"] = mask
-        else:
-            kwargs["mask"] = None
+        # create the attention mask
+        kwargs["mask"] = __create_attention_mask(
+            input_ids=result,
+            use_cache=use_cache,
+            is_prompt=i == 0,
+            pad_id=pad_id
+        )
 
         output = model(input_ids, **kwargs)
         if use_cache:
