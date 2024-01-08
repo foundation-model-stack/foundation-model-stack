@@ -125,7 +125,6 @@ def generate(
             the pad token id to use in case of batch generation where sequences are of different lengths
     """
     batched = False
-    requires_padding = False
     if num_beams != 1:
         raise NotImplementedError("generate() does yet not support beam search")
     if isinstance(input_ids, torch.Tensor):
@@ -137,6 +136,8 @@ def generate(
         requires_padding = any(p.size(0) < max_length for p in input_ids)
         if requires_padding:
             input_ids = [left_pad(p, max_length, pad_id) for p in input_ids]
+        else:
+            pad_id = -1
         input_ids = torch.stack(input_ids, dim=0)
         batched = True
     else:
@@ -150,9 +151,6 @@ def generate(
     kwargs: MutableMapping[str, Any] = dict()
     kwargs["past_key_value_states"] = None
     kwargs["use_cache"] = use_cache
-
-    if not requires_padding:
-        pad_id = -1
 
     for i in range(max_new_tokens):
         input_ids = next_input[:, -max_seq_len:]
