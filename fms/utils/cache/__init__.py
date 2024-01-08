@@ -14,6 +14,7 @@ class CacheDataLayer(metaclass=abc.ABCMeta):
     data_layer: Tuple[torch.Tensor, torch.Tensor]
         a tuple corresponding to the key block and value block
     """
+
     data_layer: Tuple[torch.Tensor, torch.Tensor]
 
     @abc.abstractmethod
@@ -63,6 +64,7 @@ class CacheData(metaclass=abc.ABCMeta):
     max_sequence_length: int
         max sequence length of all sequences stored in this cache data
     """
+
     data: List[Tuple[torch.Tensor, torch.Tensor]]
     max_sequence_length: int
 
@@ -113,6 +115,7 @@ class CacheDataWithMetadata(CacheData):
     context_lengths: torch.Tensor
         a 1d tensor corresponding to the length of each sequence in the batch denoted by the sequence ids
     """
+
     data: List[Tuple[torch.Tensor, torch.Tensor]]
     max_sequence_length: int
     sequence_ids: List[int]
@@ -194,7 +197,9 @@ class OutOfPlaceCacheDataLayer(CacheDataLayer):
 class OutOfPlaceCacheData(CacheData):
     def __init__(self, data: List[Tuple[torch.Tensor, torch.Tensor]]):
         self.data = data
-        self.max_sequence_length = 0 if self.data[0] is None else self.data[0][0].size(2)
+        self.max_sequence_length = (
+            0 if self.data[0] is None else self.data[0][0].size(2)
+        )
 
     def get_layer(self, layer_index: int) -> OutOfPlaceCacheDataLayer:
         return OutOfPlaceCacheDataLayer(data_layer=self.data[layer_index])

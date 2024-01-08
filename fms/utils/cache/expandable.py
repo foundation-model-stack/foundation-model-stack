@@ -97,7 +97,12 @@ class ExpandableKVCacheManager(KVCacheManager):
                 dtype=self.dtype,
                 device=self.device,
             )
-            self.cache.append((ExpandableTensor(empty_tensor_k, dim=2), ExpandableTensor(empty_tensor_v, dim=2)))
+            self.cache.append(
+                (
+                    ExpandableTensor(empty_tensor_k, dim=2),
+                    ExpandableTensor(empty_tensor_v, dim=2),
+                )
+            )
 
         return InPlaceCacheData(
             data=self.cache,

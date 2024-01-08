@@ -6,6 +6,7 @@ import functools
 
 _HANDLED_FUNCTIONS = {}
 
+
 def _implements(torch_function):
     """Register a torch function override"""
 
@@ -149,7 +150,4 @@ class ExpandableTensor(torch.Tensor):
         underlying_tensor = inner_tensors["_underlying_tensor"]
         dim = meta["dim"]
 
-        return ExpandableTensor(
-            underlying_tensor,
-            dim=dim
-        )
+        return ExpandableTensor(underlying_tensor, dim=dim)

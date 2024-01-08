@@ -83,7 +83,9 @@ def generate(
                 model.config.nlayers,  # type: ignore
                 model.config.nheads,  # type: ignore
                 model.config.emb_dim,  # type: ignore
-                tensor_parallel_size=dist.get_world_size() if dist.is_initialized() else 1,
+                tensor_parallel_size=dist.get_world_size()
+                if dist.is_initialized()
+                else 1,
                 dtype=torch.get_default_dtype(),
                 device=input_ids.device,
             )
@@ -129,7 +131,9 @@ def generate(
             )
 
             kwargs["cache_data"] = cache_data
-            kwargs["position_ids"] = torch.tensor(position_ids, dtype=torch.long, device=input_ids.device)
+            kwargs["position_ids"] = torch.tensor(
+                position_ids, dtype=torch.long, device=input_ids.device
+            )
 
         output = model(input_ids, **kwargs)
         if use_cache:

@@ -180,11 +180,18 @@ next_input = torch.cat((ids, next_val), dim=-1)
 del logits
 cache_data = OutOfPlaceCacheData(cache)
 position_ids = torch.tensor(
-    compute_position_ids([1 for _ in range(BATCH_SIZE)], [cache_data.max_sequence_length+1 for _ in range(BATCH_SIZE)]),
-    dtype=torch.long
+    compute_position_ids(
+        [1 for _ in range(BATCH_SIZE)],
+        [cache_data.max_sequence_length + 1 for _ in range(BATCH_SIZE)],
+    ),
+    dtype=torch.long,
 )
 expected, _ = model.forward(
-    next_val, cache_data=cache_data, use_cache=True, only_last_token=True, position_ids=position_ids
+    next_val,
+    cache_data=cache_data,
+    use_cache=True,
+    only_last_token=True,
+    position_ids=position_ids,
 )
 expected = torch.argmax(expected, dim=-1)
 
@@ -208,7 +215,10 @@ repeat = 3
 def one_token(model, use_cache):
     if use_cache:
         actual, _ = model.forward(
-            next_val, cache_data=OutOfPlaceCacheData(cache), use_cache=True, only_last_token=True
+            next_val,
+            cache_data=OutOfPlaceCacheData(cache),
+            use_cache=True,
+            only_last_token=True,
         )
     else:
         actual = model.forward(next_input, only_last_token=True)
@@ -274,7 +284,9 @@ def bench_end_to_end(use_cache, expected, kv_cache_manager=None):
 
     print0(f"- with use_cache={use_cache} {cache_type}")
     result = timeit.repeat(
-        lambda: end_to_end(model, use_cache, expected, kv_cache_manager), number=1, repeat=repeat
+        lambda: end_to_end(model, use_cache, expected, kv_cache_manager),
+        number=1,
+        repeat=repeat,
     )
     log_result(result)
 
