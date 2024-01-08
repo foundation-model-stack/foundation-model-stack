@@ -72,7 +72,19 @@ def generate(
         max_length = max(p.size(0) for p in input_ids)
         requires_padding = any(p.size(0) < max_length for p in input_ids)
         if requires_padding:
-            input_ids = [torch.cat((torch.tensor([pad_id] * (max_length - p.size(0)), device=p.device, dtype=torch.long), p)) for p in input_ids]
+            input_ids = [
+                torch.cat(
+                    (
+                        torch.tensor(
+                            [pad_id] * (max_length - p.size(0)),
+                            device=p.device,
+                            dtype=torch.long,
+                        ),
+                        p,
+                    )
+                )
+                for p in input_ids
+            ]
         input_ids = torch.stack(input_ids, dim=0)
         batched = True
     else:

@@ -76,12 +76,16 @@ def test_batched():
     )
     assert result == "ABCDEFGHIJ"
 
+
 def test_batched_jagged():
     _model_mock = ModelMock()
     tokenizer = get_tokenizer("char_tokenizer")
     prompts = ["ABCDE", "ABCDEFGH"]
 
-    ids_batch = [torch.tensor(tokenizer.convert_tokens_to_ids(tokenizer.tokenize(prompt))) for prompt in prompts]
+    ids_batch = [
+        torch.tensor(tokenizer.convert_tokens_to_ids(tokenizer.tokenize(prompt)))
+        for prompt in prompts
+    ]
     batch_result = generate(_model_mock, ids_batch, max_new_tokens=5, do_sample=False)
     prompt1_batch_result_str = tokenizer.convert_tokens_to_string(
         tokenizer.convert_ids_to_tokens(batch_result[0])
@@ -92,8 +96,12 @@ def test_batched_jagged():
     assert prompt1_batch_result_str == "\x00\x00\x00ABCDEFGHIJ"
     assert prompt2_batch_result_str == "ABCDEFGHIJKLM"
 
-    prompt1_standalone_result = generate(_model_mock, ids_batch[0], max_new_tokens=5, do_sample=False)
-    prompt2_standalone_result = generate(_model_mock, ids_batch[1], max_new_tokens=5, do_sample=False)
+    prompt1_standalone_result = generate(
+        _model_mock, ids_batch[0], max_new_tokens=5, do_sample=False
+    )
+    prompt2_standalone_result = generate(
+        _model_mock, ids_batch[1], max_new_tokens=5, do_sample=False
+    )
     prompt1_standalone_result_str = tokenizer.convert_tokens_to_string(
         tokenizer.convert_ids_to_tokens(prompt1_standalone_result)
     )
@@ -101,8 +109,9 @@ def test_batched_jagged():
         tokenizer.convert_ids_to_tokens(prompt2_standalone_result)
     )
 
-    assert prompt1_standalone_result_str == prompt1_batch_result_str.replace("\x00","")
+    assert prompt1_standalone_result_str == prompt1_batch_result_str.replace("\x00", "")
     assert prompt2_standalone_result_str == prompt2_batch_result_str
+
 
 def test_truncate():
     result = torch.ones(20)
