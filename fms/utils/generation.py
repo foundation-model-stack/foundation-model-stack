@@ -19,6 +19,7 @@ def _make_cache_contiguous(past_key_value_states):
             # torch._dynamo.mark_dynamic(n_kv_s[layer_idx][tensor_idx], 2)
     return n_kv_s
 
+
 def left_pad(input_ids: torch.Tensor, max_length: int, pad_id: int = 0) -> torch.Tensor:
     """
     left pad an input_ids tensor
@@ -44,7 +45,10 @@ def left_pad(input_ids: torch.Tensor, max_length: int, pad_id: int = 0) -> torch
     )
     return torch.cat((pads_tensor, input_ids))
 
-def __create_attention_mask(input_ids: torch.Tensor, use_cache: bool, is_prompt: bool, pad_id: int = -1) -> Optional[torch.Tensor]:
+
+def __create_attention_mask(
+    input_ids: torch.Tensor, use_cache: bool, is_prompt: bool, pad_id: int = -1
+) -> Optional[torch.Tensor]:
     """
     Optionally create an attention mask if one is required
 
@@ -155,10 +159,7 @@ def generate(
 
         # create the attention mask
         kwargs["mask"] = __create_attention_mask(
-            input_ids=result,
-            use_cache=use_cache,
-            is_prompt=i == 0,
-            pad_id=pad_id
+            input_ids=result, use_cache=use_cache, is_prompt=i == 0, pad_id=pad_id
         )
 
         output = model(input_ids, **kwargs)
