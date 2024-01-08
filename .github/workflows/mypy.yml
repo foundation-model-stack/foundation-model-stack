@@ -25,6 +25,7 @@ jobs:
         pip install transformers==4.35.0
         pip install types-requests
         pip install mypy
+        pip install pyarrow-stubs==10.0.1.7
         pip install .
         
     - name: Test with pytest
