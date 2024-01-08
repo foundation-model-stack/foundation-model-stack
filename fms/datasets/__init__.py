@@ -92,7 +92,7 @@ class DatasetStateDictMixin:
     IterableDatasets that implement this interface are expected to be
     re-startable (pick up where they left off).
 
-    If you need a restartable MapDataPipe, wrap it in a
+    If you need a restartable MapDataSet, wrap it in a
     RestartableFromMapDataset.
 
     The default implementation may not work for your dataset, so override
@@ -102,7 +102,7 @@ class DatasetStateDictMixin:
     def state_dict(self):
         return _state_dict_save_helper(self)
 
-    # In cases where the instance of DataPipeStateDictMixin composes another
+    # In cases where the instance of DatasetStateDictMixin composes another
     # DataSet, an explicit implementation of this function will be needed.
     # This default implementation doesn't know the type of the serialized
     # dataset, so can't construct it.
