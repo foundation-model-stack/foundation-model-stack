@@ -155,7 +155,7 @@ for bsize in [1, 2, 4]:
 torch.cuda.empty_cache()
 bsize = 5
 outs = []
-for k in [1, 2, 4]:
+for k in [2, 4]:
     alltimes = {}
     for j in range(20): #len(data) // bsize):
         seqs = data[j * bsize : j * bsize + bsize]
