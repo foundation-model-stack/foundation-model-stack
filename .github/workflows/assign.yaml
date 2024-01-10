@@ -28,8 +28,8 @@ jobs:
         EOF
     - name: Assign Issue
       run: |
-        git config --global user.email "andrea.frittoli@gmail.com"
-        git config --global user.name "Andrea Frittoli"
+        git config --global user.email "foundation-model-stack@googlegroups.com"
+        git config --global user.name "Foundation Model Stack CI Bot"
         gh api \
           --method POST \
           -H "Accept: application/vnd.github+json" \
