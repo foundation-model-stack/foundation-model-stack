@@ -14,6 +14,10 @@
 # Supported commands:
 # - /land: invokes the land-command workflow, to land (merge) PRs
 #          stacked through ghstack
+#
+# When a command is recognised, the rocket and eyes emojis are added
+# When a command is executed successfully, the horray emoji is added
+# When a command execution fails, a comment is added with a link to the logs
 
 name: Slash Command Routing
 on:
@@ -33,3 +37,29 @@ jobs:
         permission: write
         commands: |
           land
+
+    - name: Create URL to the run output
+      if: ${{ failure() }}
+      id: vars
+      run: echo "run-url=https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >> $GITHUB_OUTPUT
+  
+    - name: Create comment
+      if: ${{ failure() }}
+      uses: peter-evans/create-or-update-comment@v2
+      with:
+        token: ${{ secrets.LAND_TOKEN }}
+        repository: ${{ github.event.client_payload.github.payload.repository.full_name }}
+        issue-number: ${{ github.event.client_payload.github.payload.issue.number }}
+        body: |
+          Something went wrong with your `/${{ github.event.client_payload.slash_command.command }}` command: [please check the logs][1].
+
+          [1]: ${{ steps.vars.outputs.run-url }}
+
+    - name: Add reaction
+      if: ${{ success() }}
+      uses: peter-evans/create-or-update-comment@v2
+      with:
+        token: ${{ secrets.LAND_TOKEN }}
+        repository: ${{ github.event.client_payload.github.payload.repository.full_name }}
+        comment-id: ${{ github.event.client_payload.github.payload.comment.id }}
+        reaction-type: hooray
