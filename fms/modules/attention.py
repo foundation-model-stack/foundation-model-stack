@@ -1,18 +1,18 @@
-from typing import Optional
+from typing import List, Optional, Tuple
 
 import torch
-from torch import nn
+import torch.distributed
+from torch import Tensor, nn
 from torch.distributed.distributed_c10d import ProcessGroup
 from torch.nn import functional as F
 
 from fms import distributed
 from fms.distributed.tensorparallel import (
-    apply_colwise_tp,
-    apply_rowwise_tp,
     copy_to_tensor_model_parallel_region,
     reduce_from_tensor_model_parallel_region,
 )
 from fms.modules.positions import PositionEncoder
+from fms.modules.tp import TPModule
 
 
 class MultiHeadAttention(nn.Module):
@@ -105,10 +105,10 @@ class MultiHeadAttention(nn.Module):
         q,
         k,
         v,
-        mask=None,
+        mask: Optional[Tensor] = None,
         position_ids=None,
         attn_algorithm=None,
-        past_key_value_state=None,
+        past_key_value_state: Optional[Tuple[Tensor, Tensor]] = None,
         use_cache=False,
         is_self=True,
         is_causal_mask=False,
@@ -185,7 +185,7 @@ class MultiHeadAttention(nn.Module):
                 mask = mask.unsqueeze(1)
 
         if self.position_encoder is not None:
-            attn_mask = self.position_encoder.adjusted_mask(
+            attn_mask: Optional[Tensor] = self.position_encoder.adjusted_mask(
                 mask, queries, keys, past_key_value_state, use_cache
             )
         else:
@@ -245,7 +245,7 @@ class MultiHeadAttention(nn.Module):
             return out
 
 
-class TPMultiHeadAttention(MultiHeadAttention):
+class TPMultiHeadAttention(MultiHeadAttention, TPModule):
     """
     Performs multi-headed self- or cross-attention, with optional attention masking.
     This subclass adds support for Tensor Parallel
@@ -279,7 +279,8 @@ class TPMultiHeadAttention(MultiHeadAttention):
         assert (
             nheads % world_size == 0
         ), "The number of heads must be divisible by world size"
-        super(TPMultiHeadAttention, self).__init__(
+        MultiHeadAttention.__init__(
+            self,
             emb_dim,
             emb_kq,
             emb_v,
@@ -290,9 +291,17 @@ class TPMultiHeadAttention(MultiHeadAttention):
             position_encoder,
             gain,
         )
+        self.setup_tp(rank, world_size)
 
-        self.rank = rank
-        self.world_size = world_size
+    def list_colwise_weights(self) -> List[str]:
+        colwise_weights = ["query"]
+        if self.kvheads != 1:
+            colwise_weights.append("key")
+            colwise_weights.append("value")
+        return colwise_weights
+
+    def list_rowwise_weights(self) -> List[str]:
+        return ["dense"]
 
     @staticmethod
     def import_module(
@@ -310,20 +319,6 @@ class TPMultiHeadAttention(MultiHeadAttention):
             group=group,
         )
         return tp_mha
-
-    def import_weights(self, mha: MultiHeadAttention):
-        apply_colwise_tp(self.query, mha.query, self.world_size, self.rank)
-        if self.kvheads == 1:
-            with torch.no_grad():
-                self.key.weight.copy_(mha.key.weight)
-                self.value.weight.copy_(mha.value.weight)
-                if self.use_bias:
-                    self.key.bias.copy_(mha.key.bias)
-                    self.value.bias.copy_(mha.value.bias)
-        else:
-            apply_colwise_tp(self.key, mha.key, self.world_size, self.rank)
-            apply_colwise_tp(self.value, mha.value, self.world_size, self.rank)
-        apply_rowwise_tp(self.dense, mha.dense, self.world_size, self.rank)
 
     def forward(
         self,
