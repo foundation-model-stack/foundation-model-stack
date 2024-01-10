@@ -14,6 +14,8 @@
 # Supported commands:
 # - /land: invokes the land-command workflow, to land (merge) PRs
 #          stacked through ghstack
+#
+# When a command is recognised, the rocket and eyes emojis are added
 
 name: Slash Command Routing
 on:
