@@ -4,6 +4,16 @@ from typing import Tuple, List
 import torch
 
 
+class AttentionComputationMixin(metaclass=abc.ABCMeta):
+    """
+    Include this mixin in a class to implement a custom version of attention
+    """
+
+    @abc.abstractmethod
+    def attend(self, query: torch.Tensor, key: torch.Tensor, value: torch.Tensor):
+        pass
+
+
 @dataclasses.dataclass
 class CacheDataLayer(metaclass=abc.ABCMeta):
     """
@@ -47,6 +57,19 @@ class CacheDataLayer(metaclass=abc.ABCMeta):
         -------
         Tuple[torch.Tensor, torch.Tensor]
             the updated keys and values to be passed in to attention computation
+        """
+        pass
+
+    @abc.abstractmethod
+    def is_filled(self) -> bool:
+        """
+        Denotes whether this cache data layer is in post-fill stage
+
+        Returns
+        -------
+        bool
+            True if cache data layer is currently in the post-fill stage, otherwise False and cache data layer is being
+            pre-filled
         """
         pass
 
@@ -177,6 +200,7 @@ KVCache = Tuple[torch.Tensor, torch.Tensor]  # (key cache, value cache)
 
 @dataclasses.dataclass
 class OutOfPlaceCacheDataLayer(CacheDataLayer):
+
     data_layer: Tuple[torch.Tensor, torch.Tensor]
 
     def get_cache_type(self) -> str:
@@ -192,6 +216,9 @@ class OutOfPlaceCacheDataLayer(CacheDataLayer):
             )
             keys, values = self.data_layer
         return keys, values
+
+    def is_filled(self) -> bool:
+        return self.data_layer is not None
 
 
 class OutOfPlaceCacheData(CacheData):

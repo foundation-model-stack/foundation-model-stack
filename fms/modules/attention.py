@@ -6,6 +6,7 @@ from torch import nn
 from torch.distributed.distributed_c10d import ProcessGroup
 from torch.nn import functional as F
 from fms import distributed
+from fms.utils.cache import AttentionComputationMixin
 
 from fms.distributed.tensorparallel import (
     apply_colwise_tp,
@@ -183,33 +184,14 @@ class MultiHeadAttention(nn.Module):
         if use_cache and cache_data_layer:
             keys, values = cache_data_layer.store(keys, values)
 
-        # use the special paged_attention call if use_cache=True, its type is paged_attention, and it is generating
-        # todo: should we add sdpa logic to cache
+        # Provide a method for a user to perform their own implementation of attention in the cache case if required
         if (
             use_cache
             and cache_data_layer
-            and cache_data_layer.get_cache_type() == "paged-attention"
-            and cache_data_layer.is_generating
+            and cache_data_layer.is_filled()
+            and isinstance(cache_data_layer, AttentionComputationMixin)
         ):
-            queries = queries.transpose(2, 1).reshape(-1, self.nheads, self.head_size)
-
-            # Pre-allocate the output tensor.
-            attn = torch.empty_like(queries)
-            attn = torch.ops.paged_attention.paged_attention_v1(
-                attn,
-                # num_sequences x num_heads x head_size
-                queries,
-                keys,
-                values,
-                self.head_mapping,
-                (self.emb_dim // self.nheads) ** -0.5,
-                cache_data_layer.block_mapping,
-                cache_data_layer.context_lengths,
-                cache_data_layer.block_size,
-                cache_data_layer.max_sequence_length,
-                None,
-            )
-            attn = attn.view(batch_size, q_len, self.nheads * self.emb_v_per_head)
+            attn = cache_data_layer.attend(queries, keys, values)
         # otherwise we always fall back into SDPA as this is either a prompt or it is a single contiguous cache
         else:
 
@@ -271,11 +253,10 @@ class MultiHeadAttention(nn.Module):
             # attn: b x h x qlen x ds
             # attn after permute: b x qlen x h x ds
             # b x qlen x (d)
-            attn = (
-                attn.transpose(2, 1)
-                .contiguous()
-                .view(batch_size, q_len, self.nheads * self.emb_v_per_head)
-            )
+            attn = attn.transpose(2, 1).contiguous()
+
+        attn = attn.view(batch_size, q_len, self.nheads * self.emb_v_per_head)
+
         out = self.dense(attn)
 
         # if use_cache=True, we return the hidden_state as well as the kv cache

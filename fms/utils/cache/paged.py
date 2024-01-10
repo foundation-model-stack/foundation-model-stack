@@ -14,6 +14,7 @@ from fms.utils.cache import (
     CacheDataWithMetadata,
     KVCacheManager,
     KVCache,
+    AttentionComputationMixin,
 )
 
 lib = torch.library.Library("paged_attention", "FRAGMENT")
@@ -226,14 +227,18 @@ class PagedAttnKernel(ir.FallbackKernel):
 
 
 @dataclasses.dataclass
-class PagedAttentionCacheDataLayer(CacheDataLayer):
+class PagedAttentionCacheDataLayer(AttentionComputationMixin, CacheDataLayer):
+
     data_layer: Tuple[torch.Tensor, torch.Tensor]
     max_sequence_length: int
     context_lengths: torch.Tensor
     slot_mapping: torch.Tensor
     block_mapping: torch.Tensor
     block_size: int
-    num_heads: int  # this could be kvheads or num_heads
+    head_mapping: torch.Tensor
+    scale: float
+    num_heads: int
+    kv_heads: int
     head_size: int
     is_generating: bool
 
@@ -264,6 +269,35 @@ class PagedAttentionCacheDataLayer(CacheDataLayer):
         else:
             return keys, values
 
+    def attend(
+        self,
+        query: torch.Tensor,
+        key: torch.Tensor,
+        value: torch.Tensor,
+    ) -> torch.Tensor:
+        query = query.transpose(2, 1).reshape(-1, self.num_heads, self.head_size)
+
+        # Pre-allocate the output tensor.
+        attn = torch.empty_like(query)
+        attn = torch.ops.paged_attention.paged_attention_v1(
+            attn,
+            # num_sequences x num_heads x head_size
+            query,
+            key,
+            value,
+            self.head_mapping,
+            self.scale,
+            self.block_mapping,
+            self.context_lengths,
+            self.block_size,
+            self.max_sequence_length,
+            None,
+        )
+        return attn
+
+    def is_filled(self) -> bool:
+        return self.is_generating
+
 
 @dataclasses.dataclass
 class PagedAttentionCacheData(CacheDataWithMetadata):
@@ -273,7 +307,10 @@ class PagedAttentionCacheData(CacheDataWithMetadata):
     slot_mapping: torch.Tensor
     block_mapping: torch.Tensor
     block_size: int
-    num_heads: int  # this could be kvheads or num_heads
+    head_mapping: torch.Tensor
+    scale: float
+    num_heads: int
+    kv_heads: int
     head_size: int
     is_generating: bool
     sequence_ids: List[int]
@@ -286,7 +323,10 @@ class PagedAttentionCacheData(CacheDataWithMetadata):
             slot_mapping=self.slot_mapping,
             block_mapping=self.block_mapping,
             block_size=self.block_size,
+            head_mapping=self.head_mapping,
+            scale=self.scale,
             num_heads=self.num_heads,
+            kv_heads=self.kv_heads,
             head_size=self.head_size,
             is_generating=self.is_generating,
         )
@@ -442,6 +482,7 @@ class PagedKVCacheManager(KVCacheManager):
         num_layers: int,
         num_heads: int,
         emb_dim: int,
+        kv_heads: int = 0,
         total_num_gpu_blocks: Optional[int] = None,
         block_size: int = 16,
         tensor_parallel_size: int = 1,
@@ -452,32 +493,43 @@ class PagedKVCacheManager(KVCacheManager):
         self.cache: List[KVCache] = []
         element_size = torch.tensor([], dtype=dtype).element_size()
         self.device = device
+
+        if kv_heads == 0:
+            kv_heads = num_heads
+
+        self.kv_heads = kv_heads // tensor_parallel_size if kv_heads > 1 else kv_heads
         self.num_heads = (
             num_heads // tensor_parallel_size if num_heads > 1 else num_heads
         )
+        self.emb_dim = emb_dim
 
         if not total_num_gpu_blocks:
             total_num_gpu_blocks = get_max_gpu_blocks_available(
                 block_size,
                 emb_dim,
-                num_heads // tensor_parallel_size if num_heads > 1 else num_heads,
+                self.kv_heads,
                 num_layers,
                 0.8,
                 dtype,
             )
         self.total_num_gpu_blocks = total_num_gpu_blocks
 
-        self.head_size = emb_dim // num_heads
+        self.head_mapping = torch.repeat_interleave(
+            torch.arange(self.kv_heads, dtype=torch.int32, device=self.device),
+            self.num_heads // self.kv_heads,
+        )
+
+        self.head_size = emb_dim // kv_heads
 
         x = self.block_size // element_size
         key_block_shape = (
-            self.num_heads,
+            self.kv_heads,
             self.head_size // x,
             block_size,
             x,
         )
         value_block_shape = (
-            self.num_heads,
+            self.kv_heads,
             self.head_size,
             block_size,
         )
@@ -624,7 +676,10 @@ class PagedKVCacheManager(KVCacheManager):
             slot_mapping=slot_mapping_tensor,
             block_mapping=block_tables_tensor,
             block_size=self.block_size,
+            head_mapping=self.head_mapping,
+            scale=(self.emb_dim // self.num_heads) ** -0.5,
             num_heads=self.num_heads,
+            kv_heads=self.kv_heads,
             head_size=self.head_size,
             is_generating=not is_prompt,
             sequence_ids=sequence_ids,

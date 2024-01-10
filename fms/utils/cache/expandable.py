@@ -9,7 +9,9 @@ from fms.utils.tensors import ExpandableTensor
 
 @dataclasses.dataclass
 class InPlaceCacheDataLayer(CacheDataLayer):
+
     data_layer: Tuple[torch.Tensor, torch.Tensor]
+    is_generating: bool
 
     def get_cache_type(self) -> str:
         return "in-place"
@@ -24,6 +26,9 @@ class InPlaceCacheDataLayer(CacheDataLayer):
         values = self.data_layer[1]
         return keys, values
 
+    def is_filled(self) -> bool:
+        return self.is_generating
+
 
 @dataclasses.dataclass
 class InPlaceCacheData(CacheDataWithMetadata):
@@ -35,7 +40,7 @@ class InPlaceCacheData(CacheDataWithMetadata):
 
     def get_layer(self, layer_index: int) -> InPlaceCacheDataLayer:
         return InPlaceCacheDataLayer(
-            data_layer=self.data[layer_index],
+            data_layer=self.data[layer_index], is_generating=self.is_generating
         )
 
     def is_filled(self) -> bool:
@@ -99,8 +104,8 @@ class ExpandableKVCacheManager(KVCacheManager):
             )
             self.cache.append(
                 (
-                    ExpandableTensor(empty_tensor_k, dim=2),
-                    ExpandableTensor(empty_tensor_v, dim=2),
+                    empty_tensor_k,  # todo: ExpandableTensor(empty_tensor_k, dim=2) once compile works
+                    empty_tensor_v,  # todo: ExpandableTensor(empty_tensor_v, dim=2) once compile works
                 )
             )
 

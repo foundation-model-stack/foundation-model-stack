@@ -119,13 +119,6 @@ model.eval()
 torch.set_grad_enabled(False)
 print("loading complete on rank", local_rank)
 
-if args.compile:
-    print("compiling model")
-    # Bug with kv-cache in PT2.1
-    torch._inductor.config.joint_graph_constant_folding = False
-    # compiling can make first inference pass slow
-    model = torch.compile(model, mode=args.compile_mode)
-
 # cache setup
 cache_type = args.cache_type
 kv_cache_manager = None
@@ -137,6 +130,7 @@ if cache_type == "paged":
         model.config.nlayers,
         model.config.nheads,
         model.config.emb_dim,
+        kv_heads=model.config.kvheads,
         tensor_parallel_size=dist.get_world_size() if args.distributed else 1,
         dtype=torch.get_default_dtype(),
         device=device,
@@ -244,6 +238,19 @@ def infer(use_cache, do_sample):
     )
     for i in range(result.shape[0]):
         print_result(result[i])
+
+
+if args.compile:
+    print("compiling model")
+    # Bug with kv-cache in PT2.1
+    torch._inductor.config.joint_graph_constant_folding = False
+    # compiling can make first inference pass slow
+    model = torch.compile(model, dynamic=True, mode=args.compile_mode)
+
+    do_sample = [False]
+
+    for sample, cache in itertools.product(do_sample, [use_cache]):
+        infer(cache, sample)
 
 
 print("generating output", local_rank)

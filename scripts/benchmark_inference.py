@@ -296,6 +296,7 @@ if not args.skip_paged_kvcache_runs:
         model.config.nlayers,
         model.config.nheads,
         model.config.emb_dim,
+        kv_heads=model.config.kvheads,
         tensor_parallel_size=dist.get_world_size() if args.distributed else 1,
         dtype=torch.get_default_dtype(),
         total_num_gpu_blocks=500,
