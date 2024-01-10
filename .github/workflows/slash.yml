@@ -31,7 +31,18 @@ jobs:
       with:
         token: ${{ secrets.LAND_TOKEN }}
         reaction-token: ${{ secrets.LAND_TOKEN }}
-        issue-type: pull-request
-        permission: write
-        commands: |
-          land
+        config: >
+          [
+            {
+              "command": "land",
+              "permission": "write",
+              "issue_type": "pull-request",
+              "repository": "foundation-model-stack/foundation-model-stack"
+            },
+            {
+              "command": "assigntome",
+              "permission": "none",
+              "issue_type": "issue",
+              "repository": "foundation-model-stack/foundation-model-stack"
+            }
+          ]
