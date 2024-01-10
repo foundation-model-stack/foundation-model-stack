@@ -195,15 +195,6 @@ class LLaMA(nn.Module):
             ntk_scaling=self.config.ntk_scaling,
             max_seq_len=self.config.max_expected_seq_len,
         )
-        if isinstance(self.distributed_strategy, UniformModelParallelStrategy):
-            for dev_idx in set(self.distributed_strategy.layer_to_device):
-                self.rot_emb.compute_freqs_cis(
-                    torch.device("cuda", dev_idx), self.config.max_expected_seq_len
-                )
-        else:
-            self.rot_emb.compute_freqs_cis(
-                self.shared.emb.weight.device, self.config.max_expected_seq_len
-            )
 
         layers = []
         for i in range(self.config.nlayers):
@@ -242,6 +233,16 @@ class LLaMA(nn.Module):
         self.shared.head.weight.data.normal_(
             0, 1 / math.sqrt(math.sqrt(self.width * self.shared.vocab_size))
         )
+
+        if isinstance(self.distributed_strategy, UniformModelParallelStrategy):
+            for dev_idx in set(self.distributed_strategy.layer_to_device):
+                self.rot_emb.compute_freqs_cis(
+                    torch.device("cuda", dev_idx), self.config.max_expected_seq_len
+                )
+        else:
+            self.rot_emb.compute_freqs_cis(
+                self.shared.emb.weight.device, self.config.max_expected_seq_len
+            )
 
     def _helper(
         self,
@@ -428,18 +429,22 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
             # here we are using 128 as this value fits with all popular models
             #   7B, 13B, 70B to recover the number of heads
             nheads = int(temp.size(0) / 128)
-            temp = (
-                temp.view(nheads, 2, -1, temp.size(1))
-                .transpose(1, 2)
-                .reshape(*temp.size())
-            )
+
+            def transform_func(tensor):
+                return (
+                    tensor.view(nheads, 2, -1, tensor.size(1))
+                    .transpose(1, 2)
+                    .reshape(*tensor.size())
+                )
+
+            temp = transform_func(temp)
             new_sd[new_name] = temp
 
     return new_sd
 
 
-serialization.register_adapter("llama", "meta", _rename_weights_to_fms)
-serialization.register_adapter("llama", "hf", _hf_sd_to_fms_sd)
+serialization.register_adapter("llama", "meta", _rename_weights_to_fms, None)
+serialization.register_adapter("llama", "hf", _hf_sd_to_fms_sd, None)
 
 
 def load_fms_llama(model_path: str, group=None, **kwargs):
