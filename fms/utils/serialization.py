@@ -5,8 +5,12 @@ from typing import Any, Callable, List, Mapping, MutableMapping, Optional, Union
 
 import torch
 
+from fms.utils.config import ModelConfig
 
-__adapters: MutableMapping[str, MutableMapping[str, Callable[[Mapping], Mapping]]] = {}
+
+__adapters: MutableMapping[
+    str, MutableMapping[str, Callable[[Mapping, ModelConfig], Mapping]]
+] = {}
 
 
 def register_adapter(
@@ -49,7 +53,7 @@ def list_sources(architecture: str):
 
 def _get_adapter(
     architecture: str, source: Optional[str]
-) -> Callable[[Mapping[str, Any]], Mapping[str, Any]]:
+) -> Callable[[Mapping[str, Any], ModelConfig], Mapping[str, Any]]:
     if (
         source is None
         or architecture not in __adapters
@@ -58,7 +62,7 @@ def _get_adapter(
         # if no adapter is registered, assume the attributes are already in
         # fms format.
         # should we raise an error here instead?
-        return lambda x: x
+        return lambda x, config: x
     else:
         return __adapters[architecture][source]
 
@@ -79,7 +83,7 @@ def get_adapted(
     if not len(state_dict):
         return state_dict
     adapter = _get_adapter(architecture, source)
-    adapted = adapter(state_dict)
+    adapted = adapter(state_dict, model_config)
     return adapted
 
 
