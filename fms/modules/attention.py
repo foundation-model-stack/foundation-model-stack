@@ -293,14 +293,14 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
         )
         self.setup_tp(rank, world_size)
 
-    def list_colwise_weights(self) -> List[str]:
+    def colwise_param_names(self) -> List[str]:
         colwise_weights = ["query"]
         if self.kvheads != 1:
             colwise_weights.append("key")
             colwise_weights.append("value")
         return colwise_weights
 
-    def list_rowwise_weights(self) -> List[str]:
+    def rowwise_param_names(self) -> List[str]:
         return ["dense"]
 
     @staticmethod
