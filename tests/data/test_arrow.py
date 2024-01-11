@@ -54,7 +54,7 @@ def test_arrow_dataset_reload():
                 break
 
         sd = ds.state_dict()
-        #print(sd)
+        # print(sd)
         # save some data from after where it was saved, so we can verify
         # that it gets the same data after loading the sd
         saved = []
