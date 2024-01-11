@@ -7,7 +7,7 @@ import urllib3
 from pyarrow.fs import FileSystem, FileType, LocalFileSystem, S3FileSystem
 from torch.utils.data import Dataset, IterableDataset
 
-from fms.datasets import DatasetStateDictMixin
+from fms.datasets import SavableDataset
 
 
 class _ArrowFileData(UserDict):
@@ -34,7 +34,7 @@ class _ArrowFileData(UserDict):
             return reader.num_record_batches
 
 
-class ArrowFilesDataset(IterableDataset, DatasetStateDictMixin):
+class ArrowFilesDataset(IterableDataset, SavableDataset):
     """
     Creates a dataset from a path to a directory of arrow files, either in
     S3/COS or a local file system.
