@@ -184,13 +184,10 @@ class MultiHeadAttention(nn.Module):
         if use_cache and cache_data_layer:
             keys, values = cache_data_layer.store(keys, values)
 
+        custom_attention = use_cache and cache_data_layer and isinstance(cache_data_layer, AttentionComputationMixin)
+
         # Provide a method for a user to perform their own implementation of attention in the cache case if required
-        if (
-            use_cache
-            and cache_data_layer
-            and cache_data_layer.is_filled()
-            and isinstance(cache_data_layer, AttentionComputationMixin)
-        ):
+        if custom_attention and cache_data_layer.is_filled():
             attn = cache_data_layer.attend(queries, keys, values)
         # otherwise we always fall back into SDPA as this is either a prompt or it is a single contiguous cache
         else:
@@ -261,7 +258,8 @@ class MultiHeadAttention(nn.Module):
 
         # if use_cache=True, we return the hidden_state as well as the kv cache
         if use_cache:
-            return out, cache_data_layer.data_layer
+            # note: needed to add this check to return the data_layer as it fails compile otherwise
+            return out, cache_data_layer.data_layer if custom_attention else (keys, values)
         else:
             return out
 
