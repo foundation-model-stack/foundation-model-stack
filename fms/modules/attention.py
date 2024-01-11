@@ -261,7 +261,7 @@ class MultiHeadAttention(nn.Module):
 
         # if use_cache=True, we return the hidden_state as well as the kv cache
         if use_cache:
-            return out, (keys, values)
+            return out, cache_data_layer.data_layer
         else:
             return out
 

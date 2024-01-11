@@ -245,7 +245,7 @@ if args.compile:
     # Bug with kv-cache in PT2.1
     torch._inductor.config.joint_graph_constant_folding = False
     # compiling can make first inference pass slow
-    model = torch.compile(model, dynamic=True, mode=args.compile_mode)
+    model = torch.compile(model, mode=args.compile_mode)
 
     do_sample = [False]
 

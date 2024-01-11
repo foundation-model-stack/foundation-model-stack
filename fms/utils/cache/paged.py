@@ -253,10 +253,7 @@ class PagedAttentionCacheDataLayer(AttentionComputationMixin, CacheDataLayer):
             -1, self.num_heads, self.head_size
         )
 
-        (
-            keys_cache_output,
-            values_cache_output,
-        ) = torch.ops.paged_attention.reshape_and_cache(
+        self.data_layer = torch.ops.paged_attention.reshape_and_cache(
             key_to_cache,
             value_to_cache,
             self.data_layer[0],
@@ -264,10 +261,7 @@ class PagedAttentionCacheDataLayer(AttentionComputationMixin, CacheDataLayer):
             self.slot_mapping,
         )
 
-        if self.is_generating:
-            return keys_cache_output, values_cache_output
-        else:
-            return keys, values
+        return keys, values
 
     def attend(
         self,
@@ -283,8 +277,8 @@ class PagedAttentionCacheDataLayer(AttentionComputationMixin, CacheDataLayer):
             attn,
             # num_sequences x num_heads x head_size
             query,
-            key,
-            value,
+            self.data_layer[0],
+            self.data_layer[1],
             self.head_mapping,
             self.scale,
             self.block_mapping,
