@@ -39,6 +39,9 @@ def generate_test_data(
 
 
 def test_arrow_dataset_reload():
+    """
+    Validates that the dataset can be reloaded from a saved state dict.
+    """
     with tempfile.TemporaryDirectory() as data_path:
         generate_test_data(data_path, 8, 97)
         data_path = "file:///" + data_path
@@ -51,7 +54,9 @@ def test_arrow_dataset_reload():
                 break
 
         sd = ds.state_dict()
-        print(sd)
+        #print(sd)
+        # save some data from after where it was saved, so we can verify
+        # that it gets the same data after loading the sd
         saved = []
         for i, batch in enumerate(it):
             # print(i, batch)
@@ -71,6 +76,9 @@ def test_arrow_dataset_reload():
 
 
 def test_ranked():
+    """
+    test handling of rank and world size in saved state dict.
+    """
     with tempfile.TemporaryDirectory() as data_path:
         generate_test_data(data_path, 7, 95)
         data_path = "file:///" + data_path
@@ -78,6 +86,8 @@ def test_ranked():
         rank = 7
         world = 13
 
+        # we actually save the sd from rank 0. other ranks take every
+        # rank'th row after the zeroth row.
         ds0 = ArrowFilesDataset(data_path, 0, world)
         ds = ArrowFilesDataset(data_path, rank, world)
 
@@ -108,6 +118,11 @@ def test_ranked():
 
 
 def test_split():
+    """
+    in cases where a row is longer than max seq len, it's chunked and
+    read as chunks. this test checks the handling of the state dict for
+    picking up after the last chunk.
+    """
     with tempfile.TemporaryDirectory() as data_path:
         generate_test_data(data_path, 7, 10)
         data_path = "file:///" + data_path
