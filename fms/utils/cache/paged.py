@@ -248,9 +248,9 @@ class PagedAttentionCacheDataLayer(AttentionComputationMixin, CacheDataLayer):
     def store(
         self, keys: torch.Tensor, values: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        key_to_cache = keys.transpose(2, 1).reshape(-1, self.num_heads, self.head_size)
+        key_to_cache = keys.transpose(2, 1).reshape(-1, self.kv_heads, self.head_size)
         value_to_cache = values.transpose(2, 1).reshape(
-            -1, self.num_heads, self.head_size
+            -1, self.kv_heads, self.head_size
         )
 
         self.data_layer = torch.ops.paged_attention.reshape_and_cache(
@@ -513,7 +513,7 @@ class PagedKVCacheManager(KVCacheManager):
             self.num_heads // self.kv_heads,
         )
 
-        self.head_size = emb_dim // kv_heads
+        self.head_size = emb_dim // self.num_heads
 
         x = self.block_size // element_size
         key_block_shape = (
