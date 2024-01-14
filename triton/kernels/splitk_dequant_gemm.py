@@ -63,7 +63,7 @@ def matmul_split_k_kernel(a_ptr, b_ptr, c_ptr, scales_ptr, zeros_ptr,
         a = tl.load(a_ptrs)
         b = tl.load(b_ptrs)
         
-        g_id = k // (groupsize // block_k)
+        g_id = k // (groupsize // (block_k*split_k))
 
         ptr = scales_ptrs + g_id * stride_scales_g
         scales = tl.load(ptr) # -> 1D naive assumes no reordering
