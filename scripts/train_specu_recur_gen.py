@@ -51,7 +51,8 @@ class Speculator(nn.Module):
         super().__init__()
         self.nheads = n_heads
         self.emb_dim = emb_dim
-        self.inner_dim = emb_dim if inner_dim==0 else inner_dim
+        inner_dim = emb_dim if inner_dim==0 else inner_dim
+        self.inner_dim = inner_dim
         self.vsize = vocab_size
         self.emb = nn.ModuleList([nn.Embedding(vocab_size, inner_dim) for _ in range(n_heads)])
         self.proj = nn.ModuleList([nn.Linear((emb_dim if i==0 else inner_dim) + inner_dim, inner_dim, bias=False) for i in range(n_heads)])
