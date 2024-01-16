@@ -189,7 +189,7 @@ class Sphinx(nn.Module):
             max_seq_len=self.config.max_expected_seq_len,
         )
         if isinstance(self.distributed_strategy, UniformModelParallelStrategy):
-            for dev_idx in set(self.distributed_strategy.layer_to_device.values()):
+            for dev_idx in set(self.distributed_strategy.layer_to_device):
                 self.rot_emb.compute_freqs_cis(
                     torch.device("cuda", dev_idx), self.config.max_expected_seq_len
                 )
@@ -198,12 +198,12 @@ class Sphinx(nn.Module):
                 self.shared.emb.weight.device, self.config.max_expected_seq_len
             )
 
-        self.layers = []
+        layers = []
         for i in range(self.config.nlayers):
-            block = SphinxBlock(self.config, self.rot_emb)
+            block: nn.Module = SphinxBlock(self.config, self.rot_emb)
             block = self.distributed_strategy.distribute_layer(block, i)
-            self.layers.append(block)
-        self.layers = nn.ModuleList(self.layers)
+            layers.append(block)
+        self.layers: nn.ModuleList = nn.ModuleList(layers)
 
         dec_norm = LayerNormParameterized(
             self.config.emb_dim,
