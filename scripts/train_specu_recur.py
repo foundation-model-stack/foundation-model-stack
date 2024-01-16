@@ -334,7 +334,7 @@ def train_func(args):
         )
         data = fmdata.Buffer_Dataset(
             data,
-            [args.seq_len + 4],
+            [args.seq_len + args.n_specu_heads + 1],
             bos_token=args.sep_token,
             pack_hard=True,
         )
