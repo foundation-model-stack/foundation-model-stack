@@ -416,7 +416,7 @@ def train_func(args):
                 inp = inp.to(local_rank)
                 dist.barrier()
                 with torch.no_grad():
-                    _, embeds = model(inp[:, :-4], include_embeds=True, use_cache=False)
+                    _, embeds = model(inp[:, :-args.n_specu_heads-1], include_embeds=True, use_cache=False)
                 preds = speculator(embeds.detach(), inp)
                 losses = []
                 for i in range(args.n_specu_heads):
