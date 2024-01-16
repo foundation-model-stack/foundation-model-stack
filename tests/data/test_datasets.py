@@ -1,3 +1,4 @@
+import random
 import tempfile
 
 import torch
@@ -154,3 +155,17 @@ def test_packing_ds():
     i = iter(pds)
     assert next(i) == [3, 4]
     assert next(i) == [5, 6]
+
+
+def test_eos_bos():
+    bos = 11
+    eos = 12
+
+    data = list(
+        [list(range(random.randint(5, 10), random.randint(12, 15))) for x in range(10)]
+    )
+    ds = _MockDS(data)
+    ds = datasets.WithSeparatorDataset(ds, bos_token_id=bos, eos_token_id=eos)
+    i = iter(ds)
+    assert next(i) == [bos] + data[0] + [eos]
+    assert next(i) == [bos] + data[1] + [eos]

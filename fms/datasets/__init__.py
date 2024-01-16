@@ -1,4 +1,4 @@
-from typing import Any, Callable, List, Mapping
+from typing import Any, Callable, List, Mapping, Optional
 
 from torch.utils.data import Dataset, IterableDataset
 
@@ -138,3 +138,25 @@ class PackedSequenceDataset(Dataset, SavableDataset):
                 next_val = self.buffer[: self.max_seq_len]
                 self.buffer = self.buffer[self.max_seq_len :]
                 yield next_val
+
+
+class WithSeparatorDataset(Dataset, SavableDataset):
+    def __init__(
+        self,
+        dataset: SavableDataset,
+        bos_token_id: Optional[int] = None,
+        eos_token_id: Optional[int] = None,
+    ):
+        self.dataset = dataset
+        self.bos_token_id = bos_token_id
+        self.eos_token_id = eos_token_id
+
+    def __iter__(self):
+        for example in self.dataset:
+            result = []
+            if self.bos_token_id is not None:
+                result.append(self.bos_token_id)
+            result.extend(example)
+            if self.eos_token_id is not None:
+                result.append(self.eos_token_id)
+            yield result
