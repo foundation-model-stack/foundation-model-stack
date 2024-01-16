@@ -316,7 +316,7 @@ def train_func(args):
 
     model = LlamaForCausalLM.from_pretrained(args.base_path) #"/lustre/llama_weights/hf/13B-F/")
     model = llama.convert_hf_llama(model)
-    model = model.cpu()
+    model = model.cpu().bfloat16()
 
     # Wrap model
     report(f"Applying wrapper for parallelization mode={args.parallel_mode}...")
