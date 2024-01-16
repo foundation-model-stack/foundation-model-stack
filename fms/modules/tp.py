@@ -31,13 +31,13 @@ class TPModule(nn.Module, metaclass=ABCMeta):
         self.rank = rank
         self.world_size = world_size
 
-    def list_colwise_weights(self) -> List[str]:
+    def colwise_param_names(self) -> List[str]:
         return []
 
-    def list_rowwise_weights(self) -> List[str]:
+    def rowwise_param_names(self) -> List[str]:
         return []
 
-    def list_embedding_weights(self) -> List[str]:
+    def embedding_param_names(self) -> List[str]:
         return []
 
     @staticmethod
@@ -46,21 +46,21 @@ class TPModule(nn.Module, metaclass=ABCMeta):
         pass
 
     def import_weights(self, module: nn.Module):
-        for weight in self.list_colwise_weights():
+        for weight in self.colwise_param_names():
             apply_colwise_tp(
                 getattr(self, weight),
                 getattr(module, weight),
                 self.world_size,
                 self.rank,
             )
-        for weight in self.list_rowwise_weights():
+        for weight in self.rowwise_param_names():
             apply_rowwise_tp(
                 getattr(self, weight),
                 getattr(module, weight),
                 self.world_size,
                 self.rank,
             )
-        for weight in self.list_embedding_weights():
+        for weight in self.embedding_param_names():
             apply_embedding_tp(
                 getattr(self, weight),
                 getattr(module, weight),
@@ -69,9 +69,9 @@ class TPModule(nn.Module, metaclass=ABCMeta):
             )
         tp_sharded_modules = list(
             itertools.chain(
-                self.list_colwise_weights(),
-                self.list_rowwise_weights(),
-                self.list_embedding_weights(),
+                self.colwise_param_names(),
+                self.rowwise_param_names(),
+                self.embedding_param_names(),
             )
         )
         with torch.no_grad():

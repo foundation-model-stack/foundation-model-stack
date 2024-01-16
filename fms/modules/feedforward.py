@@ -126,10 +126,10 @@ class TPFeedForwardBlock(FeedForwardBlock, TPModule):
         )
         self.setup_tp(rank, world_size)
 
-    def list_colwise_weights(self) -> List[str]:
+    def colwise_param_names(self) -> List[str]:
         return ["w1"]
 
-    def list_rowwise_weights(self) -> List[str]:
+    def rowwise_param_names(self) -> List[str]:
         return ["w2"]
 
     @staticmethod
@@ -272,10 +272,10 @@ class TPGatedLinearUnit(GatedLinearUnit, TPModule):
         )
         self.setup_tp(rank, world_size)
 
-    def list_colwise_weights(self) -> List[str]:
+    def colwise_param_names(self) -> List[str]:
         return ["w1", "wg"]
 
-    def list_rowwise_weights(self) -> List[str]:
+    def rowwise_param_names(self) -> List[str]:
         return ["w2"]
 
     @staticmethod
