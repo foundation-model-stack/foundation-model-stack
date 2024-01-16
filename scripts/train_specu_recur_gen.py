@@ -47,16 +47,17 @@ torch._inductor.config.joint_graph_constant_folding = False
 
 
 class Speculator(nn.Module):
-    def __init__(self, emb_dim=4096, vocab_size=32000, n_heads=4):
+    def __init__(self, emb_dim=4096, inner_dim=0, vocab_size=32000, n_heads=4):
         super().__init__()
         self.nheads = n_heads
         self.emb_dim = emb_dim
+        self.inner_dim = emb_dim if inner_dim==0 else inner_dim
         self.vsize = vocab_size
-        self.emb = nn.ModuleList([nn.Embedding(vocab_size, emb_dim) for _ in range(n_heads)])
-        self.proj = nn.ModuleList([nn.Linear(emb_dim * 2, emb_dim, bias=False) for _ in range(n_heads)])
-        self.head = nn.ModuleList([nn.Linear(emb_dim, vocab_size, bias=False) for _ in range(n_heads)])
+        self.emb = nn.ModuleList([nn.Embedding(vocab_size, inner_dim) for _ in range(n_heads)])
+        self.proj = nn.ModuleList([nn.Linear((emb_dim if i==0 else inner_dim) + inner_dim, inner_dim, bias=False) for i in range(n_heads)])
+        self.head = nn.ModuleList([nn.Linear(inner_dim, vocab_size, bias=False) for _ in range(n_heads)])
         self.ln = nn.ModuleList(
-            [LayerNormParameterized(emb_dim, elementwise_shift=True, elementwise_scale=True) for _ in range(n_heads)]
+            [LayerNormParameterized(inner_dim, elementwise_shift=True, elementwise_scale=True) for _ in range(n_heads)]
         )
         self.a = nn.GELU()
         self.reset_params()
@@ -64,7 +65,7 @@ class Speculator(nn.Module):
     def reset_params(self):
         for m in self.modules():
             if isinstance(m, nn.Embedding) or isinstance(m, nn.Linear):
-                nn.init.trunc_normal_(m.weight, 0, 1 / self.emb_dim**0.5)
+                nn.init.trunc_normal_(m.weight, 0, 1 / self.inner_dim**0.5)
             elif isinstance(m, LayerNormParameterized):
                 m.weight.data.fill_(1)
                 m.bias.data.zero_()
@@ -121,6 +122,12 @@ parser.add_argument(
     type=int,
     default=3,
     help="Number of words to ingest before making trainable predictions",
+)
+parser.add_argument(
+    "--inner_dim",
+    type=int,
+    default=0,
+    help="Speculator width (default 0 matches base model)",
 )
 
 # Training args
@@ -335,7 +342,7 @@ def train_func(args):
     model.to(device=local_rank)
     model.rot_emb.compute_freqs_cis(model.shared.emb.weight.device, args.seq_len)
 
-    speculator = Speculator(args.emb_dim, args.vocab, args.n_specu_heads)
+    speculator = Speculator(args.emb_dim, args.inner_dim, args.vocab, args.n_specu_heads)
 
     loss_fn = nn.CrossEntropyLoss(label_smoothing=args.label_smoothing)
 
