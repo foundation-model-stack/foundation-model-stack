@@ -222,8 +222,11 @@ def train_func(args):
     report("Constructing model...")
 
     model = LlamaForCausalLM.from_pretrained(args.base_path) #"/lustre/llama_weights/hf/13B-F/")
+    report("    Codellama loaded...")
     model = llama.convert_hf_llama(model)
+    report("    Converted to FMS...")
     model = model.cpu().bfloat16()
+    report("    Converted to bf16...")
 
     # Wrap model
     report(f"Applying wrapper for parallelization mode={args.parallel_mode}...")
