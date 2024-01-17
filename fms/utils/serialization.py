@@ -309,14 +309,14 @@ def load_state_dict_into_model(
             _load_partial_state_dict(
                 model, fms_partial_sd, needs_tp_sharding, rank, world_size
             )
+            for p_key in partial_sd.keys():
+                if isinstance(state_dict, ChainMap):
+                    for child_sd in state_dict.maps:
+                        child_sd.pop(p_key, None)
+                else:
+                    state_dict.pop(p_key)
             del partial_sd
             del fms_partial_sd
-
-            if isinstance(state_dict, ChainMap):
-                for child_sd in state_dict.maps:
-                    child_sd.pop(key, None)
-            else:
-                state_dict.pop(key)
 
 
 def _copy_colwise(param: torch.nn.Parameter, tensor_value, is_bias, rank, world_size):
