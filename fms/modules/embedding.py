@@ -218,12 +218,12 @@ class TPWordEmbedding(WordEmbedding, TPModule):
         )
         return tp_we
 
-    def list_colwise_weights(self) -> List[str]:
+    def colwise_param_names(self) -> List[str]:
         if self.reversible and not self.tie_weights:
             return ["head"]
         return []
 
-    def list_embedding_weights(self) -> List[str]:
+    def embedding_param_names(self) -> List[str]:
         emb_weights = ["emb"]
         if self.abs_pos:
             emb_weights.append("pos_emb")
