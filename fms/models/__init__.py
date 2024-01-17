@@ -206,26 +206,6 @@ def _is_dp(distributed_strategy):
     return distributed_strategy in {"fsdp", "hsdp", "ddp"}
 
 
-def _load_state_dict_into_model(
-    model, state_dict, device, rank, world_size, checkpoint_format
-):
-    if checkpoint_format == "st":
-        # In this case state_dict contains some extra information:
-        # 1. Each tensor in the state dict is in a meta device to save memory
-        # 2. Each tensor has 3 extra parameters appended to it:
-        #   - st_file: the safetensors checkpoint to load the weights from
-        #   - st_key: the key(s) in the ST checkpoint needed for this weight
-        #   - transform_func: a function that transforms the weights represented
-        #     by st_key in the st_file checkpoint into the FMS weight in the state dict
-        # This is all the information needed to properly load, transform, and
-        # optionally TP partition the weights coming from a ST checkpoint
-        serialization.load_safetensors_checkpoint(
-            model, state_dict, device, rank, world_size
-        )
-    else:
-        model.load_state_dict(state_dict, strict=False)
-
-
 def get_model(
     architecture: str,
     variant: str,
@@ -280,6 +260,19 @@ def get_model(
     else:
         initial_device = device
 
+    if model_path is not None:
+        if checkpoint_format is None:
+            checkpoint_format = serialization.get_ckp_format(model_path)
+        lazy_sd = serialization.load_state_dict(
+            model_path,
+            checkpoint_format=checkpoint_format,
+            distributed_strategy=distributed_strategy,
+            checkpoint_sharding=checkpoint_sharding,
+            initial_device=initial_device,
+            rank=local_rank,
+            world_size=world_size,
+        )
+
     extra_args = kwargs
     if "distributed_strategy" not in extra_args:
         if distributed_strategy == "tp":
@@ -289,7 +282,7 @@ def get_model(
             print("using model parallel")
             devices = [i for i in range(torch.cuda.device_count())]
             extra_args["distributed_strategy"] = UniformModelParallelStrategy(
-                devices, 32
+                devices, _guess_num_layers(lazy_sd)
             )
 
     # Create the model
@@ -311,20 +304,17 @@ def get_model(
     if not pre_load:
         fms_model = model_wrap(fms_model)
 
-    if model_path is not None:
-        if checkpoint_format is None:
-            checkpoint_format = serialization.get_ckp_format(model_path)
-        fms_model = serialization.load_state_dict(
-            model_path,
-            model=fms_model,
-            architecture=architecture,
-            source=source if source is not None else "fms",
-            checkpoint_format=checkpoint_format,
-            distributed_strategy=distributed_strategy,
-            checkpoint_sharding=checkpoint_sharding,
-            initial_device=initial_device,
-            rank=local_rank,
-            world_size=world_size,
+    if len(lazy_sd):
+        serialization.load_state_dict_into_model(
+            model,
+            lazy_sd,
+            architecture,
+            source if source is not None else "fms",
+            distributed_strategy,
+            checkpoint_sharding,
+            initial_device,
+            rank,
+            world_size,
         )
 
     if pre_load:

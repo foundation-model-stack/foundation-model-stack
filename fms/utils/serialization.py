@@ -22,21 +22,16 @@ from fms.modules.tp import TPModule
 
 
 __adapters: MutableMapping[str, MutableMapping[str, Callable[[Mapping], Mapping]]] = {}
-__fusable_weight_groups: MutableMapping[
-    str, MutableMapping[str, Callable[[List[str]], List[Union[str, List[str]]]]]
-] = {}
 
 
 def register_adapter(
     architecture: str,
     source: str,
     adapter: Callable[[Mapping], Mapping],
-    fwg_adapter: Optional[Callable[[List[str]], List[Union[str, List[str]]]]] = None,
 ):
     """
     Registers a state dict adapter to be available to the (de) serialization
-    API. Optionally registers which weights are to be fused together so the
-    lazy loaders can properly work with the adapter
+    API.
 
     Args:
     architecture: The name of the model architecture, e.g. 'llama'
@@ -44,21 +39,10 @@ def register_adapter(
             E.g. 'hf'
     adapter: the class of the adapter. The class must accept one constructor
                 parameter, which will be a state dict (`OrderedDict`)
-    fwg_adapter: Optional[Callable[[List[str]], List[Union[str, List[str]]]]]
-        Function that turns a single list of weights into groups that need to
-        go together into the adapter function. For example, if a checkpoint has
-        unfused q,k,v matrices, but the FMS model requires a fused qkv, adapter
-        must be called with the three weights together always. This is needed
-        so that lazy loaders know which weights to consider together.
     """
     sources: MutableMapping[str, Callable[[Mapping], Mapping]] = {}
-    fusable_weight_groups: MutableMapping[
-        str, Callable[[List[str]], List[Union[str, List[str]]]]
-    ] = {}
     if architecture in __adapters:
         sources = __adapters[architecture]
-    if architecture in __fusable_weight_groups:
-        fusable_weight_groups = __fusable_weight_groups[architecture]
 
     if source in sources:
         raise KeyError(
@@ -66,10 +50,7 @@ def register_adapter(
         )
 
     sources[source] = adapter
-    if fwg_adapter is not None:
-        fusable_weight_groups[source] = fwg_adapter
     __adapters[architecture] = sources
-    __fusable_weight_groups[architecture] = fusable_weight_groups
 
 
 def list_sources(architecture: str):
@@ -87,10 +68,7 @@ def list_sources(architecture: str):
 
 def _get_adapter(
     architecture: str, source: Optional[str]
-) -> Tuple[
-    Callable[[Mapping[str, Any]], Mapping[str, Any]],
-    Optional[Callable[[List[str]], List[Union[str, List[str]]]]],
-]:
+) -> Callable[[Mapping[str, Any]], Mapping[str, Any]]:
     if (
         source is None
         or architecture not in __adapters
@@ -99,11 +77,9 @@ def _get_adapter(
         # if no adapter is registered, assume the attributes are already in
         # fms format.
         # should we raise an error here instead?
-        return lambda x: x, None
+        return lambda x: x
     else:
-        return __adapters[architecture][source], __fusable_weight_groups[
-            architecture
-        ].get(source, None)
+        return __adapters[architecture][source]
 
 
 def get_adapted(
@@ -153,11 +129,30 @@ def get_ckp_format(model_path: Union[str, Path]) -> str:
     return "pt_all"
 
 
+def get_safetensors_item(key, file: Path, device: torch.device) -> torch.Tensor:
+    from safetensors import safe_open  # type: ignore[import-untyped]
+
+    with torch.no_grad():
+        with safe_open(
+            file, framework="pt", device=str(device)
+        ) as model_weights:  # type: ignore[attr-defined]
+            return model_weights.get_tensor(key)
+
+
+class LazySafetensorsDict(collections.UserDict):
+    def set_lazy_tensor(self, key, file, device):
+        super().__setitem__(key, lambda: get_safetensors_item(key, file, device))
+
+    def __getitem__(self, key):
+        lazy_tensor = super().__getitem__(key)
+        if callable(lazy_tensor):
+            lazy_tensor = lazy_tensor()
+            super().__setitem__(key, lazy_tensor)
+        return lazy_tensor
+
+
 def load_state_dict(
     model_path: Union[str, Path],
-    model: torch.nn.Module,
-    architecture: str,
-    source: str,
     *,
     checkpoint_format: Optional[str] = None,
     distributed_strategy: Optional[str] = None,
@@ -165,23 +160,18 @@ def load_state_dict(
     initial_device: torch.device = torch.device("cpu"),
     rank: int = 0,
     world_size: int = 1,
-) -> torch.nn.Module:
+) -> Mapping[str, Any]:
     """
     Validates that the file(s) found at a checkpoint path are compatible with
-    the intended (possibly distributed) use-case, and returns the model with
-    the weights loaded on it. For memory efficiency, the model is modified
-    in-place.
+    the intended (possibly distributed) use-case, and returns a lazy loading
+    state dict if possible (some formats may not support that).
 
     If model_path is a directory, it'll try to load, in this order, pytorch
     models (.pth format), HF models (.bin format), and safetensors
-    (.safetensors format).
+    (.safetensors format), unless checkpoint_format is specified.
 
     Args:
     model_path: the path to find the weights. If not set, return None.
-    model: The pytorch model where the state dict will be loaded. Useful for
-            sharded loading of the state dict
-    architecture: The architecture of the model
-    source: The source of the checkpoint
     checkpoint_format: how the checkpoint files are saved: None, 'pt',
             'hf', or 'st'. If None, guess based on files.
     distributed_strategy: the kind of possibly-distributed model in which we
@@ -189,12 +179,15 @@ def load_state_dict(
             validation.
     checkpoint_sharding: the sharding format of the checkpoint.
             E.g. layer, tp, fsdp.
-    initial_device: where the state dict will be loaded. if meta, return None.
+    initial_device: where the state dict will be loaded if not lazy.
+            If meta, return empty dict.
     """
     if model_path is None or initial_device.type == "meta":
-        return model
+        return {}
     if checkpoint_sharding == "fsdp" and distributed_strategy not in ["fsdp", "hsdp"]:
         raise ValueError(f"FSDP checkpoints can only be loaded into an FSDP model")
+    if checkpoint_sharding == "tp" and distributed_strategy not in ["tp"]:
+        raise ValueError("TP checkpoints can only be loaded into a TP model")
 
     model_path = Path(os.path.expanduser(model_path))
 
@@ -232,89 +225,90 @@ def load_state_dict(
         ), f"Loading a {checkpoint_sharding}-sharded checkpoint with len={len(checkpoints)} but world size is {world_size}"
 
         checkpoints = [checkpoints[rank]]
-    sd_adapter, fwg_adapter = _get_adapter(architecture, source)
 
-    tp_shard_ckp = distributed_strategy == "tp" and checkpoint_sharding != "tp"
+    checkpoint_sds = []
     if checkpoint_format == "st":
         for ckp in checkpoints:
-            load_safetensors_checkpoint(
-                model,
-                ckp,
-                sd_adapter,
-                fwg_adapter,
-                tp_shard_ckp,
-                initial_device,
-                rank,
-                world_size,
+            checkpoint_sds.append(
+                load_safetensors_state_dict(
+                    ckp,
+                    initial_device,
+                )
             )
     else:
         with torch.no_grad():
-            [
-                _load_partial_state_dict(
-                    model,
-                    sd_adapter(torch.load(ckpt_path, map_location=initial_device)),
-                    tp_shard_ckp,
-                    rank,
-                    world_size,
-                )
-                for ckpt_path in checkpoints
+            checkpoint_sds = [
+                torch.load(ckpt_path, mmap=True) for ckpt_path in checkpoints
             ]
-    return model
+    return ChainMap(*checkpoint_sds)
 
 
-def load_safetensors_checkpoint(
-    model: torch.nn.Module,
+def load_safetensors_state_dict(
     checkpoint: Path,
-    adapter: Callable[[Mapping], Mapping],
-    fwg_adapter: Optional[Callable[[List[str]], List[Union[str, List[str]]]]],
-    tp_shard: bool,
-    device,
-    rank,
-    world_size,
+    device: torch.device,
 ):
-    """
-    This function loads a safetensors unsharded (or layer-sharded) checkpoint into a model (possibly TP)
-    with an arbitrary number of ranks.
+    sd = LazySafetensorsDict()
 
-    Args
-    ====
-    model: torch.nn.Module
-        Model where the weights will be loaded
-    state_dict: Mapping[str, any]
-        Dictionary mapping FMS weight names to files and their weight names
-    adapter: Callable[[Mapping], Mapping]
-        Function that returns an FMS state_dict from a source state_dict.
-        E.g. turns meta checkpoints into FMS checkpoints
-    fwg_adapter: Optional[Callable[[List[str]], List[Union[str, List[str]]]]]
-        Function that turns a single list of weights into groups that need to
-        go together into the adapter function. For example, if a checkpoint has
-        unfused q,k,v matrices, but the FMS model requires a fused qkv, adapter
-        must be called with the three weights together always. This is needed
-        so that lazy loaders know which weights to consider together.
-    rank: int
-        Rank of the current process
-    world_size: int
-        Total number of TP processes
-    """
     from safetensors import safe_open  # type: ignore[import-untyped]
 
-    with torch.no_grad():
-        with safe_open(
-            checkpoint, framework="pt", device=str(device)
-        ) as model_weights:  # type: ignore[attr-defined]
-            sd_keys = list(model_weights.keys())
-            if fwg_adapter is not None:
-                key_groups = fwg_adapter(sd_keys)
-            else:
-                key_groups = sd_keys
-            for key_group in key_groups:
-                if not isinstance(key_group, list):
-                    key_group = [key_group]
-                keys_sd = {}
-                for key in key_group:
-                    keys_sd[key] = model_weights.get_tensor(key)
-                fms_sd = adapter(keys_sd)
-                _load_partial_state_dict(model, fms_sd, tp_shard, rank, world_size)
+    with safe_open(
+        checkpoint, framework="pt", device=str(device)
+    ) as model_weights:  # type: ignore[attr-defined]
+        sd_keys = list(model_weights.keys())
+        for key in sd_keys:
+            sd.set_lazy_tensor(key, checkpoint, device)
+    return sd
+
+
+class FusableWeightsMissingError(Exception):
+    missing_weights: List[str] = []
+
+    def __init__(self, missing_weights):
+        self.missing_weights = missing_weights
+        super().__init__()
+
+
+def load_state_dict_into_model(
+    model: torch.nn.Module,
+    state_dict: Mapping[str, Any],
+    architecture: str,
+    source: str,
+    distributed_strategy: Optional[str] = None,
+    checkpoint_sharding: Optional[str] = None,
+    initial_device: torch.device = torch.device("cpu"),
+    rank: int = 0,
+    world_size: int = 0,
+) -> None:
+    # 1. Get the adapter from checkpoint sd to fms sd
+    adapter = _get_adapter(architecture, source)
+
+    # 2. Decide if model needs sharding and how (for now only TP)
+    needs_tp_sharding = checkpoint_sharding != "tp" and distributed_strategy == "tp"
+
+    # 3. Iterate over the weights and load them into the model
+    used_keys = set()
+    sd_keys = state_dict.keys()
+    for key, tensor in sd_keys:
+        if key in used_keys:
+            continue
+        used_keys.add(key)
+        try:
+            partial_sd = {key: state_dict[key]}
+            if partial_sd[key].device != initial_device:
+                partial_sd[key] = partial_sd[key].to(device=initial_device)
+            fms_partial_sd = adapter(partial_sd)
+        except FusableWeightsMissingError as e:
+            for weight in e.missing_weights:
+                partial_sd[weight] = state_dict[weight]
+                if partial_sd[weight].device != initial_device:
+                    partial_sd[weight] = partial_sd[weight].to(device=initial_device)
+            fms_partial_sd = adapter(partial_sd)
+        _load_partial_state_dict(
+            model, fms_partial_sd, needs_tp_sharding, rank, world_size
+        )
+        del partial_sd
+        del fms_partial_sd
+        del state_dict[key]
 
 
 def _copy_colwise(param: torch.nn.Parameter, tensor_value, is_bias, rank, world_size):
