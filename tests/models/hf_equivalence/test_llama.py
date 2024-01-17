@@ -1,15 +1,14 @@
 import pytest
-
-from fms.models.llama import convert_hf_llama
-from fms.models import get_model
 import torch
 
+from fms.models import get_model
+from fms.models.hf.utils import to_hf_api
+from fms.models.llama import convert_hf_llama
 from fms.testing.comparison import (
-    compare_model_signatures,
     HFModelSignatureParams,
     ModelSignatureParams,
+    compare_model_signatures,
 )
-from fms.models.hf.utils import to_hf_api
 
 
 @pytest.mark.slow

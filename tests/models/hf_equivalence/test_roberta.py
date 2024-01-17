@@ -1,29 +1,27 @@
+import math
 import tempfile
 
 import pytest
+import torch
 from transformers import (
     AutoModelForMaskedLM,
-    RobertaTokenizerFast,
     AutoModelForSequenceClassification,
+    RobertaTokenizerFast,
 )
-
-from fms.models.hf.roberta.modeling_roberta_hf import (
-    HFAdaptedRoBERTaForSequenceClassification,
-)
-import torch
-import math
 
 from fms.models import get_model
 from fms.models.hf import to_hf_api
+from fms.models.hf.roberta.modeling_roberta_hf import (
+    HFAdaptedRoBERTaForSequenceClassification,
+)
 from fms.testing.comparison import (
-    ModelSignatureParams,
     HFModelSignatureParams,
+    ModelSignatureParams,
     compare_model_signatures,
 )
 
 
 def test_roberta_base_for_masked_lm_equivalency():
-
     # create models
     hf_model = AutoModelForMaskedLM.from_pretrained("roberta-base")
 
@@ -132,7 +130,6 @@ sequence_classification_params = [
     ids=[x[1] for x in sequence_classification_params],
 )
 def test_roberta_base_for_sequence_classification(task, problem_type):
-
     # create models
     hf_model = AutoModelForSequenceClassification.from_pretrained(
         "SamLowe/roberta-base-go_emotions"

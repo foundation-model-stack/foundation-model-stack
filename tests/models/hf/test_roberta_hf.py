@@ -1,27 +1,28 @@
 import pytest
 import torch
 from transformers import (
-    PreTrainedModel,
     PretrainedConfig,
+    PreTrainedModel,
     PreTrainedTokenizer,
-    RobertaForMaskedLM,
     RobertaConfig,
+    RobertaForMaskedLM,
 )
 
-from fms.models.roberta import RoBERTa
+from fms.models.hf import to_hf_api
 from fms.models.hf.roberta.modeling_roberta_hf import (
     HFAdaptedRoBERTaConfig,
     HFAdaptedRoBERTaForMaskedLM,
 )
+from fms.models.roberta import RoBERTa
 from fms.testing._internal.hf.model_test_suite import (
     HFConfigFixtureMixin,
-    HFModelFixtureMixin,
     HFConfigTestSuite,
-    HFModelEquivalenceTestSuite,
     HFModelCompileTestSuite,
+    HFModelEquivalenceTestSuite,
+    HFModelFixtureMixin,
 )
 from fms.testing._internal.model_test_suite import ModelFixtureMixin
-from fms.models.hf import to_hf_api
+
 from ..test_roberta import RoBERTaFixtures
 
 

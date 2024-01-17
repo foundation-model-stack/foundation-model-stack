@@ -18,20 +18,10 @@ from fms.utils.generation import generate
 # Example usage of 13B model on 2 GPUs with Tensor Parallel:
 # srun -N 1 --gres=gpu:2 torchrun --nproc_per_node=2 scripts/inference.py --model_path=~/models/13B-F --tokenizer=~/models/tokenizer.model --distributed
 
-parser = argparse.ArgumentParser(description="Script to run inference on a LLaMA model")
+parser = argparse.ArgumentParser(
+    description="Script to run inference on a causal model"
+)
 parser.add_argument("--device_type", type=str, default="cuda")
-parser.add_argument(
-    "--model_path",
-    type=str,
-    required=True,
-    help="Path to the directory containing LLaMa weights (.pth files sharded by tensor parallel rank, not HF weights)",
-)
-parser.add_argument(
-    "--model_path_source",
-    type=str,
-    default="meta",
-    help="The source format of the model weights. E.g. meta, hf",
-)
 parser.add_argument(
     "--architecture",
     type=str,
@@ -43,6 +33,17 @@ parser.add_argument(
     type=str,
     default="7b",
     help="The model variant (configuration) to benchmark. E.g. 7b, 13b, 70b.",
+)
+parser.add_argument(
+    "--model_path",
+    type=str,
+    help="Path to the directory containing LLaMa weights (.pth files sharded by tensor parallel rank, not HF weights)",
+)
+parser.add_argument(
+    "--model_path_source",
+    type=str,
+    default="meta",
+    help="The source format of the model weights. E.g. meta, hf",
 )
 parser.add_argument(
     "--checkpoint_sharding",
@@ -88,8 +89,11 @@ parser.add_argument("--context_file", type=str, default=None, help="File to summ
 args = parser.parse_args()
 
 local_rank = int(os.getenv("LOCAL_RANK", 0))
-device = torch.device(args.device_type, local_rank)
-torch.cuda.set_device(device)
+world_size = int(os.getenv("WORLD_SIZE", 1))
+if args.device_type == "cuda":
+    device = torch.device(args.device_type, local_rank)
+else:
+    device = torch.device(args.device_type)
 
 torch.set_default_device(device)
 torch.set_default_dtype(torch.half)
@@ -102,26 +106,29 @@ if args.distributed:
     dist.init_process_group()
 
 print("loading model")
+if args.distributed:
+    distr_param = "tp"
+else:
+    if torch.cuda.device_count() > 1 and world_size == 1:
+        distr_param = "mp"
+    else:
+        distr_param = None
+
 model = get_model(
     args.architecture,
     args.variant,
     model_path=args.model_path,
-    source=args.model_path_source,
     device_type=args.device_type,
+    source=args.model_source,
+    distributed_strategy=distr_param,
     checkpoint_sharding=args.checkpoint_sharding,
+    group=dist.group.WORLD,
     norm_eps=1e-6,
 )
 tokenizer = tokenizers.get_tokenizer(args.tokenizer)
 model.eval()
 torch.set_grad_enabled(False)
 print("loading complete on rank", local_rank)
-
-if args.compile:
-    print("compiling model")
-    # Bug with kv-cache in PT2.1
-    torch._inductor.config.joint_graph_constant_folding = False
-    # compiling can make first inference pass slow
-    model = torch.compile(model, mode=args.compile_mode)
 
 
 def ids_for_prompt(prompt):
@@ -205,10 +212,22 @@ def infer(use_cache, do_sample):
         print_result(result[i])
 
 
-print("generating output", local_rank)
 do_sample = [False]
 use_cache = [
     args.no_use_cache
 ]  # True/False are identical with greedy iff `torch.use_deterministic_algorithms(True)`
+
+if args.compile:
+    print("compiling model")
+    # Bug with kv-cache in PT2.1
+    torch._inductor.config.joint_graph_constant_folding = False
+    # compiling can make first inference pass slow
+    model = torch.compile(model, mode=args.compile_mode)
+
+    for sample, cache in itertools.product(do_sample, use_cache):
+        infer(cache, sample)
+
+
+print("generating output", local_rank)
 for sample, cache in itertools.product(do_sample, use_cache):
     infer(cache, sample)

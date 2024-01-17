@@ -1,8 +1,10 @@
-from collections import ChainMap
 import tempfile
+from collections import ChainMap
 from pathlib import Path
+
 import pytest
 import torch
+
 from fms import models
 from fms.utils import serialization
 

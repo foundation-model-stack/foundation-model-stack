@@ -1,6 +1,6 @@
 import torch
-from torch import nn
 import torch.nn.functional as F
+from torch import nn
 
 from fms.utils.generation import generate, truncate_after_eos
 from fms.utils.tokenizers import get_tokenizer

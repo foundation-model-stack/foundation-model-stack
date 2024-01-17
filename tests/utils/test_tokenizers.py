@@ -1,5 +1,6 @@
-from fms.utils.tokenizers import get_tokenizer
 import pytest
+
+from fms.utils.tokenizers import get_tokenizer
 
 
 def test_hf_compat():

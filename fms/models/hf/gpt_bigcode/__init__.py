@@ -2,7 +2,7 @@ import os
 from typing import Union
 
 import torch
-from transformers import PreTrainedModel, GPTBigCodeForCausalLM, GPTBigCodeConfig
+from transformers import GPTBigCodeConfig, GPTBigCodeForCausalLM, PreTrainedModel
 
 from fms.models.hf.gpt_bigcode.modeling_gpt_bigcode_hf import (
     HFAdaptedGPTBigCodeForCausalLM,
@@ -28,10 +28,11 @@ def get_model(
     HFAdaptedGPTBigCodeForCausalLM
         A Huggingface adapted FMS implementation of GPT-BigCode
     """
-    from fms.models.hf.utils import register_fms_models
-    from transformers import AutoModelForCausalLM
     import torch
+    from transformers import AutoModelForCausalLM
+
     from fms.models.gpt_bigcode import GPTBigCode
+    from fms.models.hf.utils import register_fms_models
 
     register_fms_models()
     hf_model_in_memory = isinstance(model_name_or_path, PreTrainedModel)
