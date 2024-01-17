@@ -40,10 +40,9 @@ parser.add_argument(
     help="Path to the directory containing LLaMa weights (.pth files sharded by tensor parallel rank, not HF weights)",
 )
 parser.add_argument(
-    "--model_path_source",
+    "--model_source",
     type=str,
-    default="meta",
-    help="The source format of the model weights. E.g. meta, hf",
+    help="Source of the checkpoint. E.g. 'meta', 'hf', None",
 )
 parser.add_argument(
     "--checkpoint_sharding",
