@@ -306,14 +306,14 @@ def get_model(
 
     if len(lazy_sd):
         serialization.load_state_dict_into_model(
-            model,
+            fms_model,
             lazy_sd,
             architecture,
             source if source is not None else "fms",
             distributed_strategy,
             checkpoint_sharding,
             initial_device,
-            rank,
+            local_rank,
             world_size,
         )
 

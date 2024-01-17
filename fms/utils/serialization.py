@@ -238,7 +238,7 @@ def load_state_dict(
     else:
         with torch.no_grad():
             checkpoint_sds = [
-                torch.load(ckpt_path, mmap=True) for ckpt_path in checkpoints
+                torch.load(str(ckpt_path), mmap=True) for ckpt_path in checkpoints
             ]
     return ChainMap(*checkpoint_sds)
 
@@ -288,27 +288,30 @@ def load_state_dict_into_model(
     # 3. Iterate over the weights and load them into the model
     used_keys = set()
     sd_keys = state_dict.keys()
-    for key, tensor in sd_keys:
-        if key in used_keys:
-            continue
-        used_keys.add(key)
-        try:
-            partial_sd = {key: state_dict[key]}
-            if partial_sd[key].device != initial_device:
-                partial_sd[key] = partial_sd[key].to(device=initial_device)
-            fms_partial_sd = adapter(partial_sd)
-        except FusableWeightsMissingError as e:
-            for weight in e.missing_weights:
-                partial_sd[weight] = state_dict[weight]
-                if partial_sd[weight].device != initial_device:
-                    partial_sd[weight] = partial_sd[weight].to(device=initial_device)
-            fms_partial_sd = adapter(partial_sd)
-        _load_partial_state_dict(
-            model, fms_partial_sd, needs_tp_sharding, rank, world_size
-        )
-        del partial_sd
-        del fms_partial_sd
-        del state_dict[key]
+    with torch.no_grad():
+        for key in sd_keys:
+            if key in used_keys:
+                continue
+            used_keys.add(key)
+            try:
+                partial_sd = {key: state_dict[key]}
+                if partial_sd[key].device != initial_device:
+                    partial_sd[key] = partial_sd[key].to(device=initial_device)
+                fms_partial_sd = adapter(partial_sd)
+            except FusableWeightsMissingError as e:
+                for weight in e.missing_weights:
+                    partial_sd[weight] = state_dict[weight]
+                    if partial_sd[weight].device != initial_device:
+                        partial_sd[weight] = partial_sd[weight].to(
+                            device=initial_device
+                        )
+                fms_partial_sd = adapter(partial_sd)
+            _load_partial_state_dict(
+                model, fms_partial_sd, needs_tp_sharding, rank, world_size
+            )
+            del partial_sd
+            del fms_partial_sd
+            del state_dict[key]
 
 
 def _copy_colwise(param: torch.nn.Parameter, tensor_value, is_bias, rank, world_size):
@@ -447,7 +450,7 @@ def _load_partial_state_dict(
             if not tp_shard or tp_module is None:
                 _copy_if_present(param, tensor_value)
             elif tp_module is not None:
-                if key_steps[-2] in tp_module.list_colwise_weights():
+                if key_steps[-2] in tp_module.colwise_param_names():
                     _copy_colwise(
                         param,
                         tensor_value,
@@ -455,7 +458,7 @@ def _load_partial_state_dict(
                         rank,
                         world_size,
                     )
-                if key_steps[-2] in tp_module.list_rowwise_weights():
+                if key_steps[-2] in tp_module.rowwise_param_names():
                     _copy_rowwise(
                         param,
                         tensor_value,
@@ -463,7 +466,7 @@ def _load_partial_state_dict(
                         rank,
                         world_size,
                     )
-                if key_steps[-2] in tp_module.list_embedding_weights():
+                if key_steps[-2] in tp_module.embedding_param_names():
                     _copy_embedding(
                         param,
                         tensor_value,
