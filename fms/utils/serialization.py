@@ -97,7 +97,7 @@ def get_adapted(
     # sometimes we only load onto rank 0 so may not have a state_dict here.
     if not len(state_dict):
         return state_dict
-    adapter, _ = _get_adapter(architecture, source)
+    adapter = _get_adapter(architecture, source)
     adapted = adapter(state_dict)
     return adapted
 
@@ -160,7 +160,7 @@ def load_state_dict(
     initial_device: torch.device = torch.device("cpu"),
     rank: int = 0,
     world_size: int = 1,
-) -> Mapping[str, Any]:
+) -> MutableMapping[str, Any]:
     """
     Validates that the file(s) found at a checkpoint path are compatible with
     the intended (possibly distributed) use-case, and returns a lazy loading
@@ -270,7 +270,7 @@ class FusableWeightsMissingError(Exception):
 
 def load_state_dict_into_model(
     model: torch.nn.Module,
-    state_dict: Mapping[str, Any],
+    state_dict: MutableMapping[str, Any],
     architecture: str,
     source: str,
     distributed_strategy: Optional[str] = None,
@@ -287,7 +287,7 @@ def load_state_dict_into_model(
 
     # 3. Iterate over the weights and load them into the model
     used_keys = set()
-    sd_keys = state_dict.keys()
+    sd_keys = list(state_dict.keys())
     with torch.no_grad():
         for key in sd_keys:
             if key in used_keys:
@@ -311,7 +311,12 @@ def load_state_dict_into_model(
             )
             del partial_sd
             del fms_partial_sd
-            del state_dict[key]
+
+            if isinstance(state_dict, ChainMap):
+                for child_sd in state_dict.maps:
+                    child_sd.pop(key, None)
+            else:
+                state_dict.pop(key)
 
 
 def _copy_colwise(param: torch.nn.Parameter, tensor_value, is_bias, rank, world_size):
