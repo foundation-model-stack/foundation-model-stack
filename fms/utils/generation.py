@@ -1,4 +1,4 @@
-from typing import Any, Callable, List, MutableMapping, Union, Optional
+from typing import Any, Callable, List, MutableMapping, Optional, Union
 
 import torch
 import torch.nn.functional as F
