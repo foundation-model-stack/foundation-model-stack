@@ -28,13 +28,6 @@ from fms.utils.config import ModelConfig
 from fms.utils.tokenizers import _has_hf, get_tokenizer
 
 
-# params emb_dim heads layers lr
-#  7B    4096    32    32     3.0E-04
-# 13B    5120    40    40     3.0E-04
-# 33B    6656    52    60     1.5.E-04
-# 65B    8192    64    80     1.5.E-04
-
-
 @dataclass
 class MixtralConfig(ModelConfig):
     src_vocab_size: int = 32_000  # can be set by tokenizer
@@ -54,8 +47,8 @@ class MixtralConfig(ModelConfig):
 
 
 class MixtralBlock(nn.Module):
-    def __init__(self, config: LLaMAConfig, rotary_emb: RotaryEmbedding):
-        super(LLaMABlock, self).__init__()
+    def __init__(self, config: MixtralConfig, rotary_emb: RotaryEmbedding):
+        super(MixtralBlock, self).__init__()
         self.config = config
         emb_kq = self.config.dim // self.config.nheads
         emb_v = self.config.dim // self.config.nheads
@@ -162,7 +155,7 @@ class MixtralBlock(nn.Module):
 class Mixtral(nn.Module):
     def __init__(
         self,
-        config: Optional[LLaMAConfig] = None,
+        config: Optional[MixtralConfig] = None,
         distributed_strategy: DistributedStrategy = NoOpStrategy,
         **kwargs,
     ):
@@ -347,7 +340,7 @@ def _mixtral_factory_factory(config):
 
 
 models.register_model(
-    _architecture_name, "8x7b", _mixtral_factory_factory(_8x7b_config)
+    _architecture_name, "8x7b", _mixtral_factory_factory(_8x7b_config), _8x7b_config
 )
 
 

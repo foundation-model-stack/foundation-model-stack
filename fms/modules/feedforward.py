@@ -305,7 +305,7 @@ class ConditionalFeedForward(nn.Module):
         self.w2 = nn.Parameter(torch.empty(num_experts, intermediate_size, dim))
         self.w3 = nn.Parameter(torch.empty(num_experts, intermediate_size, dim))
 
-    def forward(self, x: Tensor, expert_indices: Tensor) -> Tensor:
+    def forward(self, x: torch.Tensor, expert_indices: torch.Tensor) -> torch.Tensor:
         w1_weights = self.w1[expert_indices].transpose(-1, -2)  # [T, A, D, D]
         w3_weights = self.w3[expert_indices].transpose(-1, -2)  # [T, A, D, D]
         w2_weights = self.w2[expert_indices]  # [T, A, D, D]
@@ -380,7 +380,7 @@ class MOEFeedForward(nn.Module):
         self.dim = dim
         self.num_activated_experts = num_activated_experts
 
-    def forward(self, x: Tensor) -> Tensor:
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         B, S = x.shape[:2]
         x = x.view(-1, self.dim)
         # T = num_tokens, E = num_experts, D = hidden dim, A = activated experts

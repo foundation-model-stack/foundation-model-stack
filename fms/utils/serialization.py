@@ -68,7 +68,10 @@ def _get_adapter(
 
 
 def get_adapted(
-    architecture: str, source: Optional[str], state_dict: Mapping[str, Any]
+    architecture: str,
+    source: Optional[str],
+    state_dict: Mapping[str, Any],
+    model_config: ModelConfig,
 ) -> Mapping[str, Any]:
     """
     Convert a state dict to FMS format, using an adapter specified by name.
