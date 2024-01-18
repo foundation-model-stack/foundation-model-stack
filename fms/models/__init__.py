@@ -182,9 +182,7 @@ def _fsdp_wrap(
     # initializes parameters that are on meta devices
     def init_fn(x: nn.Module):
         if not rank0:
-            return x.to_empty(device=device, recurse=False)
-        else:
-            return x
+            x.to_empty(device=device, recurse=False)
 
     # TODO: enable other policies
     mp_policy = MixedPrecision(
@@ -238,6 +236,7 @@ def get_model(
     device_type: str = "cpu",
     distributed_strategy: Optional[str] = None,
     checkpoint_sharding: Optional[str] = None,
+    checkpoint_format: Optional[str] = None,
     group: Optional[ProcessGroup] = None,
     **kwargs,
 ):
@@ -254,6 +253,8 @@ def get_model(
     distributed_strategy: None, 'fsdp', 'hsdp', 'tp', or 'mp'.
     checkpoint_sharding: how the checkpoint files are sharded: None, 'tp',
                 'fsdp', or 'layer'. If None, guess based on files.
+    checkpoint_format: how the checkpoint files are saved: None, 'pt',
+                'hf', or 'st'. If None, guess based on files.
     source: If the weights in the state dict didn't come from an FMS model,
                 `source` specifies which conversion function might be needed.
                 See `serialization.list_sources(architecture)`
@@ -265,7 +266,10 @@ def get_model(
         if world_size > 1:
             distributed_strategy = "tp"
 
-    device = torch.device(device_type, local_rank)
+    if device_type == "cuda":
+        device = torch.device(device_type, local_rank)
+    else:
+        device = torch.device(device_type)
 
     if (
         _is_dp(distributed_strategy)
@@ -279,18 +283,19 @@ def get_model(
         initial_device = device
 
     if model_path is not None:
-        fms_sd = serialization.load_state_dict(
+        if checkpoint_format is None:
+            checkpoint_format = serialization.get_ckp_format(model_path)
+        lazy_sd = serialization.load_state_dict(
             model_path,
-            distributed_strategy,
-            checkpoint_sharding,
-            initial_device,
-            local_rank,
-            world_size,
+            checkpoint_format=checkpoint_format,
+            distributed_strategy=distributed_strategy,
+            checkpoint_sharding=checkpoint_sharding,
+            initial_device=initial_device,
+            rank=local_rank,
+            world_size=world_size,
         )
-        model_config = _get_model_config(architecture, source)
-        fms_sd = serialization.get_adapted(architecture, source, fms_sd, model_config)
     else:
-        fms_sd = {}
+        lazy_sd = {}
 
     extra_args = kwargs
     if "distributed_strategy" not in extra_args:
@@ -301,31 +306,43 @@ def get_model(
             print("using model parallel")
             devices = [i for i in range(torch.cuda.device_count())]
             extra_args["distributed_strategy"] = UniformModelParallelStrategy(
-                devices, _guess_num_layers(fms_sd)
+                devices, _guess_num_layers(lazy_sd)
             )
 
+    # Create the model
     fms_model = _get_model_instance(
         architecture, variant, device=initial_device, extra_args=extra_args
     )
 
-    # In some cases we'd need to load the sd before distributing, in some cases
-    # after.
-    # e.g. a checkpoint can be loaded onto rank0 and synced across ranks by
-    # FSDP, but in most cases we need to load the rank-specific checkpoint
-    # onto the current rank.
+    # Choose when to wrap and load the model weights based on the combination
+    # distribution strategy and checkpoint sharding
     pre_load = (
         distributed_strategy in ["fsdp", "hsdp"] and checkpoint_sharding != "fsdp"
     )
 
-    if pre_load and local_rank == 0 and len(fms_sd):
-        fms_model.load_state_dict(fms_sd, strict=False)
+    def model_wrap(model):
+        if _is_dp(distributed_strategy):
+            return _fsdp_wrap(model, distributed_strategy, device, local_rank == 0)
+        return model
 
-    # post-init distribution
-    if _is_dp(distributed_strategy):
-        fms_model = _fsdp_wrap(fms_model, distributed_strategy, device, local_rank == 0)
+    if not pre_load:
+        fms_model = model_wrap(fms_model)
 
-    if not pre_load and len(fms_sd):
-        fms_model.load_state_dict(fms_sd, strict=False)
+    if len(lazy_sd):
+        serialization.load_state_dict_into_model(
+            fms_model,
+            lazy_sd,
+            architecture,
+            source if source is not None else "fms",
+            distributed_strategy,
+            checkpoint_sharding,
+            initial_device,
+            local_rank,
+            world_size,
+        )
+
+    if pre_load:
+        fms_model = model_wrap(fms_model)
 
     return fms_model
 

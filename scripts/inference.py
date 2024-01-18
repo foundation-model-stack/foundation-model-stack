@@ -115,6 +115,7 @@ model = get_model(
     source=args.model_source,
     distributed_strategy=distr_param,
     group=dist.group.WORLD,
+    checkpoint_format="pt",
 )
 tokenizer = tokenizers.get_tokenizer(args.tokenizer)
 model.eval()
@@ -176,7 +177,7 @@ max_len = max([len(prompt) for prompt in [prompt1, prompt2]])
 # prompt2 = pad_prompt(prompt2, max_len)
 # ids = torch.stack((prompt2, prompt1), dim=0)
 
-ids = prompt1.unsqueeze(0)
+ids = prompt2.unsqueeze(0)
 
 
 def print_result(result):

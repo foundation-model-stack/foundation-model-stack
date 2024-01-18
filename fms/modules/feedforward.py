@@ -3,6 +3,7 @@ from typing import List, Optional
 import torch
 import torch.distributed
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.distributed.distributed_c10d import ProcessGroup
 
 from fms import distributed
@@ -301,6 +302,9 @@ class TPGatedLinearUnit(GatedLinearUnit, TPModule):
 class ConditionalFeedForward(nn.Module):
     def __init__(self, num_experts, dim, intermediate_size):
         super().__init__()
+        self.num_experts = num_experts
+        self.dim = dim
+        self.intermediate_size = intermediate_size
         self.w1 = nn.Parameter(torch.empty(num_experts, intermediate_size, dim))
         self.w2 = nn.Parameter(torch.empty(num_experts, intermediate_size, dim))
         self.w3 = nn.Parameter(torch.empty(num_experts, intermediate_size, dim))
@@ -344,11 +348,11 @@ class TPConditionalFeedForward(ConditionalFeedForward, TPModule):
             self,
             num_experts,
             dim,
-            intermediate_size / world_size,
+            intermediate_size // world_size,
         )
         self.setup_tp(rank, world_size)
 
-    def list_rowwise_weights(self) -> List[str]:
+    def moe_param_names(self) -> List[str]:
         return ["w1", "w2", "w3"]
 
     @staticmethod

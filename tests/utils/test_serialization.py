@@ -29,4 +29,8 @@ def test_list():
 
 def test_load():
     with pytest.raises(ValueError):
-        serialization.load_state_dict("path", "fsdp", "tp")
+        serialization.load_state_dict(
+            "path",
+            checkpoint_format="fsdp",
+            distributed_strategy="tp",
+        )

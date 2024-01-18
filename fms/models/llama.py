@@ -195,15 +195,6 @@ class LLaMA(nn.Module):
             ntk_scaling=self.config.ntk_scaling,
             max_seq_len=self.config.max_expected_seq_len,
         )
-        if isinstance(self.distributed_strategy, UniformModelParallelStrategy):
-            for dev_idx in set(self.distributed_strategy.layer_to_device):
-                self.rot_emb.compute_freqs_cis(
-                    torch.device("cuda", dev_idx), self.config.max_expected_seq_len
-                )
-        else:
-            self.rot_emb.compute_freqs_cis(
-                self.shared.emb.weight.device, self.config.max_expected_seq_len
-            )
 
         layers = []
         for i in range(self.config.nlayers):
@@ -242,6 +233,16 @@ class LLaMA(nn.Module):
         self.shared.head.weight.data.normal_(
             0, 1 / math.sqrt(math.sqrt(self.width * self.shared.vocab_size))
         )
+
+        if isinstance(self.distributed_strategy, UniformModelParallelStrategy):
+            for dev_idx in set(self.distributed_strategy.layer_to_device):
+                self.rot_emb.compute_freqs_cis(
+                    torch.device("cuda", dev_idx), self.config.max_expected_seq_len
+                )
+        else:
+            self.rot_emb.compute_freqs_cis(
+                self.shared.emb.weight.device, self.config.max_expected_seq_len
+            )
 
     def _helper(
         self,
@@ -437,11 +438,13 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
             # here we are using 128 as this value fits with all popular models
             #   7B, 13B, 70B to recover the number of heads
             nheads = int(temp.size(0) / 128)
+
             temp = (
                 temp.view(nheads, 2, -1, temp.size(1))
                 .transpose(1, 2)
                 .reshape(*temp.size())
             )
+
             new_sd[new_name] = temp
 
     return new_sd
@@ -449,65 +452,6 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
 
 serialization.register_adapter("llama", "meta", _rename_weights_to_fms)
 serialization.register_adapter("llama", "hf", _hf_sd_to_fms_sd)
-
-
-def load_fms_llama(model_path: str, group=None, **kwargs):
-    """
-    Deprecated in favor of `models.load_model`
-    """
-    rank, world_size = distributed.rank_and_world(group)
-
-    # from llama.tokenizer import Tokenizer
-    model_path = os.path.expanduser(model_path)
-
-    # Load Llama model from Meta's weights
-    checkpoints = sorted(Path(model_path).glob("*.pth"))
-
-    assert world_size == len(
-        checkpoints
-    ), f"Loading a checkpoint for MP={len(checkpoints)} but world size is {world_size}"
-
-    ckpt_path = checkpoints[rank]
-    checkpoint_sd = torch.load(ckpt_path, map_location="cpu")
-    with open(Path(model_path) / "params.json", "r") as f:
-        params = json.loads(f.read())
-    hidden_grow_factor = 8 / 3
-    if "ffn_dim_multiplier" in params:
-        hidden_grow_factor = hidden_grow_factor * params["ffn_dim_multiplier"]
-
-    # IBM LLaMa
-    fms_sd = _rename_weights_to_fms(checkpoint_sd)
-
-    extra_args = kwargs
-    if world_size > 1:
-        print("using tensor parallel")
-        extra_args["distributed_strategy"] = TensorParallelStrategy()
-    elif torch.cuda.device_count() > 1:
-        print("using model parallel")
-        devices = [i for i in range(torch.cuda.device_count())]
-        extra_args["distributed_strategy"] = UniformModelParallelStrategy(
-            devices, params["n_layers"]
-        )
-
-    if "n_kv_heads" in params:
-        extra_args["kvheads"] = params["n_kv_heads"]
-
-    ibm_model = LLaMA(
-        src_vocab_size=32_000,
-        emb_dim=params["dim"],
-        nheads=params["n_heads"],
-        nlayers=params["n_layers"],
-        hidden_grow_factor=hidden_grow_factor,
-        multiple_of=params["multiple_of"],
-        norm_eps=params["norm_eps"],
-        **extra_args,
-    )
-
-    ibm_model.load_state_dict(
-        fms_sd, strict=False
-    )  # the meta weights have some extra stuff
-
-    return ibm_model
 
 
 def convert_hf_llama(hf_model: "LlamaForCausalLM") -> LLaMA:  # type: ignore

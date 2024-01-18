@@ -77,7 +77,7 @@ class UniformModelParallelStrategy(DistributedStrategy):
         num_dev = len(devices)
         layers_per_dev = num_layers // num_dev
         remainder = num_layers - (layers_per_dev * num_dev)
-        self.layer_to_device = [0] * len(devices)
+        self.layer_to_device = [0] * num_layers
         layer_id = 0
         for dev_idx in range(len(devices)):
             for i in range(layers_per_dev):
