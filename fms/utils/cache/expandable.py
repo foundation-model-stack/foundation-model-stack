@@ -1,15 +1,14 @@
-from typing import Tuple, List, Optional, Union, Dict
-
-from fms.utils.cache import CacheDataLayer, CacheDataWithMetadata, KVCacheManager
 import dataclasses
+from typing import Dict, List, Optional, Tuple, Union
+
 import torch
 
+from fms.utils.cache import CacheDataLayer, CacheDataWithMetadata, KVCacheManager
 from fms.utils.tensors import ExpandableTensor
 
 
 @dataclasses.dataclass
 class InPlaceCacheDataLayer(CacheDataLayer):
-
     data_layer: Tuple[torch.Tensor, torch.Tensor]
     is_generating: bool
 
@@ -17,11 +16,11 @@ class InPlaceCacheDataLayer(CacheDataLayer):
         return "in-place"
 
     def store(
-        self, keys: torch.Tensor, values: torch.Tensor
+            self, keys: torch.Tensor, values: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         shape = keys.shape
-        self.data_layer[0][:, :, -shape[2] :, :].copy_(keys)
-        self.data_layer[1][:, :, -shape[2] :, :].copy_(values)
+        self.data_layer[0][:, :, -shape[2]:, :].copy_(keys)
+        self.data_layer[1][:, :, -shape[2]:, :].copy_(values)
         keys = self.data_layer[0]
         values = self.data_layer[1]
         return keys, values
@@ -35,7 +34,7 @@ class InPlaceCacheData(CacheDataWithMetadata):
     data: List[Tuple[torch.Tensor, torch.Tensor]]
     sequence_ids: List[int]
     max_sequence_length: int
-    context_lengths: torch.Tensor
+    context_lengths: Optional[torch.Tensor]
     is_generating: bool
 
     def get_layer(self, layer_index: int) -> InPlaceCacheDataLayer:
@@ -48,15 +47,16 @@ class InPlaceCacheData(CacheDataWithMetadata):
 
 
 class ExpandableKVCacheManager(KVCacheManager):
+
     # TODO: Would be nice for this cache to be the compact expandable cache, but not required right now
     def __init__(
-        self,
-        num_layers: int,
-        num_heads: int,
-        emb_dim: int,
-        tensor_parallel_size: int = 1,
-        device: Optional[Union[str, torch.device]] = "cpu",
-        dtype: torch.dtype = torch.float32,
+            self,
+            num_layers: int,
+            num_heads: int,
+            emb_dim: int,
+            tensor_parallel_size: int = 1,
+            device: Optional[Union[str, torch.device]] = "cpu",
+            dtype: torch.dtype = torch.float32,
     ):
         self.cache: List[Tuple[torch.Tensor, torch.Tensor]] = []
         self.num_layers = num_layers
@@ -68,8 +68,21 @@ class ExpandableKVCacheManager(KVCacheManager):
         self.dtype = dtype
         self.context_map: Dict[int, int] = {}
 
-    def allocate_prompt_tokens(
-        self, num_tokens_per_sequence: List[int]
+    def free_sequences(self, sequence_ids: List[int]):
+        # TODO: we might be able to handle multiple batches by using sequence ids, but for now naiive approach, one cache per batch
+        self.cache.clear()
+        self.context_map = {}
+
+    def allocate_tokens(
+            self, num_tokens_per_sequence: List[int], sequence_ids: Optional[List[int]] = None
+    ) -> CacheDataWithMetadata:
+        if sequence_ids is None:
+            return self._allocate_prompt_tokens(num_tokens_per_sequence)
+        else:
+            return self._allocate_generated_tokens(sequence_ids, num_tokens_per_sequence)
+
+    def _allocate_prompt_tokens(
+            self, num_tokens_per_sequence: List[int]
     ) -> InPlaceCacheData:
         # TODO: we might be able to handle multiple batches by using sequence ids, but for now naiive approach, one cache per batch
         self.cache.clear()
@@ -78,7 +91,6 @@ class ExpandableKVCacheManager(KVCacheManager):
         }
 
         max_sequence_length = max(num_tokens_per_sequence)
-        context_lengths = torch.tensor(num_tokens_per_sequence, dtype=torch.int32)
         sequence_ids = [i for i in range(len(num_tokens_per_sequence))]
         for i in range(self.num_layers):
             # b x head x sequence_length x emb_dim/head
@@ -111,14 +123,14 @@ class ExpandableKVCacheManager(KVCacheManager):
 
         return InPlaceCacheData(
             data=self.cache,
-            context_lengths=context_lengths,
+            context_lengths=None,
             max_sequence_length=max_sequence_length,
             sequence_ids=sequence_ids,
             is_generating=False,
         )
 
-    def allocate_generated_tokens(
-        self, sequence_ids: List[int], num_tokens_per_sequence: List[int]
+    def _allocate_generated_tokens(
+            self, sequence_ids: List[int], num_tokens_per_sequence: List[int]
     ) -> InPlaceCacheData:
         max_sequence_length = -1
         context_lengths = []

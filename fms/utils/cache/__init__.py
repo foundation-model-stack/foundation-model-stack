@@ -1,7 +1,10 @@
 import abc
 import dataclasses
-from typing import Tuple, List
+from typing import List, Optional, Tuple
+
 import torch
+
+from fms.modules.positions import compute_position_ids as util_compute_position_ids
 
 
 class AttentionComputationMixin(metaclass=abc.ABCMeta):
@@ -41,7 +44,7 @@ class CacheDataLayer(metaclass=abc.ABCMeta):
 
     @abc.abstractmethod
     def store(
-        self, key: torch.Tensor, value: torch.Tensor
+            self, key: torch.Tensor, value: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Store the computed keys and values in the cache data layer
@@ -135,14 +138,20 @@ class CacheDataWithMetadata(CacheData):
     sequence_ids: List[int]
         the integer ids associated with each sequence, these will correspond by index with the input ids passed to the
         model
-    context_lengths: torch.Tensor
-        a 1d tensor corresponding to the length of each sequence in the batch denoted by the sequence ids
+    context_lengths: torch.Tensor, optional
+        a 1d tensor corresponding to the length of each sequence in the batch denoted by the sequence ids. If None,
+        cache data is in pre-fill
     """
 
     data: List[Tuple[torch.Tensor, torch.Tensor]]
     max_sequence_length: int
     sequence_ids: List[int]
-    context_lengths: torch.Tensor
+    context_lengths: Optional[torch.Tensor]
+
+    def compute_position_ids(self, num_tokens_per_sequence: List[int]) -> torch.Tensor:
+        position_ids_list = util_compute_position_ids(num_tokens_per_sequence,
+                                                      None if self.context_lengths is None else self.context_lengths.tolist())
+        return torch.tensor(position_ids_list, dtype=torch.long, device=self.data[0][0].device)
 
 
 class KVCacheManager(metaclass=abc.ABCMeta):
@@ -152,39 +161,25 @@ class KVCacheManager(metaclass=abc.ABCMeta):
     """
 
     @abc.abstractmethod
-    def allocate_prompt_tokens(
-        self, num_tokens_per_sequence: List[int]
+    def allocate_tokens(
+            self,
+            num_tokens_per_sequence: List[int],
+            sequence_ids: Optional[List[int]] = None,
     ) -> CacheDataWithMetadata:
         """
-        Perform the initial allocation for a batch-prompt
+        allocate tokens in the kv-cache. If sequence ids are not given, this will be considered pre-fill for the prompt,
+        and sequence ids will be generated. If sequence ids are given, this will be considered allocating tokens for
+        generation and paged attention will be used
 
         Parameters
         ----------
-        num_tokens_per_sequence: List[int]
-            a list where each integer in the list is corresponding to the prompts length
-
-        Returns
-        -------
-        CacheDataWithMetadata
-            a cache data object that includes metadata associated with it based on the current state of the
-            KVCacheManager.
-        """
-        pass
-
-    @abc.abstractmethod
-    def allocate_generated_tokens(
-        self, sequence_ids: List[int], num_tokens_per_sequence: List[int]
-    ) -> CacheDataWithMetadata:
-        """
-        allocate generated tokens for the given sequence ids
-
-        Parameters
-        ----------
-        sequence_ids: List[int]
-            a list of sequence ids that will be expanded in the cache with generated tokens
         num_tokens_per_sequence: List[int]
             the number of tokens per sequence to expand in the kv-cache. This should correspond index-to-index with the
             given sequence_ids
+        sequence_ids: List[int], optional
+            a list of sequence ids that will be expanded in the cache with generated tokens. If no sequence ids are
+            given, a new sequence id will be generated and allocation will be considered for the prompt
+            (default is None)
 
         Returns
         -------
@@ -194,20 +189,31 @@ class KVCacheManager(metaclass=abc.ABCMeta):
         """
         pass
 
+    @abc.abstractmethod
+    def free_sequences(self, sequence_ids: List[int]):
+        """
+        free the given sequence ids from the kv-cache
+
+        Parameters
+        ----------
+        sequence_ids: List[int]
+            list of sequence ids to free
+        """
+        pass
+
 
 KVCache = Tuple[torch.Tensor, torch.Tensor]  # (key cache, value cache)
 
 
 @dataclasses.dataclass
 class OutOfPlaceCacheDataLayer(CacheDataLayer):
-
     data_layer: Tuple[torch.Tensor, torch.Tensor]
 
     def get_cache_type(self) -> str:
         return "out-of-place"
 
     def store(
-        self, keys: torch.Tensor, values: torch.Tensor
+            self, keys: torch.Tensor, values: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         if self.data_layer is not None:
             self.data_layer = (

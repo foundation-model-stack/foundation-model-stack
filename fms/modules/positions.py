@@ -1,5 +1,5 @@
 import math
-from typing import MutableMapping, Optional, Tuple, List
+from typing import List, MutableMapping, Optional, Tuple, Union
 
 import torch
 
@@ -11,22 +11,22 @@ class PositionEncoder:
 
     # Override to adjust the mask e.g. for Alibi
     def adjusted_mask(
-        self,
-        mask: torch.Tensor,
-        q: torch.Tensor,
-        k: torch.Tensor,
-        position_ids: Optional[torch.LongTensor],
-        use_cache=False,
+            self,
+            mask: torch.Tensor,
+            q: torch.Tensor,
+            k: torch.Tensor,
+            position_ids: Optional[torch.LongTensor],
+            use_cache=False,
     ) -> torch.Tensor:
         return mask
 
     # Override to adjust q/k's e.g. for rotary embeddings
     def adjusted_qk(
-        self,
-        q: torch.Tensor,
-        k: torch.Tensor,
-        position_ids: Optional[torch.LongTensor],
-        use_cache=False,
+            self,
+            q: torch.Tensor,
+            k: torch.Tensor,
+            position_ids: Optional[torch.LongTensor],
+            use_cache=False,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         return q, k
 
@@ -45,7 +45,7 @@ class Alibi(PositionEncoder):
         Minimum scaling factor. Defaults to 2^-8 as in paper.
     """
 
-    def __init__(self, nheads, max_scale=0.5, min_scale=1 / (2**8)):
+    def __init__(self, nheads, max_scale=0.5, min_scale=1 / (2 ** 8)):
         super(Alibi, self).__init__()
         self.nheads = nheads
         start = math.log2(max_scale)
@@ -58,12 +58,12 @@ class Alibi(PositionEncoder):
         )
 
     def adjusted_mask(
-        self,
-        mask: torch.Tensor,
-        q: torch.Tensor,
-        k: torch.Tensor,
-        position_ids: Optional[torch.Tensor],
-        use_cache=False,
+            self,
+            mask: torch.Tensor,
+            q: torch.Tensor,
+            k: torch.Tensor,
+            position_ids: Optional[torch.Tensor],
+            use_cache=False,
     ) -> torch.Tensor:
         qlen = q.size(1)
         klen = k.size(1)
@@ -99,7 +99,7 @@ class Alibi(PositionEncoder):
 
 class RotaryEmbedding(PositionEncoder):
     def __init__(
-        self, dim: int, ratio: int = 10_000, max_seq_len=2048, ntk_scaling=False
+            self, dim: int, ratio: int = 10_000, max_seq_len=2048, ntk_scaling=False
     ):
         """
         This implementation of Rotary Position Embeddings (RoPE) avoids
@@ -135,7 +135,7 @@ class RotaryEmbedding(PositionEncoder):
             # `math.log` does
             alpha = math.log(alpha) / math.log(2)
             alpha = math.ceil(alpha)
-            alpha = 2**alpha
+            alpha = 2 ** alpha
             alpha = int(alpha)
             return alpha
 
@@ -167,8 +167,8 @@ class RotaryEmbedding(PositionEncoder):
             max_seq_len = max(max_seq_len, self.max_seq_len)
 
         if (
-            alpha in self.cached_freqs[dev_idx]
-            and max_seq_len <= self.max_seq_len_cached[dev_idx]
+                alpha in self.cached_freqs[dev_idx]
+                and max_seq_len <= self.max_seq_len_cached[dev_idx]
         ):
             return alpha
 
@@ -179,8 +179,8 @@ class RotaryEmbedding(PositionEncoder):
             ratio = ratio * alpha ** (dim / (dim - 2))
 
         freqs = 1.0 / (
-            ratio
-            ** (torch.arange(0, dim, 2, device=device)[: (dim // 2)].float() / dim)
+                ratio
+                ** (torch.arange(0, dim, 2, device=device)[: (dim // 2)].float() / dim)
         )
 
         t = torch.arange(max_seq_len, device=device, dtype=freqs.dtype)
@@ -209,11 +209,11 @@ class RotaryEmbedding(PositionEncoder):
         return cur_freqs.view(*shape, 2)
 
     def adjusted_qk(
-        self,
-        q: torch.Tensor,
-        k: torch.Tensor,
-        position_ids: Optional[torch.Tensor] = None,
-        use_cache=False,
+            self,
+            q: torch.Tensor,
+            k: torch.Tensor,
+            position_ids: Optional[torch.Tensor] = None,
+            use_cache=False,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Args
@@ -253,8 +253,24 @@ class RotaryEmbedding(PositionEncoder):
 
 
 def compute_position_ids(
-    num_tokens_per_sequence: List[int], context_lengths: Optional[List[int]] = None
+        num_tokens_per_sequence: List[int], context_lengths: Optional[List[int]] = None
 ) -> List[List[int]]:
+    """Compute position ids based on the current context lengths and the new tokens to add
+
+    Parameters
+    ----------
+    num_tokens_per_sequence: List[int]
+        number of tokens to be added to each sequence
+    context_lengths: List[int], optional
+        optional list of current context lengths per sequence. If none, will assume no context length and starting
+        position will be 0 (default is None)
+
+    Returns
+    -------
+    List[List[int]]
+        the position ids for each sequence
+    """
+
     max_tokens = max(num_tokens_per_sequence)
     position_ids = []
     for seq_i, num_tokens in enumerate(num_tokens_per_sequence):

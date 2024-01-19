@@ -1,11 +1,11 @@
-from typing import Any, Callable, List, MutableMapping, Union, Optional
+from typing import Any, Callable, List, MutableMapping, Optional, Union
 
 import torch
 import torch.nn.functional as F
 from torch import distributed as dist
 
 from fms.modules.positions import compute_position_ids
-from fms.utils.cache import KVCacheManager, CacheDataWithMetadata
+from fms.utils.cache import CacheDataWithMetadata, KVCacheManager
 from fms.utils.cache.expandable import ExpandableKVCacheManager
 
 
@@ -26,17 +26,17 @@ def _make_cache_contiguous(past_key_value_states):
 
 
 def generate(
-    model: Union[Callable, torch.nn.Module],
-    input_ids: torch.Tensor,
-    max_seq_len: int = 2048,
-    max_new_tokens: int = 256,
-    temperature: float = 1.0,
-    top_k: int = 10,
-    do_sample: bool = True,
-    num_beams: int = 1,
-    use_cache: bool = False,
-    kv_cache_manager: Optional[KVCacheManager] = None,
-    contiguous_cache: bool = False,
+        model: Union[Callable, torch.nn.Module],
+        input_ids: torch.Tensor,
+        max_seq_len: int = 2048,
+        max_new_tokens: int = 256,
+        temperature: float = 1.0,
+        top_k: int = 10,
+        do_sample: bool = True,
+        num_beams: int = 1,
+        use_cache: bool = False,
+        kv_cache_manager: Optional[KVCacheManager] = None,
+        contiguous_cache: bool = False,
 ):
     """
     A trivial generate function that can be used for validation/testing in
@@ -77,6 +77,7 @@ def generate(
 
     if use_cache:
         kwargs["cache_data"] = None
+        sequence_ids: Optional[List[int]] = None
         if kv_cache_manager is None:
             # TODO: standardized way of getting nlayers, nheads, emb_dim
             kv_cache_manager = ExpandableKVCacheManager(
@@ -110,29 +111,23 @@ def generate(
                 num_tokens_per_sequence = torch.count_nonzero(
                     input_ids.T, dim=0
                 ).tolist()
-                cache_data: CacheDataWithMetadata = (
-                    kv_cache_manager.allocate_prompt_tokens(num_tokens_per_sequence)
+                cache_data: CacheDataWithMetadata = kv_cache_manager.allocate_tokens(
+                    num_tokens_per_sequence
                 )
-                # context lengths here actually have the real lengths, but we want to start at 0 for first iteration
-                # might want to have 2 variables for this, but for now, just keep as is
-                context_lengths: Optional[List[int]] = None
             else:
                 num_tokens_per_sequence = [1 for _ in range(input_ids.size(0))]
-                cache_data = kv_cache_manager.allocate_generated_tokens(
-                    sequence_ids, num_tokens_per_sequence
+                cache_data = kv_cache_manager.allocate_tokens(
+                    num_tokens_per_sequence, sequence_ids
                 )
-                context_lengths = cache_data.context_lengths.tolist()
 
-                # todo: is this supported?
+                # TODO: is this supported? is it necessary?
                 # if contiguous_cache:
-            sequence_ids: List[int] = cache_data.sequence_ids
-            position_ids = compute_position_ids(
-                num_tokens_per_sequence, context_lengths
-            )
+            sequence_ids = cache_data.sequence_ids
 
             kwargs["cache_data"] = cache_data
-            kwargs["position_ids"] = torch.tensor(
-                position_ids, dtype=torch.long, device=input_ids.device
+            # TODO: should we just have this as an attribute of CacheDataWithMetadata or provide computation
+            kwargs["position_ids"] = cache_data.compute_position_ids(
+                num_tokens_per_sequence
             )
 
         output = model(input_ids, **kwargs)
@@ -164,11 +159,7 @@ def generate(
     if not batched:
         result = result[0]
 
-    if (
-        use_cache
-        and kv_cache_manager
-        and callable(getattr(kv_cache_manager, "free_sequences", None))
-    ):
+    if use_cache:
         kv_cache_manager.free_sequences(sequence_ids)  # type: ignore
 
     return result

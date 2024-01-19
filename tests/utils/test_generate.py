@@ -1,7 +1,10 @@
+import pytest
 import torch
-from torch import nn
 import torch.nn.functional as F
+from torch import nn
 
+from fms.models import get_model
+from fms.utils.cache.paged import PagedKVCacheManager
 from fms.utils.generation import generate, truncate_after_eos
 from fms.utils.tokenizers import get_tokenizer
 
@@ -75,3 +78,24 @@ def test_truncate():
     expected = torch.ones(11)
     expected[10] = 5
     torch.testing.assert_close(result, expected)
+
+
+@pytest.mark.slow
+def test_cache_generation():
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    model = get_model("llama", "7b", device_type=device)
+    ids = torch.arange(1, 16, dtype=torch.long, device=device).unsqueeze(0)
+    expandable_results = generate(model, ids, do_sample=False, use_cache=True)
+    no_cache_results = generate(model, ids, do_sample=False, use_cache=False)
+    torch.testing.assert_allclose(expandable_results, no_cache_results)
+
+    if torch.cuda.is_available():
+        paged_kv_cache = PagedKVCacheManager(
+            model.config.nlayers,
+            model.config.nheads,
+            model.config.emb_dim,
+            model.config.kvheads,
+            total_num_gpu_blocks=100
+        )
+        paged_results = generate(model, ids, do_sample=False, use_cache=True, kv_cache_manager=paged_kv_cache)
+        torch.testing.assert_allclose(paged_results, no_cache_results)
