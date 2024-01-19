@@ -1,16 +1,16 @@
-from typing import Optional
+from typing import List, Optional
+
 import torch
 import torch.distributed
 import torch.nn as nn
 from torch.distributed.distributed_c10d import ProcessGroup
-from fms import distributed
 
+from fms import distributed
 from fms.distributed.tensorparallel import (
-    apply_colwise_tp,
-    apply_rowwise_tp,
     copy_to_tensor_model_parallel_region,
     reduce_from_tensor_model_parallel_region,
 )
+from fms.modules.tp import TPModule
 
 
 class FeedForwardBlock(nn.Module):
@@ -81,7 +81,7 @@ class FeedForwardBlock(nn.Module):
         return out
 
 
-class TPFeedForwardBlock(FeedForwardBlock):
+class TPFeedForwardBlock(FeedForwardBlock, TPModule):
     """
     A two-layer, symmetric, fully-connected MLP structure with Tensor Parallel support.
 
@@ -98,7 +98,7 @@ class TPFeedForwardBlock(FeedForwardBlock):
     def __init__(
         self,
         emb_dim,
-        hidden_grow_factor=4,
+        hidden_grow_factor: float = 4,
         multiple_of=None,
         activation_fn=nn.ReLU(),
         p_dropout=0.1,
@@ -114,7 +114,8 @@ class TPFeedForwardBlock(FeedForwardBlock):
         assert (
             hidden_dim % world_size == 0
         ), "Hidden dim must be divisible by world size"
-        super(TPFeedForwardBlock, self).__init__(
+        FeedForwardBlock.__init__(
+            self,
             emb_dim,
             hidden_grow_factor / world_size,
             multiple_of,
@@ -123,8 +124,13 @@ class TPFeedForwardBlock(FeedForwardBlock):
             use_bias,
             gain,
         )
-        self.rank = rank
-        self.world_size = world_size
+        self.setup_tp(rank, world_size)
+
+    def colwise_param_names(self) -> List[str]:
+        return ["w1"]
+
+    def rowwise_param_names(self) -> List[str]:
+        return ["w2"]
 
     @staticmethod
     def import_module(
@@ -140,10 +146,6 @@ class TPFeedForwardBlock(FeedForwardBlock):
             group=group,
         )
         return tp_ffb
-
-    def import_weights(self, ffb: FeedForwardBlock):
-        apply_colwise_tp(self.w1, ffb.w1, self.world_size, self.rank)
-        apply_rowwise_tp(self.w2, ffb.w2, self.world_size, self.rank)
 
     def forward(self, x):
         x_par = copy_to_tensor_model_parallel_region(x)
@@ -176,7 +178,7 @@ class GatedLinearUnit(nn.Module):
     def __init__(
         self,
         emb_dim,
-        hidden_grow_factor=4,
+        hidden_grow_factor: float = 4,
         multiple_of=None,
         activation_fn=nn.ReLU(),
         p_dropout=0.1,
@@ -222,7 +224,7 @@ class GatedLinearUnit(nn.Module):
         return self.w2(out)
 
 
-class TPGatedLinearUnit(GatedLinearUnit):
+class TPGatedLinearUnit(GatedLinearUnit, TPModule):
     """
     A two-point-five-layer, fully-connected gated linear MLP structure (GLU).
     Contains 50% extra params compared to FeedForwardBlock, adjust accordingly.
@@ -241,7 +243,7 @@ class TPGatedLinearUnit(GatedLinearUnit):
     def __init__(
         self,
         emb_dim,
-        hidden_grow_factor=4,
+        hidden_grow_factor: float = 4,
         multiple_of=None,
         activation_fn=nn.ReLU(),
         p_dropout=0.1,
@@ -258,7 +260,8 @@ class TPGatedLinearUnit(GatedLinearUnit):
         assert (
             hidden_dim % world_size == 0
         ), "Hidden dim must be divisible by world size"
-        super(TPGatedLinearUnit, self).__init__(
+        GatedLinearUnit.__init__(
+            self,
             emb_dim,
             hidden_grow_factor / world_size,
             multiple_of,
@@ -267,8 +270,13 @@ class TPGatedLinearUnit(GatedLinearUnit):
             use_bias,
             gain,
         )
-        self.rank = rank
-        self.world_size = world_size
+        self.setup_tp(rank, world_size)
+
+    def colwise_param_names(self) -> List[str]:
+        return ["w1", "wg"]
+
+    def rowwise_param_names(self) -> List[str]:
+        return ["w2"]
 
     @staticmethod
     def import_module(glu: GatedLinearUnit, group: ProcessGroup) -> "TPGatedLinearUnit":
@@ -283,11 +291,6 @@ class TPGatedLinearUnit(GatedLinearUnit):
         )
 
         return tp_glu
-
-    def import_weights(self, glu: GatedLinearUnit):
-        apply_colwise_tp(self.w1, glu.w1, self.world_size, self.rank)
-        apply_colwise_tp(self.wg, glu.wg, self.world_size, self.rank)
-        apply_rowwise_tp(self.w2, glu.w2, self.world_size, self.rank)
 
     def forward(self, x):
         x_par = copy_to_tensor_model_parallel_region(x)

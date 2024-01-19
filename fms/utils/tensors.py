@@ -1,8 +1,8 @@
+import functools
 from typing import Dict
 
 import torch
 
-import functools
 
 _HANDLED_FUNCTIONS = {}
 

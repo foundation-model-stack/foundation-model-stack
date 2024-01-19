@@ -8,14 +8,14 @@ from transformers import PretrainedConfig
 from transformers.modeling_outputs import (
     BaseModelOutputWithPastAndCrossAttentions,
     CausalLMOutputWithCrossAttentions,
+    MaskedLMOutput,
     Seq2SeqLMOutput,
     SequenceClassifierOutput,
-    MaskedLMOutput,
 )
 from transformers.utils import ModelOutput
 
-from fms.utils.activation import str_to_activation
 from fms.modules.head import ClassificationHead
+from fms.utils.activation import str_to_activation
 
 
 class LMHeadMixin:

@@ -1,8 +1,8 @@
-from collections import OrderedDict
 import json
 import math
 import os
 import re
+from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping, Optional
@@ -10,13 +10,13 @@ from typing import Mapping, Optional
 import torch
 import torch.nn as nn
 
+from fms import distributed, models
 from fms.distributed.strategy import (
     DistributedStrategy,
     NoOpStrategy,
     TensorParallelStrategy,
     UniformModelParallelStrategy,
 )
-from fms import distributed, models
 from fms.modules.attention import MultiHeadAttention
 from fms.modules.embedding import WordEmbedding
 from fms.modules.feedforward import GatedLinearUnit
@@ -26,6 +26,7 @@ from fms.utils import serialization
 from fms.utils.activation import str_to_activation
 from fms.utils.config import ModelConfig
 from fms.utils.tokenizers import _has_hf, get_tokenizer
+
 
 # params emb_dim heads layers lr
 #  7B    4096    32    32     3.0E-04
@@ -104,15 +105,15 @@ class LLaMABlock(nn.Module):
             self.dropout = nn.Dropout(self.config.p_dropout)
 
     def forward(
-        self,
-        x,
-        *,
-        mask=None,
-        position_ids=None,
-        cache_data_layer=None,
-        use_cache=False,
-        is_causal_mask=False,
-        attn_algorithm=None,
+            self,
+            x,
+            *,
+            mask=None,
+            position_ids=None,
+            cache_data_layer=None,
+            use_cache=False,
+            is_causal_mask=False,
+            attn_algorithm=None,
     ):
 
         # first we do MHA and Add&Norm
@@ -155,10 +156,10 @@ class LLaMABlock(nn.Module):
 
 class LLaMA(nn.Module):
     def __init__(
-        self,
-        config: Optional[LLaMAConfig] = None,
-        distributed_strategy: DistributedStrategy = NoOpStrategy,
-        **kwargs,
+            self,
+            config: Optional[LLaMAConfig] = None,
+            distributed_strategy: DistributedStrategy = NoOpStrategy,
+            **kwargs,
     ):
         super(LLaMA, self).__init__()
         if config is not None:
@@ -237,21 +238,19 @@ class LLaMA(nn.Module):
         )
 
     def _helper(
-        self,
-        x_in,
-        mask=None,
-        position_ids=None,
-        cache_data=None,
-        use_cache=False,
-        attn_algorithm=None,
+            self,
+            x_in,
+            mask=None,
+            position_ids=None,
+            cache_data=None,
+            use_cache=False,
+            attn_algorithm=None,
     ):
 
         qlen = x_in.size(1)
         filled_cache = False
 
         # if we are using the cache, the key length needs to be extended with the past keys length
-        # todo: we probably don't need this here as we are only using the klen to check for is_causal_mask
-        #  might be better to just set is_generating in the cache_metadata and compute the position_offset in attention
         if use_cache:
             if cache_data:
                 filled_cache = cache_data.is_filled()
@@ -300,14 +299,14 @@ class LLaMA(nn.Module):
         return dec_out, present_key_value_states
 
     def forward(
-        self,
-        x,
-        mask=None,
-        position_ids=None,
-        cache_data=None,
-        use_cache=False,
-        only_last_token=False,
-        attn_algorithm=None,
+            self,
+            x,
+            mask=None,
+            position_ids=None,
+            cache_data=None,
+            use_cache=False,
+            only_last_token=False,
+            attn_algorithm=None,
     ):
         output, cache = self._helper(
             x,
@@ -527,7 +526,7 @@ def convert_hf_llama(hf_model: "LlamaForCausalLM") -> LLaMA:  # type: ignore
         nheads=hf_model.config.num_attention_heads,
         nlayers=hf_model.config.num_hidden_layers,
         hidden_grow_factor=hf_model.config.intermediate_size
-        / hf_model.config.hidden_size,
+                           / hf_model.config.hidden_size,
         multiple_of=1,  # this is set to 1 as it is encoded in the hidden dimension
         activation_fn=hf_model.config.hidden_act,
         max_expected_seq_len=hf_model.config.max_position_embeddings,

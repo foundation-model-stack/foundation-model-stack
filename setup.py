@@ -1,12 +1,13 @@
 import os
-import warnings
-from typing import Set, List
-
-from setuptools import find_packages, setup
-import torch
-from torch.utils.cpp_extension import BuildExtension, CUDAExtension, CUDA_HOME
-from packaging.version import parse, Version
 import subprocess
+import warnings
+from typing import List, Set
+
+import torch
+from packaging.version import Version, parse
+from setuptools import find_packages, setup
+from torch.utils.cpp_extension import CUDA_HOME, BuildExtension, CUDAExtension
+
 
 ROOT_DIR = os.path.dirname(__file__)
 

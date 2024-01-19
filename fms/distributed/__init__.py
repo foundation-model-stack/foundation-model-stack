@@ -8,6 +8,7 @@ def rank_and_world(group=None):
     """
     if torch.distributed.is_initialized() and group is None:
         group = torch.distributed.GroupMember.WORLD
+
     if group is None:
         world_size = 1
         rank = 0

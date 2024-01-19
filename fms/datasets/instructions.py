@@ -1,11 +1,14 @@
+import json
+import os
+import urllib
 from typing import Dict
+
 import requests
 import torch
 from torch.utils.data import Dataset
-import urllib
+
 from fms.utils import tokenizers
-import json
-import os
+
 
 _instruction_template = """Below is an instruction that describes a task, paired with an input that provides further context. Write a response that appropriately completes the request.
 

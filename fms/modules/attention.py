@@ -1,20 +1,20 @@
 import math
-from typing import Optional, Tuple, List
+from typing import List, Optional, Tuple
 
 import torch
-from torch import nn
+import torch.distributed
+from torch import Tensor, nn
 from torch.distributed.distributed_c10d import ProcessGroup
 from torch.nn import functional as F
-from fms import distributed
-from fms.utils.cache import AttentionComputationMixin
 
+from fms import distributed
 from fms.distributed.tensorparallel import (
-    apply_colwise_tp,
-    apply_rowwise_tp,
     copy_to_tensor_model_parallel_region,
     reduce_from_tensor_model_parallel_region,
 )
 from fms.modules.positions import PositionEncoder
+from fms.modules.tp import TPModule
+from fms.utils.cache import AttentionComputationMixin, CacheDataLayer
 
 
 class MultiHeadAttention(nn.Module):
@@ -41,16 +41,16 @@ class MultiHeadAttention(nn.Module):
     """
 
     def __init__(
-        self,
-        emb_dim,
-        emb_kq,
-        emb_v,
-        nheads,
-        kvheads,
-        p_dropout=None,
-        use_bias=False,
-        position_encoder: Optional[PositionEncoder] = None,
-        gain=1,
+            self,
+            emb_dim,
+            emb_kq,
+            emb_v,
+            nheads,
+            kvheads,
+            p_dropout=None,
+            use_bias=False,
+            position_encoder: Optional[PositionEncoder] = None,
+            gain=1,
     ):
         super(MultiHeadAttention, self).__init__()
         self.nheads = nheads
@@ -94,7 +94,7 @@ class MultiHeadAttention(nn.Module):
         # Ensure softmax inputs are standard normal
         for layer in ["query", "key"]:
             nn.init.trunc_normal_(
-                getattr(self, layer).weight, mean=0.0, std=self.emb_dim**-0.5
+                getattr(self, layer).weight, mean=0.0, std=self.emb_dim ** -0.5
             )
         # Ensure projection layers have same scale (for normalized-step dataloaders like
         # AdamW / Sophia), and maintain input norm up to attention remix, in expectation
@@ -103,28 +103,28 @@ class MultiHeadAttention(nn.Module):
                 getattr(self, layer).weight,
                 mean=0.0,
                 std=(gain / (self.emb_dim * self.nheads * self.emb_v_per_head) ** 0.5)
-                ** 0.5,
+                    ** 0.5,
             )  # Using explicit terms instead of numel to account for eventual MQA addition
         if self.use_bias:
             for layer in ["query", "key", "value", "dense"]:
                 getattr(self, layer).bias.data.zero_()
 
     def forward(
-        self,
-        q,
-        k,
-        v,
-        mask=None,
-        position_ids=None,
-        attn_algorithm=None,
-        cache_data_layer=None,
-        use_cache=False,
-        is_self=True,
-        is_causal_mask=False,
+            self,
+            q,
+            k,
+            v,
+            mask: Optional[Tensor] = None,
+            position_ids=None,
+            attn_algorithm=None,
+            cache_data_layer=None,
+            use_cache=False,
+            is_self=True,
+            is_causal_mask=False,
     ):
         """
-        past_key_value_state: tuple
-            the cache to be used in attention of the form (<self/cross>_key, <self/cross>_value)
+        cache_data_layer: CacheDataLayer, optional
+            A single layer of the cache (default is None)
         position_ids: Optional[torch.LongTensor]
             The position of each of the tokens encoded in q and k. Used for RoPE embeddings
         use_cache: bool
@@ -264,7 +264,7 @@ class MultiHeadAttention(nn.Module):
             return out
 
 
-class TPMultiHeadAttention(MultiHeadAttention):
+class TPMultiHeadAttention(MultiHeadAttention, TPModule):
     """
     Performs multi-headed self- or cross-attention, with optional attention masking.
     This subclass adds support for Tensor Parallel
@@ -280,25 +280,26 @@ class TPMultiHeadAttention(MultiHeadAttention):
     """
 
     def __init__(
-        self,
-        emb_dim,
-        emb_kq,
-        emb_v,
-        nheads,
-        kvheads,
-        p_dropout=None,
-        use_bias=False,
-        position_encoder: Optional[PositionEncoder] = None,
-        gain=1,
-        group: Optional[ProcessGroup] = None,
+            self,
+            emb_dim,
+            emb_kq,
+            emb_v,
+            nheads,
+            kvheads,
+            p_dropout=None,
+            use_bias=False,
+            position_encoder: Optional[PositionEncoder] = None,
+            gain=1,
+            group: Optional[ProcessGroup] = None,
     ):
         assert torch.distributed.is_initialized()
 
         rank, world_size = distributed.rank_and_world(group)
         assert (
-            nheads % world_size == 0
+                nheads % world_size == 0
         ), "The number of heads must be divisible by world size"
-        super(TPMultiHeadAttention, self).__init__(
+        MultiHeadAttention.__init__(
+            self,
             emb_dim,
             emb_kq,
             emb_v,
@@ -309,14 +310,22 @@ class TPMultiHeadAttention(MultiHeadAttention):
             position_encoder,
             gain,
         )
-
-        self.rank = rank
-        self.world_size = world_size
+        self.setup_tp(rank, world_size)
         self.head_size = self.head_size // world_size
+
+    def colwise_param_names(self) -> List[str]:
+        colwise_weights = ["query"]
+        if self.kvheads != 1:
+            colwise_weights.append("key")
+            colwise_weights.append("value")
+        return colwise_weights
+
+    def rowwise_param_names(self) -> List[str]:
+        return ["dense"]
 
     @staticmethod
     def import_module(
-        mha: MultiHeadAttention, group: ProcessGroup
+            mha: MultiHeadAttention, group: ProcessGroup
     ) -> "TPMultiHeadAttention":
         tp_mha = TPMultiHeadAttention(
             emb_dim=mha.emb_dim,
@@ -331,32 +340,18 @@ class TPMultiHeadAttention(MultiHeadAttention):
         )
         return tp_mha
 
-    def import_weights(self, mha: MultiHeadAttention):
-        apply_colwise_tp(self.query, mha.query, self.world_size, self.rank)
-        if self.kvheads == 1:
-            with torch.no_grad():
-                self.key.weight.copy_(mha.key.weight)
-                self.value.weight.copy_(mha.value.weight)
-                if self.use_bias:
-                    self.key.bias.copy_(mha.key.bias)
-                    self.value.bias.copy_(mha.value.bias)
-        else:
-            apply_colwise_tp(self.key, mha.key, self.world_size, self.rank)
-            apply_colwise_tp(self.value, mha.value, self.world_size, self.rank)
-        apply_rowwise_tp(self.dense, mha.dense, self.world_size, self.rank)
-
     def forward(
-        self,
-        q,
-        k,
-        v,
-        mask=None,
-        position_ids=None,
-        attn_algorithm=None,
-        cache_data_layer=None,
-        use_cache=False,
-        is_self=True,
-        is_causal_mask=False,
+            self,
+            q,
+            k,
+            v,
+            mask=None,
+            position_ids=None,
+            attn_algorithm=None,
+            cache_data_layer=None,
+            use_cache=False,
+            is_self=True,
+            is_causal_mask=False,
     ):
         """
         Check MultiHeadAttention for up-to-date arguments and docs

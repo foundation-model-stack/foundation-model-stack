@@ -6,11 +6,12 @@ from torch._dynamo.exc import TorchDynamoException
 from torch._dynamo.testing import CompileCounterWithBackend
 
 from fms.models.hf.modeling_hf_adapter import (
-    HFEncoderDecoderModelArchitecture,
     HFDecoderModelArchitecture,
+    HFEncoderDecoderModelArchitecture,
 )
 from fms.models.hf.utils import register_fms_models, to_hf_api
 from fms.testing._internal.model_test_suite import ConfigFixtureMixin
+
 
 SEED = 42
 torch.manual_seed(SEED)  # pytorch random seed
@@ -19,27 +20,27 @@ torch.backends.cudnn.deterministic = True
 
 
 import abc
+import itertools
 import tempfile
+from typing import List, Optional
 
+import numpy as np
 import pytest
 import torch
 import torch.nn as nn
-import numpy as np
-import itertools
-from typing import List, Optional
-
 from transformers import (
-    PreTrainedModel,
-    AutoTokenizer,
-    PreTrainedTokenizer,
-    PretrainedConfig,
     AutoConfig,
     AutoModel,
-    AutoModelForSeq2SeqLM,
     AutoModelForCausalLM,
+    AutoModelForSeq2SeqLM,
+    AutoTokenizer,
+    PretrainedConfig,
+    PreTrainedModel,
+    PreTrainedTokenizer,
 )
 
 from fms.utils.config import ModelConfig
+
 from ...comparison import (
     HFModelSignatureParams,
     ModelSignatureParams,

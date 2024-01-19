@@ -4,7 +4,6 @@ import torch
 import torch.nn.functional as F
 from torch import distributed as dist
 
-from fms.modules.positions import compute_position_ids
 from fms.utils.cache import CacheDataWithMetadata, KVCacheManager
 from fms.utils.cache.expandable import ExpandableKVCacheManager
 
@@ -107,21 +106,19 @@ def generate(
 
         # get the cache data and position ids if using cache
         if use_cache and kv_cache_manager:
-            if i == 0:
+            if sequence_ids is None:
                 num_tokens_per_sequence = torch.count_nonzero(
                     input_ids.T, dim=0
                 ).tolist()
-                cache_data: CacheDataWithMetadata = kv_cache_manager.allocate_tokens(
-                    num_tokens_per_sequence
-                )
             else:
                 num_tokens_per_sequence = [1 for _ in range(input_ids.size(0))]
-                cache_data = kv_cache_manager.allocate_tokens(
-                    num_tokens_per_sequence, sequence_ids
-                )
 
-                # TODO: is this supported? is it necessary?
-                # if contiguous_cache:
+            cache_data = kv_cache_manager.allocate_tokens(
+                num_tokens_per_sequence, sequence_ids
+            )
+
+            # TODO: contiguous_cache -- is this supported? is it necessary?
+
             sequence_ids = cache_data.sequence_ids
 
             kwargs["cache_data"] = cache_data
