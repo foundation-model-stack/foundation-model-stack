@@ -105,17 +105,16 @@ class LLaMABlock(nn.Module):
             self.dropout = nn.Dropout(self.config.p_dropout)
 
     def forward(
-            self,
-            x,
-            *,
-            mask=None,
-            position_ids=None,
-            cache_data_layer=None,
-            use_cache=False,
-            is_causal_mask=False,
-            attn_algorithm=None,
+        self,
+        x,
+        *,
+        mask=None,
+        position_ids=None,
+        cache_data_layer=None,
+        use_cache=False,
+        is_causal_mask=False,
+        attn_algorithm=None,
     ):
-
         # first we do MHA and Add&Norm
         residual = x
         x = self.ln(x)
@@ -156,10 +155,10 @@ class LLaMABlock(nn.Module):
 
 class LLaMA(nn.Module):
     def __init__(
-            self,
-            config: Optional[LLaMAConfig] = None,
-            distributed_strategy: DistributedStrategy = NoOpStrategy,
-            **kwargs,
+        self,
+        config: Optional[LLaMAConfig] = None,
+        distributed_strategy: DistributedStrategy = NoOpStrategy,
+        **kwargs,
     ):
         super(LLaMA, self).__init__()
         if config is not None:
@@ -238,15 +237,14 @@ class LLaMA(nn.Module):
         )
 
     def _helper(
-            self,
-            x_in,
-            mask=None,
-            position_ids=None,
-            cache_data=None,
-            use_cache=False,
-            attn_algorithm=None,
+        self,
+        x_in,
+        mask=None,
+        position_ids=None,
+        cache_data=None,
+        use_cache=False,
+        attn_algorithm=None,
     ):
-
         qlen = x_in.size(1)
         filled_cache = False
 
@@ -299,14 +297,14 @@ class LLaMA(nn.Module):
         return dec_out, present_key_value_states
 
     def forward(
-            self,
-            x,
-            mask=None,
-            position_ids=None,
-            cache_data=None,
-            use_cache=False,
-            only_last_token=False,
-            attn_algorithm=None,
+        self,
+        x,
+        mask=None,
+        position_ids=None,
+        cache_data=None,
+        use_cache=False,
+        only_last_token=False,
+        attn_algorithm=None,
     ):
         output, cache = self._helper(
             x,
@@ -526,7 +524,7 @@ def convert_hf_llama(hf_model: "LlamaForCausalLM") -> LLaMA:  # type: ignore
         nheads=hf_model.config.num_attention_heads,
         nlayers=hf_model.config.num_hidden_layers,
         hidden_grow_factor=hf_model.config.intermediate_size
-                           / hf_model.config.hidden_size,
+        / hf_model.config.hidden_size,
         multiple_of=1,  # this is set to 1 as it is encoded in the hidden dimension
         activation_fn=hf_model.config.hidden_act,
         max_expected_seq_len=hf_model.config.max_position_embeddings,

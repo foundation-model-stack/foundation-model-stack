@@ -58,17 +58,16 @@ class GPTBigCodeBlock(nn.Module):
             self.dropout = nn.Dropout(self.config.p_dropout)
 
     def forward(
-            self,
-            x: torch.Tensor,
-            *,
-            mask: Optional[torch.Tensor] = None,
-            position_ids: Optional[torch.Tensor] = None,
-            cache_data_layer: Optional[CacheDataLayer] = None,
-            use_cache: bool = False,
-            is_causal_mask: bool = False,
-            attn_algorithm: Optional[str] = None,
+        self,
+        x: torch.Tensor,
+        *,
+        mask: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.Tensor] = None,
+        cache_data_layer: Optional[CacheDataLayer] = None,
+        use_cache: bool = False,
+        is_causal_mask: bool = False,
+        attn_algorithm: Optional[str] = None,
     ):
-
         # first we do MHA and Add&Norm
         residual = x
         x = self.ln(x)
@@ -130,13 +129,13 @@ class GPTBigCodeHeadless(nn.Module):
             self.dropout = nn.Dropout(self.config.p_dropout)
 
     def forward(
-            self,
-            x: torch.LongTensor,
-            mask: Optional[torch.Tensor] = None,
-            position_ids: Optional[torch.Tensor] = None,
-            cache_data: Optional[CacheData] = None,
-            use_cache: bool = False,
-            attn_algorithm: Optional[str] = None,
+        self,
+        x: torch.LongTensor,
+        mask: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.Tensor] = None,
+        cache_data: Optional[CacheData] = None,
+        use_cache: bool = False,
+        attn_algorithm: Optional[str] = None,
     ):
         # Embed the given vocabulary indices using the given attention mask, with pre-/post-norm and dropout as specified
         # x_in: batch_size x seq_len
@@ -221,9 +220,9 @@ class GPTBigCodeHeadless(nn.Module):
 # Implements the decoder-only GPTBigCodeModel
 class GPTBigCode(nn.Module):
     def __init__(
-            self,
-            config: Optional[GPTBigCodeConfig] = None,
-            **kwargs,
+        self,
+        config: Optional[GPTBigCodeConfig] = None,
+        **kwargs,
     ):
         super(GPTBigCode, self).__init__()
         if config is not None:
@@ -258,13 +257,13 @@ class GPTBigCode(nn.Module):
         )
 
     def forward(
-            self,
-            x: torch.LongTensor,
-            mask: Optional[torch.Tensor] = None,
-            position_ids: Optional[torch.LongTensor] = None,
-            cache_data: Optional[CacheData] = None,
-            use_cache: bool = False,
-            attn_algorithm: Optional[str] = None,
+        self,
+        x: torch.LongTensor,
+        mask: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
+        cache_data: Optional[CacheData] = None,
+        use_cache: bool = False,
+        attn_algorithm: Optional[str] = None,
     ):
         output, cache = self.base_model(
             x,

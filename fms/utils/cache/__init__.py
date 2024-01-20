@@ -44,7 +44,7 @@ class CacheDataLayer(metaclass=abc.ABCMeta):
 
     @abc.abstractmethod
     def store(
-            self, key: torch.Tensor, value: torch.Tensor
+        self, key: torch.Tensor, value: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Store the computed keys and values in the cache data layer
@@ -149,9 +149,13 @@ class CacheDataWithMetadata(CacheData):
     context_lengths: Optional[torch.Tensor]
 
     def compute_position_ids(self, num_tokens_per_sequence: List[int]) -> torch.Tensor:
-        position_ids_list = util_compute_position_ids(num_tokens_per_sequence,
-                                                      None if self.context_lengths is None else self.context_lengths.tolist())
-        return torch.tensor(position_ids_list, dtype=torch.long, device=self.data[0][0].device)
+        position_ids_list = util_compute_position_ids(
+            num_tokens_per_sequence,
+            None if self.context_lengths is None else self.context_lengths.tolist(),
+        )
+        return torch.tensor(
+            position_ids_list, dtype=torch.long, device=self.data[0][0].device
+        )
 
 
 class KVCacheManager(metaclass=abc.ABCMeta):
@@ -162,9 +166,9 @@ class KVCacheManager(metaclass=abc.ABCMeta):
 
     @abc.abstractmethod
     def allocate_tokens(
-            self,
-            num_tokens_per_sequence: List[int],
-            sequence_ids: Optional[List[int]] = None,
+        self,
+        num_tokens_per_sequence: List[int],
+        sequence_ids: Optional[List[int]] = None,
     ) -> CacheDataWithMetadata:
         """
         allocate tokens in the kv-cache. If sequence ids are not given, this will be considered pre-fill for the prompt,
@@ -213,7 +217,7 @@ class OutOfPlaceCacheDataLayer(CacheDataLayer):
         return "out-of-place"
 
     def store(
-            self, keys: torch.Tensor, values: torch.Tensor
+        self, keys: torch.Tensor, values: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         if self.data_layer is not None:
             self.data_layer = (

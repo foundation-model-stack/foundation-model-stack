@@ -25,17 +25,17 @@ def _make_cache_contiguous(past_key_value_states):
 
 
 def generate(
-        model: Union[Callable, torch.nn.Module],
-        input_ids: torch.Tensor,
-        max_seq_len: int = 2048,
-        max_new_tokens: int = 256,
-        temperature: float = 1.0,
-        top_k: int = 10,
-        do_sample: bool = True,
-        num_beams: int = 1,
-        use_cache: bool = False,
-        kv_cache_manager: Optional[KVCacheManager] = None,
-        contiguous_cache: bool = False,
+    model: Union[Callable, torch.nn.Module],
+    input_ids: torch.Tensor,
+    max_seq_len: int = 2048,
+    max_new_tokens: int = 256,
+    temperature: float = 1.0,
+    top_k: int = 10,
+    do_sample: bool = True,
+    num_beams: int = 1,
+    use_cache: bool = False,
+    kv_cache_manager: Optional[KVCacheManager] = None,
+    contiguous_cache: bool = False,
 ):
     """
     A trivial generate function that can be used for validation/testing in
@@ -91,7 +91,6 @@ def generate(
             )
 
     for i in range(max_new_tokens):
-
         input_ids = next_input[:, -max_seq_len:]
 
         # compute the mask

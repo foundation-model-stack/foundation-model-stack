@@ -41,16 +41,16 @@ class MultiHeadAttention(nn.Module):
     """
 
     def __init__(
-            self,
-            emb_dim,
-            emb_kq,
-            emb_v,
-            nheads,
-            kvheads,
-            p_dropout=None,
-            use_bias=False,
-            position_encoder: Optional[PositionEncoder] = None,
-            gain=1,
+        self,
+        emb_dim,
+        emb_kq,
+        emb_v,
+        nheads,
+        kvheads,
+        p_dropout=None,
+        use_bias=False,
+        position_encoder: Optional[PositionEncoder] = None,
+        gain=1,
     ):
         super(MultiHeadAttention, self).__init__()
         self.nheads = nheads
@@ -94,7 +94,7 @@ class MultiHeadAttention(nn.Module):
         # Ensure softmax inputs are standard normal
         for layer in ["query", "key"]:
             nn.init.trunc_normal_(
-                getattr(self, layer).weight, mean=0.0, std=self.emb_dim ** -0.5
+                getattr(self, layer).weight, mean=0.0, std=self.emb_dim**-0.5
             )
         # Ensure projection layers have same scale (for normalized-step dataloaders like
         # AdamW / Sophia), and maintain input norm up to attention remix, in expectation
@@ -103,24 +103,24 @@ class MultiHeadAttention(nn.Module):
                 getattr(self, layer).weight,
                 mean=0.0,
                 std=(gain / (self.emb_dim * self.nheads * self.emb_v_per_head) ** 0.5)
-                    ** 0.5,
+                ** 0.5,
             )  # Using explicit terms instead of numel to account for eventual MQA addition
         if self.use_bias:
             for layer in ["query", "key", "value", "dense"]:
                 getattr(self, layer).bias.data.zero_()
 
     def forward(
-            self,
-            q,
-            k,
-            v,
-            mask: Optional[Tensor] = None,
-            position_ids=None,
-            attn_algorithm=None,
-            cache_data_layer=None,
-            use_cache=False,
-            is_self=True,
-            is_causal_mask=False,
+        self,
+        q,
+        k,
+        v,
+        mask: Optional[Tensor] = None,
+        position_ids=None,
+        attn_algorithm=None,
+        cache_data_layer=None,
+        use_cache=False,
+        is_self=True,
+        is_causal_mask=False,
     ):
         """
         cache_data_layer: CacheDataLayer, optional
@@ -184,14 +184,17 @@ class MultiHeadAttention(nn.Module):
         if use_cache and cache_data_layer:
             keys, values = cache_data_layer.store(keys, values)
 
-        custom_attention = use_cache and cache_data_layer and isinstance(cache_data_layer, AttentionComputationMixin)
+        custom_attention = (
+            use_cache
+            and cache_data_layer
+            and isinstance(cache_data_layer, AttentionComputationMixin)
+        )
 
         # Provide a method for a user to perform their own implementation of attention in the cache case if required
         if custom_attention and cache_data_layer.is_filled():
             attn = cache_data_layer.attend(queries, keys, values)
         # otherwise we always fall back into SDPA as this is either a prompt or it is a single contiguous cache
         else:
-
             # Merge rel pos bias and mask into single float mask
             if mask is not None:
                 # Our expected mask format is bs x q_len x k_len, so to make it broadcastable
@@ -259,7 +262,10 @@ class MultiHeadAttention(nn.Module):
         # if use_cache=True, we return the hidden_state as well as the kv cache
         if use_cache:
             # note: needed to add this check to return the data_layer as it fails compile otherwise
-            return out, cache_data_layer.data_layer if custom_attention else (keys, values)
+            return out, cache_data_layer.data_layer if custom_attention else (
+                keys,
+                values,
+            )
         else:
             return out
 
@@ -280,23 +286,23 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
     """
 
     def __init__(
-            self,
-            emb_dim,
-            emb_kq,
-            emb_v,
-            nheads,
-            kvheads,
-            p_dropout=None,
-            use_bias=False,
-            position_encoder: Optional[PositionEncoder] = None,
-            gain=1,
-            group: Optional[ProcessGroup] = None,
+        self,
+        emb_dim,
+        emb_kq,
+        emb_v,
+        nheads,
+        kvheads,
+        p_dropout=None,
+        use_bias=False,
+        position_encoder: Optional[PositionEncoder] = None,
+        gain=1,
+        group: Optional[ProcessGroup] = None,
     ):
         assert torch.distributed.is_initialized()
 
         rank, world_size = distributed.rank_and_world(group)
         assert (
-                nheads % world_size == 0
+            nheads % world_size == 0
         ), "The number of heads must be divisible by world size"
         MultiHeadAttention.__init__(
             self,
@@ -325,7 +331,7 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
 
     @staticmethod
     def import_module(
-            mha: MultiHeadAttention, group: ProcessGroup
+        mha: MultiHeadAttention, group: ProcessGroup
     ) -> "TPMultiHeadAttention":
         tp_mha = TPMultiHeadAttention(
             emb_dim=mha.emb_dim,
@@ -341,17 +347,17 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
         return tp_mha
 
     def forward(
-            self,
-            q,
-            k,
-            v,
-            mask=None,
-            position_ids=None,
-            attn_algorithm=None,
-            cache_data_layer=None,
-            use_cache=False,
-            is_self=True,
-            is_causal_mask=False,
+        self,
+        q,
+        k,
+        v,
+        mask=None,
+        position_ids=None,
+        attn_algorithm=None,
+        cache_data_layer=None,
+        use_cache=False,
+        is_self=True,
+        is_causal_mask=False,
     ):
         """
         Check MultiHeadAttention for up-to-date arguments and docs

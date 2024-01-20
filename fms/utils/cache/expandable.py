@@ -16,11 +16,11 @@ class InPlaceCacheDataLayer(CacheDataLayer):
         return "in-place"
 
     def store(
-            self, keys: torch.Tensor, values: torch.Tensor
+        self, keys: torch.Tensor, values: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         shape = keys.shape
-        self.data_layer[0][:, :, -shape[2]:, :].copy_(keys)
-        self.data_layer[1][:, :, -shape[2]:, :].copy_(values)
+        self.data_layer[0][:, :, -shape[2] :, :].copy_(keys)
+        self.data_layer[1][:, :, -shape[2] :, :].copy_(values)
         keys = self.data_layer[0]
         values = self.data_layer[1]
         return keys, values
@@ -47,16 +47,15 @@ class InPlaceCacheData(CacheDataWithMetadata):
 
 
 class ExpandableKVCacheManager(KVCacheManager):
-
     # TODO: Would be nice for this cache to be the compact expandable cache, but not required right now
     def __init__(
-            self,
-            num_layers: int,
-            num_heads: int,
-            emb_dim: int,
-            tensor_parallel_size: int = 1,
-            device: Optional[Union[str, torch.device]] = "cpu",
-            dtype: torch.dtype = torch.float32,
+        self,
+        num_layers: int,
+        num_heads: int,
+        emb_dim: int,
+        tensor_parallel_size: int = 1,
+        device: Optional[Union[str, torch.device]] = "cpu",
+        dtype: torch.dtype = torch.float32,
     ):
         self.cache: List[Tuple[torch.Tensor, torch.Tensor]] = []
         self.num_layers = num_layers
@@ -74,15 +73,19 @@ class ExpandableKVCacheManager(KVCacheManager):
         self.context_map = {}
 
     def allocate_tokens(
-            self, num_tokens_per_sequence: List[int], sequence_ids: Optional[List[int]] = None
+        self,
+        num_tokens_per_sequence: List[int],
+        sequence_ids: Optional[List[int]] = None,
     ) -> CacheDataWithMetadata:
         if sequence_ids is None:
             return self._allocate_prompt_tokens(num_tokens_per_sequence)
         else:
-            return self._allocate_generated_tokens(sequence_ids, num_tokens_per_sequence)
+            return self._allocate_generated_tokens(
+                sequence_ids, num_tokens_per_sequence
+            )
 
     def _allocate_prompt_tokens(
-            self, num_tokens_per_sequence: List[int]
+        self, num_tokens_per_sequence: List[int]
     ) -> InPlaceCacheData:
         # TODO: we might be able to handle multiple batches by using sequence ids, but for now naiive approach, one cache per batch
         self.cache.clear()
@@ -130,7 +133,7 @@ class ExpandableKVCacheManager(KVCacheManager):
         )
 
     def _allocate_generated_tokens(
-            self, sequence_ids: List[int], num_tokens_per_sequence: List[int]
+        self, sequence_ids: List[int], num_tokens_per_sequence: List[int]
     ) -> InPlaceCacheData:
         max_sequence_length = -1
         context_lengths = []

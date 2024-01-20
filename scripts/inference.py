@@ -182,8 +182,8 @@ if args.context_file is not None:
     with open(args.context_file) as file:
         long_prompt = file.read()
         prompt1 = (
-                long_prompt
-                + "\nPlease give me a brief summary of this research paper in a few bullet points."
+            long_prompt
+            + "\nPlease give me a brief summary of this research paper in a few bullet points."
         )
         # prompt1 = long_prompt + "\nDescribe work that was done concurrently with the research in this paper."
         prompt2 = long_prompt + "\nPlease write me the abstract for this paper."

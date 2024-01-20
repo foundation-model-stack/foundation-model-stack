@@ -4,7 +4,6 @@ import torch.nn.functional as F
 from torch import nn
 
 from fms.models import get_model
-from fms.utils.cache.paged import PagedKVCacheManager
 from fms.utils.generation import generate, truncate_after_eos
 from fms.utils.tokenizers import get_tokenizer
 
@@ -90,12 +89,16 @@ def test_cache_generation():
     torch.testing.assert_allclose(expandable_results, no_cache_results)
 
     if torch.cuda.is_available():
+        from fms.utils.cache.paged import PagedKVCacheManager
+
         paged_kv_cache = PagedKVCacheManager(
             model.config.nlayers,
             model.config.nheads,
             model.config.emb_dim,
             model.config.kvheads,
-            total_num_gpu_blocks=100
+            total_num_gpu_blocks=100,
         )
-        paged_results = generate(model, ids, do_sample=False, use_cache=True, kv_cache_manager=paged_kv_cache)
+        paged_results = generate(
+            model, ids, do_sample=False, use_cache=True, kv_cache_manager=paged_kv_cache
+        )
         torch.testing.assert_allclose(paged_results, no_cache_results)

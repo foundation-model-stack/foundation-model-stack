@@ -68,40 +68,40 @@ lib.define(
 
 @torch.library.impl(lib, "paged_attention_v2", "Meta")
 def _paged_attention_v2_meta(
-        out,
-        exp_sums,
-        max_logits,
-        tmp_out,
-        query,
-        key_cache,
-        value_cache,
-        head_mapping,
-        scale,
-        block_tables,
-        context_lens,
-        block_size,
-        max_context_len,
-        alibi_slopes=None,
+    out,
+    exp_sums,
+    max_logits,
+    tmp_out,
+    query,
+    key_cache,
+    value_cache,
+    head_mapping,
+    scale,
+    block_tables,
+    context_lens,
+    block_size,
+    max_context_len,
+    alibi_slopes=None,
 ):
     return out.contiguous()
 
 
 @torch.library.impl(lib, "paged_attention_v2", "CUDA")
 def _paged_attention_v2(
-        out,
-        exp_sums,
-        max_logits,
-        tmp_out,
-        query,
-        key_cache,
-        value_cache,
-        head_mapping,
-        scale,
-        block_tables,
-        context_lens,
-        block_size,
-        max_context_len,
-        alibi_slopes=None,
+    out,
+    exp_sums,
+    max_logits,
+    tmp_out,
+    query,
+    key_cache,
+    value_cache,
+    head_mapping,
+    scale,
+    block_tables,
+    context_lens,
+    block_size,
+    max_context_len,
+    alibi_slopes=None,
 ):
     out = out.contiguous()
     exp_sums = exp_sums.contiguous()
@@ -140,20 +140,20 @@ lowering.fallbacks.add(torch.ops.paged_attention.paged_attention_v2)
     torch.ops.paged_attention.paged_attention_v2, type_promotion_kind=None
 )
 def _paged_attention_v2_lowering(
-        out,
-        exp_sums,
-        max_logits,
-        tmp_out,
-        query,
-        key_cache,
-        value_cache,
-        head_mapping,
-        scale,
-        block_tables,
-        context_lens,
-        block_size,
-        max_context_len,
-        alibi_slopes=None,
+    out,
+    exp_sums,
+    max_logits,
+    tmp_out,
+    query,
+    key_cache,
+    value_cache,
+    head_mapping,
+    scale,
+    block_tables,
+    context_lens,
+    block_size,
+    max_context_len,
+    alibi_slopes=None,
 ):
     PagedAttnKernel.create(
         torch.ops.paged_attention.paged_attention_v2.default,
@@ -183,34 +183,34 @@ lib.define(
 
 @torch.library.impl(lib, "paged_attention_v1", "Meta")
 def _paged_attention_v1_meta(
-        out,
-        query,
-        key_cache,
-        value_cache,
-        head_mapping,
-        scale,
-        block_tables,
-        context_lens,
-        block_size,
-        max_context_len,
-        alibi_slopes=None,
+    out,
+    query,
+    key_cache,
+    value_cache,
+    head_mapping,
+    scale,
+    block_tables,
+    context_lens,
+    block_size,
+    max_context_len,
+    alibi_slopes=None,
 ):
     return out.contiguous()
 
 
 @torch.library.impl(lib, "paged_attention_v1", "CUDA")
 def _paged_attention_v1(
-        out,
-        query,
-        key_cache,
-        value_cache,
-        head_mapping,
-        scale,
-        block_tables,
-        context_lens,
-        block_size,
-        max_context_len,
-        alibi_slopes=None,
+    out,
+    query,
+    key_cache,
+    value_cache,
+    head_mapping,
+    scale,
+    block_tables,
+    context_lens,
+    block_size,
+    max_context_len,
+    alibi_slopes=None,
 ):
     out = out.contiguous()
     query = query.contiguous()
@@ -243,17 +243,17 @@ lowering.fallbacks.add(torch.ops.paged_attention.paged_attention_v1)
     torch.ops.paged_attention.paged_attention_v1, type_promotion_kind=None
 )
 def _paged_attention_v1_lowering(
-        out,
-        query,
-        key_cache,
-        value_cache,
-        head_mapping,
-        scale,
-        block_tables,
-        context_lens,
-        block_size,
-        max_context_len,
-        alibi_slopes=None,
+    out,
+    query,
+    key_cache,
+    value_cache,
+    head_mapping,
+    scale,
+    block_tables,
+    context_lens,
+    block_size,
+    max_context_len,
+    alibi_slopes=None,
 ):
     PagedAttnKernel.create(
         torch.ops.paged_attention.paged_attention_v1.default,
@@ -362,7 +362,7 @@ class PagedAttentionCacheDataLayer(AttentionComputationMixin, CacheDataLayer):
         return "paged-attention"
 
     def store(
-            self, keys: torch.Tensor, values: torch.Tensor
+        self, keys: torch.Tensor, values: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         key_to_cache = keys.transpose(2, 1).reshape(-1, self.kv_heads, self.head_size)
         value_to_cache = values.transpose(2, 1).reshape(
@@ -380,10 +380,10 @@ class PagedAttentionCacheDataLayer(AttentionComputationMixin, CacheDataLayer):
         return keys, values
 
     def attend(
-            self,
-            query: torch.Tensor,
-            key: torch.Tensor,
-            value: torch.Tensor,
+        self,
+        query: torch.Tensor,
+        key: torch.Tensor,
+        value: torch.Tensor,
     ) -> torch.Tensor:
         query = query.transpose(2, 1).reshape(-1, self.num_heads, self.head_size)
 
@@ -393,11 +393,11 @@ class PagedAttentionCacheDataLayer(AttentionComputationMixin, CacheDataLayer):
         num_seqs, num_heads, head_size = query.shape
         _PARTITION_SIZE = 512
         max_num_partitions = (
-                                     self.max_sequence_length + _PARTITION_SIZE - 1
-                             ) // _PARTITION_SIZE
+            self.max_sequence_length + _PARTITION_SIZE - 1
+        ) // _PARTITION_SIZE
 
         use_v1 = self.max_sequence_length <= 8192 and (
-                max_num_partitions == 1 or num_seqs * num_heads > 512
+            max_num_partitions == 1 or num_seqs * num_heads > 512
         )
 
         if use_v1:
@@ -497,12 +497,12 @@ def get_cache_block_size(block_size, head_size, num_heads, num_layers, dtype) ->
 
 # TODO: This can be improved to profile a forward pass with batch and max length
 def get_max_gpu_blocks_available(
-        block_size: int,
-        emb_dim: int,
-        nheads: int,
-        nlayers: int,
-        gpu_memory_utilization: float,
-        dtype,
+    block_size: int,
+    emb_dim: int,
+    nheads: int,
+    nlayers: int,
+    gpu_memory_utilization: float,
+    dtype,
 ) -> int:
     # Calculate the number of blocks that can be allocated with the
     # profiled peak memory.
@@ -522,9 +522,9 @@ def get_max_gpu_blocks_available(
 
 class CacheBlock:
     def __init__(
-            self,
-            block_number: int,
-            block_size: int,
+        self,
+        block_number: int,
+        block_size: int,
     ):
         self.block_number = block_number
         self.block_size = block_size
@@ -629,16 +629,16 @@ class CacheBlockGroup(List[CacheBlock]):
 
 class PagedKVCacheManager(KVCacheManager):
     def __init__(
-            self,
-            num_layers: int,
-            num_heads: int,
-            emb_dim: int,
-            kv_heads: int = 0,
-            total_num_gpu_blocks: Optional[int] = None,
-            block_size: int = 16,
-            tensor_parallel_size: int = 1,
-            device: Optional[Union[str, torch.device]] = "cuda",
-            dtype: torch.dtype = torch.float32,
+        self,
+        num_layers: int,
+        num_heads: int,
+        emb_dim: int,
+        kv_heads: int = 0,
+        total_num_gpu_blocks: Optional[int] = None,
+        block_size: int = 16,
+        tensor_parallel_size: int = 1,
+        device: Optional[Union[str, torch.device]] = "cuda",
+        dtype: torch.dtype = torch.float32,
     ):
         self.block_size = block_size
         self.cache: List[KVCache] = []
@@ -726,8 +726,8 @@ class PagedKVCacheManager(KVCacheManager):
     def is_generating(self, sequence_ids: List[int]):
         for sequence_id in sequence_ids:
             if (
-                    sequence_id not in self.cbg_map
-                    or not self.cbg_map[sequence_id].is_generating()
+                sequence_id not in self.cbg_map
+                or not self.cbg_map[sequence_id].is_generating()
             ):
                 return False
         return True
@@ -735,8 +735,8 @@ class PagedKVCacheManager(KVCacheManager):
     def is_initialized_with_prompt(self, sequence_ids: List[int]):
         for sequence_id in sequence_ids:
             if (
-                    sequence_id not in self.cbg_map
-                    or not self.cbg_map[sequence_id].is_initialized_with_prompt()
+                sequence_id not in self.cbg_map
+                or not self.cbg_map[sequence_id].is_initialized_with_prompt()
             ):
                 return False
         return True
@@ -758,7 +758,7 @@ class PagedKVCacheManager(KVCacheManager):
 
         for cb in cbg:
             if cbg.prefix is None or (
-                    cbg.prefix is not None and cb.block_number not in prefix_block_numbers
+                cbg.prefix is not None and cb.block_number not in prefix_block_numbers
             ):
                 cb.num_tokens = 0
                 self.free_blocks.append(cb)
@@ -776,10 +776,10 @@ class PagedKVCacheManager(KVCacheManager):
         return [self.unused_keys.get_nowait() for _ in range(num_sequences)]
 
     def _get_cache_metadata(
-            self,
-            sequence_ids: List[int],
-            is_prompt: bool,
-            num_tokens_per_sequence: Optional[List[int]] = None,
+        self,
+        sequence_ids: List[int],
+        is_prompt: bool,
+        num_tokens_per_sequence: Optional[List[int]] = None,
     ) -> PagedAttentionCacheData:
         slot_mapping = []
         block_tables = []
@@ -837,15 +837,19 @@ class PagedKVCacheManager(KVCacheManager):
         )
 
     def allocate_tokens(
-            self, num_tokens_per_sequence: List[int], sequence_ids: Optional[List[int]] = None
+        self,
+        num_tokens_per_sequence: List[int],
+        sequence_ids: Optional[List[int]] = None,
     ) -> CacheDataWithMetadata:
         if sequence_ids is None:
             return self._allocate_prompt_tokens(num_tokens_per_sequence)
         else:
-            return self._allocate_generated_tokens(sequence_ids, num_tokens_per_sequence)
+            return self._allocate_generated_tokens(
+                sequence_ids, num_tokens_per_sequence
+            )
 
     def _allocate_prompt_tokens(
-            self, num_tokens_per_sequence: List[int]
+        self, num_tokens_per_sequence: List[int]
     ) -> PagedAttentionCacheData:
         sequence_ids = self._get_unassigned_sequence_ids(len(num_tokens_per_sequence))
 
@@ -855,7 +859,7 @@ class PagedKVCacheManager(KVCacheManager):
         return self._get_cache_metadata(sequence_ids, is_prompt=True)
 
     def _allocate_generated_tokens(
-            self, sequence_ids: List[int], num_tokens_per_sequence: List[int]
+        self, sequence_ids: List[int], num_tokens_per_sequence: List[int]
     ) -> PagedAttentionCacheData:
         for seq_id, num_tokens in zip(sequence_ids, num_tokens_per_sequence):
             cache_block_group = self.cbg_map[seq_id]
@@ -884,8 +888,8 @@ class PagedKVCacheManager(KVCacheManager):
         cursor = 0
         while cursor < num_tokens:
             tokens_to_append = (
-                    min(num_tokens, cursor + last_cache_block.num_available_slots())
-                    - cursor
+                min(num_tokens, cursor + last_cache_block.num_available_slots())
+                - cursor
             )
             last_cache_block.append_num_tokens(tokens_to_append)
             cursor += tokens_to_append
@@ -926,7 +930,7 @@ class PagedKVCacheManager(KVCacheManager):
         return child_sequence_id
 
     def add_child_sequences(
-            self, parent_sequence_id: int, num_sequences: int
+        self, parent_sequence_id: int, num_sequences: int
     ) -> list[int]:
         child_sequence_ids = []
         for _ in range(num_sequences):
