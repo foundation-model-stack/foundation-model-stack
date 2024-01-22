@@ -127,10 +127,10 @@ class RotaryEmbeddingTests(unittest.TestCase):
             k[:, :, -1:, :],
             position_ids=torch.tensor([[7], [6]]),
         )
-        
+
         torch.testing.assert_close(qr_good, qr_correct[:, :, -1:, :])
         torch.testing.assert_close(kr_good, kr_correct[:, :, -1:, :])
-        
+
         with self.assertRaises(AssertionError):
             torch.testing.assert_close(qr_bad, qr_correct[:, :, -1:, :])
         with self.assertRaises(AssertionError):
