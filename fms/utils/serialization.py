@@ -107,29 +107,7 @@ def get_adapted(
 from fms import models
 
 
-def get_ckp_format(model_path: Union[str, Path]) -> str:
-    """
-    Returns the checkpoint format of a model checkpoint. If format
-    is not recognized, assumes all files are regular pytorch
-    checkpoints and returns "pt"
-
-    Args:
-    model_path: the path to find the weights.
-    """
-    model_path = Path(os.path.expanduser(model_path))
-    if (
-        model_path.suffix == ".safetensors"
-        or len(sorted(model_path.glob("*.safetensors"))) > 0
-    ):
-        return "st"
-    if model_path.suffix == ".pth" or len(sorted(model_path.glob("*.pth"))) > 0:
-        return "pt"
-    if model_path.suffix == ".bin" or len(sorted(model_path.glob("*.bin"))) > 0:
-        return "hf"
-    return "pt_all"
-
-
-def get_safetensors_item(key, file: Path, device: torch.device) -> torch.Tensor:
+def _get_safetensors_item(key, file: Path, device: torch.device) -> torch.Tensor:
     from safetensors import safe_open  # type: ignore[import-untyped]
 
     with torch.no_grad():
@@ -141,7 +119,7 @@ def get_safetensors_item(key, file: Path, device: torch.device) -> torch.Tensor:
 
 class LazySafetensorsDict(collections.UserDict):
     def set_lazy_tensor(self, key, file, device):
-        super().__setitem__(key, lambda: get_safetensors_item(key, file, device))
+        super().__setitem__(key, lambda: _get_safetensors_item(key, file, device))
 
     def __getitem__(self, key):
         lazy_tensor = super().__getitem__(key)
@@ -154,7 +132,7 @@ class LazySafetensorsDict(collections.UserDict):
 def load_state_dict(
     model_path: Union[str, Path],
     *,
-    checkpoint_format: Optional[str] = None,
+    source: Optional[str] = None,
     distributed_strategy: Optional[str] = None,
     checkpoint_sharding: Optional[str] = None,
     initial_device: torch.device = torch.device("cpu"),
@@ -166,14 +144,15 @@ def load_state_dict(
     the intended (possibly distributed) use-case, and returns a lazy loading
     state dict if possible (some formats may not support that).
 
-    If model_path is a directory, it'll try to load, in this order, pytorch
-    models (.pth format), HF models (.bin format), and safetensors
-    (.safetensors format), unless checkpoint_format is specified.
+    If model_path is a directory, it'll try to load models based on the source
+    (e.g. .bin for HF, .pth for Meta), and, if no source is specified or hasn't
+    been registered, it'll try .safetensors, .pth, and .bin.
 
     Args:
     model_path: the path to find the weights. If not set, return None.
-    checkpoint_format: how the checkpoint files are saved: None, 'pt',
-            'hf', or 'st'. If None, guess based on files.
+    source: If the weights in the state dict didn't come from an FMS model,
+            `source` specifies which conversion function might be needed.
+            See `serialization.list_sources(architecture)`
     distributed_strategy: the kind of possibly-distributed model in which we
             intend to load these weights. E.g. tp, fsdp, None. Used for
             validation.
@@ -189,35 +168,36 @@ def load_state_dict(
     if checkpoint_sharding == "tp" and distributed_strategy not in ["tp"]:
         raise ValueError("TP checkpoints can only be loaded into a TP model")
 
+    # Before creating the Path object, check if model_path has a glob pattern
+    model_path, sep, glob_pattern = model_path.partition("*")
+    glob_pattern = sep + glob_pattern
+
     model_path = Path(os.path.expanduser(model_path))
 
-    if checkpoint_format is None:
-        # Try finding the checkpoint format internally
-        checkpoint_format = get_ckp_format(model_path)
+    checkpoints = []
 
-    if checkpoint_format == "pt":
-        glob_pattern = "*.pth"
-    elif checkpoint_format == "hf":
-        glob_pattern = "*.bin"
-    elif checkpoint_format == "st":
-        glob_pattern = "*.safetensors"
-    elif checkpoint_format == "pt_all":
-        # Assume whatever file(s) are PT checkpoint(s)
-        glob_pattern = "*"
-    else:
-        raise ValueError(f"Unsupported checkpoint format {checkpoint_format}")
+    if model_path.is_dir():
+        if glob_pattern != "":
+            glob_pattern_list = [glob_pattern]
+        elif source == "meta":
+            glob_pattern_list = ["*.pth", "*.safetensors"]
+        elif source == "hf":
+            glob_pattern_list = ["*.bin", "*.safetensors"]
+        else:
+            glob_pattern_list = ["*.safetensors", "*.pth", "*.bin"]
+        for glob_pattern_possibility in glob_pattern_list:
+            file_list = list(model_path.glob(glob_pattern_possibility))
+            if len(file_list) > 0:
+                checkpoints = sorted(file_list)
+                break
+
     if model_path.is_file():
         checkpoints = [model_path]
-        assert (
-            model_path.suffix == glob_pattern[1:]
-        ), f"Checkpoint {model_path} is not a {checkpoint_format} checkpoint"
-    else:
-        checkpoints = sorted(model_path.glob(glob_pattern))
 
-    # Check if the requested file format matches the file format
+    # Check if we found some files
     assert (
         len(checkpoints) > 0
-    ), f"Can't find the requested checkpoint data at {model_path} for format {checkpoint_format}"
+    ), f"Can't find the requested checkpoint data at {model_path}"
 
     if checkpoint_sharding is not None and checkpoint_sharding != "layer":
         assert world_size == len(
@@ -227,10 +207,10 @@ def load_state_dict(
         checkpoints = [checkpoints[rank]]
 
     checkpoint_sds = []
-    if checkpoint_format == "st":
+    if checkpoints[0].suffix == ".safetensors":
         for ckp in checkpoints:
             checkpoint_sds.append(
-                load_safetensors_state_dict(
+                _load_safetensors_state_dict(
                     ckp,
                     initial_device,
                 )
@@ -243,7 +223,7 @@ def load_state_dict(
     return ChainMap(*checkpoint_sds)
 
 
-def load_safetensors_state_dict(
+def _load_safetensors_state_dict(
     checkpoint: Path,
     device: torch.device,
 ):
@@ -279,6 +259,28 @@ def load_state_dict_into_model(
     rank: int = 0,
     world_size: int = 0,
 ) -> None:
+    """
+    This function loads state_dict into model in the most efficient way possible,
+    and it removes all weights that have been used in model from state_dict
+    in order to conserve memory.
+
+    Args:
+    model: The model where the weights are being loaded.
+    state_dict: The dictionary with all the weights. If it has been mmaped
+            (for torch.load) or it is an instance of LazySafetensorsDict,
+            the weights are loaded lazily from disk.
+    architecture: the model architecture, e.g. llama. See `models.list_models()`.
+    source: If the weights in the state dict didn't come from an FMS model,
+            `source` specifies which conversion function might be needed.
+            See `serialization.list_sources(architecture)`
+    distributed_strategy: the kind of possibly-distributed model in which we
+            intend to load these weights. E.g. tp, fsdp, None. Used for weight
+            sharding.
+    checkpoint_sharding: the sharding format of the checkpoint.
+            E.g. layer, tp, fsdp. Used for weight sharding.
+    initial_device: where the weights will be loaded from disk.
+    """
+
     # 1. Get the adapter from checkpoint sd to fms sd
     adapter = _get_adapter(architecture, source)
 
@@ -418,7 +420,7 @@ def _copy_if_present(parameter, tensor_value):
 def _load_partial_state_dict(
     model: torch.nn.Module,
     state_dict,
-    tp_shard: bool,
+    needs_tp_sharding: bool,
     rank=0,
     world_size=1,
 ):
@@ -430,13 +432,15 @@ def _load_partial_state_dict(
         prefix = ""
         key_step = 0
         tp_module = None
+        # Navigate the model tree to find the module where the parameter is
+        # located and whether there is a TPModule in the way in case the
+        # parameter requires sharding
         while key_step < len(key_steps) - 1:
             try:
                 target_module = getattr(target_module, key_steps[key_step])
-                if key_step == 0:
-                    prefix += key_steps[key_step]
-                else:
-                    prefix += "." + key_steps[key_step]
+                if key_step > 0:
+                    prefix += "."
+                prefix += key_steps[key_step]
                 key_step += 1
                 if isinstance(target_module, Iterable):
                     target_module = target_module[int(key_steps[key_step])]  # type: ignore[index]
@@ -452,9 +456,12 @@ def _load_partial_state_dict(
         try:
             param = getattr(target_module, key_steps[-1])
 
-            if not tp_shard or tp_module is None:
+            # If TP sharding is not needed, copy the parameter
+            # into the model
+            if not needs_tp_sharding or tp_module is None:
                 _copy_if_present(param, tensor_value)
             elif tp_module is not None:
+                # Handle TP sharding
                 if key_steps[-2] in tp_module.colwise_param_names():
                     _copy_colwise(
                         param,
