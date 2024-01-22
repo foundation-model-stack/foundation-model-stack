@@ -4,7 +4,6 @@ from typing import Dict, List, Optional, Tuple, Union
 import torch
 
 from fms.utils.cache import CacheDataLayer, CacheDataWithMetadata, KVCacheManager
-from fms.utils.tensors import ExpandableTensor
 
 
 @dataclasses.dataclass

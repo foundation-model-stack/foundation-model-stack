@@ -117,7 +117,7 @@ else:
         distr_param = "mp"
     else:
         distr_param = None
-distr_param = None
+
 model = get_model(
     args.architecture,
     args.variant,

@@ -15,7 +15,7 @@ class PositionEncoder:
         mask: Optional[torch.Tensor],
         q: torch.Tensor,
         k: torch.Tensor,
-        position_ids: Optional[torch.LongTensor],
+        position_ids: Optional[torch.Tensor],
         use_cache=False,
     ) -> Optional[torch.Tensor]:
         return mask

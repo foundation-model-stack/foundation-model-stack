@@ -467,12 +467,12 @@ def load_fms_llama(model_path: str, group=None, **kwargs):
     if world_size > 1:
         print("using tensor parallel")
         extra_args["distributed_strategy"] = TensorParallelStrategy()
-    # elif torch.cuda.device_count() > 1:
-    #     print("using model parallel")
-    #     devices = [i for i in range(torch.cuda.device_count())]
-    #     extra_args["distributed_strategy"] = UniformModelParallelStrategy(
-    #         devices, params["n_layers"]
-    #     )
+    elif torch.cuda.device_count() > 1:
+        print("using model parallel")
+        devices = [i for i in range(torch.cuda.device_count())]
+        extra_args["distributed_strategy"] = UniformModelParallelStrategy(
+            devices, params["n_layers"]
+        )
 
     if "n_kv_heads" in params:
         extra_args["kvheads"] = params["n_kv_heads"]

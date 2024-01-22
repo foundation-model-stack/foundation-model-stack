@@ -7,7 +7,12 @@ from typing import List, Set
 import torch
 from packaging.version import Version, parse
 from setuptools import find_packages, setup
-from torch.utils.cpp_extension import CUDA_HOME, ROCM_HOME, BuildExtension, CUDAExtension
+from torch.utils.cpp_extension import (
+    CUDA_HOME,
+    ROCM_HOME,
+    BuildExtension,
+    CUDAExtension,
+)
 
 
 ROOT_DIR = os.path.dirname(__file__)
@@ -15,11 +20,14 @@ ROOT_DIR = os.path.dirname(__file__)
 ext_modules = []
 cmdclass = {}
 
+
 def _is_hip() -> bool:
     return torch.version.hip is not None
 
+
 def _is_cuda() -> bool:
     return torch.version.cuda is not None
+
 
 if CUDA_HOME is not None or ROCM_HOME is not None:
     # vllm setup for csrc
@@ -48,7 +56,7 @@ if CUDA_HOME is not None or ROCM_HOME is not None:
         command = "/opt/rocm/llvm/bin/amdgpu-offload-arch"
         try:
             output = subprocess.check_output([command])
-            return output.decode('utf-8').strip()
+            return output.decode("utf-8").strip()
         except subprocess.CalledProcessError as e:
             error_message = f"Error: {e}"
             raise RuntimeError(error_message) from e
@@ -61,10 +69,12 @@ if CUDA_HOME is not None or ROCM_HOME is not None:
 
     def get_hipcc_rocm_version():
         # Run the hipcc --version command
-        result = subprocess.run(['hipcc', '--version'],
-                                stdout=subprocess.PIPE,
-                                stderr=subprocess.STDOUT,
-                                text=True)
+        result = subprocess.run(
+            ["hipcc", "--version"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
 
         # Check if the command was executed successfully
         if result.returncode != 0:
@@ -72,7 +82,7 @@ if CUDA_HOME is not None or ROCM_HOME is not None:
             return None
 
         # Extract the version using a regular expression
-        match = re.search(r'HIP version: (\S+)', result.stdout)
+        match = re.search(r"HIP version: (\S+)", result.stdout)
         if match:
             # Return the version string
             return match.group(1)
@@ -110,7 +120,9 @@ if CUDA_HOME is not None or ROCM_HOME is not None:
             return set()
 
         # Filter out the invalid architectures and print a warning.
-        valid_archs = NVIDIA_SUPPORTED_ARCHS.union({s + "+PTX" for s in NVIDIA_SUPPORTED_ARCHS})
+        valid_archs = NVIDIA_SUPPORTED_ARCHS.union(
+            {s + "+PTX" for s in NVIDIA_SUPPORTED_ARCHS}
+        )
         arch_list = torch_arch_list.intersection(valid_archs)
         # If none of the specified architectures are valid, raise an error.
         if not arch_list:
@@ -140,7 +152,8 @@ if CUDA_HOME is not None or ROCM_HOME is not None:
             major, minor = torch.cuda.get_device_capability(i)
             if major < 7:
                 raise RuntimeError(
-                    "GPUs with compute capability below 7.0 are not supported.")
+                    "GPUs with compute capability below 7.0 are not supported."
+                )
             compute_capabilities.add(f"{major}.{minor}")
 
     if _is_cuda():
@@ -156,12 +169,13 @@ if CUDA_HOME is not None or ROCM_HOME is not None:
                 compute_capabilities.remove("9.0")
         # Validate the NVCC CUDA version.
         if nvcc_cuda_version < Version("11.0"):
+            raise RuntimeError("CUDA 11.0 or higher is required to build the package.")
+        if nvcc_cuda_version < Version("11.1") and any(
+            cc.startswith("8.6") for cc in compute_capabilities
+        ):
             raise RuntimeError(
-                "CUDA 11.0 or higher is required to build the package.")
-        if (nvcc_cuda_version < Version("11.1")
-                and any(cc.startswith("8.6") for cc in compute_capabilities)):
-            raise RuntimeError(
-                "CUDA 11.1 or higher is required for compute capability 8.6.")
+                "CUDA 11.1 or higher is required for compute capability 8.6."
+            )
         if nvcc_cuda_version < Version("11.8"):
             if any(cc.startswith("8.9") for cc in compute_capabilities):
                 # CUDA 11.8 is required to generate the code targeting compute capability 8.9.
@@ -172,22 +186,23 @@ if CUDA_HOME is not None or ROCM_HOME is not None:
                 warnings.warn(
                     "CUDA 11.8 or higher is required for compute capability 8.9. "
                     "Targeting compute capability 8.0 instead.",
-                    stacklevel=2)
-                compute_capabilities = set(cc for cc in compute_capabilities
-                                        if not cc.startswith("8.9"))
+                    stacklevel=2,
+                )
+                compute_capabilities = set(
+                    cc for cc in compute_capabilities if not cc.startswith("8.9")
+                )
                 compute_capabilities.add("8.0+PTX")
             if any(cc.startswith("9.0") for cc in compute_capabilities):
                 raise RuntimeError(
-                    "CUDA 11.8 or higher is required for compute capability 9.0.")
+                    "CUDA 11.8 or higher is required for compute capability 9.0."
+                )
 
         # Add target compute capabilities to NVCC flags.
         for capability in compute_capabilities:
             num = capability[0] + capability[2]
             NVCC_FLAGS += ["-gencode", f"arch=compute_{num},code=sm_{num}"]
             if capability.endswith("+PTX"):
-                NVCC_FLAGS += [
-                    "-gencode", f"arch=compute_{num},code=compute_{num}"
-                ]
+                NVCC_FLAGS += ["-gencode", f"arch=compute_{num},code=compute_{num}"]
 
         # Use NVCC threads to parallelize the build.
         if nvcc_cuda_version >= Version("11.2"):
@@ -200,8 +215,9 @@ if CUDA_HOME is not None or ROCM_HOME is not None:
         if amd_arch not in ROCM_SUPPORTED_ARCHS:
             raise RuntimeError(
                 f"Only the following arch is supported: {ROCM_SUPPORTED_ARCHS}"
-                f"amdgpu_arch_found: {amd_arch}")
-    
+                f"amdgpu_arch_found: {amd_arch}"
+            )
+
     paged_attn_extension = CUDAExtension(
         name="fms.paged_c",
         sources=[
