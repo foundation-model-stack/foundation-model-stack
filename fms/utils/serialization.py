@@ -169,7 +169,11 @@ def load_state_dict(
         raise ValueError("TP checkpoints can only be loaded into a TP model")
 
     # Before creating the Path object, check if model_path has a glob pattern
-    model_path, sep, glob_pattern = model_path.partition("*")
+    if isinstance(model_path, str):
+        model_path, sep, glob_pattern = model_path.partition("*")
+    else:
+        sep = ""
+        glob_pattern = ""
     glob_pattern = sep + glob_pattern
 
     model_path = Path(os.path.expanduser(model_path))
@@ -229,11 +233,9 @@ def _load_safetensors_state_dict(
 ):
     sd = LazySafetensorsDict()
 
-    from safetensors import safe_open  # type: ignore[import-untyped]
+    from safetensors import safe_open
 
-    with safe_open(
-        checkpoint, framework="pt", device=str(device)
-    ) as model_weights:  # type: ignore[attr-defined]
+    with safe_open(checkpoint, framework="pt", device=str(device)) as model_weights:
         sd_keys = list(model_weights.keys())
         for key in sd_keys:
             sd.set_lazy_tensor(key, checkpoint, device)
