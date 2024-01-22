@@ -236,7 +236,6 @@ def get_model(
     device_type: str = "cpu",
     distributed_strategy: Optional[str] = None,
     checkpoint_sharding: Optional[str] = None,
-    checkpoint_format: Optional[str] = None,
     group: Optional[ProcessGroup] = None,
     **kwargs,
 ):
@@ -253,8 +252,6 @@ def get_model(
     distributed_strategy: None, 'fsdp', 'hsdp', 'tp', or 'mp'.
     checkpoint_sharding: how the checkpoint files are sharded: None, 'tp',
                 'fsdp', or 'layer'. If None, guess based on files.
-    checkpoint_format: how the checkpoint files are saved: None, 'pt',
-                'hf', or 'st'. If None, guess based on files.
     source: If the weights in the state dict didn't come from an FMS model,
                 `source` specifies which conversion function might be needed.
                 See `serialization.list_sources(architecture)`
@@ -283,11 +280,9 @@ def get_model(
         initial_device = device
 
     if model_path is not None:
-        if checkpoint_format is None:
-            checkpoint_format = serialization.get_ckp_format(model_path)
         lazy_sd = serialization.load_state_dict(
             model_path,
-            checkpoint_format=checkpoint_format,
+            source=source,
             distributed_strategy=distributed_strategy,
             checkpoint_sharding=checkpoint_sharding,
             initial_device=initial_device,
