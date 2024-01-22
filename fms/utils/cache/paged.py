@@ -8,7 +8,7 @@ import torch._inductor.ir as ir
 import torch._inductor.lowering as lowering
 from torch._inductor.virtualized import V
 
-from fms._C import cache_ops, ops  # type: ignore
+from fms.paged_c import attn_ops, cache_ops  # type: ignore
 from fms.utils.cache import (
     AttentionComputationMixin,
     CacheDataLayer,
@@ -62,7 +62,7 @@ def _reshape_and_cache_lowering(key, value, key_cache, value_cache, slot_mapping
 
 
 lib.define(
-    "paged_attention_v2(Tensor out, Tensor exp_sums, Tensor max_logits, Tensor tmp_out, Tensor query, Tensor key_cache, Tensor value_cache, Tensor head_mapping, float scale, Tensor block_tables, Tensor context_lens, int block_size, SymInt max_context_len, Tensor? alibi_slopes) -> Tensor"
+    "paged_attention_v2(Tensor out, Tensor exp_sums, Tensor max_logits, Tensor tmp_out, Tensor query, Tensor key_cache, Tensor value_cache, int num_kv_heads, float scale, Tensor block_tables, Tensor context_lens, int block_size, SymInt max_context_len, Tensor? alibi_slopes) -> Tensor"
 )
 
 
@@ -75,7 +75,7 @@ def _paged_attention_v2_meta(
     query,
     key_cache,
     value_cache,
-    head_mapping,
+    num_kv_heads,
     scale,
     block_tables,
     context_lens,
@@ -95,7 +95,7 @@ def _paged_attention_v2(
     query,
     key_cache,
     value_cache,
-    head_mapping,
+    num_kv_heads,
     scale,
     block_tables,
     context_lens,
@@ -110,11 +110,10 @@ def _paged_attention_v2(
     query = query.contiguous()
     key_cache = key_cache.contiguous()
     value_cache = value_cache.contiguous()
-    head_mapping = head_mapping.contiguous()
     block_tables = block_tables.contiguous()
     context_lens = context_lens.contiguous()
 
-    ops.paged_attention_v2(
+    attn_ops.paged_attention_v2(
         out,
         exp_sums,
         max_logits,
@@ -122,7 +121,7 @@ def _paged_attention_v2(
         query,
         key_cache,
         value_cache,
-        head_mapping,
+        num_kv_heads,
         scale,
         block_tables,
         context_lens,
@@ -147,7 +146,7 @@ def _paged_attention_v2_lowering(
     query,
     key_cache,
     value_cache,
-    head_mapping,
+    num_kv_heads,
     scale,
     block_tables,
     context_lens,
@@ -164,7 +163,7 @@ def _paged_attention_v2_lowering(
         query,
         key_cache,
         value_cache,
-        head_mapping,
+        num_kv_heads,
         scale,
         block_tables,
         context_lens,
@@ -177,7 +176,7 @@ def _paged_attention_v2_lowering(
 
 
 lib.define(
-    "paged_attention_v1(Tensor out, Tensor query, Tensor key_cache, Tensor value_cache, Tensor head_mapping, float scale, Tensor block_tables, Tensor context_lens, int block_size, SymInt max_context_len, Tensor? alibi_slopes) -> Tensor"
+    "paged_attention_v1(Tensor out, Tensor query, Tensor key_cache, Tensor value_cache, int num_kv_heads, float scale, Tensor block_tables, Tensor context_lens, int block_size, SymInt max_context_len, Tensor? alibi_slopes) -> Tensor"
 )
 
 
@@ -187,7 +186,7 @@ def _paged_attention_v1_meta(
     query,
     key_cache,
     value_cache,
-    head_mapping,
+    num_kv_heads,
     scale,
     block_tables,
     context_lens,
@@ -204,7 +203,7 @@ def _paged_attention_v1(
     query,
     key_cache,
     value_cache,
-    head_mapping,
+    num_kv_heads,
     scale,
     block_tables,
     context_lens,
@@ -216,16 +215,15 @@ def _paged_attention_v1(
     query = query.contiguous()
     key_cache = key_cache.contiguous()
     value_cache = value_cache.contiguous()
-    head_mapping = head_mapping.contiguous()
     block_tables = block_tables.contiguous()
     context_lens = context_lens.contiguous()
 
-    ops.paged_attention_v1(
+    attn_ops.paged_attention_v1(
         out,
         query,
         key_cache,
         value_cache,
-        head_mapping,
+        num_kv_heads,
         scale,
         block_tables,
         context_lens,
@@ -247,7 +245,7 @@ def _paged_attention_v1_lowering(
     query,
     key_cache,
     value_cache,
-    head_mapping,
+    num_kv_heads,
     scale,
     block_tables,
     context_lens,
@@ -261,7 +259,7 @@ def _paged_attention_v1_lowering(
         query,
         key_cache,
         value_cache,
-        head_mapping,
+        num_kv_heads,
         scale,
         block_tables,
         context_lens,
@@ -351,7 +349,6 @@ class PagedAttentionCacheDataLayer(AttentionComputationMixin, CacheDataLayer):
     slot_mapping: torch.Tensor
     block_mapping: torch.Tensor
     block_size: int
-    head_mapping: torch.Tensor
     scale: float
     num_heads: int
     kv_heads: int
@@ -365,9 +362,7 @@ class PagedAttentionCacheDataLayer(AttentionComputationMixin, CacheDataLayer):
         self, keys: torch.Tensor, values: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         key_to_cache = keys.transpose(2, 1).reshape(-1, self.kv_heads, self.head_size)
-        value_to_cache = values.transpose(2, 1).reshape(
-            -1, self.kv_heads, self.head_size
-        )
+        value_to_cache = values.transpose(2, 1).view(-1, self.kv_heads, self.head_size)
 
         self.data_layer = torch.ops.paged_attention.reshape_and_cache(
             key_to_cache,
@@ -385,7 +380,7 @@ class PagedAttentionCacheDataLayer(AttentionComputationMixin, CacheDataLayer):
         key: torch.Tensor,
         value: torch.Tensor,
     ) -> torch.Tensor:
-        query = query.transpose(2, 1).reshape(-1, self.num_heads, self.head_size)
+        query = query.transpose(2, 1).view(-1, self.num_heads, self.head_size)
 
         # Pre-allocate the output tensor.
         attn = torch.empty_like(query)
@@ -407,7 +402,7 @@ class PagedAttentionCacheDataLayer(AttentionComputationMixin, CacheDataLayer):
                 query,
                 self.data_layer[0],
                 self.data_layer[1],
-                self.head_mapping,
+                self.kv_heads,
                 self.scale,
                 self.block_mapping,
                 self.context_lengths,
@@ -437,7 +432,7 @@ class PagedAttentionCacheDataLayer(AttentionComputationMixin, CacheDataLayer):
                 query,
                 self.data_layer[0],
                 self.data_layer[1],
-                self.head_mapping,
+                self.kv_heads,
                 self.scale,
                 self.block_mapping,
                 self.context_lengths,
@@ -459,7 +454,6 @@ class PagedAttentionCacheData(CacheDataWithMetadata):
     slot_mapping: torch.Tensor
     block_mapping: torch.Tensor
     block_size: int
-    head_mapping: torch.Tensor
     scale: float
     num_heads: int
     kv_heads: int
@@ -475,7 +469,6 @@ class PagedAttentionCacheData(CacheDataWithMetadata):
             slot_mapping=self.slot_mapping,
             block_mapping=self.block_mapping,
             block_size=self.block_size,
-            head_mapping=self.head_mapping,
             scale=self.scale,
             num_heads=self.num_heads,
             kv_heads=self.kv_heads,
@@ -657,7 +650,7 @@ class PagedKVCacheManager(KVCacheManager):
         if not total_num_gpu_blocks:
             total_num_gpu_blocks = get_max_gpu_blocks_available(
                 block_size,
-                emb_dim,
+                emb_dim // tensor_parallel_size,
                 self.kv_heads,
                 num_layers,
                 0.8,
@@ -665,12 +658,7 @@ class PagedKVCacheManager(KVCacheManager):
             )
         self.total_num_gpu_blocks = total_num_gpu_blocks
 
-        self.head_mapping = torch.repeat_interleave(
-            torch.arange(self.kv_heads, dtype=torch.int32, device=self.device),
-            self.num_heads // self.kv_heads,
-        )
-
-        self.head_size = emb_dim // self.num_heads
+        self.head_size = emb_dim // num_heads
 
         x = self.block_size // element_size
         key_block_shape = (
@@ -827,8 +815,7 @@ class PagedKVCacheManager(KVCacheManager):
             slot_mapping=slot_mapping_tensor,
             block_mapping=block_tables_tensor,
             block_size=self.block_size,
-            head_mapping=self.head_mapping,
-            scale=(self.emb_dim // self.num_heads) ** -0.5,
+            scale=self.head_size**-0.5,
             num_heads=self.num_heads,
             kv_heads=self.kv_heads,
             head_size=self.head_size,

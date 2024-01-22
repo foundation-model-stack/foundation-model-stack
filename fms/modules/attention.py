@@ -82,12 +82,6 @@ class MultiHeadAttention(nn.Module):
         )
         self.previous_math: bool = torch.backends.cuda.math_sdp_enabled()
         self.head_size = emb_dim // nheads
-        self.head_mapping = torch.repeat_interleave(
-            torch.arange(
-                self.kvheads, dtype=torch.int32, device=self.query.weight.device
-            ),
-            self.nheads // self.kvheads,
-        )
         self.reset_params(gain)
 
     def reset_params(self, gain=1):

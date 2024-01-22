@@ -95,6 +95,7 @@ local_rank = int(os.getenv("LOCAL_RANK", 0))
 world_size = int(os.getenv("WORLD_SIZE", 1))
 if args.device_type == "cuda":
     device = torch.device(args.device_type, local_rank)
+    torch.cuda.set_device(device)
 else:
     device = torch.device(args.device_type)
 
@@ -260,11 +261,6 @@ if args.compile:
     torch._inductor.config.joint_graph_constant_folding = False
     # compiling can make first inference pass slow
     model = torch.compile(model, mode=args.compile_mode)
-
-    do_sample = [False]
-
-    for sample, cache in itertools.product(do_sample, [use_cache]):
-        infer(cache, sample)
 
 print("generating output", local_rank)
 do_sample = [False]
