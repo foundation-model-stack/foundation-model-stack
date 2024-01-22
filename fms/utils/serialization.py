@@ -235,7 +235,7 @@ def _load_safetensors_state_dict(
 
     from safetensors import safe_open
 
-    with safe_open(checkpoint, framework="pt", device=str(device)) as model_weights:
+    with safe_open(checkpoint, framework="pt", device=str(device)) as model_weights:  # type: ignore[attr-defined]
         sd_keys = list(model_weights.keys())
         for key in sd_keys:
             sd.set_lazy_tensor(key, checkpoint, device)
