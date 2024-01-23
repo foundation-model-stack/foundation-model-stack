@@ -1,12 +1,12 @@
 import pytest
+import torch
 from transformers import (
-    PreTrainedModel,
-    GPTBigCodeForCausalLM,
     GPTBigCodeConfig,
+    GPTBigCodeForCausalLM,
     PretrainedConfig,
+    PreTrainedModel,
     PreTrainedTokenizer,
 )
-import torch
 
 from fms.models.gpt_bigcode import GPTBigCode
 from fms.models.hf.gpt_bigcode import convert_to_hf
@@ -18,13 +18,14 @@ from fms.models.hf.gpt_bigcode.modeling_gpt_bigcode_hf import (
 )
 from fms.testing._internal.hf.model_test_suite import (
     HFConfigFixtureMixin,
-    HFModelFixtureMixin,
     HFConfigTestSuite,
-    HFModelEquivalenceTestSuite,
-    HFModelGenerationTestSuite,
     HFModelCompileTestSuite,
+    HFModelEquivalenceTestSuite,
+    HFModelFixtureMixin,
+    HFModelGenerationTestSuite,
 )
 from fms.testing._internal.model_test_suite import ModelFixtureMixin
+
 from ..test_gpt_bigcode import GPTBigCodeFixtures
 
 

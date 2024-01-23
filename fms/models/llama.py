@@ -1,8 +1,8 @@
-from collections import OrderedDict
 import json
 import math
 import os
 import re
+from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping, Optional
@@ -10,13 +10,13 @@ from typing import Mapping, Optional
 import torch
 import torch.nn as nn
 
+from fms import distributed, models
 from fms.distributed.strategy import (
     DistributedStrategy,
     NoOpStrategy,
     TensorParallelStrategy,
     UniformModelParallelStrategy,
 )
-from fms import distributed, models
 from fms.modules.attention import MultiHeadAttention
 from fms.modules.embedding import WordEmbedding
 from fms.modules.feedforward import GatedLinearUnit

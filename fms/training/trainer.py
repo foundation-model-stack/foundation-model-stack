@@ -1,10 +1,12 @@
 from contextlib import nullcontext
 from typing import List, Optional
+
 import torch
-from torch.cuda import amp
 from torch import nn
-from torch.utils.data import DataLoader
+from torch.cuda import amp
 from torch.optim import Optimizer
+from torch.utils.data import DataLoader, DistributedSampler
+
 from fms.training.plugins import TrainerPlugin
 from fms.utils import print0
 
@@ -54,6 +56,9 @@ def __one_epoch(
 
     grad_scaler = None
     # grad_scaler = torch.cuda.amp.GradScaler()
+
+    if data.sampler is not None and isinstance(data.sampler, DistributedSampler):
+        data.sampler.set_epoch(epoch)
 
     optimized = False
     optimizer.zero_grad()

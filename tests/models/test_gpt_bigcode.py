@@ -1,13 +1,13 @@
 import pytest
 import torch
 
-from fms.models.gpt_bigcode import GPTBigCodeConfig, GPTBigCode, GPTBigCodeHeadless
+from fms.models.gpt_bigcode import GPTBigCode, GPTBigCodeConfig, GPTBigCodeHeadless
 from fms.testing._internal.model_test_suite import (
     ConfigFixtureMixin,
-    ModelFixtureMixin,
+    ModelCompileTestSuite,
     ModelConfigTestSuite,
     ModelConsistencyTestSuite,
-    ModelCompileTestSuite,
+    ModelFixtureMixin,
 )
 
 

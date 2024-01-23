@@ -3,6 +3,7 @@ import itertools
 import os
 
 import torch
+import torch._inductor.config
 from torch import distributed as dist
 
 from fms.models import get_model
@@ -17,7 +18,9 @@ from fms.utils.generation import generate
 # Example usage of 13B model on 2 GPUs with Tensor Parallel:
 # srun -N 1 --gres=gpu:2 torchrun --nproc_per_node=2 scripts/inference.py --model_path=~/models/13B-F --tokenizer=~/models/tokenizer.model --distributed
 
-parser = argparse.ArgumentParser(description="Script to run inference on a LLaMA model")
+parser = argparse.ArgumentParser(
+    description="Script to run inference on a causal model"
+)
 parser.add_argument("--device_type", type=str, default="cuda")
 parser.add_argument(
     "--architecture",
@@ -35,6 +38,11 @@ parser.add_argument(
     "--model_path",
     type=str,
     help="Path to the directory containing LLaMa weights (.pth files sharded by tensor parallel rank, not HF weights)",
+)
+parser.add_argument(
+    "--model_source",
+    type=str,
+    help="Source of the checkpoint. E.g. 'meta', 'hf', None",
 )
 parser.add_argument(
     "--tokenizer",
@@ -74,7 +82,11 @@ parser.add_argument("--context_file", type=str, default=None, help="File to summ
 args = parser.parse_args()
 
 local_rank = int(os.getenv("LOCAL_RANK", 0))
-device = torch.device(args.device_type, local_rank)
+world_size = int(os.getenv("WORLD_SIZE", 1))
+if args.device_type == "cuda":
+    device = torch.device(args.device_type, local_rank)
+else:
+    device = torch.device(args.device_type)
 
 torch.set_default_device(device)
 torch.set_default_dtype(torch.half)
@@ -88,16 +100,24 @@ if args.distributed:
     torch._C._distributed_c10d._register_process_group("default", dist.group.WORLD)
 
 print("loading model")
-distr_param = "tp" if args.distributed else None
-model = get_model(args.architecture,
-                  args.variant,
-                  model_path=args.model_path,
-                  device_type=args.device_type,
-                  source="meta",
-                  distributed_strategy=distr_param,
-                  checkpoint_sharding=distr_param,
-                  group=dist.group.WORLD
-                  )
+
+if args.distributed:
+    distr_param = "tp"
+else:
+    if torch.cuda.device_count() > 1 and world_size == 1:
+        distr_param = "mp"
+    else:
+        distr_param = None
+
+model = get_model(
+    args.architecture,
+    args.variant,
+    model_path=args.model_path,
+    device_type=args.device_type,
+    source=args.model_source,
+    distributed_strategy=distr_param,
+    group=dist.group.WORLD,
+)
 tokenizer = tokenizers.get_tokenizer(args.tokenizer)
 model.eval()
 torch.set_grad_enabled(False)
