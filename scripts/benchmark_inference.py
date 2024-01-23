@@ -307,9 +307,9 @@ if not args.skip_compile_runs:
         # Activate dynamo logs to ensure some output during compilation
         torch._logging.set_logs(dynamo=logging.INFO)
         if not args.skip_kvcache_runs:
-            one_token(model, True)
+            one_token(decode_model, True)
         if not args.skip_nokvcache_runs:
-            one_token(model, False)
+            one_token(decode_model, False)
         print(f"Model has warmed up in rank {local_rank}")
 
         # These get much better results with mode='reduce-overhead' but can lead to
@@ -324,9 +324,9 @@ if not args.skip_compile_runs:
         print0()
         print(f"Warming up the compiled model e2e in rank {local_rank}")
         if not args.skip_kvcache_runs:
-            end_to_end(model, True, e2e_expected_cache)
+            end_to_end(prefill_model, decode_model, True, e2e_expected_cache)
         if not args.skip_nokvcache_runs:
-            end_to_end(model, False, e2e_expected_nocache)
+            end_to_end(prefill_model, decode_model, False, e2e_expected_nocache)
         print(f"Model has warmed up e2e in rank {local_rank}")
 
         print0("(Compiled) End-to-end sequence generation")
