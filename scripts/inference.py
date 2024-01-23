@@ -116,6 +116,7 @@ model = get_model(
     device_type=args.device_type,
     source=args.model_source,
     distributed_strategy=distr_param,
+    checkpoint_sharding=distr_param,
     group=dist.group.WORLD,
 )
 tokenizer = tokenizers.get_tokenizer(args.tokenizer)
@@ -123,12 +124,18 @@ model.eval()
 torch.set_grad_enabled(False)
 print("loading complete on rank", local_rank)
 
+decode_model = model
+prefill_model = model
+
 if args.compile:
     print("compiling model")
     # Bug with kv-cache in PT2.1
     # torch._inductor.config.joint_graph_constant_folding = False
+    # torch._inductor.config.coordinate_descent_tuning = True
+    torch._inductor.config.triton.unique_kernel_names = True
     # compiling can make first inference pass slow
-    model = torch.compile(model, mode=args.compile_mode)
+    decode_model = torch.compile(decode_model, mode=args.compile_mode, fullgraph=True)
+    prefill_model = torch.compile(prefill_model, fullgraph=True, dynamic=True)
 
 
 def ids_for_prompt(prompt):
@@ -208,7 +215,8 @@ def infer(use_cache, do_sample):
         max_seq_len = model.config.max_expected_seq_len
 
     result = generate(
-        model,
+        prefill_model,
+        decode_model,
         ids,
         max_new_tokens=200,
         use_cache=use_cache,
@@ -226,4 +234,10 @@ use_cache = [
     args.no_use_cache
 ]  # True/False are identical with greedy iff `torch.use_deterministic_algorithms(True)`
 for sample, cache in itertools.product(do_sample, use_cache):
-    infer(cache, sample)
+    for i in range(1000):
+        ids = prompt1.unsqueeze(0)
+        print(ids)
+        if local_rank == 0:
+            print(f"Iteration {i}")
+        infer(cache, sample)
+        print(ids)

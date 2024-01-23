@@ -21,7 +21,8 @@ def _make_cache_contiguous(past_key_value_states):
 
 
 def generate(
-    model: Union[Callable, torch.nn.Module],
+    prefill_model: Union[Callable, torch.nn.Module],
+    decode_model: Union[Callable, torch.nn.Module],
     input_ids: torch.Tensor,
     max_seq_len: int = 2048,
     max_new_tokens: int = 256,
@@ -70,9 +71,12 @@ def generate(
     kwargs["past_key_value_states"] = None
     kwargs["use_cache"] = use_cache
 
-    for _ in range(max_new_tokens):
+    for token_idx in range(max_new_tokens):
         input_ids = next_input[:, -max_seq_len:]
-        output = model(input_ids, **kwargs)
+        if token_idx == 0:
+            output = prefill_model(input_ids, **kwargs)
+        else:
+            output = decode_model(input_ids, **kwargs)
         if use_cache:
             logits, past_key_value_states = output
             # TODO: this should go away when reduce-overhead issues are fixed, or

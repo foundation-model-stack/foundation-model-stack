@@ -145,6 +145,9 @@ tokenizer = tokenizers.get_tokenizer(args.tokenizer)
 
 model.eval()
 torch.set_grad_enabled(False)
+
+decode_model = model
+prefill_model = model
 print(f"loading complete on rank {local_rank}")
 
 SEQ_LEN = args.seq_len
@@ -165,7 +168,7 @@ ids = torch.randint(
 # of the first token without cache, plus the cost of all subsequent tokens with
 # cache. I.e. the amortized per-token cost would depend on the number of tokens
 # generated.
-logits, cache = model.forward(ids, use_cache=True)
+logits, cache = decode_model(ids, use_cache=True)
 logits = logits[:, -1, :]
 next_val = torch.argmax(logits, dim=-1).unsqueeze(0).t()
 next_input = torch.cat((ids, next_val), dim=-1)
@@ -173,12 +176,12 @@ next_input = torch.cat((ids, next_val), dim=-1)
 # not still needed
 del logits
 
-expected, _ = model.forward(
+expected, _ = decode_model(
     next_val, past_key_value_states=cache, use_cache=True, only_last_token=True
 )
 expected = torch.argmax(expected, dim=-1)
 
-expected2 = model.forward(next_input, only_last_token=True)
+expected2 = decode_model(next_input, only_last_token=True)
 expected2 = torch.argmax(expected2, dim=-1)
 
 torch.testing.assert_close(expected, expected2)
@@ -197,11 +200,11 @@ repeat = 3
 # of the concatenation operation.
 def one_token(model, use_cache):
     if use_cache:
-        actual, _ = model.forward(
+        actual, _ = model(
             next_val, past_key_value_states=cache, use_cache=True, only_last_token=True
         )
     else:
-        actual = model.forward(next_input, only_last_token=True)
+        actual = model(next_input, only_last_token=True)
     actual = torch.argmax(actual, dim=-1)
     if local_rank == 0 and not args.skip_correctness_check:
         torch.testing.assert_close(actual, expected)
@@ -209,9 +212,10 @@ def one_token(model, use_cache):
         torch.cuda.synchronize()
 
 
-def end_to_end(model, use_cache, expected=None):
+def end_to_end(prefill_model, decode_model, use_cache, expected=None):
     result = generation.generate(
-        model,
+        prefill_model,
+        decode_model,
         ids,
         max_new_tokens=MAX_NEW_TOKENS,
         do_sample=False,
@@ -232,8 +236,8 @@ def end_to_end(model, use_cache, expected=None):
     return result
 
 
-e2e_expected_cache = end_to_end(model, True)
-e2e_expected_nocache = end_to_end(model, True)
+e2e_expected_cache = end_to_end(prefill_model, decode_model, True)
+e2e_expected_nocache = end_to_end(prefill_model, decode_model, True)
 
 
 def log_result(result):
@@ -248,7 +252,7 @@ def bench_one(use_cache):
     print0(f"- with use_cache={use_cache}")
     log_result(
         timeit.repeat(
-            lambda: one_token(model, use_cache), number=MAX_NEW_TOKENS, repeat=repeat
+            lambda: one_token(decode_model, use_cache), number=MAX_NEW_TOKENS, repeat=repeat
         )
     )
 
@@ -256,7 +260,7 @@ def bench_one(use_cache):
 def bench_end_to_end(use_cache, expected):
     print0(f"- with use_cache={use_cache}")
     result = timeit.repeat(
-        lambda: end_to_end(model, use_cache, expected), number=1, repeat=repeat
+        lambda: end_to_end(prefill_model, decode_model, use_cache, expected), number=1, repeat=repeat
     )
     log_result(result)
 
@@ -290,7 +294,8 @@ if not args.skip_compile_runs:
     # hit an error on the end-to-end test below when run after other tests (if it's
     # run first it works, confirming a memory leak):
     # `RuntimeError: Expected curr_block->ptr == block_state.ptr to be true, but got false.`
-    model = torch.compile(model, dynamic=True, mode=args.compile_mode)
+    decode_model = torch.compile(decode_model, mode=args.compile_mode, fullgraph=True)
+    prefill_model = torch.compile(prefill_model, fullgraph=True, dynamic=True)
 
     print0()
     print0("Compiled results:")

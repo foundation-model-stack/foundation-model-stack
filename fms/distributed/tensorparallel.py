@@ -53,7 +53,7 @@ def _all_gather_into_tensor(
     gather_dim: int,
     world_size: int
 ) -> torch.Tensor:
-    res = torch.ops._c10d_functional.all_gather_into_tensor(input, world_size, "default")
+    res = torch.ops._c10d_functional.all_gather_into_tensor(input.contiguous(), world_size, "default")
     res = torch.ops._c10d_functional.wait_tensor(res)
     # TODO this should be done inside AsyncCollectiveTensor to delay the wait() call
     if gather_dim != 0:
@@ -61,7 +61,7 @@ def _all_gather_into_tensor(
     return res
 
 def _all_reduce_single(input: torch.Tensor, op: str):
-    res = torch.ops._c10d_functional.all_reduce(input, op, "default")
+    res = torch.ops._c10d_functional.all_reduce(input.contiguous(), op, "default")
     return torch.ops._c10d_functional.wait_tensor(res)
 
 
