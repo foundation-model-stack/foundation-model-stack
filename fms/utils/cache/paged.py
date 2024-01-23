@@ -793,7 +793,7 @@ class PagedKVCacheManager(KVCacheManager):
                 num_tokens = num_tokens_per_sequence[i]  # type: ignore
                 start = context_length - num_tokens
                 slot = self.__pad_to_max_left(
-                    cbg.get_slot_mapping(start), max_num_tokens_per_sequence, -1 # type: ignore
+                    cbg.get_slot_mapping(start), max_num_tokens_per_sequence, -1  # type: ignore
                 )
                 i += 1
 
