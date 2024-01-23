@@ -1,12 +1,11 @@
 from typing import List, Tuple
 
 import torch
-from torch import nn
 import torch.nn.functional as F
-
-from lm_eval.api.instance import Instance # type: ignore
-from lm_eval.api.model import LM # type: ignore
-from lm_eval.api.registry import register_model # type: ignore
+from lm_eval.api.instance import Instance  # type: ignore
+from lm_eval.api.model import LM  # type: ignore
+from lm_eval.api.registry import register_model  # type: ignore
+from torch import nn
 
 from fms.utils import tokenizers
 
@@ -30,8 +29,8 @@ class FMSEvalHarnessLM(LM):
         # until the fix is in a release
         generic_object = lambda: None
         self.model = generic_object
-        self.model.config = generic_object # type: ignore
-        self.model.config._name_or_path = "FMSEvalHarnessLM" # type: ignore
+        self.model.config = generic_object  # type: ignore
+        self.model.config._name_or_path = "FMSEvalHarnessLM"  # type: ignore
 
     def loglikelihood_one(self, context: str, continuation: str) -> Tuple[float, bool]:
         context_ids = self.tokenizer.convert_tokens_to_ids(

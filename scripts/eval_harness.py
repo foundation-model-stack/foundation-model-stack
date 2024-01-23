@@ -2,14 +2,14 @@ import argparse
 import os
 
 import lm_eval
-from lm_eval.utils import make_table
 import torch
 import torch._inductor.config
+from lm_eval.utils import make_table
 from torch import distributed as dist
 
 from fms.models import get_model
-from fms.utils import evaluation
-from fms.utils import tokenizers
+from fms.utils import evaluation, tokenizers
+
 
 """
 Example use:
@@ -24,9 +24,7 @@ $ srun -N 1 --gres=gpu:1 --cpus-per-task=12 --mem=128G --unbuffered --gres-flags
 """
 
 
-parser = argparse.ArgumentParser(
-    description="Script to evaluate a causal model"
-)
+parser = argparse.ArgumentParser(description="Script to evaluate a causal model")
 parser.add_argument("--device_type", type=str, default="cuda")
 parser.add_argument(
     "--architecture",
@@ -142,8 +140,8 @@ lm_eval.tasks.initialize_tasks()
 
 results = lm_eval.simple_evaluate(
     model=lm_obj,
-    tasks=args.tasks.split(','),
+    tasks=args.tasks.split(","),
 )
 print(make_table(results))
-if 'groups' in results:
-    print(make_table(results, 'groups'))
+if "groups" in results:
+    print(make_table(results, "groups"))
