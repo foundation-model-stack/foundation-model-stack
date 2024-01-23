@@ -151,7 +151,12 @@ class CacheDataWithMetadata(CacheData):
     def compute_position_ids(self, num_tokens_per_sequence: List[int]) -> torch.Tensor:
         position_ids_list = util_compute_position_ids(
             num_tokens_per_sequence,
-            None if self.context_lengths is None else self.context_lengths.tolist(),
+            None
+            if self.context_lengths is None
+            else [
+                r - l + 1
+                for l, r in zip(num_tokens_per_sequence, self.context_lengths.tolist())
+            ],
         )
         return torch.tensor(
             position_ids_list, dtype=torch.long, device=self.data[0][0].device

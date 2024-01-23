@@ -633,6 +633,7 @@ class PagedKVCacheManager(KVCacheManager):
         device: Optional[Union[str, torch.device]] = "cuda",
         dtype: torch.dtype = torch.float32,
     ):
+        self.dtype = dtype
         self.block_size = block_size
         self.cache: List[KVCache] = []
         element_size = torch.tensor([], dtype=dtype).element_size()
@@ -775,6 +776,9 @@ class PagedKVCacheManager(KVCacheManager):
         max_sequence_length = self.get_max_sequence_length(sequence_ids)
         remainder = max_sequence_length % self.block_size
         max_num_blocks = max_sequence_length // self.block_size
+        max_num_tokens_per_sequence = (
+            max(num_tokens_per_sequence) if num_tokens_per_sequence else None
+        )
         if remainder != 0:
             max_num_blocks += 1
         i = 0
@@ -788,7 +792,9 @@ class PagedKVCacheManager(KVCacheManager):
             else:
                 num_tokens = num_tokens_per_sequence[i]  # type: ignore
                 start = context_length - num_tokens
-                slot = cbg.get_slot_mapping(start)
+                slot = self.__pad_to_max_left(
+                    cbg.get_slot_mapping(start), max_num_tokens_per_sequence, -1 # type: ignore
+                )
                 i += 1
 
             block_mapping = cbg.get_block_mapping()
