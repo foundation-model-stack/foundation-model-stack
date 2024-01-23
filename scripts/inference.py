@@ -44,6 +44,13 @@ parser.add_argument(
     type=str,
     help="Source of the checkpoint. E.g. 'meta', 'hf', None",
 )
+
+parser.add_argument(
+    "--checkpoint_sharding",
+    type=str,
+    default=None,
+    help="type of weight sharding. E.g. tensor-parallel (tp), None",
+)
 parser.add_argument(
     "--tokenizer",
     type=str,
@@ -51,10 +58,13 @@ parser.add_argument(
     help="Path to the tokenizer (e.g. ~/tokenizer.model)",
 )
 parser.add_argument(
-    "--no_use_cache",
-    action="store_false",
-    help="Disable the kv-cache (on by default)",
+    "--cache_type",
+    type=str,
+    help="type of cache",
+    default="none",
+    choices=["paged", "expandable", "none"],
 )
+
 parser.add_argument(
     "--compile",
     action="store_true",
@@ -85,6 +95,7 @@ local_rank = int(os.getenv("LOCAL_RANK", 0))
 world_size = int(os.getenv("WORLD_SIZE", 1))
 if args.device_type == "cuda":
     device = torch.device(args.device_type, local_rank)
+    torch.cuda.set_device(device)
 else:
     device = torch.device(args.device_type)
 
@@ -111,22 +122,40 @@ model = get_model(
     args.architecture,
     args.variant,
     model_path=args.model_path,
+    checkpoint_sharding=args.checkpoint_sharding,
     device_type=args.device_type,
     source=args.model_source,
     distributed_strategy=distr_param,
     group=dist.group.WORLD,
+    norm_eps=1e-6,
 )
 tokenizer = tokenizers.get_tokenizer(args.tokenizer)
 model.eval()
 torch.set_grad_enabled(False)
 print("loading complete on rank", local_rank)
 
-if args.compile:
-    print("compiling model")
-    # Bug with kv-cache in PT2.1
-    torch._inductor.config.joint_graph_constant_folding = False
-    # compiling can make first inference pass slow
-    model = torch.compile(model, mode=args.compile_mode)
+# cache setup
+cache_type = args.cache_type
+kv_cache_manager = None
+if cache_type == "paged":
+    from fms.utils.cache.paged import PagedKVCacheManager
+
+    use_cache = True
+    kv_cache_manager = PagedKVCacheManager(
+        model.config.nlayers,
+        model.config.nheads,
+        model.config.emb_dim,
+        kv_heads=model.config.kvheads,
+        tensor_parallel_size=dist.get_world_size() if args.distributed else 1,
+        dtype=torch.get_default_dtype(),
+        device=device,
+    )
+elif cache_type == "expandable":
+    use_cache = True
+elif cache_type == "none":
+    use_cache = False
+else:
+    raise ValueError("cache_type needs to be one of paged, expandable, or none")
 
 
 def ids_for_prompt(prompt):
@@ -144,7 +173,8 @@ def pad_prompt(prompt, pad_len, pad_token="<unk>"):
 
     pad_id = tokenizer.convert_tokens_to_ids(pad_token)
     pad_ids = [pad_id] * to_pad
-    return torch.cat((torch.tensor(pad_ids, device=device), prompt))
+    pads = torch.tensor(pad_ids, device=device)
+    return torch.cat((pads, prompt))
 
 
 if args.context_file is not None:
@@ -165,18 +195,25 @@ else:
         "Provide a list of instructions for preparing chicken soup."
     )
     prompt2 = template.format("Explain some popular greetings in Spanish.")
+    prompt3 = template.format("Explain to me why ignorance is bliss.")
+    prompt4 = template.format(
+        "I have just come into a very large sum of money. I received the money from my parents who told me I could do whatever I want with it. My first thought was to go to a financial advisor. Provide me a list of things that I can do with my new found wealth."
+    )
 
 prompt1 = ids_for_prompt(prompt1)
 prompt2 = ids_for_prompt(prompt2)
+prompt3 = ids_for_prompt(prompt3)
+prompt4 = ids_for_prompt(prompt4)
 
-max_len = max([len(prompt) for prompt in [prompt1, prompt2]])
-# prompt1 = pad_prompt(prompt1, max_len)
+max_len = max([len(prompt) for prompt in [prompt1, prompt2, prompt3, prompt4]])
+
 # LLaMA 7B did better on the spanish prompt vs 13B.
 # TODO: add a better english prompt to demonstrate padding/batching.
-# prompt2 = pad_prompt(prompt2, max_len)
-# ids = torch.stack((prompt2, prompt1), dim=0)
-
-ids = prompt1.unsqueeze(0)
+prompt1 = pad_prompt(prompt1, max_len)
+prompt2 = pad_prompt(prompt2, max_len)
+prompt3 = pad_prompt(prompt3, max_len)
+prompt4 = pad_prompt(prompt4, max_len)
+ids = torch.stack((prompt1, prompt2, prompt3, prompt4), dim=0)
 
 
 def print_result(result):
@@ -210,6 +247,7 @@ def infer(use_cache, do_sample):
         ids,
         max_new_tokens=100,
         use_cache=use_cache,
+        kv_cache_manager=kv_cache_manager,
         do_sample=do_sample,
         max_seq_len=max_seq_len,
     )
@@ -217,10 +255,15 @@ def infer(use_cache, do_sample):
         print_result(result[i])
 
 
+if args.compile:
+    print("compiling model")
+    # Bug with kv-cache in PT2.1
+    torch._inductor.config.joint_graph_constant_folding = False
+    # compiling can make first inference pass slow
+    model = torch.compile(model, mode=args.compile_mode)
+
 print("generating output", local_rank)
 do_sample = [False]
-use_cache = [
-    args.no_use_cache
-]  # True/False are identical with greedy iff `torch.use_deterministic_algorithms(True)`
-for sample, cache in itertools.product(do_sample, use_cache):
+
+for sample, cache in itertools.product(do_sample, [use_cache]):
     infer(cache, sample)

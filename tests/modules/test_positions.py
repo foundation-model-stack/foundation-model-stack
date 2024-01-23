@@ -113,11 +113,6 @@ class RotaryEmbeddingTests(unittest.TestCase):
         k = torch.normal(0, 1, (2, 1, 8, 16))  # b h s e
 
         # First generate a qr, kr that will act as kv-cache and the correct answers given one padding token on second row
-        qr_cache, kr_cache = rotary_embeddings.adjusted_qk(
-            q[:, :, :-1, :],
-            k[:, :, :-1, :],
-            position_ids=torch.tensor([list(range(7)), [1] + list(range(6))]),
-        )
         qr_correct, kr_correct = rotary_embeddings.adjusted_qk(
             q, k, torch.tensor([list(range(8)), [1] + list(range(7))])
         )
@@ -126,14 +121,10 @@ class RotaryEmbeddingTests(unittest.TestCase):
         qr_bad, kr_bad = rotary_embeddings.adjusted_qk(
             q[:, :, -1:, :],
             k[:, :, -1:, :],
-            past_kv_state=(qr_cache, kr_cache),
-            use_cache=True,
         )
         qr_good, kr_good = rotary_embeddings.adjusted_qk(
             q[:, :, -1:, :],
             k[:, :, -1:, :],
-            past_kv_state=(qr_cache, kr_cache),
-            use_cache=True,
             position_ids=torch.tensor([[7], [6]]),
         )
 

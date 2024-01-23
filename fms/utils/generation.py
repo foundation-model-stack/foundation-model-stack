@@ -1,7 +1,11 @@
-from typing import Any, Callable, List, MutableMapping, Union
+from typing import Any, Callable, List, MutableMapping, Optional, Union
 
 import torch
 import torch.nn.functional as F
+from torch import distributed as dist
+
+from fms.utils.cache import CacheDataWithMetadata, KVCacheManager
+from fms.utils.cache.expandable import ExpandableKVCacheManager
 
 
 def _make_cache_contiguous(past_key_value_states):
@@ -30,6 +34,7 @@ def generate(
     do_sample: bool = True,
     num_beams: int = 1,
     use_cache: bool = False,
+    kv_cache_manager: Optional[KVCacheManager] = None,
     contiguous_cache: bool = False,
 ):
     """
@@ -67,22 +72,63 @@ def generate(
     result = input_ids
     next_input = input_ids
     kwargs: MutableMapping[str, Any] = dict()
-    kwargs["past_key_value_states"] = None
     kwargs["use_cache"] = use_cache
 
-    for _ in range(max_new_tokens):
+    if use_cache:
+        kwargs["cache_data"] = None
+        sequence_ids: Optional[List[int]] = None
+        if kv_cache_manager is None:
+            # TODO: standardized way of getting nlayers, nheads, emb_dim
+            kv_cache_manager = ExpandableKVCacheManager(
+                model.config.nlayers,  # type: ignore
+                model.config.nheads,  # type: ignore
+                model.config.emb_dim,  # type: ignore
+                tensor_parallel_size=dist.get_world_size()
+                if dist.is_initialized()
+                else 1,
+                dtype=torch.get_default_dtype(),
+                device=input_ids.device,
+            )
+
+    for i in range(max_new_tokens):
         input_ids = next_input[:, -max_seq_len:]
+
+        # compute the mask
+        if not use_cache or i == 0:
+            is_pad = input_ids == 0
+            mask = is_pad.unsqueeze(-1) == is_pad.unsqueeze(-2)
+            kwargs["mask"] = mask.tril(diagonal=0)
+        else:
+            is_not_pad = result != 0
+            mask = is_not_pad.unsqueeze(-2)
+            kwargs["mask"] = mask
+
+        # get the cache data and position ids if using cache
+        if use_cache and kv_cache_manager:
+            if sequence_ids is None:
+                num_tokens_per_sequence = torch.count_nonzero(
+                    input_ids.T, dim=0
+                ).tolist()
+            else:
+                num_tokens_per_sequence = [1 for _ in range(input_ids.size(0))]
+
+            cache_data = kv_cache_manager.allocate_tokens(
+                num_tokens_per_sequence, sequence_ids
+            )
+
+            # TODO: contiguous_cache -- is this supported? is it necessary?
+
+            sequence_ids = cache_data.sequence_ids
+
+            kwargs["cache_data"] = cache_data
+            # TODO: should we just have this as an attribute of CacheDataWithMetadata or provide computation
+            kwargs["position_ids"] = cache_data.compute_position_ids(
+                num_tokens_per_sequence
+            )
+
         output = model(input_ids, **kwargs)
         if use_cache:
-            logits, past_key_value_states = output
-            # TODO: this should go away when reduce-overhead issues are fixed, or
-            # maybe could be moved into model code to be more portable.
-            if contiguous_cache:
-                kwargs["past_key_value_states"] = _make_cache_contiguous(
-                    past_key_value_states
-                )
-            else:
-                kwargs["past_key_value_states"] = past_key_value_states
+            logits, _ = output
         else:
             logits = output
         logits = logits[:, -1, :]
@@ -108,6 +154,10 @@ def generate(
 
     if not batched:
         result = result[0]
+
+    if use_cache:
+        kv_cache_manager.free_sequences(sequence_ids)  # type: ignore
+
     return result
 
 
