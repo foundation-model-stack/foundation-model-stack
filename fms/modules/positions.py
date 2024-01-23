@@ -234,7 +234,7 @@ class RotaryEmbedding(PositionEncoder):
         assert len(q.size()) == 4
         assert len(k.size()) == 4
 
-        seq_len = k.size(2)
+        seq_len = max(k.size(2), q.size(2))
         if position_ids is None:
             # Compute position_ids based on cache config
             position_ids = torch.arange(
