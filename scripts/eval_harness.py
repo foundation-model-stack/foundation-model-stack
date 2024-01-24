@@ -14,12 +14,12 @@ from fms.utils import evaluation, tokenizers
 """
 Example use:
 ```
-$ srun -N 1 --gres=gpu:1 --cpus-per-task=12 --mem=128G --unbuffered --gres-flags=enforce-binding  python scripts/eval_harness.py --model_path=~/models/7B-F/ --model_source=meta  --tokenizer=~/models/tokenizer.model --tasks=hellaswag
+srun -N 1 --gres=gpu:1 --cpus-per-task=12 --mem=128G --unbuffered --gres-flags=enforce-binding  python scripts/eval_harness.py --model_path=~/models/7B-F/ --tokenizer=~/models/tokenizer.model --model_source=meta --tasks=hellaswag --num_fewshot=10
 
 |  Tasks  |Version|Filter|n-shot| Metric |Value |   |Stderr|
 |---------|-------|------|-----:|--------|-----:|---|-----:|
-|hellaswag|Yaml   |none  |     0|acc     |0.5739|±  |0.0049|
-|         |       |none  |     0|acc_norm|0.7349|±  |0.0044|
+|hellaswag|Yaml   |none  |    10|acc     |0.5915|±  |0.0049|
+|         |       |none  |    10|acc_norm|0.7713|±  |0.0042|
 ```
 """
 
@@ -82,7 +82,7 @@ parser.add_argument(
     help="This is a distributed job (multiple instances run with RANK+WORLD_SIZE)",
 )
 parser.add_argument("--tasks", type=str, help="Task names to pass to lm_eval")
-parser.add_argument("--context_file", type=str, default=None, help="File to summarize")
+parser.add_argument("--num_fewshot", type=int, default=None, help="Number of examples in few-shot context")
 
 args = parser.parse_args()
 
@@ -141,6 +141,7 @@ lm_eval.tasks.initialize_tasks()
 results = lm_eval.simple_evaluate(
     model=lm_obj,
     tasks=args.tasks.split(","),
+    num_fewshot=args.num_fewshot,
 )
 print(make_table(results))
 if "groups" in results:
