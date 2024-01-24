@@ -34,7 +34,7 @@ def matmul_split_k_kernel(a_ptr, b_ptr, c_ptr, scales_ptr, zeros_ptr,
     
     pid = tl.program_id(0)
     pid_k = tl.program_id(1)
-    num_pid_k = tl.cdiv(k, block_k*split_k)
+    total_blocks_k = tl.cdiv(k, block_k*split_k)
 
     pid_m, pid_n = swizzle_tile(pid,
                                 m, n,
@@ -57,24 +57,23 @@ def matmul_split_k_kernel(a_ptr, b_ptr, c_ptr, scales_ptr, zeros_ptr,
     zeros_shifter = (offs_bn % 8) * 4
     
     acc = tl.zeros((block_m, block_n), dtype=tl.float32)
-    for k in range(0, num_pid_k):
-    # for k in tl.static_range(8):
+    for k in range(0, total_blocks_k):
         
         a = tl.load(a_ptrs)
         b = tl.load(b_ptrs)
         
-        g_id = k // (groupsize // (block_k*split_k))
+        g_id = (k * split_k + pid_k) // (groupsize // block_k)
 
         ptr = scales_ptrs + g_id * stride_scales_g
-        scales = tl.load(ptr) # -> 1D naive assumes no reordering
+        scales = tl.load(ptr)
         
         ptr = zeros_ptrs + g_id * stride_zeros_g
-        zeros = tl.load(ptr) # -> 1D naive assumes no reordering
+        zeros = tl.load(ptr) 
 
         zeros = (zeros >> zeros_shifter) & 0xF
         zeros = (zeros + 1) * scales
 
-        b = (b >> shifter[:, None]) & 0xF # b is int32
+        b = (b >> shifter[:, None]) & 0xF
         b = b * scales[None, :] - zeros[None, :]
 
         acc += tl.dot(a, b)
