@@ -82,7 +82,12 @@ parser.add_argument(
     help="This is a distributed job (multiple instances run with RANK+WORLD_SIZE)",
 )
 parser.add_argument("--tasks", type=str, help="Task names to pass to lm_eval")
-parser.add_argument("--num_fewshot", type=int, default=None, help="Number of examples in few-shot context")
+parser.add_argument(
+    "--num_fewshot",
+    type=int,
+    default=None,
+    help="Number of examples in few-shot context",
+)
 
 args = parser.parse_args()
 
