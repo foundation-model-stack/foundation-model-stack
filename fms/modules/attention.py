@@ -171,11 +171,18 @@ class MultiHeadAttention(nn.Module):
         # if you want to use caching and past_key_value_state is not None meaning you have values in your cache
         if use_cache and past_key_value_state is not None:
             if is_self:
-                keys = torch.cat((past_key_value_state[0], keys), dim=2)
-                values = torch.cat((past_key_value_state[1], values), dim=2)
+                # print(init_index)
+                idx_p_ids = position_ids.unsqueeze(1).unsqueeze(-1)
+                past_key_value_state[0][:, :, position_ids[0]] = keys
+                past_key_value_state[1][:, :, position_ids[0]] = values
+                keys = past_key_value_state[0]
+                values = past_key_value_state[1]
+                # breakpoint()
             else:
                 keys = past_key_value_state[0]
                 values = past_key_value_state[1]
+
+        # print(queries.shape, keys.shape, values.shape, mask.shape)
 
         # Merge rel pos bias and mask into single float mask
         if mask is not None:
@@ -213,6 +220,7 @@ class MultiHeadAttention(nn.Module):
             torch.backends.cuda.enable_mem_efficient_sdp(use_mem_efficient)
             torch.backends.cuda.enable_math_sdp(use_math)
 
+        # print(queries.shape, keys_e.shape, values_e.shape, attn_mask.shape)
         attn = F.scaled_dot_product_attention(
             queries,
             keys_e,
@@ -239,10 +247,7 @@ class MultiHeadAttention(nn.Module):
         out = self.dense(attn)
 
         # if use_cache=True, we return the hidden_state as well as the kv cache
-        if use_cache:
-            return out, (keys, values)
-        else:
-            return out
+        return out
 
 
 class TPMultiHeadAttention(MultiHeadAttention, TPModule):
@@ -359,9 +364,5 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
 
         # if use_cache=True, we return the hidden_state as well as the kv cache.
         # We only reduce the output, and keep the cache thread-local
-        if use_cache:
-            out = reduce_from_tensor_model_parallel_region(out_par[0])
-            return out, out_par[1]
-        else:
-            out = reduce_from_tensor_model_parallel_region(out_par)
-            return out
+        out = reduce_from_tensor_model_parallel_region(out_par)
+        return out

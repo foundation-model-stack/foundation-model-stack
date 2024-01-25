@@ -137,9 +137,6 @@ class LLaMABlock(nn.Module):
             is_self=True,
             is_causal_mask=is_causal_mask,
         )
-        cache = None
-        if use_cache:
-            x, cache = x
         if self.config.p_dropout != 0:
             x = self.dropout(x)
         # residual connection
@@ -154,10 +151,7 @@ class LLaMABlock(nn.Module):
         # another residual
         x = x + residual
 
-        if use_cache:
-            return (x, cache)
-        else:
-            return x
+        return x
 
 
 class LLaMA(nn.Module):
@@ -229,6 +223,9 @@ class LLaMA(nn.Module):
 
         self.reset_params()
 
+    def preallocate_mask(self, new_dim):
+        self.mask = torch.tril(torch.ones(new_dim, new_dim, dtype=torch.bool))
+
     def get_config(self) -> LLaMAConfig:
         return self.config
 
@@ -260,16 +257,12 @@ class LLaMA(nn.Module):
             past_key_value_states = [None for _ in range(len(self.layers))]
 
         qlen = x_in.size(1)
-        klen = x_in.size(1)
-
-        # if we are using the cache, the key length needs to be extended with the past keys length
-        if use_cache and past_key_value_states[0] is not None:
-            klen += past_key_value_states[0][0].size(-2)
 
         # if mask is none, we need to specify causal mask
+        mask = self.mask[position_ids].unsqueeze(1)
         if mask is None:
             # we are caching and can assume all 1s in the mask
-            if use_cache and klen != 1 and qlen == 1:
+            if use_cache and position_ids.shape[1] == 1 and qlen == 1:
                 # b x h x qlen x kvlen
                 is_causal_mask = False
             else:
@@ -279,8 +272,6 @@ class LLaMA(nn.Module):
 
         x_in = self.shared(x_in)
 
-        # this is the output cache for all the decoder layers
-        present_key_value_states = []
 
         for i, layer in enumerate(self.layers):
             output = layer(
@@ -293,19 +284,14 @@ class LLaMA(nn.Module):
                 attn_algorithm=attn_algorithm,
             )
 
-            if use_cache:
-                x_in, present_key_value_state = output
-                present_key_value_states.append(present_key_value_state)
-
-            else:
-                x_in = output
+            x_in = output
 
         dec_out = x_in
         dec_out = self.dec_norm(dec_out)
         if self.config.p_dropout:
             dec_out = self.dropout(dec_out)
 
-        return dec_out, present_key_value_states
+        return dec_out
 
     def forward(
         self,
@@ -317,18 +303,15 @@ class LLaMA(nn.Module):
         only_last_token=False,
         attn_algorithm=None,
     ):
-        output, cache = self._helper(
-            x, mask, position_ids, past_key_value_states, use_cache, attn_algorithm
+        output = self._helper(
+            x, mask, position_ids, past_key_value_states, use_cache, attn_algorithm,
         )
 
         if only_last_token:
             output = output[:, -1, :]
         preds = self.shared(output, reverse=True)
 
-        if use_cache:
-            return preds, cache
-        else:
-            return preds
+        return preds
 
 
 # Register common LLaMA variants with the model registration API

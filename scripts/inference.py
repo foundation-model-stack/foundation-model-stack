@@ -132,7 +132,7 @@ if args.compile:
     # Bug with kv-cache in PT2.1
     # torch._inductor.config.joint_graph_constant_folding = False
     # torch._inductor.config.coordinate_descent_tuning = True
-    torch._inductor.config.triton.unique_kernel_names = True
+    # torch._inductor.config.triton.unique_kernel_names = True
     # compiling can make first inference pass slow
     decode_model = torch.compile(decode_model, mode=args.compile_mode, fullgraph=True)
     prefill_model = torch.compile(prefill_model, fullgraph=True, dynamic=True)
@@ -236,8 +236,8 @@ use_cache = [
 for sample, cache in itertools.product(do_sample, use_cache):
     for i in range(1000):
         ids = prompt1.unsqueeze(0)
-        print(ids)
         if local_rank == 0:
             print(f"Iteration {i}")
         infer(cache, sample)
-        print(ids)
+        if local_rank == 0:
+            print(torch.cuda.memory_summary(), torch.cuda.memory_allocated(), torch.cuda.memory_reserved(), torch.cuda.memory_stats())

@@ -168,7 +168,15 @@ ids = torch.randint(
 # of the first token without cache, plus the cost of all subsequent tokens with
 # cache. I.e. the amortized per-token cost would depend on the number of tokens
 # generated.
-logits, cache = decode_model(ids, use_cache=True)
+cache = [
+    [
+        torch.zeros((BATCH_SIZE, decode_model.config.kvheads // 8, SEQ_LEN + 2, decode_model.config.emb_dim // decode_model.config.nheads), device=ids.device, dtype=torch.half),
+        torch.zeros((BATCH_SIZE, decode_model.config.kvheads // 8, SEQ_LEN + 2, decode_model.config.emb_dim // decode_model.config.nheads), device=ids.device, dtype=torch.half),
+    ] for _ in range(len(decode_model.layers))
+]
+position_ids = torch.arange(0, SEQ_LEN, 1, dtype=torch.long, device=ids.device).repeat(BATCH_SIZE, 1)
+prefill_model.preallocate_mask(SEQ_LEN + 2)
+logits = prefill_model(ids, past_key_value_states=cache, position_ids=position_ids, use_cache=True)
 logits = logits[:, -1, :]
 next_val = torch.argmax(logits, dim=-1).unsqueeze(0).t()
 next_input = torch.cat((ids, next_val), dim=-1)
@@ -176,12 +184,18 @@ next_input = torch.cat((ids, next_val), dim=-1)
 # not still needed
 del logits
 
-expected, _ = decode_model(
-    next_val, past_key_value_states=cache, use_cache=True, only_last_token=True
+expected = decode_model(
+    next_val, 
+    past_key_value_states=cache, 
+    position_ids=torch.tensor([next_input.shape[1]-1], dtype=torch.long, device=next_input.device).repeat(next_input.size(0), 1), 
+    use_cache=True, 
+    only_last_token=True
 )
 expected = torch.argmax(expected, dim=-1)
 
-expected2 = decode_model(next_input, only_last_token=True)
+position_ids = torch.arange(0, next_input.size(1), 1, dtype=torch.long, device=ids.device).repeat(BATCH_SIZE, 1)
+prefill_model.preallocate_mask(SEQ_LEN + 1)
+expected2 = decode_model(next_input, position_ids=position_ids, only_last_token=True)
 expected2 = torch.argmax(expected2, dim=-1)
 
 torch.testing.assert_close(expected, expected2)
@@ -200,10 +214,12 @@ repeat = 3
 # of the concatenation operation.
 def one_token(model, use_cache):
     if use_cache:
-        actual, _ = model(
+        model.prefill_mask(cache[0][0].size(2))
+        actual = model(
             next_val, past_key_value_states=cache, use_cache=True, only_last_token=True
         )
     else:
+        model.prefill_mask(next_input.size(1))
         actual = model(next_input, only_last_token=True)
     actual = torch.argmax(actual, dim=-1)
     if local_rank == 0 and not args.skip_correctness_check:
@@ -222,7 +238,7 @@ def end_to_end(prefill_model, decode_model, use_cache, expected=None):
         use_cache=use_cache,
         contiguous_cache=args.compile_mode == "reduce-overhead"
         and isinstance(
-            model, OptimizedModule
+            decode_model, OptimizedModule
         ),  # this is needed for reduce-overhead to work correctly for now
     )
     if local_rank == 0:

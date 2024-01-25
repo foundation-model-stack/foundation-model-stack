@@ -68,27 +68,25 @@ def generate(
     result = input_ids
     next_input = input_ids
     kwargs: MutableMapping[str, Any] = dict()
-    kwargs["past_key_value_states"] = None
+    # Preallocate cache
+    kwargs["past_key_value_states"] = [
+        [
+            torch.zeros((input_ids.size(0), decode_model.config.kvheads // 8, max_new_tokens+input_ids.size(1), decode_model.config.emb_dim // decode_model.config.nheads), device=input_ids.device, dtype=torch.half),
+            torch.zeros((input_ids.size(0), decode_model.config.kvheads // 8, max_new_tokens+input_ids.size(1), decode_model.config.emb_dim // decode_model.config.nheads), device=input_ids.device, dtype=torch.half),
+        ] for _ in range(len(decode_model.layers))
+    ]
     kwargs["use_cache"] = use_cache
-
+    kwargs["position_ids"] = torch.arange(0, input_ids.shape[1], 1, dtype=torch.long, device=input_ids.device).repeat(input_ids.size(0), 1)
+    prefill_model.preallocate_mask(input_ids.shape[1] + max_new_tokens)
+    
     for token_idx in range(max_new_tokens):
+        # print(kwargs["position_ids"])
         input_ids = next_input[:, -max_seq_len:]
         if token_idx == 0:
             output = prefill_model(input_ids, **kwargs)
         else:
             output = decode_model(input_ids, **kwargs)
-        if use_cache:
-            logits, past_key_value_states = output
-            # TODO: this should go away when reduce-overhead issues are fixed, or
-            # maybe could be moved into model code to be more portable.
-            if contiguous_cache:
-                kwargs["past_key_value_states"] = _make_cache_contiguous(
-                    past_key_value_states
-                )
-            else:
-                kwargs["past_key_value_states"] = past_key_value_states
-        else:
-            logits = output
+        logits = output
         logits = logits[:, -1, :]
 
         if do_sample:
@@ -110,9 +108,14 @@ def generate(
         else:
             next_input = result
 
+        if kwargs["position_ids"].shape[1] > 1:
+            kwargs["position_ids"] = torch.tensor([result.shape[1]-1], dtype=torch.long, device=result.device).repeat(input_ids.size(0), 1)
+        else:
+            kwargs["position_ids"] += 1
+
     if not batched:
         result = result[0]
-    return result
+    return result.clone().detach()
 
 
 def truncate_after_eos(result, eos_token_id):
