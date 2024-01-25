@@ -1,5 +1,6 @@
 import functools
 
+from typing import Dict
 import torch
 
 
@@ -106,6 +107,32 @@ class ExpandableTensor(torch.Tensor):
 
     def __repr__(self):
         return self._tensor().__repr__()
+
+    def __tensor_flatten__(self):
+        ctx = {
+            "_dim": self._dim,
+            "_dim_length": self._dim_length,
+        }
+        inner_tensors = ["_underlying_tensor"]
+        return inner_tensors, ctx
+
+    @staticmethod
+    def __tensor_unflatten__(inner_tensors: Dict, meta, outer_size, outer_stride):
+        assert len(inner_tensors) == 1
+        _underlying_tensor = inner_tensors["_underlying_tensor"]
+        _dim = meta["_dim"]
+        _dim_length = meta["_dim_length"]
+
+        # Note that we cannot simply check if is_fake(values) because
+        # during aot autograd, FunctionalTensors are not fake but hold
+        # symbolic sizes.
+        sizes = list(_underlying_tensor.size())
+        sizes[_dim] = _dim_length
+        return ExpandableTensor(
+            _underlying_tensor.as_strided(size=sizes, stride=_underlying_tensor.stride()),
+            _dim,
+            _underlying_tensor.size(_dim),
+        )
 
     @_implements(torch.cat)
     def cat(tensors, dim=0, *, out=None):

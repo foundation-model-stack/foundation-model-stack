@@ -185,7 +185,7 @@ class MultiHeadAttention(nn.Module):
             # -- we are currently only using ExpandableTensor for the cache when we are not compiling
             # -- currently there is no support for subclass tensors in pytorch with compile
             # -- see https://github.com/pytorch/pytorch/issues/93723
-            elif not torch.distributed._functional_collectives._are_we_tracing():
+            else:
                 preallocate_length = smallest_power_greater_than(keys.size(2))
                 keys = ExpandableTensor(
                     keys, dim=2, preallocate_length=preallocate_length
