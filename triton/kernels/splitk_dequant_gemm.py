@@ -117,7 +117,7 @@ def matmul_split_k(a, b, scales, zeros):
 
     print(f"{total_programs_mn=}, {total_programs_k=}")
     
-    c = torch.empty((m, n), device=a.device, dtype=torch.float16)
+    c = torch.zeros((m, n), device=a.device, dtype=torch.float16)
     k = matmul_split_k_kernel[grid](a, b, c, scales, zeros,
                               a.stride(0), a.stride(1),
                               b.stride(0), b.stride(1),
@@ -171,7 +171,6 @@ if __name__ == '__main__':
     # c = custom_qlinear(a, b, scales, zeros)
     # print(f"{c.shape=}, {c[0][0:4]}")
 
-    
 
     split_k_output = matmul_split_k(a, b, scales, zeros)
     print(f"{split_k_output.shape=}, {split_k_output[0][0:4]}")
