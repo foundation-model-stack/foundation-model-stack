@@ -56,9 +56,9 @@ class LLaMA2HFFixtures(ModelFixtureMixin, HFConfigFixtureMixin, HFModelFixtureMi
                 hidden_size=hf_config.hidden_size,
                 rms_norm_eps=hf_config.norm_eps,
                 num_attention_heads=hf_config.nheads,
-                num_key_value_heads=None
-                if hf_config.kvheads == 0
-                else hf_config.kvheads,
+                num_key_value_heads=(
+                    None if hf_config.kvheads == 0 else hf_config.kvheads
+                ),
                 num_hidden_layers=hf_config.nlayers,
                 pad_token_id=hf_config.pad_token_id,
                 intermediate_size=int(
