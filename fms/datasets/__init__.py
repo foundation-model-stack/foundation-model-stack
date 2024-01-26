@@ -1,4 +1,4 @@
-from typing import Any, Callable, List, Mapping
+from typing import Any, Callable, List, Mapping, Optional
 
 from torch.utils.data import Dataset, IterableDataset
 
@@ -31,8 +31,10 @@ def get_dataset(name: str, tokenizer: BaseTokenizer, data: str = "", **kwargs):
 def _state_dict_save_helper(target):
     if isinstance(target, dict):
         dict_attrs = target
-    else:
+    elif hasattr(target, "__dict__"):
         dict_attrs = target.__dict__
+    else:
+        return target
     result = {}
     for attr in dict_attrs:
         if isinstance(attr, str) and (not len(attr) or attr[0] == "_"):
@@ -54,6 +56,8 @@ def _state_dict_save_helper(target):
             # format like pytorch nn.Module state dicts instead of nesting
             for sub_attr in sub_dict:
                 result[f"{attr}.{sub_attr}"] = sub_dict[sub_attr]
+        elif isinstance(dict_attrs[attr], list):
+            result[attr] = [_state_dict_save_helper(x) for x in dict_attrs[attr]]
         else:
             result[attr] = dict_attrs[attr]
     return result
@@ -111,7 +115,7 @@ class SavableDataset:
 
 
 class RestartableFromMapDataset(SavableDataset, IterableDataset):
-    def __init__(self, map_ds):
+    def __init__(self, map_ds: Dataset):
         super().__init__()
         self._map_ds = map_ds
         self.current_index = 0
@@ -138,3 +142,25 @@ class PackedSequenceDataset(Dataset, SavableDataset):
                 next_val = self.buffer[: self.max_seq_len]
                 self.buffer = self.buffer[self.max_seq_len :]
                 yield next_val
+
+
+class WithSeparatorDataset(Dataset, SavableDataset):
+    def __init__(
+        self,
+        dataset: SavableDataset,
+        bos_token_id: Optional[int] = None,
+        eos_token_id: Optional[int] = None,
+    ):
+        self.dataset = dataset
+        self._bos_token_id = bos_token_id
+        self._eos_token_id = eos_token_id
+
+    def __iter__(self):
+        for example in self.dataset:
+            result = []
+            if self._bos_token_id is not None:
+                result.append(self._bos_token_id)
+            result.extend(example)
+            if self._eos_token_id is not None:
+                result.append(self._eos_token_id)
+            yield result
