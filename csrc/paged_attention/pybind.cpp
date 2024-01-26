@@ -24,6 +24,11 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     &reshape_and_cache,
     "Reshape the key and value tensors and cache them");
 
+  cache_ops.def(
+    "copy_blocks",
+    &copy_blocks,
+    "Copy the cache blocks from src to dst");
+
   // Cuda utils
   pybind11::module cuda_utils = m.def_submodule("cuda_utils", "vLLM cuda utils");
   cuda_utils.def(

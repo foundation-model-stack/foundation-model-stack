@@ -1,11 +1,14 @@
+import time
 from typing import Any, Callable, List, MutableMapping, Optional, Union
 
 import torch
 import torch.nn.functional as F
 from torch import distributed as dist
 
+from fms.modules.speculator import Speculator
 from fms.utils.cache import CacheDataWithMetadata, KVCacheManager
 from fms.utils.cache.expandable import ExpandableKVCacheManager
+from fms.utils.cache.paged import PagedKVCacheManager
 
 
 def _make_cache_contiguous(past_key_value_states):
@@ -234,7 +237,7 @@ def speculative_generate(
     num_tokens_per_sequence = torch.count_nonzero(
         inputs[:, :-1].T, dim=0
     ).tolist()
-    cache_data = kv_cache_manager.allocate_prompt_tokens(num_tokens_per_sequence)
+    cache_data = kv_cache_manager.allocate_tokens(num_tokens_per_sequence)
     parent_sequence_ids = cache_data.sequence_ids
     # Build padded causal mask
     mask = torch.ones(
@@ -263,7 +266,7 @@ def speculative_generate(
     # Build kv cache and get initial state vector
     n_adds = speculator.n_predict + 1
     inputs = inputs[:, -max_seq_len + n_adds :]
-    position_ids = torch.tensor(compute_position_ids(num_tokens_per_sequence), dtype=torch.int64, device=inputs.device)
+    position_ids = cache_data.compute_position_ids(num_tokens_per_sequence)
     output = model(
         inputs[:, :-1],
         include_embeds=True,
@@ -293,8 +296,8 @@ def speculative_generate(
             child_sequence_ids_flattened.extend(child_sequence_ids)
 
         # add n_adds tokens to each candidate
-        cache_data = kv_cache_manager.allocate_generated_tokens(child_sequence_ids_flattened, num_tokens_per_sequence)
-        position_ids = torch.tensor(compute_position_ids(num_tokens_per_sequence, cache_data.context_lengths.tolist()), dtype=torch.int64, device=inputs.device)
+        cache_data = kv_cache_manager.allocate_tokens(num_tokens_per_sequence, child_sequence_ids_flattened)
+        position_ids = cache_data.compute_position_ids(num_tokens_per_sequence)
 
         # Get candidate set of speculations
         adds = speculator.generate_suffixes(embeds, inputs, threshes, top_k)  # b k h

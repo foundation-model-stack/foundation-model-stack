@@ -95,8 +95,11 @@ kv_cache = PagedKVCacheManager(
     model.config.nlayers,
     model.config.nheads,
     model.config.emb_dim,
+    kv_heads=model.config.kvheads,
+    tensor_parallel_size=dist.get_world_size() if args.distributed else 1,
     total_num_gpu_blocks=3818,
-    dtype=model.shared.emb.weight.dtype,
+    dtype=torch.get_default_dtype(),
+    device=device,
 )
 
 if args.compile:
@@ -170,7 +173,7 @@ def infer(ids):
         # without ntk scaling, extending the seq length too far gives bogus results.
         max_seq_len = model.config.max_expected_seq_len
 
-    result, n_steps = speculative_generate(
+    result, n_steps, _ = speculative_generate(
         model,
         ids,
         speculator,

@@ -354,6 +354,7 @@ class PagedAttentionCacheDataLayer(AttentionComputationMixin, CacheDataLayer):
     kv_heads: int
     head_size: int
     is_generating: bool
+    query_length: int
 
     def get_cache_type(self) -> str:
         return "paged-attention"
@@ -380,16 +381,15 @@ class PagedAttentionCacheDataLayer(AttentionComputationMixin, CacheDataLayer):
         key: torch.Tensor,
         value: torch.Tensor,
     ) -> torch.Tensor:
-        q_len = query.size(1)
-        query = query.transpose(2, 1).view(-1, self.num_heads, self.head_size)
+        query = query.transpose(2, 1).reshape(-1, self.num_heads, self.head_size)
 
         # Pre-allocate the output tensor.
         attn = torch.empty_like(query)
 
         context_lengths = self.context_lengths
-        context_lengths = context_lengths.unsqueeze(1).expand(-1, q_len)
+        context_lengths = context_lengths.unsqueeze(1).expand(-1, self.query_length)
         context_lengths = context_lengths.sub(context_lengths.sign().cumsum(1).flip([1]).sub(1)).int()
-        block_mappings = self.block_mapping.repeat_interleave(q_len, dim=0)
+        block_mappings = self.block_mapping.repeat_interleave(self.query_length, dim=0)
 
         num_seqs, num_heads, head_size = query.shape
         _PARTITION_SIZE = 512
@@ -466,6 +466,7 @@ class PagedAttentionCacheData(CacheDataWithMetadata):
     head_size: int
     is_generating: bool
     sequence_ids: List[int]
+    query_length: int
 
     def get_layer(self, layer_index: int) -> PagedAttentionCacheDataLayer:
         return PagedAttentionCacheDataLayer(
@@ -480,6 +481,7 @@ class PagedAttentionCacheData(CacheDataWithMetadata):
             kv_heads=self.kv_heads,
             head_size=self.head_size,
             is_generating=self.is_generating,
+            query_length=self.query_length,
         )
 
     def is_filled(self) -> bool:
@@ -833,6 +835,7 @@ class PagedKVCacheManager(KVCacheManager):
             head_size=self.head_size,
             is_generating=not is_prompt,
             sequence_ids=sequence_ids,
+            query_length=0 if max_num_tokens_per_sequence is None else max_num_tokens_per_sequence,
         )
 
     def allocate_tokens(
