@@ -1678,9 +1678,11 @@ class HFEncoderDecoderModelArchitecture(
             decoder_attention_mask,
             hf_dec_attention_mask,
         ) = self._compute_decoder_attention_masks(
-            decoder_input_ids
-            if decoder_input_ids is not None
-            else decoder_inputs_embeds,
+            (
+                decoder_input_ids
+                if decoder_input_ids is not None
+                else decoder_inputs_embeds
+            ),
             decoder_attention_mask,
             is_cache_used_and_filled,
             inference=use_cache is not None,
@@ -1731,13 +1733,17 @@ class HFEncoderDecoderModelArchitecture(
             input_ids=decoder_input_ids,
             encoder_outputs=encoder_outputs,
             encoder_hidden_states=enc_hidden_state,
-            encoder_attention_mask=hf_attention_mask
-            if attention_mask is not None and self.decoder._attention_mask_dim == 2
-            else attention_mask,
-            attention_mask=hf_dec_attention_mask
-            if decoder_attention_mask is not None
-            and self.decoder._attention_mask_dim == 2
-            else decoder_attention_mask,
+            encoder_attention_mask=(
+                hf_attention_mask
+                if attention_mask is not None and self.decoder._attention_mask_dim == 2
+                else attention_mask
+            ),
+            attention_mask=(
+                hf_dec_attention_mask
+                if decoder_attention_mask is not None
+                and self.decoder._attention_mask_dim == 2
+                else decoder_attention_mask
+            ),
             inputs_embeds=decoder_inputs_embeds,
             past_key_values=past_key_values,
             use_cache=use_cache,
