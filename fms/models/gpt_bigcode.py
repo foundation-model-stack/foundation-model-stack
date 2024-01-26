@@ -16,7 +16,7 @@ class GPTBigCodeConfig(ModelConfig):
     # This param default is based on https://huggingface.co/bigcode/gpt_bigcode-santacoder
     src_vocab_size: int = 49157
     # This param default is based on https://huggingface.co/bigcode/gpt_bigcode-santacoder
-    emb_dim: int = 2048 
+    emb_dim: int = 2048
     nheads: int = 12
     nlayers: int = 12
     pad_id: int = 0
