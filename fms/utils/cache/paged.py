@@ -380,10 +380,16 @@ class PagedAttentionCacheDataLayer(AttentionComputationMixin, CacheDataLayer):
         key: torch.Tensor,
         value: torch.Tensor,
     ) -> torch.Tensor:
+        q_len = query.size(1)
         query = query.transpose(2, 1).view(-1, self.num_heads, self.head_size)
 
         # Pre-allocate the output tensor.
         attn = torch.empty_like(query)
+
+        context_lengths = self.context_lengths
+        context_lengths = context_lengths.unsqueeze(1).expand(-1, q_len)
+        context_lengths = context_lengths.sub(context_lengths.sign().cumsum(1).flip([1]).sub(1)).int()
+        block_mappings = self.block_mapping.repeat_interleave(q_len, dim=0)
 
         num_seqs, num_heads, head_size = query.shape
         _PARTITION_SIZE = 512
@@ -404,8 +410,8 @@ class PagedAttentionCacheDataLayer(AttentionComputationMixin, CacheDataLayer):
                 self.data_layer[1],
                 self.kv_heads,
                 self.scale,
-                self.block_mapping,
-                self.context_lengths,
+                block_mappings,
+                context_lengths,
                 self.block_size,
                 self.max_sequence_length,
                 None,
