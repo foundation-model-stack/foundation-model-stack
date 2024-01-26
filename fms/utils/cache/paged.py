@@ -14,7 +14,7 @@ from fms.utils.cache import (
     CacheDataLayer,
     CacheDataWithMetadata,
     KVCache,
-    KVCacheManager,
+    KVCacheManager, select_inflate_dim,
 )
 
 
@@ -355,6 +355,8 @@ class PagedAttentionCacheDataLayer(AttentionComputationMixin, CacheDataLayer):
     head_size: int
     is_generating: bool
     query_length: int
+    flatten_indices: Optional[torch.Tensor] = None
+    unflatten_indices: Optional[torch.Tensor] = None
 
     def get_cache_type(self) -> str:
         return "paged-attention"
@@ -362,8 +364,17 @@ class PagedAttentionCacheDataLayer(AttentionComputationMixin, CacheDataLayer):
     def store(
         self, keys: torch.Tensor, values: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        key_to_cache = keys.transpose(2, 1).reshape(-1, self.kv_heads, self.head_size)
-        value_to_cache = values.transpose(2, 1).view(-1, self.kv_heads, self.head_size)
+        # k/v: b h n d
+        if self.unflatten_indices is not None:
+            # inp: 1 h n' d
+            # inds: b k n
+            keys = select_inflate_dim(keys[0].transpose(0, 1), self.unflatten_indices)  # b k n h d
+            values = select_inflate_dim(values[0].transpose(0, 1), self.unflatten_indices)
+            key_to_cache = keys.view(-1, *keys.size()[3:])
+            value_to_cache = values.view(-1, *values.size()[3:])  # bkn h d
+        else:
+            key_to_cache = keys.transpose(2, 1).reshape(-1, self.kv_heads, self.head_size)
+            value_to_cache = values.transpose(2, 1).view(-1, self.kv_heads, self.head_size)
 
         self.data_layer = torch.ops.paged_attention.reshape_and_cache(
             key_to_cache,
@@ -383,14 +394,30 @@ class PagedAttentionCacheDataLayer(AttentionComputationMixin, CacheDataLayer):
     ) -> torch.Tensor:
         query = query.transpose(2, 1).reshape(-1, self.num_heads, self.head_size)
 
+        ## Pre-allocate the output tensor.
+            # attn = torch.empty_like(queries)
+            # context_lengths = cache_data_layer.context_lengths # bk
+            # inflate_factor = q_len if cache_data_layer.unflatten_indices is None else cache_data_layer.unflatten_indices.size(-1)
+            # context_lengths = context_lengths.unsqueeze(1).expand(-1, inflate_factor) # bk n
+            # context_lengths = context_lengths.sub(context_lengths.sign().cumsum(1).flip([1]).sub(1)).int().view(-1) # bkn
+            # block_mappings = cache_data_layer.block_mapping.repeat_interleave(inflate_factor, dim=0) # bkn n_blocks
+            # if cache_data_layer.flatten_indices is not None:
+            #     context_lengths = select_inflate_dim(context_lengths, cache_data_layer.flatten_indices) # n'
+            #     block_mappings = select_inflate_dim(block_mappings, cache_data_layer.flatten_indices) # n' n_blocks
+
         # Pre-allocate the output tensor.
         attn = torch.empty_like(query)
 
-        context_lengths = self.context_lengths
-        context_lengths = context_lengths.unsqueeze(1).expand(-1, self.query_length)
-        context_lengths = context_lengths.sub(context_lengths.sign().cumsum(1).flip([1]).sub(1)).int()
-        block_mappings = self.block_mapping.repeat_interleave(self.query_length, dim=0)
+        context_lengths = self.context_lengths # bk
+        inflate_factor = self.query_length if self.unflatten_indices is None else self.unflatten_indices.size(-1)
+        context_lengths = context_lengths.unsqueeze(1).expand(-1, inflate_factor) # bk n
+        context_lengths = context_lengths.sub(context_lengths.sign().cumsum(1).flip([1]).sub(1)).int().view(-1) # bkn
+        block_mappings = self.block_mapping.repeat_interleave(inflate_factor, dim=0) # bkn n_blocks
+        if self.flatten_indices is not None:
+            context_lengths = select_inflate_dim(context_lengths, self.flatten_indices) # n'
+            block_mappings = select_inflate_dim(block_mappings, self.flatten_indices) # n' n_blocks
 
+        # TODO: Check with v2
         num_seqs, num_heads, head_size = query.shape
         _PARTITION_SIZE = 512
         max_num_partitions = (
@@ -440,8 +467,8 @@ class PagedAttentionCacheDataLayer(AttentionComputationMixin, CacheDataLayer):
                 self.data_layer[1],
                 self.kv_heads,
                 self.scale,
-                self.block_mapping,
-                self.context_lengths,
+                block_mappings,
+                context_lengths,
                 self.block_size,
                 self.max_sequence_length,
                 None,
@@ -467,6 +494,8 @@ class PagedAttentionCacheData(CacheDataWithMetadata):
     is_generating: bool
     sequence_ids: List[int]
     query_length: int
+    flatten_indices: Optional[torch.Tensor] = None
+    unflatten_indices: Optional[torch.Tensor] = None
 
     def get_layer(self, layer_index: int) -> PagedAttentionCacheDataLayer:
         return PagedAttentionCacheDataLayer(
@@ -482,6 +511,8 @@ class PagedAttentionCacheData(CacheDataWithMetadata):
             head_size=self.head_size,
             is_generating=self.is_generating,
             query_length=self.query_length,
+            flatten_indices=self.flatten_indices,
+            unflatten_indices=self.unflatten_indices,
         )
 
     def is_filled(self) -> bool:

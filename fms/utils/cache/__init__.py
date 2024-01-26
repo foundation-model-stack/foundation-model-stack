@@ -248,3 +248,42 @@ class OutOfPlaceCacheData(CacheData):
 
     def is_filled(self) -> bool:
         return self.data[0] is not None
+
+
+
+
+def flatten_batch(inp):
+    # Takes a bsize x n_candidates x candidate_len rectangular batch of input indices
+    # Returns 1) a flattened set of indices with all redundant tokens removed,
+    # and 2) a tensor, sized as input, mapping each input token to its slot in output,
+    # and 3) a tensor, sized as output, mapping each output token to slot in flattened input
+    ind_out = torch.zeros_like(inp)
+    inp = inp.tolist()
+    out = []
+    ind_flat = []
+    batch_offset = 0
+    for b,candidate_set in enumerate(inp):
+        lineages = []
+        for k,candidate in enumerate(candidate_set):
+            for n in range(len(candidate)):
+                lineage = tuple(candidate[:n+1])
+                if lineage in lineages:
+                    # Token is redundant
+                    ind_out[b,k,n] = lineages.index(lineage)+batch_offset
+                else:
+                    # Token is not redundant
+                    ind_out[b,k,n] = len(lineages)+batch_offset
+                    lineages.append(lineage)
+                    ind_flat.append(b*len(inp[0])*len(inp[0][0]) + k*len(inp[0][0]) + n)
+        out.append(torch.tensor([lineage[-1] for lineage in lineages],
+                                device=ind_out.device, dtype=torch.int32))
+        batch_offset += len(lineages)
+    return torch.cat(out), ind_out, torch.tensor(ind_flat, device=ind_out.device, dtype=torch.int32)
+
+def select_inflate_dim(inp, inds, dim=0):
+    # Takes a flattened input of size ([...] x n x [...]) with n in slot dim, and token mappings of size (a x ... x z)
+    # and over/under-samples on n to create output tensor with size ([...] x a x ... x z x [...])
+    inds_shape = inds.size()
+    inp_shape = inp.size()
+    out = inp.index_select(dim, inds.view(-1))
+    return out.view(*inp_shape[:dim],*inds_shape,*inp_shape[dim+1:])
