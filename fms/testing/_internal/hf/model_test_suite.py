@@ -5,7 +5,13 @@ import torch
 from torch._dynamo.exc import TorchDynamoException
 from torch._dynamo.testing import CompileCounterWithBackend
 
+from fms.models.hf.modeling_hf_adapter import (
+    HFDecoderModelArchitecture,
+    HFEncoderDecoderModelArchitecture,
+)
+from fms.models.hf.utils import register_fms_models, to_hf_api
 from fms.testing._internal.model_test_suite import ConfigFixtureMixin
+
 
 SEED = 42
 torch.manual_seed(SEED)  # pytorch random seed
@@ -14,23 +20,27 @@ torch.backends.cudnn.deterministic = True
 
 
 import abc
+import itertools
 import tempfile
+from typing import List, Optional
 
+import numpy as np
 import pytest
 import torch
 import torch.nn as nn
-import numpy as np
-import itertools
-from typing import List, Optional
-
 from transformers import (
-    PreTrainedModel,
+    AutoConfig,
+    AutoModel,
+    AutoModelForCausalLM,
+    AutoModelForSeq2SeqLM,
     AutoTokenizer,
-    PreTrainedTokenizer,
     PretrainedConfig,
+    PreTrainedModel,
+    PreTrainedTokenizer,
 )
 
 from fms.utils.config import ModelConfig
+
 from ...comparison import (
     HFModelSignatureParams,
     ModelSignatureParams,
@@ -115,6 +125,15 @@ class HFConfigTestSuite(ConfigFixtureMixin, HFConfigFixtureMixin):
             )
             assert fms_hf_config.to_dict() == fms_hf_config_loaded.to_dict()
 
+    def test_hf_autoconfig(self, fms_hf_config: PretrainedConfig):
+        """test that the config can be loaded with autoconfig after registration"""
+        register_fms_models()
+        with tempfile.TemporaryDirectory() as workdir:
+            fms_hf_config_path = f"{workdir}/hf_config.json"
+            fms_hf_config.save_pretrained(fms_hf_config_path)
+            new_config = AutoConfig.from_pretrained(fms_hf_config_path)
+            assert isinstance(new_config, type(fms_hf_config))
+
 
 class HFModelCompileTestSuite(HFModelFixtureMixin):
     """A set of tests associated with compilation of huggingface adapted fms models"""
@@ -163,6 +182,36 @@ class HFModelCompileTestSuite(HFModelFixtureMixin):
             pytest.fail(f"Failed to get signature of full-graph compiled model:\n{e}")
 
 
+class HFAutoModelTestSuite(HFModelFixtureMixin):
+    def test_hf_automodel_headless(self, fms_hf_model: PreTrainedModel):
+        """test that the headless model can be loaded with automodel after registration"""
+        register_fms_models()
+        with tempfile.TemporaryDirectory() as workdir:
+            fms_hf_model_path = f"{workdir}/hf_model"
+            fms_hf_model.save_pretrained(fms_hf_model_path)
+            new_model = AutoModel.from_pretrained(fms_hf_model_path)
+            assert (
+                isinstance(fms_hf_model, type(new_model)) and new_model.lm_head is None
+            )
+
+    def test_hf_automodel_language_modeling_head(self, fms_hf_model: PreTrainedModel):
+        """test that the language modeling head model can be loaded with automodel"""
+        if isinstance(fms_hf_model, HFEncoderDecoderModelArchitecture):
+            automodel_class = AutoModelForSeq2SeqLM
+        elif isinstance(fms_hf_model, HFDecoderModelArchitecture):
+            automodel_class = AutoModelForCausalLM
+        else:
+            pytest.skip(
+                "encoder-only models do not perform text generation and therefore do not use AutoModelForCausalLM or AutoModelForSeq2SeqLM"
+            )
+        register_fms_models()
+        with tempfile.TemporaryDirectory() as workdir:
+            fms_hf_model_path = f"{workdir}/hf_model"
+            fms_hf_model.save_pretrained(fms_hf_model_path)
+            new_model = automodel_class.from_pretrained(fms_hf_model_path)
+            assert isinstance(new_model, type(fms_hf_model))
+
+
 class HFModelEquivalenceTestSuite(HFConfigFixtureMixin, HFModelFixtureMixin):
     """General huggingface model testing class for future use with other models"""
 
@@ -183,9 +232,7 @@ class HFModelEquivalenceTestSuite(HFConfigFixtureMixin, HFModelFixtureMixin):
     def test_hf_and_fms_model_equivalence(self, fms_hf_model, model):
         """test model signature equivalence between huggingface model and fms model"""
 
-        _fms_hf_model = type(fms_hf_model).from_fms_model(
-            model, **fms_hf_model.config.to_dict()
-        )
+        _fms_hf_model = to_hf_api(model, **fms_hf_model.config.to_dict())
         fms_signature_params = ModelSignatureParams(
             model, len(self._get_hf_signature_params) - 1
         )
@@ -270,7 +317,7 @@ class HFModelGenerationTestSuite(HFConfigFixtureMixin, HFModelFixtureMixin):
                 repetition_penalty=2.5,
                 length_penalty=1.0,
                 early_stopping=True,
-                pad_token_id=model.config.eos_token_id,
+                pad_token_id=model.config.pad_token_id,
             )
         generated_texts = tokenizer.batch_decode(
             generated_ids, skip_special_tokens=True

@@ -5,14 +5,14 @@ import torch.nn as nn
 from transformers import PretrainedConfig
 from transformers.modeling_outputs import BaseModelOutputWithPastAndCrossAttentions
 
-from fms.models.hf.llama.configuration_llama_hf import LLaMAHFConfig
+from fms.models.hf.llama.configuration_llama_hf import HFAdaptedLLaMAConfig
 from fms.models.hf.lm_head_mixins import LMHeadModelLMHeadMixin
 from fms.models.hf.modeling_hf_adapter import HFDecoder, HFDecoderModelArchitecture
 from fms.models.llama import LLaMA
 
 
-class LLaMAHFDecoder(HFDecoder):
-    """Adapter for the LlamaDecoder"""
+class HFAdaptedLLaMADecoder(HFDecoder):
+    """Adapter for the LLaMA decoder"""
 
     def __init__(self, model: LLaMA, config: PretrainedConfig):
         super().__init__(model, config, attention_mask_dim=3)
@@ -47,12 +47,12 @@ class LLaMAHFDecoder(HFDecoder):
         )
 
 
-class LLaMAHF(HFDecoderModelArchitecture):
+class HFAdaptedLLaMAHeadless(HFDecoderModelArchitecture):
     """This is the Adapter for the base granite architecture"""
 
     # attributes required by HF
-    config_class = LLaMAHFConfig
-    base_model_prefix = "llama_hf"
+    config_class = HFAdaptedLLaMAConfig
+    base_model_prefix = "hf_adapted_llama"
 
     def __init__(
         self,
@@ -62,7 +62,6 @@ class LLaMAHF(HFDecoderModelArchitecture):
         *args,
         **kwargs,
     ):
-
         # in the case we have not yet received the encoder/decoder/embedding, initialize it here
         if decoder is None or embedding is None:
             params = config.to_dict()
@@ -71,7 +70,7 @@ class LLaMAHF(HFDecoderModelArchitecture):
             embedding = model.shared.emb if embedding is None else embedding
 
         # these are now huggingface compatible
-        decoder = LLaMAHFDecoder(decoder, config)
+        decoder = HFAdaptedLLaMADecoder(decoder, config)
         super().__init__(decoder, embedding, config, *args, **kwargs)
 
     def _prepare_inputs_for_generation(
@@ -93,7 +92,9 @@ class LLaMAHF(HFDecoderModelArchitecture):
         # Add more cached rope freqs if over cached number
         max_expected_len = input_ids.shape[1] + torch.max(position_ids)
         if max_expected_len > self.decoder.model.rot_emb.max_seq_len:
-            self.decoder.model.rot_emb.compute_freqs_cis(max_expected_len)
+            self.decoder.model.rot_emb.compute_freqs_cis(
+                input_ids.device, max_expected_len
+            )
 
         return {
             "input_ids": input_ids,
@@ -105,17 +106,17 @@ class LLaMAHF(HFDecoderModelArchitecture):
         }
 
 
-class LLaMAHFForCausalLM(LMHeadModelLMHeadMixin, LLaMAHF):
+class HFAdaptedLLaMAForCausalLM(LMHeadModelLMHeadMixin, HFAdaptedLLaMAHeadless):
     _keys_to_ignore_on_load_missing = [r"lm_head.weight"]
     _tied_weights_keys = ["embedding.weight", "lm_head.weight"]
 
-    def __init__(self, config: LLaMAHFConfig, *args, **kwargs):
+    def __init__(self, config: HFAdaptedLLaMAConfig, *args, **kwargs):
         super().__init__(config=config, bias=False, *args, **kwargs)
 
     @classmethod
     def _hf_model_from_fms(
-        cls, model: LLaMA, config: LLaMAHFConfig
-    ) -> "LLaMAHFForCausalLM":
+        cls, model: LLaMA, config: HFAdaptedLLaMAConfig
+    ) -> "HFAdaptedLLaMAForCausalLM":
         return cls(
             config=config,
             decoder=model,

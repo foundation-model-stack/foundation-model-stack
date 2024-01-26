@@ -1,33 +1,36 @@
 import pytest
-from torch import nn as nn
+import torch
 from transformers import (
-    PreTrainedModel,
-    LlamaForCausalLM,
     LlamaConfig,
+    LlamaForCausalLM,
     PretrainedConfig,
+    PreTrainedModel,
     PreTrainedTokenizer,
 )
-import torch
 
-from fms.models.hf.llama.configuration_llama_hf import LLaMAHFConfig
-from fms.models.hf.llama.modeling_llama_hf import LLaMAHFForCausalLM
+from fms.models.hf.llama.configuration_llama_hf import HFAdaptedLLaMAConfig
+from fms.models.hf.llama.modeling_llama_hf import HFAdaptedLLaMAForCausalLM
 from fms.models.llama import LLaMA
 from fms.testing._internal.hf.model_test_suite import (
+    HFAutoModelTestSuite,
     HFConfigFixtureMixin,
-    HFModelFixtureMixin,
     HFConfigTestSuite,
-    HFModelEquivalenceTestSuite,
-    HFModelGenerationTestSuite,
     HFModelCompileTestSuite,
+    HFModelEquivalenceTestSuite,
+    HFModelFixtureMixin,
+    HFModelGenerationTestSuite,
 )
 from fms.testing._internal.model_test_suite import ModelFixtureMixin
+
 from ..test_llama import LLaMA2Fixtures, LLaMA2GQAFixtures
 
 
 class LLaMA2HFFixtures(ModelFixtureMixin, HFConfigFixtureMixin, HFModelFixtureMixin):
     @pytest.fixture(scope="class", autouse=True)
     def fms_hf_model(self, model: LLaMA, fms_hf_config: PretrainedConfig, **kwargs):
-        return LLaMAHFForCausalLM.from_fms_model(model, **fms_hf_config.to_dict())
+        return HFAdaptedLLaMAForCausalLM.from_fms_model(
+            model, **fms_hf_config.to_dict()
+        )
 
     @pytest.fixture(scope="class", autouse=True)
     def fms_hf_config(
@@ -38,14 +41,14 @@ class LLaMA2HFFixtures(ModelFixtureMixin, HFConfigFixtureMixin, HFModelFixtureMi
             if tokenizer.bos_token_id is not None
             else tokenizer.eos_token_id
         )
-        return LLaMAHFConfig.from_fms_config(
+        return HFAdaptedLLaMAConfig.from_fms_config(
             model.get_config(),
             eos_token_id=tokenizer.eos_token_id,
             bos_token_id=bos_token_id,
         )
 
     @pytest.fixture(scope="class", autouse=True)
-    def oss_hf_model(self, fms_hf_model: LLaMAHFForCausalLM) -> PreTrainedModel:
+    def oss_hf_model(self, fms_hf_model: HFAdaptedLLaMAForCausalLM) -> PreTrainedModel:
         hf_config = fms_hf_model.config
         oss_hf_model = LlamaForCausalLM(
             LlamaConfig(
@@ -53,9 +56,9 @@ class LLaMA2HFFixtures(ModelFixtureMixin, HFConfigFixtureMixin, HFModelFixtureMi
                 hidden_size=hf_config.hidden_size,
                 rms_norm_eps=hf_config.norm_eps,
                 num_attention_heads=hf_config.nheads,
-                num_key_value_heads=None
-                if hf_config.kvheads == 0
-                else hf_config.kvheads,
+                num_key_value_heads=(
+                    None if hf_config.kvheads == 0 else hf_config.kvheads
+                ),
                 num_hidden_layers=hf_config.nlayers,
                 pad_token_id=hf_config.pad_token_id,
                 intermediate_size=int(
@@ -78,7 +81,6 @@ class LLaMA2HFFixtures(ModelFixtureMixin, HFConfigFixtureMixin, HFModelFixtureMi
         freqs = 1.0 / (ratio ** (torch.arange(0, dim, 2)[: (dim // 2)].float() / dim))
 
         with torch.no_grad():
-
             oss_hf_model.model.embed_tokens.weight.copy_(fms_hf_model.embedding.weight)
             i = 0
             for oss_hf_layer in oss_hf_model.model.layers:
@@ -143,6 +145,7 @@ class TestLLaMA2HF(
     HFModelEquivalenceTestSuite,
     HFModelGenerationTestSuite,
     HFModelCompileTestSuite,
+    HFAutoModelTestSuite,
     LLaMA2Fixtures,
     LLaMA2HFFixtures,
 ):
@@ -164,6 +167,7 @@ class TestLLaMA2GQAHF(
     HFModelEquivalenceTestSuite,
     HFModelGenerationTestSuite,
     HFModelCompileTestSuite,
+    HFAutoModelTestSuite,
     LLaMA2GQAFixtures,
     LLaMA2HFFixtures,
 ):

@@ -2,35 +2,44 @@ import argparse
 import logging
 import os
 import statistics
-import time
 import timeit
 
 import torch
 from torch import distributed as dist
-from torch._dynamo.eval_frame import OptimizedModule
+from torch._dynamo import OptimizedModule
+from fms import models
 
-from fms.models.llama import load_fms_llama
 from fms.utils import generation, print0, tokenizers
 
 
 # Example running llama 7B on one A100:
 #
-# (bare metal) $ CUDA_VISIBLE_DEVICES=0 torchrun --nproc_per_node=1 ./scripts/benchmark_inference.py --model_path=~/models/7B-F/ --tokenizer=~/models/tokenizer.model
-# (slurm) $ srun -N 1 --gres=gpu:1 torchrun --nproc_per_node=1 ./scripts/benchmark_inference.py --model_path=~/models/7B-F/ --tokenizer=~/models/tokenizer.model
+# (bare metal) $ CUDA_VISIBLE_DEVICES=0 torchrun --nproc_per_node=1 ./scripts/benchmark_inference.py --architecture=llama --variant=7b --tokenizer=~/models/tokenizer.model --batch_size=2 --seq_len=500
+# (slurm) $ srun -N 1 --gres=gpu:1 torchrun --nproc_per_node=1 ./scripts/benchmark_inference.py --architecture=llama --variant=7b --tokenizer=~/models/tokenizer.model --batch_size=2 --seq_len=500
 # loading model
 # loading complete on rank 0
 # Uncompiled results:
-# - with use_cache=True, excluding first call
-#         35.20 ms per token
-# - without cache
-#         91.87 ms per token
+# - with use_cache=True
+#         34.86 ms per token
+# - with use_cache=False
+#         86.39 ms per token
+# End-to-end sequence generation
+# - with use_cache=True
+#         37.04 ms per token
+# - with use_cache=False
+#         90.68 ms per token
 # Compiling model...
-#
 # Compiled results:
-# - with use_cache=True, excluding first call
-#         21.31 ms per token
-# - without cache
-#         72.23 ms per token
+# - with use_cache=True
+#         18.66 ms per token
+# - with use_cache=False
+#         67.66 ms per token
+
+# (Compiled) End-to-end sequence generation
+# - with use_cache=True
+#         20.61 ms per token
+# - with use_cache=False
+#         71.45 ms per token
 
 
 parser = argparse.ArgumentParser(
@@ -38,10 +47,16 @@ parser = argparse.ArgumentParser(
 )
 parser.add_argument("--device_type", type=str, default="cuda")
 parser.add_argument(
-    "--model_path",
+    "--architecture",
     type=str,
-    required=True,
-    help="Path to the directory containing LLaMa weights (.pth files sharded by tensor parallel rank, not HF weights)",
+    default="llama",
+    help="The model architecture to benchmark",
+)
+parser.add_argument(
+    "--variant",
+    type=str,
+    default="7b",
+    help="The model variant (configuration) to benchmark. E.g. 7b, 13b, 70b.",
 )
 parser.add_argument(
     "--tokenizer",
@@ -65,7 +80,7 @@ parser.add_argument(
     "--max_new_tokens",
     type=int,
     default=256,
-    help="Batch size of mock input",
+    help="Max number of tokens to generate",
 )
 parser.add_argument(
     "--compile_mode",
@@ -80,9 +95,9 @@ parser.add_argument(
     help="This is a distributed job (multiple instances run with RANK+WORLD_SIZE)",
 )
 parser.add_argument(
-    "--check_correctness",
+    "--skip_correctness_check",
     action="store_true",
-    help="Test correctness of outputs vs just timing",
+    help="Do not test correctness of outputs vs just timing",
 )
 parser.add_argument(
     "--skip_eager_runs", action="store_true", help="Do not run the eager benchmarks"
@@ -114,21 +129,22 @@ parser.add_argument(
 args = parser.parse_args()
 
 local_rank = int(os.getenv("LOCAL_RANK", 0))
+world_size = int(os.getenv("WORLD_SIZE", 1))
 device = torch.device(args.device_type, local_rank)
 
 torch.set_default_device(device)
 torch.set_default_dtype(torch.half)
 
-if args.distributed:
+if world_size > 1:
     dist.init_process_group()
 
 print("loading model")
-model = load_fms_llama(args.model_path)
+model = models.get_model(args.architecture, args.variant, device_type=args.device_type)
 tokenizer = tokenizers.get_tokenizer(args.tokenizer)
 
 model.eval()
 torch.set_grad_enabled(False)
-print("loading complete on rank", local_rank)
+print(f"loading complete on rank {local_rank}")
 
 SEQ_LEN = args.seq_len
 BATCH_SIZE = args.batch_size
@@ -186,7 +202,7 @@ def one_token(model, use_cache):
     else:
         actual = model.forward(next_input, only_last_token=True)
     actual = torch.argmax(actual, dim=-1)
-    if local_rank == 0 and args.check_correctness:
+    if local_rank == 0 and not args.skip_correctness_check:
         torch.testing.assert_close(actual, expected)
     else:
         torch.cuda.synchronize()
@@ -208,7 +224,7 @@ def end_to_end(model, use_cache, expected=None):
         assert (
             result.size()[-1] == SEQ_LEN + MAX_NEW_TOKENS
         ), f"{result.size()}, {SEQ_LEN}, {MAX_NEW_TOKENS}"
-    if expected is not None and args.check_correctness:
+    if expected is not None and not args.skip_correctness_check:
         torch.testing.assert_close(result, expected)
     else:
         torch.cuda.synchronize()
@@ -267,6 +283,7 @@ if not args.skip_eager_runs:
 if not args.skip_compile_runs:
     print0("Compiling model...")
 
+    # This is to prevent a bug in PT 2.1 that has been fixed in PT 2.2 nightlies
     torch._inductor.config.joint_graph_constant_folding = False
     # with mode='reduce-overhead' we see better performance but on multi-GPU models
     # hit an error on the end-to-end test below when run after other tests (if it's

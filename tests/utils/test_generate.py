@@ -1,11 +1,15 @@
 import torch
 import torch.nn.functional as F
+from torch import nn
 
 from fms.utils.generation import generate, truncate_after_eos
 from fms.utils.tokenizers import get_tokenizer
 
 
-class ModelMock:
+class ModelMock(nn.Module):
+    def __init__(self):
+        super().__init__()
+
     def forward(self, inputs, **kwargs):
         results = []
         for i in range(inputs.shape[0]):

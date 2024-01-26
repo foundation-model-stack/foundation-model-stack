@@ -1,8 +1,12 @@
-from fms.datasets.text import CausalTextDatasetFromString
-from fms.datasets.instructions import JsonInstructions
-from fms.utils import tokenizers
 import tempfile
+
 import torch
+from torch.utils.data import Dataset
+
+from fms import datasets
+from fms.datasets.instructions import JsonInstructions
+from fms.datasets.text import CausalTextDatasetFromString
+from fms.utils import tokenizers
 
 
 sample_json = """[{
@@ -16,12 +20,10 @@ def test_instructions_dataset():
     with tempfile.NamedTemporaryFile(mode="w+t") as file:
         file.writelines(sample_json)
         file.seek(0)
-        instructions = JsonInstructions(
-            file.name, tokenizer, bos_tok_id=1, eos_tok_id=2
-        )
+        instructions = JsonInstructions(file.name, tokenizer)
         input, label = instructions[0]
-        assert input[0] == 1
-        assert label[len(label) - 1] == 2
+        assert input[0] == 2
+        assert label[len(label) - 1] == 3
         assert label[0] == -100
 
 
@@ -33,6 +35,10 @@ def test_text_dataset():
     first_input, _ = ds[0]
     last_input, last_label = ds[10]
     assert last_input[0] == tokenizer.convert_tokens_to_ids("b")[0]
+    expected = (["b"] * 90) + (["a"] * 9)
+    torch.testing.assert_close(
+        last_input, torch.tensor(tokenizer.convert_tokens_to_ids(expected))
+    )
     assert last_label[0] == -100
     torch.testing.assert_close(
         first_input, torch.tensor(tokenizer.convert_tokens_to_ids(["a"] * 99))
@@ -40,3 +46,111 @@ def test_text_dataset():
 
     ds = CausalTextDatasetFromString(text, tokenizer, seq_len=99)
     assert len(ds) == 10
+
+
+def test_dataset_getter():
+    text = "a" * 10
+    with tempfile.NamedTemporaryFile(mode="w+t") as file:
+        file.writelines(text)
+        file.seek(0)
+        result = datasets.get_dataset(
+            "text", tokenizers.get_tokenizer(tokenizers.char_tokenizer), file.name
+        )
+        # for input, output in result:
+        #     print(input, output)
+        input, _ = result[0]
+        assert input[0].item() == ord("a")
+        assert input.shape[0] == 9
+
+
+class _MockDS(Dataset):
+    def __init__(self, data):
+        self.data = data
+
+    def __getitem__(self, idx):
+        return self.data[idx]
+
+    def __len__(self):
+        return len(self.data)
+
+
+def test_restartable():
+    data = [1, 2, 3, 4, 5]
+    ds = _MockDS(data)
+    rds = datasets.RestartableFromMapDataset(ds)
+    assert len(rds) == 5
+    i = iter(rds)
+    assert next(i) == 1
+    assert next(i) == 2
+    sd = rds.state_dict()
+
+    assert next(i) == 3
+    assert next(i) == 4
+
+    rds = datasets.RestartableFromMapDataset(_MockDS(data))
+    rds.load_state_dict(sd)
+    assert rds.state_dict() == sd
+
+    i = iter(rds)
+    assert next(i) == 3
+
+
+class _MockNested(Dataset, datasets.SavableDataset):
+    def __init__(self, dataset):
+        self.dataset = dataset
+
+    def __iter__(self):
+        return iter(self.dataset)
+
+
+def test_nested_restartable():
+    data = [1, 2, 3, 4, 5]
+
+    ds = _MockDS(data)
+    ds = datasets.RestartableFromMapDataset(ds)
+    ds = _MockNested(ds)
+
+    i = iter(ds)
+    assert next(i) == 1
+    assert next(i) == 2
+    sd = ds.state_dict()
+
+    assert next(i) == 3
+    assert next(i) == 4
+
+    ds = _MockDS(data)
+    ds = datasets.RestartableFromMapDataset(ds)
+    ds = _MockNested(ds)
+    ds.load_state_dict(sd)
+    assert ds.state_dict() == sd
+
+    i = iter(ds)
+    assert next(i) == 3
+
+
+def test_packing_ds():
+    data = [[1, 2, 3], [4, 5, 6, 7], [8, 9]]
+    ds = _MockDS(data)
+    ds = datasets.RestartableFromMapDataset(ds)
+    pds = datasets.PackedSequenceDataset(ds, 2)
+
+    i = iter(pds)
+    assert next(i) == [1, 2]
+
+    sd = pds.state_dict()
+
+    assert next(i) == [3, 4]
+    assert next(i) == [5, 6]
+    assert next(i) == [7, 8]
+
+    ds = _MockDS(data)
+    ds = datasets.RestartableFromMapDataset(ds)
+    pds = datasets.PackedSequenceDataset(ds, 2)
+
+    pds.load_state_dict(sd)
+
+    assert pds.state_dict() == sd
+
+    i = iter(pds)
+    assert next(i) == [3, 4]
+    assert next(i) == [5, 6]

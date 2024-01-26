@@ -1,9 +1,14 @@
 # Foundation Model Stack
 
-Foundation Model Stack is a collection of components for development, inference, training, and tuning of foundation models leveraging PyTorch native components. For inference optimizations we aim to support PyTorch compile, accelerated transformers, and tensor parallelism. At training time we aim to support FSDP and various parallelism strategies, accelerated transformers, and PyTorch compile.
+Foundation Model Stack is a collection of components for development, inference, training, and tuning of foundation models leveraging PyTorch native components. For inference optimizations we aim to support PyTorch compile, accelerated transformers, and tensor parallelism. At training time we aim to support FSDP, accelerated transformers, and PyTorch compile. To enable these optimizations, we will provide reimplementations of several popular model architectures starting with Llama and GPT-BigCode. 
 
-## Status
-* 09/08/2023: Inference on 7B, 13B LLaMa models
+## Models Supported
+| Model family | Inference | Tuning and Training |
+|--------------| ---------- | ------------------ |
+| LLaMA        | :heavy_check_mark: | :heavy_check_mark: |
+| GPT-BigCode  | :heavy_check_mark: | :x: |
+| RoBERTa      | :heavy_check_mark: | :x: |
+
 
 ## Installation
 
@@ -27,44 +32,69 @@ or
 python setup.py install
 ```
 
-An example of inference on our implementation of LLaMA can be found in `scripts/inference.py`.
-
 
 ## Inference
 
-Our approach for inference optimization is to use PyTorch compile, accelerated transformers, and tensor parallelism. PyTorch compile compiles the code into optimized kernels, accelerated transformers leverages `scaled_dot_product_attention` (SDPA) for accelerating attention computation while saving memory, and tensor parallelism is necessary for larger models like LLaMa 70B. In our experiments with various models `torch.compile` has given 2-2.5x speedups for inference, with `SDPA` providing 30-40% improvements.
+#### Approach
+Our approach for inference optimization is to use PyTorch compile, accelerated transformers, and tensor parallelism. PyTorch compile compiles the code into optimized kernels, accelerated transformers leverages `scaled_dot_product_attention` (SDPA) for accelerating attention computation while saving memory, and tensor parallelism is necessary for larger models.
 
-We initially provide a re-implementation of the LLaMA2 architecture. To enable the model to compile, we reimplement `RoPE` encodings without complex numbers. We have verified that the `forward` pass compiles (there is work that needs to be done for `backward` to work with FSDP).
+To enable the Llama models to compile, we had to reimplement `RoPE` encodings without complex numbers. With this change, Llama model inference is able to leverage model compilation for latency reduction.
 
-The figure below shows the latency improvements as we move from eager mode execution to adding SDPA, compile, and SDPA+Compile. The measurements are for 7 and 13B models.
+#### Inference latency
+We measured inference latencies with 1024 token prompt and generation of 256 tokens on AWS P4de instance nodes with 8 80G A100 GPUs and report the median latency in the below table.
+| Model | # GPUs | Median latency (ms) |
+| ----- | ----------- | ----- |
+| 7B | 1 | 14ms |
+| 13B | 1 | 22ms |
+| 70B | 8 | 30ms |
 
-![image (21)](static/optimizations.png)
+If you would like to reproduce the latencies, you can run the `scripts/benchmark_inference.py` and the details are described in [inference](./scripts).
 
 For more information on reproducing the benchmarks and running some examples, see [here](scripts/README.md)
 
 ## HF Model Support
 
+The support for HF models is provided by our HF model adapter. One can obtain similar latencies as tabulated above with HF models using our HF model adapter:
+
 ```python
 # fms model
-llama: LLaMA = LLaMA(config)
+llama = get_model("llama", "13b")
 
 # huggingface model backed by fms internals
-llama_hf = LLaMAHFForCausalLM.from_fms_model(llama)
+llama_hf = to_hf_api(llama)
 
-# generate some text
+# compile the model -- in HF, the decoder only
+llama_hf.decoder = torch.compile(llama_hf.decoder)
+
+# generate some text -- the first time will be slow since the model needs to be compiled, but subsequent generations should be faster.
 llama_generator = pipeline(task="text-generation", model=llama_hf, tokenizer=tokenizer)
 llama_generator("""q: how are you? a: I am good. How about you? q: What is the weather like today? a:""")
 ```
 
+A detailed example is provided [here](./notebooks/hf_adapted_llama_inference.ipynb).
 
-Tensor parallel inference numbers for 13B and 70B models are **coming soon**!
+## Tuning
 
-## Training (Coming Soon!!)
+To fine-tune LLaMA, use the `scripts/train_causal.py` training script. Here's
+an example of that command.
+```
+torchrun --nproc_per_node=2 \
+        scripts/train_causal.py \
+        --architecture=llama \
+        --variant=7b \
+        --tokenizer=~/models/tokenizer.model \
+        --model_path=~/models/7B/ \
+        --report_steps=10 \
+        --checkpoint_format=meta \
+        --distributed=fsdp
+```
+See options in the script for other ways to train and tune.
 
 ## Open Issues
-* https://github.com/pytorch/pytorch/issues/108780 requires adding graph breaks to preserve accuracy.
-* https://github.com/pytorch/pytorch/issues/107824 prevents training/finetuning from working
 
+* https://github.com/pytorch/pytorch/issues/107824 prevents training/finetuning from working with `torch.compile`.
+* In addition, there are several open issues we are tracking to improve stability and memory footprint of inference
+  
 ## References
 
 * Huggingface TGI: https://github.com/huggingface/text-generation-inference

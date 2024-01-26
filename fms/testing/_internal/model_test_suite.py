@@ -14,6 +14,7 @@ from torch._dynamo.testing import CompileCounterWithBackend
 from fms.testing.comparison import get_signature
 from fms.utils.config import ModelConfig
 
+
 _FAILED_CONFIG_LOAD_MSG = """
 Failed to load the configuration. This could occur if there was a change in the configuration and the implementation of 
 the ModelConfig is not accounting for it.
@@ -213,9 +214,15 @@ class ModelConsistencyTestSuite(ModelFixtureMixin, SignatureFixtureMixin):
                 "Signature file has been saved, please re-run the tests without --capture_expectation"
             )
 
-        assert np.allclose(
-            np.array(actual), np.array(signature)
-        ), _FAILED_MODEL_SIGNATURE_OUTPUT_MSG
+        assertion_msg = f"""
+        difference: {np.mean(np.abs(np.array(actual) - np.array(signature)))}
+        
+        {_FAILED_MODEL_SIGNATURE_OUTPUT_MSG}
+        """
+
+        torch.testing.assert_close(
+            torch.tensor(actual), torch.tensor(signature)
+        ), assertion_msg
 
     def test_model_weight_keys(self, model, capture_expectation):
         import inspect
@@ -231,7 +238,6 @@ class ModelConsistencyTestSuite(ModelFixtureMixin, SignatureFixtureMixin):
         )
 
         if capture_expectation:
-
             with open(weight_keys_path, "w") as weight_keys_file:
                 weight_keys_file.write(",".join(map(str, actual_keys)))
             weight_keys_file.close()
