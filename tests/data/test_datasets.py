@@ -87,6 +87,7 @@ def test_restartable():
 
     assert next(i) == 3
     assert next(i) == 4
+    assert next(i) == 5
 
     rds = datasets.RestartableFromMapDataset(_MockDS(data))
     rds.load_state_dict(sd)
@@ -94,6 +95,8 @@ def test_restartable():
 
     i = iter(rds)
     assert next(i) == 3
+    assert next(i) == 4
+    assert next(i) == 5
 
 
 class _MockNested(Dataset, datasets.SavableDataset):
@@ -101,7 +104,8 @@ class _MockNested(Dataset, datasets.SavableDataset):
         self.dataset = dataset
 
     def __iter__(self):
-        return iter(self.dataset)
+        for item in self.dataset:
+            yield item
 
 
 def test_nested_restartable():
@@ -127,6 +131,8 @@ def test_nested_restartable():
 
     i = iter(ds)
     assert next(i) == 3
+    assert next(i) == 4
+    assert next(i) == 5
 
 
 def test_packing_ds():
@@ -155,6 +161,7 @@ def test_packing_ds():
     i = iter(pds)
     assert next(i) == [3, 4]
     assert next(i) == [5, 6]
+    assert next(i) == [7, 8]
 
 
 def test_eos_bos():
@@ -169,3 +176,34 @@ def test_eos_bos():
     i = iter(ds)
     assert next(i) == [bos] + data[0] + [eos]
     assert next(i) == [bos] + data[1] + [eos]
+
+
+def test_composed_eos_bos():
+    bos = 11
+    eos = 12
+
+    data = [[1, 2, 3], [4, 5, 6, 7], [8, 9]]
+    ds = _MockDS(data)
+    ds = datasets.RestartableFromMapDataset(ds)
+    separated = datasets.WithSeparatorDataset(ds, bos_token_id=bos, eos_token_id=eos)
+    pds = datasets.PackedSequenceDataset(separated, 5)
+
+    i = iter(pds)
+    assert next(i) == [bos, 1, 2, 3, eos]
+
+    sd = pds.state_dict()
+
+    assert next(i) == [bos, 4, 5, 6, 7]
+    assert next(i) == [eos, bos, 8, 9, eos]
+
+    ds = _MockDS(data)
+    ds = datasets.RestartableFromMapDataset(ds)
+    separated = datasets.WithSeparatorDataset(ds, bos_token_id=bos, eos_token_id=eos)
+    pds = datasets.PackedSequenceDataset(separated, 5)
+
+    pds.load_state_dict(sd)
+
+    assert pds.state_dict() == sd
+    i = iter(pds)
+    assert next(i) == [bos, 4, 5, 6, 7]
+    assert next(i) == [eos, bos, 8, 9, eos]
