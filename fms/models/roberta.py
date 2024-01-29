@@ -286,14 +286,19 @@ def _roberta_factory_factory(config):
 
 
 models.register_model(
-    _architecture_name, "micro", _roberta_factory_factory(_micro_char_config)
+    _architecture_name,
+    "micro",
+    _roberta_factory_factory(_micro_char_config),
+    _micro_char_config,
 )
 models.register_model(
-    _architecture_name, "base", _roberta_factory_factory(_base_config)
+    _architecture_name, "base", _roberta_factory_factory(_base_config), _base_config
 )
 
 
-def _hf_sd_to_fms_sd(hf_sd: Mapping[Any, Any]) -> Mapping[Any, Any]:
+def _hf_sd_to_fms_sd(
+    hf_sd: Mapping[Any, Any], model_config: Optional[ModelConfig]
+) -> Mapping[Any, Any]:
     replacements = [
         (r"^roberta.embeddings.word_embeddings.weight", "base_model.embedding.weight"),
         (
