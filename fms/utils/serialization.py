@@ -292,6 +292,7 @@ def load_state_dict_into_model(
                     partial_sd[key] = partial_sd[key].to(device=initial_device)
                 fms_partial_sd = adapter(partial_sd)
             except FusableWeightsMissingError as e:
+                used_keys.add(weight)
                 for weight in e.missing_weights:
                     partial_sd[weight] = state_dict[weight]
                     if partial_sd[weight].device != initial_device:
