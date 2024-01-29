@@ -293,7 +293,9 @@ models.register_model(
 )
 
 
-def _hf_sd_to_fms_sd(hf_sd: Mapping[Any, Any]) -> Mapping[Any, Any]:
+def _hf_sd_to_fms_sd(
+    hf_sd: Mapping[Any, Any], model_config: Optional[ModelConfig]
+) -> Mapping[Any, Any]:
     replacements = [
         (r"^roberta.embeddings.word_embeddings.weight", "base_model.embedding.weight"),
         (
