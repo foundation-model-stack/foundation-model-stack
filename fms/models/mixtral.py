@@ -19,7 +19,7 @@ from fms.distributed.strategy import (
 )
 from fms.modules.attention import MultiHeadAttention
 from fms.modules.embedding import WordEmbedding
-from fms.modules.feedforward import GatedLinearUnit
+from fms.modules.feedforward import MOEFeedForward
 from fms.modules.layernorm import LayerNormParameterized
 from fms.modules.positions import RotaryEmbedding
 from fms.utils import serialization
@@ -28,39 +28,33 @@ from fms.utils.config import ModelConfig
 from fms.utils.tokenizers import _has_hf, get_tokenizer
 
 
-# params emb_dim heads layers lr
-#  7B    4096    32    32     3.0E-04
-# 13B    5120    40    40     3.0E-04
-# 33B    6656    52    60     1.5.E-04
-# 65B    8192    64    80     1.5.E-04
-
-
 @dataclass
-class LLaMAConfig(ModelConfig):
+class MixtralConfig(ModelConfig):
     src_vocab_size: int = 32_000  # can be set by tokenizer
-    emb_dim: int = 4096
-    norm_eps: float = 1e-5
+    dim: int = 4096
+    norm_eps: float = 1e-6
     nheads: int = 32
-    kvheads: int = 0
+    kvheads: int = 8
     nlayers: int = 32
     pad_id: int = -1
-    hidden_grow_factor: float = 8 / 3
-    multiple_of: int = 256
-    activation_fn: str = "swish"
+    hidden_dim = 14336
     p_dropout: float = 0.0
-    max_expected_seq_len: int = 4096
+    num_experts: int = 8
+    top_k_experts: int = 2
+    max_expected_seq_len: int = 32768
+    rope_base: float = 1000000.0
     ntk_scaling: bool = False
 
 
-class LLaMABlock(nn.Module):
-    def __init__(self, config: LLaMAConfig, rotary_emb: RotaryEmbedding):
-        super(LLaMABlock, self).__init__()
+class MixtralBlock(nn.Module):
+    def __init__(self, config: MixtralConfig, rotary_emb: RotaryEmbedding):
+        super(MixtralBlock, self).__init__()
         self.config = config
-        emb_kq = self.config.emb_dim // self.config.nheads
-        emb_v = self.config.emb_dim // self.config.nheads
+        emb_kq = self.config.dim // self.config.nheads
+        emb_v = self.config.dim // self.config.nheads
 
         self.ln = LayerNormParameterized(
-            self.config.emb_dim,
+            self.config.dim,
             elementwise_scale=True,
             elementwise_shift=False,
             use_mean=False,
@@ -68,7 +62,7 @@ class LLaMABlock(nn.Module):
             use_high_precision_pow=True,
         )
         self.ff_ln = LayerNormParameterized(
-            self.config.emb_dim,
+            self.config.dim,
             elementwise_scale=True,
             elementwise_shift=False,
             use_mean=False,
@@ -83,7 +77,7 @@ class LLaMABlock(nn.Module):
             assert self.config.nheads % self.config.kvheads == 0
 
         self.attn = MultiHeadAttention(
-            self.config.emb_dim,
+            self.config.dim,
             emb_kq,
             emb_v,
             self.config.nheads,
@@ -92,13 +86,11 @@ class LLaMABlock(nn.Module):
             use_bias=False,
             position_encoder=rotary_emb,
         )
-        self.ff_sub_layer = GatedLinearUnit(
-            self.config.emb_dim,
-            hidden_grow_factor=self.config.hidden_grow_factor,
-            multiple_of=self.config.multiple_of,
-            activation_fn=str_to_activation(self.config.activation_fn),
-            p_dropout=self.config.p_dropout,
-            use_bias=False,
+        self.ff_sub_layer = MOEFeedForward(
+            self.config.num_experts,
+            self.config.num_activated_experts,
+            self.config.dim,
+            self.config.hidden_dim,
         )
 
         if self.config.p_dropout != 0:
@@ -160,28 +152,28 @@ class LLaMABlock(nn.Module):
             return x
 
 
-class LLaMA(nn.Module):
+class Mixtral(nn.Module):
     def __init__(
         self,
-        config: Optional[LLaMAConfig] = None,
+        config: Optional[MixtralConfig] = None,
         distributed_strategy: DistributedStrategy = NoOpStrategy,
         **kwargs,
     ):
-        super(LLaMA, self).__init__()
+        super(Mixtral, self).__init__()
         if config is not None:
             self.config = config
         else:
-            self.config = LLaMAConfig()
+            self.config = MixtralConfig()
         self.config = self.config.updated(**kwargs)
         self.distributed_strategy = distributed_strategy
 
-        self.width = self.config.emb_dim
+        self.width = self.config.dim
         self.pad_id = self.config.pad_id
         self.max_expected_seq_len = self.config.max_expected_seq_len
 
         shared = WordEmbedding(
             self.config.src_vocab_size,
-            self.config.emb_dim,
+            self.config.dim,
             padding_idx=self.config.pad_id,
             abs_pos=False,
             reversible=True,
@@ -191,20 +183,30 @@ class LLaMA(nn.Module):
         self.shared = self.distributed_strategy.distribute_module(shared)
 
         self.rot_emb = RotaryEmbedding(
-            dim=self.config.emb_dim // self.config.nheads,
+            dim=self.config.dim // self.config.nheads,
+            ratio=self.config.rope_base,
             ntk_scaling=self.config.ntk_scaling,
             max_seq_len=self.config.max_expected_seq_len,
         )
+        if isinstance(self.distributed_strategy, UniformModelParallelStrategy):
+            for dev_idx in set(self.distributed_strategy.layer_to_device):
+                self.rot_emb.compute_freqs_cis(
+                    torch.device("cuda", dev_idx), self.config.max_expected_seq_len
+                )
+        else:
+            self.rot_emb.compute_freqs_cis(
+                self.shared.emb.weight.device, self.config.max_expected_seq_len
+            )
 
         layers = []
         for i in range(self.config.nlayers):
-            block: nn.Module = LLaMABlock(self.config, self.rot_emb)
+            block: nn.Module = MixtralBlock(self.config, self.rot_emb)
             block = self.distributed_strategy.distribute_layer(block, i)
             layers.append(block)
         self.layers = nn.ModuleList(layers)
 
         dec_norm = LayerNormParameterized(
-            self.config.emb_dim,
+            self.config.dim,
             elementwise_scale=True,
             elementwise_shift=False,
             use_mean=False,
@@ -220,11 +222,11 @@ class LLaMA(nn.Module):
 
         self.reset_params()
 
-    def get_config(self) -> LLaMAConfig:
+    def get_config(self) -> MixtralConfig:
         return self.config
 
     @classmethod
-    def from_config(cls, config: LLaMAConfig) -> "LLaMA":
+    def from_config(cls, config: MixtralConfig) -> "Mixtral":
         return cls(config)
 
     def reset_params(self):
@@ -233,16 +235,6 @@ class LLaMA(nn.Module):
         self.shared.head.weight.data.normal_(
             0, 1 / math.sqrt(math.sqrt(self.width * self.shared.vocab_size))
         )
-
-        if isinstance(self.distributed_strategy, UniformModelParallelStrategy):
-            for dev_idx in set(self.distributed_strategy.layer_to_device):
-                self.rot_emb.compute_freqs_cis(
-                    torch.device("cuda", dev_idx), self.config.max_expected_seq_len
-                )
-        else:
-            self.rot_emb.compute_freqs_cis(
-                self.shared.emb.weight.device, self.config.max_expected_seq_len
-            )
 
     def _helper(
         self,
@@ -332,208 +324,60 @@ class LLaMA(nn.Module):
             return preds
 
 
-# Register common LLaMA variants with the model registration API
-
-# a micro llama model to use with a char-level tokenizer
-_micro_char_config = LLaMAConfig(
-    emb_dim=192, nheads=4, nlayers=5, max_expected_seq_len=1024, src_vocab_size=256
-)
-
-_7b_config = LLaMAConfig()
-_13b_config = LLaMAConfig(emb_dim=5120, nheads=40, nlayers=40)
-# todo: add 35B config
-
-_70b_config = LLaMAConfig(
-    emb_dim=8192,
-    multiple_of=4096,
-    nheads=64,
-    kvheads=8,
-    nlayers=80,
-    hidden_grow_factor=(1.3 * 8 / 3),
-)
-
-_architecture_name = "llama"
+# Register common Mixtral variants with the model registration API
 
 
-def _llama_factory_factory(config):
+_8x7b_config = MixtralConfig()
+
+_architecture_name = "mixtral"
+
+
+def _mixtral_factory_factory(config):
     def factory(**kwargs):
-        return LLaMA(config, **kwargs)
+        return Mixtral(config, **kwargs)
 
     return factory
 
 
 models.register_model(
-    _architecture_name,
-    "micro",
-    _llama_factory_factory(_micro_char_config),
-    _micro_char_config,
-)
-models.register_model(
-    _architecture_name, "7b", _llama_factory_factory(_7b_config), _7b_config
-)
-models.register_model(
-    _architecture_name, "13b", _llama_factory_factory(_13b_config), _13b_config
-)
-models.register_model(
-    _architecture_name, "70b", _llama_factory_factory(_70b_config), _70b_config
+    _architecture_name, "8x7b", _mixtral_factory_factory(_8x7b_config), _8x7b_config
 )
 
 
-def _rename_weights_to_fms(orig_sd):
+def _hf_sd_to_fms_sd(hf_sd: Mapping, config: MixtralConfig) -> Mapping:
     replacements = [
-        (r"^tok_embeddings", "shared.emb"),
-        (r"^norm", "dec_norm"),
-        (r"^output", "shared.head"),
-        (r"^layers", "layers"),
-        (r"\.attention\.", ".attn."),
-        (r"attn\.wq", "attn.query"),
-        (r"attn\.wk", "attn.key"),
-        (r"attn\.wv", "attn.value"),
-        (r"attn\.wo", "attn.dense"),
+        (r"output.weight", "shared.head.weight"),
+        (r"tok_embeddings.weight", "shared.emb.weight"),
+        (r"^model.norm", "dec_norm"),
+        (r"^model.layers", "layers"),
+        (r"attention\.wk", "attn.key"),
+        (r"attention\.wv", "attn.value"),
+        (r"attention\.wq", "attn.query"),
+        (r"attention\.wo", "attn.dense"),
+        (r"block_sparse_moe\.w1", "ff_sub_layer.cond_ffn.w1"),
+        (r"block_sparse_moe\.w2", "ff_sub_layer.cond_ffn.w2"),
+        (r"block_sparse_moe\.w3", "ff_sub_layer.cond_ffn.w3"),
+        (r"block_sparse_moe\.gate", "ff_sub_layer.gate"),
         (r"attention_norm", "ln"),
-        (r"feed_forward\.w1", "ff_sub_layer.wg"),
-        (r"feed_forward\.w2", "ff_sub_layer.w2"),
-        (r"feed_forward\.w3", "ff_sub_layer.w1"),
         (r"ffn_norm", "ff_ln"),
     ]
     new_sd = {}
-    for name, param in orig_sd.items():
-        new_name = name
-        for pattern, repl in replacements:
-            new_name = re.sub(pattern, repl, new_name)
-        new_sd[new_name] = param
 
-    return new_sd
-
-
-def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
-    replacements = [
-        (r"^lm_head.weight", "shared.head.weight"),
-        (r"^model.embed_tokens.weight", "shared.emb.weight"),
-        (r"^model.norm", "dec_norm"),
-        (r"^model.layers", "layers"),
-        (r"self_attn\.k_proj", "attn.key"),
-        (r"self_attn\.v_proj", "attn.value"),
-        (r"self_attn\.q_proj", "attn.query"),
-        (r"self_attn\.o_proj", "attn.dense"),
-        (r"mlp\.gate_proj", "ff_sub_layer.wg"),
-        (r"mlp\.up_proj", "ff_sub_layer.w1"),
-        (r"mlp\.down_proj", "ff_sub_layer.w2"),
-        (r"input_layernorm", "ln"),
-        (r"post_attention_layernorm", "ff_ln"),
-    ]
-    new_sd = {}
-
-    trans_required_pattern = re.compile("layers.[0-9]+.attn.(query|key).weight")
     for name, param in hf_sd.items():
         new_name = name
         for pattern, repl in replacements:
             new_name = re.sub(pattern, repl, new_name)
         new_sd[new_name] = param
 
-        # hf -> fms requires a transpose operation for the query and key
-        if bool(trans_required_pattern.match(new_name)):
+        if "w1" in new_name or "w2" in new_name or "w3" in new_name:
             temp = new_sd[new_name]
-            # nheads is used in the transformation required for hf->fms
-            # here we are using 128 as this value fits with all popular models
-            #   7B, 13B, 70B to recover the number of heads
-            nheads = int(temp.size(0) / 128)
+            new_sd[new_name] = temp.reshape(
+                config.num_experts, config.intermediate_size, config.dim
+            ).contiguous()
 
-            temp = (
-                temp.view(nheads, 2, -1, temp.size(1))
-                .transpose(1, 2)
-                .reshape(*temp.size())
-            )
-
-            new_sd[new_name] = temp
-
+    if "gate" in new_name:
+        new_sd[new_name] = new_sd[new_name].contiguous()
     return new_sd
 
 
-serialization.register_adapter("llama", "meta", _rename_weights_to_fms)
-serialization.register_adapter("llama", "hf", _hf_sd_to_fms_sd)
-
-
-def convert_hf_llama(hf_model: "LlamaForCausalLM") -> LLaMA:  # type: ignore
-    """
-    Convert a Llama huggingface model to an fms model
-
-    Parameters
-    ----------
-    hf_model: LlamaForCausalLM
-        a Llama Huggingface model
-
-    Returns
-    -------
-    LLaMA
-        an FMS LLaMA model
-    """
-
-    if not _has_hf:
-        raise ImportError(
-            "in order to convert huggingface weights, you need to have transformers installed"
-        )
-
-    import re
-
-    config = LLaMAConfig(
-        src_vocab_size=hf_model.config.vocab_size,
-        emb_dim=hf_model.config.hidden_size,
-        norm_eps=hf_model.config.rms_norm_eps,
-        nheads=hf_model.config.num_attention_heads,
-        nlayers=hf_model.config.num_hidden_layers,
-        hidden_grow_factor=hf_model.config.intermediate_size
-        / hf_model.config.hidden_size,
-        multiple_of=1,  # this is set to 1 as it is encoded in the hidden dimension
-        activation_fn=hf_model.config.hidden_act,
-        max_expected_seq_len=hf_model.config.max_position_embeddings,
-    )
-    model = LLaMA(config)
-    count_parameters = lambda m: sum(p.numel() for p in m.parameters())
-    assert count_parameters(model) == count_parameters(hf_model)
-
-    hf_sd = hf_model.model.state_dict()
-
-    replacements = [
-        (r"^embed_tokens.weight", "shared.emb.weight"),
-        (r"^norm", "dec_norm"),
-        (r"^layers", "layers"),
-        (r"self_attn\.k_proj", "attn.key"),
-        (r"self_attn\.v_proj", "attn.value"),
-        (r"self_attn\.q_proj", "attn.query"),
-        (r"self_attn\.o_proj", "attn.dense"),
-        (r"mlp\.gate_proj", "ff_sub_layer.wg"),
-        (r"mlp\.up_proj", "ff_sub_layer.w1"),
-        (r"mlp\.down_proj", "ff_sub_layer.w2"),
-        (r"input_layernorm", "ln"),
-        (r"post_attention_layernorm", "ff_ln"),
-    ]
-    new_sd = {}
-    for name, param in hf_sd.items():
-        new_name = name
-        for pattern, repl in replacements:
-            new_name = re.sub(pattern, repl, new_name)
-        new_sd[new_name] = param
-
-    model.load_state_dict(new_sd, strict=False)
-    model.shared.head.weight = hf_model.lm_head.weight
-
-    # model.rot_emb.freqs = hf_model.model.layers[0].self_attn.rotary_emb.inv_freq
-    for layer in model.layers:
-        q = layer.attn.query.weight.data
-        q = (
-            q.view(model.config.nheads, 2, -1, q.size(1))
-            .transpose(1, 2)
-            .reshape(*q.size())
-        )
-        layer.attn.query.weight.data = q
-
-        k = layer.attn.key.weight.data
-        k = (
-            k.view(model.config.nheads, 2, -1, k.size(1))
-            .transpose(1, 2)
-            .reshape(*k.size())
-        )
-        layer.attn.key.weight.data = k
-
-    return model
+serialization.register_adapter("mixtral", "hf", _hf_sd_to_fms_sd)
