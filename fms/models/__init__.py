@@ -23,7 +23,7 @@ from fms.utils.config import ModelConfig
 
 
 __models: MutableMapping[
-    str, MutableMapping[str, Tuple[Callable[[], nn.Module], ModelConfig]]
+    str, MutableMapping[str, Tuple[Callable[[], nn.Module], Optional[ModelConfig]]]
 ] = {}
 
 
@@ -31,7 +31,7 @@ def register_model(
     architecture: str,
     variant: str,
     factory: Callable[[], nn.Module],
-    config: ModelConfig,
+    config: Optional[ModelConfig] = None,
 ):
     """
     Registers a model variant and its config to be made available in the registration API.
@@ -40,10 +40,12 @@ def register_model(
     variant: A reference for a particular configuration of the architecture,
         e.g. '7b'
     factory: A callable that constructs an instance of the model variant.
-    config: The model parameters
+    config (optional): The model configuration, if the model is constructed
+        using one.
     """
-    variants: MutableMapping[str, Tuple[Callable[[], nn.Module], ModelConfig]] = {}
-
+    variants: MutableMapping[
+        str, Tuple[Callable[[], nn.Module], Optional[ModelConfig]]
+    ] = {}
     if architecture in __models:
         variants = __models[architecture]
     if variant in variants:
@@ -310,6 +312,7 @@ def get_model(
     fms_model = _get_model_instance(
         architecture, variant, device=initial_device, extra_args=extra_args
     )
+    fms_config = _get_model_config(architecture, variant)
 
     # Choose when to wrap and load the model weights based on the combination
     # distribution strategy and checkpoint sharding
@@ -331,6 +334,7 @@ def get_model(
             lazy_sd,
             architecture,
             source if source is not None else "fms",
+            fms_config,
             distributed_strategy,
             checkpoint_sharding,
             initial_device,
