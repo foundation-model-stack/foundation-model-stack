@@ -3,6 +3,7 @@ from typing import List, Optional
 import torch
 import torch.distributed
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.distributed.distributed_c10d import ProcessGroup
 
 from fms import distributed

@@ -88,7 +88,7 @@ class MixtralBlock(nn.Module):
         )
         self.ff_sub_layer = MOEFeedForward(
             self.config.num_experts,
-            self.config.num_activated_experts,
+            self.config.top_k_experts,
             self.config.dim,
             self.config.hidden_dim,
         )
@@ -344,7 +344,9 @@ models.register_model(
 )
 
 
-def _hf_sd_to_fms_sd(hf_sd: Mapping, config: MixtralConfig) -> Mapping:
+def _hf_sd_to_fms_sd(hf_sd: Mapping, config: Optional[ModelConfig]) -> Mapping:
+    if not isinstance(config, MixtralConfig):
+        raise ValueError("This adapter requires a MixtralConfig")
     replacements = [
         (r"output.weight", "shared.head.weight"),
         (r"tok_embeddings.weight", "shared.emb.weight"),
@@ -372,7 +374,7 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping, config: MixtralConfig) -> Mapping:
         if "w1" in new_name or "w2" in new_name or "w3" in new_name:
             temp = new_sd[new_name]
             new_sd[new_name] = temp.reshape(
-                config.num_experts, config.intermediate_size, config.dim
+                config.num_experts, config.hidden_dim, config.dim
             ).contiguous()
 
     if "gate" in new_name:
