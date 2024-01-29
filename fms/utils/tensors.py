@@ -2,6 +2,7 @@ import functools
 from typing import Dict, Optional, Union, Tuple, List
 
 import torch
+import torch.nn.functional as f
 
 _HANDLED_FUNCTIONS = {}
 
@@ -204,9 +205,9 @@ class PagedTensor(torch.Tensor):
 
     def _allocate_blocks(self, num_blocks) -> torch.Tensor:
         # TODO: keep num_blocks on gpu
-        first_available_blocks = (self.ref_counts == 0).nonzero()[0:int(num_blocks.item())]
-        self.ref_counts[first_available_blocks] = 1
-        return first_available_blocks
+        first_available_blocks = (self.ref_counts == 0).nonzero()[0:int(num_blocks.item())] + 1
+        self.ref_counts[first_available_blocks - 1] = 1
+        return first_available_blocks.squeeze(1).int()
 
     def __repr__(self):
         return f"PagedTensor(context_lengths={self.context_lengths}, block_mapping={self.block_mapping.tolist()})"
@@ -252,49 +253,25 @@ class PagedTensor(torch.Tensor):
             prev_context_lengths = paged_tensor.context_lengths
             total_context_lengths = prev_context_lengths + context_lengths
 
-            prev_num_blocks = prev_context_lengths // paged_tensor.block_size
-            remainders_tensor = prev_num_blocks % paged_tensor.block_size
-            prev_num_blocks += remainders_tensor.sign()
+            # get the total old number of blocks in the block mapping (not including pads)
+            prev_num_blocks = torch.ceil(prev_context_lengths / paged_tensor.block_size)
 
-            total_num_blocks = total_context_lengths // paged_tensor.block_size
-            remainders_tensor = total_context_lengths % paged_tensor.block_size
-            total_num_blocks += remainders_tensor.sign()
+            # get the total new number of blocks in the block mapping (not including pads)
+            total_num_blocks = torch.ceil(total_context_lengths / paged_tensor.block_size)
+
+            # pre-pad block_mapping to max
+            pad = (0, (torch.max(total_num_blocks) - paged_tensor.block_mapping.size(1)).int().tolist())
+            paged_tensor.block_mapping = f.pad(input=paged_tensor.block_mapping, pad=pad, mode='constant', value=0).int()
 
             n_blocks_to_add = (total_num_blocks - prev_num_blocks).int()
-
             blocks_to_add = paged_tensor._allocate_blocks(torch.sum(n_blocks_to_add))
-            print("bla")
 
-            import torch.nn.functional as f
-
-            # # INPUTS
-            #
-            # block_mapping = [
-            #     [12, 13, 14, 15, 16],
-            #     [1, 2, 3, 0, 0],
-            #     [4, 5, 0, 0, 0],
-            #     [6, 7, 8, 9, 0],
-            #     [11, 0, 0, 0, 0],
-            # ]
-            # block_mapping = torch.tensor(block_mapping)
-            # print("Block mapping:")
-            # print(block_mapping)
-            # print()
-            #
-            # n_blocks_to_add = torch.tensor([0, 2, 1, 0, 3])
-            # print("N_blocks_to_add:")
-            # print(n_blocks_to_add)
-            # print()
-            #
-            # blocks_to_add = torch.arange(100, 100 + sum(n_blocks_to_add))
-            # print("New block indices:")
-            # print(blocks_to_add)
-            # print()
-            #
-            # print("--------")
-            # print()
+            # print(f"block_mapping pre-padded: {paged_tensor.block_mapping}")
+            # print(f"n_blocks_to_add:{n_blocks_to_add}")
+            # print(f"blocks_to_add:{blocks_to_add}")
 
             # CALCULATE ROW INDICES
+
 
             # At what new-block indices do we enter a new row?
             rowbreak_thresh = n_blocks_to_add.cumsum(0)
@@ -302,22 +279,22 @@ class PagedTensor(torch.Tensor):
             newblock_inds = torch.ones_like(blocks_to_add).cumsum(0).unsqueeze(0).sub(1)
             # What row break thresholds does each index position qualify for
             below_thresh = newblock_inds < rowbreak_thresh.unsqueeze(1)
-            print("Matrix of row candidacy:")
-            print(below_thresh)
-            print()
+            # print("Matrix of row candidacy:")
+            # print(below_thresh)
+            # print()
 
             # The first qualifying break represents the assigned sequence
             row_inds = below_thresh.int().argmax(0)
-            print("Row indices:")
-            print(row_inds)
-            print()
+            # print("Row indices:")
+            # print(row_inds)
+            # print()
 
             # CALCULATE COLUMN INDICES
 
             col_offsets = paged_tensor.block_mapping.count_nonzero(1)
-            print("Col offsets per row:")
-            print(col_offsets)
-            print()
+            # print("Col offsets per row:")
+            # print(col_offsets)
+            # print()
 
             # Does each new value belong to the same row as the prior one?
             row_match = row_inds.roll(1) == row_inds
@@ -327,15 +304,16 @@ class PagedTensor(torch.Tensor):
             col_increments -= f.pad(n_blocks_to_add.sub(1).clamp(min=0).cumsum(0), (1, 0))[:-1][row_inds]
             # Add the column offset for each row
             col_inds = col_increments + col_offsets[row_inds]
-            print("Col inds:")
-            print(col_inds)
-            print()
+            # print("Col inds:")
+            # print(col_inds)
+            # print()
 
             # UPDATE BLOCK MAPPING
 
             paged_tensor.block_mapping[row_inds, col_inds] = blocks_to_add
-            print("Updated block mapping:")
-            print(paged_tensor.block_mapping)
+            paged_tensor.context_lengths = total_context_lengths
+            # print("Updated block mapping:")
+            # print(paged_tensor.block_mapping)
 
             # for i, context_length in enumerate(context_lengths):
             #     block_group = paged_tensor.block_mapping[i]
@@ -357,14 +335,30 @@ class PagedTensor(torch.Tensor):
         return paged_tensor
 
 if __name__ == "__main__":
-    pt = PagedTensor(8, 64, 100, True, device="cpu")
+    pt = PagedTensor(8, 64, 1000, True, device="cpu")
 
     # warm up sequences
-    pt = torch.cat((pt, torch.empty(8, 0)), dim=0)
+    pt = torch.cat((pt, torch.empty(4, 0)), dim=0)
     print(pt.block_mapping)
     print(pt.context_lengths)
 
-    pt2 = torch.cat((pt, torch.rand(8, 8)), dim=1)
+    l = [
+        [i for i in range(100)],
+        [i for i in range(40)],
+        [i for i in range(8)],
+        [i for i in range(24)],
+    ]
+    l = torch.nested.nested_tensor(l)
+
+    pt2 = torch.cat((pt, l), dim=1)
+    print(f"block_mapping pt2: {pt.block_mapping}")
+    print(pt.context_lengths)
+
+    pt3 = torch.cat((pt2, torch.rand(4, 200)), dim=1)
+    print(f"block_mapping pt3: {pt3.block_mapping}")
+    print(pt3.context_lengths)
+
+    #
 
 
     #
