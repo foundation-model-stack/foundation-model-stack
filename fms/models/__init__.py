@@ -1,6 +1,6 @@
 from contextlib import nullcontext
 from functools import partial
-from typing import Callable, MutableMapping, Optional, Tuple
+from typing import Callable, MutableMapping, Optional
 
 import torch
 from torch import nn
@@ -19,38 +19,28 @@ from fms.distributed.strategy import (
     UniformModelParallelStrategy,
 )
 from fms.utils import serialization
-from fms.utils.config import ModelConfig
 
 
-__models: MutableMapping[
-    str, MutableMapping[str, Tuple[Callable[[], nn.Module], ModelConfig]]
-] = {}
+__models: MutableMapping[str, MutableMapping[str, Callable[[], nn.Module]]] = {}
 
 
-def register_model(
-    architecture: str,
-    variant: str,
-    factory: Callable[[], nn.Module],
-    config: ModelConfig,
-):
+def register_model(architecture: str, variant: str, factory: Callable[[], nn.Module]):
     """
-    Registers a model variant and its config to be made available in the registration API.
+    Registers a model variant to be made available in the registration API.
     Args:
     architecture: The name of the model architecture, e.g. 'llama'
     variant: A reference for a particular configuration of the architecture,
         e.g. '7b'
     factory: A callable that constructs an instance of the model variant.
-    config: The model parameters
     """
-    variants: MutableMapping[str, Tuple[Callable[[], nn.Module], ModelConfig]] = {}
-
+    variants: MutableMapping[str, Callable[[], nn.Module]] = {}
     if architecture in __models:
         variants = __models[architecture]
     if variant in variants:
         raise KeyError(
             f"Variant {variant} already registered for architecture {architecture}"
         )
-    variants[variant] = (factory, config)
+    variants[variant] = factory
     __models[architecture] = variants
 
 
@@ -96,7 +86,7 @@ def _get_model_instance(
             f'{variant} is not a registered variant of {architecture}. See `models.list_variants("{architecture}")` for available variants.'
         )
 
-    model_factory = __models[architecture][variant][0]
+    model_factory = __models[architecture][variant]
 
     orig = torch.get_default_dtype()
 
@@ -107,18 +97,6 @@ def _get_model_instance(
             return model_factory(**extra_args)
     finally:
         torch.set_default_dtype(orig)
-
-
-def _get_model_config(architecture: str, variant: str):
-    if architecture not in __models:
-        raise KeyError(
-            f"{architecture} is not registered. See `models.list_models()` for available architectures"
-        )
-    if variant not in __models[architecture]:
-        raise KeyError(
-            f'{variant} is not a registered variant of {architecture}. See `models.list_variants("{architecture}")` for available variants.'
-        )
-    return __models[architecture][variant][1]
 
 
 def _guess_num_layers(state_dict):
@@ -342,4 +320,4 @@ def get_model(
     return fms_model
 
 
-from fms.models import llama, mixtral, roberta
+from fms.models import llama, roberta

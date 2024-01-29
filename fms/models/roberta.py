@@ -286,13 +286,10 @@ def _roberta_factory_factory(config):
 
 
 models.register_model(
-    _architecture_name,
-    "micro",
-    _roberta_factory_factory(_micro_char_config),
-    _micro_char_config,
+    _architecture_name, "micro", _roberta_factory_factory(_micro_char_config)
 )
 models.register_model(
-    _architecture_name, "base", _roberta_factory_factory(_base_config), _base_config
+    _architecture_name, "base", _roberta_factory_factory(_base_config)
 )
 
 
