@@ -1,6 +1,6 @@
 from contextlib import nullcontext
 from functools import partial
-from typing import Any, Callable, Mapping, MutableMapping, Optional, Tuple
+from typing import Callable, MutableMapping, Optional, Tuple
 
 import torch
 from torch import nn
@@ -182,7 +182,9 @@ def _fsdp_wrap(
     # initializes parameters that are on meta devices
     def init_fn(x: nn.Module):
         if not rank0:
-            x.to_empty(device=device, recurse=False)
+            return x.to_empty(device=device, recurse=False)
+        else:
+            return x
 
     # TODO: enable other policies
     mp_policy = MixedPrecision(

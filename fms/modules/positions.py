@@ -233,15 +233,16 @@ class RotaryEmbedding(PositionEncoder):
         """
         assert len(q.size()) == 4
         assert len(k.size()) == 4
+
+        seq_len = max(k.size(2), q.size(2))
         if position_ids is None:
             # Compute position_ids based on cache config
             position_ids = torch.arange(
-                0, q.size(2), dtype=torch.long, device=q.device
-            ).repeat(q.size(0), 1)
+                0, seq_len, dtype=torch.long, device=q.device
+            ).repeat(k.size(0), 1)
             if use_cache and past_kv_state is not None:
                 position_ids += past_kv_state[0].size(2)
 
-        seq_len = q.size(2)
         q_ = q.float().reshape(*q.size()[:-1], -1, 2)  # B H L D/2 2
         k_ = k.float().reshape(*k.size()[:-1], -1, 2)  # B H L D/2 2
 
@@ -251,7 +252,11 @@ class RotaryEmbedding(PositionEncoder):
         freqs = self.cached_freqs[q.device.index][alpha][position_ids].unsqueeze(1)
 
         freqs = freqs.float()  # 1 1 L D/2 2 2
-        q_out = freqs.mul(q_.unsqueeze(-2)).sum(5).flatten(3)
-        k_out = freqs.mul(k_.unsqueeze(-2)).sum(5).flatten(3)
+        q_out = (
+            freqs[:, :, -q.size(2) :, :, :, :].mul(q_.unsqueeze(-2)).sum(5).flatten(3)
+        )
+        k_out = (
+            freqs[:, :, -k.size(2) :, :, :, :].mul(k_.unsqueeze(-2)).sum(5).flatten(3)
+        )
 
         return q_out.type_as(q).contiguous(), k_out.type_as(k).contiguous()
