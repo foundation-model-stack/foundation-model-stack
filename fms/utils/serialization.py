@@ -1,20 +1,9 @@
 import collections
-import itertools
 import os
 from collections import ChainMap
 from collections.abc import Iterable
 from pathlib import Path
-from typing import (
-    Any,
-    Callable,
-    Dict,
-    List,
-    Mapping,
-    MutableMapping,
-    Optional,
-    Tuple,
-    Union,
-)
+from typing import Any, Callable, List, Mapping, MutableMapping, Optional, Union
 
 import torch
 
@@ -165,7 +154,7 @@ def load_state_dict(
         return {}
     if checkpoint_sharding == "fsdp" and distributed_strategy not in ["fsdp", "hsdp"]:
         raise ValueError(f"FSDP checkpoints can only be loaded into an FSDP model")
-    if checkpoint_sharding == "tp" and distributed_strategy not in ["tp"]:
+    if checkpoint_sharding == "tp" and distributed_strategy != "tp":
         raise ValueError("TP checkpoints can only be loaded into a TP model")
 
     # Before creating the Path object, check if model_path has a glob pattern
