@@ -71,7 +71,7 @@ def _get_adapter(
         # if no adapter is registered, assume the attributes are already in
         # fms format.
         # should we raise an error here instead?
-        return lambda x: x
+        return lambda x, config: x
     else:
         return __adapters[architecture][source]
 
