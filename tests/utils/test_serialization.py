@@ -11,7 +11,7 @@ from fms.utils import serialization
 
 def test_register():
     with pytest.raises(KeyError):
-        serialization.register_adapter("llama", "meta", lambda x: x)
+        serialization.register_adapter("llama", "meta", lambda x, config: x)
 
 
 def test_adapt():
