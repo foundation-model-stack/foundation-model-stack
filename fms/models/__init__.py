@@ -34,7 +34,7 @@ def register_model(
     config: Optional[ModelConfig] = None,
 ):
     """
-    Registers a model variant to be made available in the registration API.
+    Registers a model variant and its config to be made available in the registration API.
     Args:
     architecture: The name of the model architecture, e.g. 'llama'
     variant: A reference for a particular configuration of the architecture,
@@ -346,4 +346,4 @@ def get_model(
     return fms_model
 
 
-from fms.models import llama, roberta
+from fms.models import llama, mixtral, roberta
