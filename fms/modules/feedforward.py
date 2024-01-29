@@ -296,3 +296,102 @@ class TPGatedLinearUnit(GatedLinearUnit, TPModule):
         x_par = copy_to_tensor_model_parallel_region(x)
         out_par = GatedLinearUnit.forward(self, x_par)
         return reduce_from_tensor_model_parallel_region(out_par)
+
+
+class ConditionalFeedForward(nn.Module):
+    def __init__(self, num_experts, dim, intermediate_size):
+        super().__init__()
+        self.w1 = nn.Parameter(torch.empty(num_experts, intermediate_size, dim))
+        self.w2 = nn.Parameter(torch.empty(num_experts, intermediate_size, dim))
+        self.w3 = nn.Parameter(torch.empty(num_experts, intermediate_size, dim))
+
+    def forward(self, x: torch.Tensor, expert_indices: torch.Tensor) -> torch.Tensor:
+        w1_weights = self.w1[expert_indices].transpose(-1, -2)  # [T, A, D, D]
+        w3_weights = self.w3[expert_indices].transpose(-1, -2)  # [T, A, D, D]
+        w2_weights = self.w2[expert_indices]  # [T, A, D, D]
+        x1 = F.silu(torch.einsum("ti,taio -> tao", x, w1_weights))
+        x3 = torch.einsum("ti, taio -> tao", x, w3_weights)
+        expert_outs = torch.einsum("tao, taoi -> tai", (x1 * x3), w2_weights)
+        return expert_outs
+
+
+class TPConditionalFeedForward(ConditionalFeedForward, TPModule):
+    """
+    Args
+    ----
+    Check ConditionalFeedForward for up-to-date docs
+
+    world_size: int
+        the number of processes running this model in TP
+    rank: int
+        the index of this process wrt to the rest running the model in TP
+    """
+
+    def __init__(
+        self,
+        num_experts,
+        dim,
+        intermediate_size,
+        group: Optional[ProcessGroup] = None,
+    ):
+        assert torch.distributed.is_initialized()
+        rank, world_size = distributed.rank_and_world(group)
+
+        assert (
+            intermediate_size % world_size == 0
+        ), "Hidden dim must be divisible by world size"
+        ConditionalFeedForward.__init__(
+            self,
+            num_experts,
+            dim,
+            intermediate_size / world_size,
+        )
+        self.setup_tp(rank, world_size)
+
+    def list_rowwise_weights(self) -> List[str]:
+        return ["w1", "w2", "w3"]
+
+    @staticmethod
+    def import_module(
+        cff: ConditionalFeedForward, group: ProcessGroup
+    ) -> "TPConditionalFeedForward":
+        tp_cff = TPConditionalFeedForward(
+            num_experts=cff.num_experts,
+            dim=cff.dim,
+            intermediate_size=cff.intermediate_size,
+            group=group,
+        )
+
+        return tp_cff
+
+    def forward(self, x, expert_indices):
+        x_par = copy_to_tensor_model_parallel_region(x)
+        out_par = ConditionalFeedForward.forward(self, x_par, expert_indices)
+        return reduce_from_tensor_model_parallel_region(out_par)
+
+
+class MOEFeedForward(nn.Module):
+    def __init__(
+        self, num_experts, num_activated_experts, dim, intermediate_size
+    ) -> None:
+        super().__init__()
+        self.gate = nn.Linear(dim, num_experts, bias=False)
+        self.cond_ffn = ConditionalFeedForward(num_experts, dim, intermediate_size)
+        self.dim = dim
+        self.num_activated_experts = num_activated_experts
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        B, S = x.shape[:2]
+        x = x.view(-1, self.dim)
+        # T = num_tokens, E = num_experts, D = hidden dim, A = activated experts
+        # x: [T, D]
+        scores = self.gate(x)  # [T, E]
+        expert_weights = F.softmax(scores, dim=-1)
+        expert_weights, expert_indices = torch.topk(
+            expert_weights, self.num_activated_experts, dim=-1
+        )  # [T, A], [T, A]
+        expert_weights /= expert_weights.sum(dim=-1, keepdim=True)  # [T, A]
+        expert_outs = self.cond_ffn(x, expert_indices)
+        return torch.einsum("tai,ta -> ti", expert_outs, expert_weights).view(
+            B, S, self.dim
+        )
