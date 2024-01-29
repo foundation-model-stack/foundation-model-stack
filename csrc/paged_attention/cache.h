@@ -12,3 +12,13 @@ void reshape_and_cache(
   torch::Tensor& key_cache,
   torch::Tensor& value_cache,
   torch::Tensor& slot_mapping);
+
+void reshape_and_cache_key(
+  torch::Tensor& key,
+  torch::Tensor& key_cache,
+  torch::Tensor& slot_mapping);
+
+void reshape_and_cache_value(
+  torch::Tensor& value,
+  torch::Tensor& value_cache,
+  torch::Tensor& slot_mapping);

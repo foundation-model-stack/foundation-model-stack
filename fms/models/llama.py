@@ -110,11 +110,18 @@ class LLaMABlock(nn.Module):
         *,
         mask=None,
         position_ids=None,
-        cache_data_layer=None,
+        past_key_value_state=None,
         use_cache=False,
         is_causal_mask=False,
         attn_algorithm=None,
     ):
+        # if the cache is not empty, we need to get the kv cache for self and cross attention
+        self_attn_past_key_value = past_key_value_state
+        # if past_key_value_state is not None:
+        #     self_attn_past_key_value = past_key_value_state[:2]
+        # else:
+        #     self_attn_past_key_value = None
+
         # first we do MHA and Add&Norm
         residual = x
         x = self.ln(x)
@@ -125,7 +132,7 @@ class LLaMABlock(nn.Module):
             mask=mask,
             position_ids=position_ids,
             attn_algorithm=attn_algorithm,
-            cache_data_layer=cache_data_layer,
+            past_key_value_state=self_attn_past_key_value,
             use_cache=use_cache,
             is_self=True,
             is_causal_mask=is_causal_mask,
@@ -241,17 +248,25 @@ class LLaMA(nn.Module):
         x_in,
         mask=None,
         position_ids=None,
-        cache_data=None,
+        past_key_value_states=None,
         use_cache=False,
         attn_algorithm=None,
     ):
+        # Embed the given vocabulary indices using the given attention mask, with pre-/post-norm and dropout as specified
+        # x_in: batch_size x seq_len
+        # mask: batch_size x seq_len x seq_len
+        # bias: nheads x seq_len x seq_len
+        if past_key_value_states is None or len(past_key_value_states) == 0:
+            past_key_value_states = [None for _ in range(len(self.layers))]
+
         qlen = x_in.size(1)
         filled_cache = False
 
         # if we are using the cache, the key length needs to be extended with the past keys length
         if use_cache:
-            if cache_data:
-                filled_cache = cache_data.is_filled()
+            if past_key_value_states is not None:
+                # TODO: This will need to change for compile as context lengths should be a tensor
+                filled_cache = any(x != 0 for x in past_key_value_states[0][0].context_lengths)
 
         # if mask is none, we need to specify causal mask
         if mask is None:
@@ -274,9 +289,7 @@ class LLaMA(nn.Module):
                 x=x_in,
                 mask=mask,
                 position_ids=position_ids,
-                cache_data_layer=None
-                if cache_data is None
-                else cache_data.get_layer(i),
+                past_key_value_state=past_key_value_states[i],
                 use_cache=use_cache,
                 is_causal_mask=is_causal_mask,
                 attn_algorithm=attn_algorithm,
@@ -301,18 +314,13 @@ class LLaMA(nn.Module):
         x,
         mask=None,
         position_ids=None,
-        cache_data=None,
+        past_key_value_states=None,
         use_cache=False,
         only_last_token=False,
         attn_algorithm=None,
     ):
         output, cache = self._helper(
-            x,
-            mask,
-            position_ids,
-            cache_data,
-            use_cache,
-            attn_algorithm,
+            x, mask, position_ids, past_key_value_states, use_cache, attn_algorithm
         )
 
         if only_last_token:

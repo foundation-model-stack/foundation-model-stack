@@ -81,7 +81,6 @@ class MultiHeadAttention(nn.Module):
             torch.backends.cuda.mem_efficient_sdp_enabled()
         )
         self.previous_math: bool = torch.backends.cuda.math_sdp_enabled()
-        self.head_size = emb_dim // nheads
         self.reset_params(gain)
 
     def reset_params(self, gain=1):
@@ -111,14 +110,14 @@ class MultiHeadAttention(nn.Module):
         mask: Optional[Tensor] = None,
         position_ids=None,
         attn_algorithm=None,
-        cache_data_layer=None,
+        past_key_value_state: Optional[Tuple[Tensor, Tensor]] = None,
         use_cache=False,
         is_self=True,
         is_causal_mask=False,
     ):
         """
-        cache_data_layer: CacheDataLayer, optional
-            A single layer of the cache (default is None)
+        past_key_value_state: tuple
+            the cache to be used in attention of the form (<self/cross>_key, <self/cross>_value)
         position_ids: Optional[torch.LongTensor]
             The position of each of the tokens encoded in q and k. Used for RoPE embeddings
         use_cache: bool
@@ -154,7 +153,7 @@ class MultiHeadAttention(nn.Module):
         # b x kvlen x d
         # b x kvlen x h x ds
         # b x h x kvlen x ds
-        if is_self:
+        if is_self or past_key_value_state is None:
             keys = self.key(k).view(
                 batch_size, kv_len, self.kvheads, self.emb_kq_per_head
             )
@@ -173,21 +172,19 @@ class MultiHeadAttention(nn.Module):
                     position_ids,
                     use_cache,
                 )
+        is_prompt = past_key_value_state[0] is None or any(x != 0 for x in past_key_value_state[0].context_lengths)
 
-        # store the values in kv-cache
-        if use_cache and cache_data_layer:
-            keys, values = cache_data_layer.store(keys, values)
+        # if you want to use caching and past_key_value_state is not None meaning you have values in your cache
+        if use_cache and past_key_value_state is not None:
+            if is_self:
+                keys = torch.cat((past_key_value_state[0], keys), dim=2)
+                values = torch.cat((past_key_value_state[1], values), dim=2)
+            else:
+                keys = past_key_value_state[0]
+                values = past_key_value_state[1]
 
-        custom_attention = (
-            use_cache
-            and cache_data_layer
-            and isinstance(cache_data_layer, AttentionComputationMixin)
-        )
-
-        # Provide a method for a user to perform their own implementation of attention in the cache case if required
-        if custom_attention and cache_data_layer.is_filled():
-            attn = cache_data_layer.attend(queries, keys, values)
-        # otherwise we always fall back into SDPA as this is either a prompt or it is a single contiguous cache
+        if attn_algorithm == "paged" and not is_prompt:
+            # paged attn stuff
         else:
             # Merge rel pos bias and mask into single float mask
             if mask is not None:
@@ -255,11 +252,7 @@ class MultiHeadAttention(nn.Module):
 
         # if use_cache=True, we return the hidden_state as well as the kv cache
         if use_cache:
-            # note: needed to add this check to return the data_layer as it fails compile otherwise
-            return out, cache_data_layer.data_layer if custom_attention else (
-                keys,
-                values,
-            )
+            return out, (keys, values)
         else:
             return out
 
