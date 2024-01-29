@@ -34,7 +34,7 @@ def register_model(
     config: Optional[ModelConfig] = None,
 ):
     """
-    Registers a model variant to be made available in the registration API.
+    Registers a model variant and its confg to be made available in the registration API.
     Args:
     architecture: The name of the model architecture, e.g. 'llama'
     variant: A reference for a particular configuration of the architecture,
@@ -52,7 +52,7 @@ def register_model(
         raise KeyError(
             f"Variant {variant} already registered for architecture {architecture}"
         )
-    variants[variant] = factory
+    variants[variant] = (factory, config)
     __models[architecture] = variants
 
 
@@ -98,7 +98,7 @@ def _get_model_instance(
             f'{variant} is not a registered variant of {architecture}. See `models.list_variants("{architecture}")` for available variants.'
         )
 
-    model_factory = __models[architecture][variant]
+    model_factory = __models[architecture][variant][0]
 
     orig = torch.get_default_dtype()
 
