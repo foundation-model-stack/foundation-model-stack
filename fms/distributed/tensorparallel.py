@@ -51,7 +51,11 @@ def apply_moe_tp(par_mod: nn.Module, mod: nn.Module, param_names, world_size, ra
     output_size_per_partition = mod.intermediate_size // world_size
     with torch.no_grad():
         for param in param_names:
-            getattr(par_mod, param).copy_(torch.split(getattr(par_mod, param), output_size_per_partition, dim=1)[rank])
+            getattr(par_mod, param).copy_(
+                torch.split(getattr(par_mod, param), output_size_per_partition, dim=1)[
+                    rank
+                ]
+            )
 
 
 def _all_reduce(input_: torch.Tensor) -> torch.Tensor:
