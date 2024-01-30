@@ -26,6 +26,7 @@ jobs:
         pip install types-requests
         pip install mypy
         pip install pyarrow-stubs==10.0.1.7
+        pip install safetensors
         pip install .
         
     - name: Test with pytest

@@ -35,7 +35,7 @@ def test_load():
     m = models._get_model_instance("llama", "micro")
     sd = m.state_dict()
 
-    with tempfile.NamedTemporaryFile() as f:
+    with tempfile.NamedTemporaryFile(suffix=".pth") as f:
         torch.save(sd, f.name)
         loaded = models.get_model("llama", "micro", f.name)
 
