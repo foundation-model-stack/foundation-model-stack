@@ -5,7 +5,7 @@ import re
 from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping, Optional
+from typing import Mapping, Optional
 
 import torch
 import torch.nn as nn
@@ -363,25 +363,14 @@ def _llama_factory_factory(config):
 
 
 models.register_model(
-    _architecture_name,
-    "micro",
-    _llama_factory_factory(_micro_char_config),
-    _micro_char_config,
+    _architecture_name, "micro", _llama_factory_factory(_micro_char_config)
 )
-models.register_model(
-    _architecture_name, "7b", _llama_factory_factory(_7b_config), _7b_config
-)
-models.register_model(
-    _architecture_name, "13b", _llama_factory_factory(_13b_config), _13b_config
-)
-models.register_model(
-    _architecture_name, "70b", _llama_factory_factory(_70b_config), _70b_config
-)
+models.register_model(_architecture_name, "7b", _llama_factory_factory(_7b_config))
+models.register_model(_architecture_name, "13b", _llama_factory_factory(_13b_config))
+models.register_model(_architecture_name, "70b", _llama_factory_factory(_70b_config))
 
 
-def _rename_weights_to_fms(
-    orig_sd: Mapping[str, Any], model_config: Optional[ModelConfig]
-):
+def _rename_weights_to_fms(orig_sd):
     replacements = [
         (r"^tok_embeddings", "shared.emb"),
         (r"^norm", "dec_norm"),
@@ -408,7 +397,7 @@ def _rename_weights_to_fms(
     return new_sd
 
 
-def _hf_sd_to_fms_sd(hf_sd: Mapping, model_config: Optional[ModelConfig]) -> Mapping:
+def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
     replacements = [
         (r"^lm_head.weight", "shared.head.weight"),
         (r"^model.embed_tokens.weight", "shared.emb.weight"),

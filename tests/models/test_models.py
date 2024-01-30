@@ -12,7 +12,6 @@ from fms.utils import serialization
 def test_register():
     with pytest.raises(KeyError):
         models.register_model("llama", "7b", lambda x: x)
-        models.register_model("llama", "7b", lambda x: x, None)
 
 
 def test_getmodel():
@@ -25,16 +24,6 @@ def test_getmodel():
 
     micro = models._get_model_instance("llama", "micro")
     assert micro.config.nlayers == 5
-
-
-def test_getconfig():
-    with pytest.raises(KeyError):
-        models._get_model_config("foo", "foo")
-    with pytest.raises(KeyError):
-        models._get_model_config("llama", "foo")
-
-    micro_config = models._get_model_config("llama", "micro")
-    assert micro_config.nlayers == 5
 
 
 def test_list():
