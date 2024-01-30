@@ -334,11 +334,11 @@ def _mixtral_factory_factory(config):
 
 
 models.register_model(
-    _architecture_name, "8x7b", _mixtral_factory_factory(_8x7b_config), _8x7b_config
+    _architecture_name, "8x7b", _mixtral_factory_factory(_8x7b_config)
 )
 
 
-def _hf_sd_to_fms_sd(hf_sd: Mapping, config: MixtralConfig) -> Mapping:
+def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
     replacements = [
         (r"output.weight", "shared.head.weight"),
         (r"tok_embeddings.weight", "shared.emb.weight"),
