@@ -1,20 +1,15 @@
-import json
 import math
-import os
 import re
-from collections import OrderedDict
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Mapping, Optional
 
 import torch
 import torch.nn as nn
 
-from fms import distributed, models
+from fms import models
 from fms.distributed.strategy import (
     DistributedStrategy,
     NoOpStrategy,
-    TensorParallelStrategy,
     UniformModelParallelStrategy,
 )
 from fms.modules.attention import MultiHeadAttention
@@ -23,9 +18,8 @@ from fms.modules.feedforward import MOEFeedForward
 from fms.modules.layernorm import LayerNormParameterized
 from fms.modules.positions import RotaryEmbedding
 from fms.utils import serialization
-from fms.utils.activation import str_to_activation
 from fms.utils.config import ModelConfig
-from fms.utils.tokenizers import _has_hf, get_tokenizer
+from fms.utils.serialization import FusableWeightsMissingError
 
 
 @dataclass
@@ -369,10 +363,31 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping, config: MixtralConfig) -> Mapping:
             new_name = re.sub(pattern, repl, new_name)
         new_sd[new_name] = param
 
+        if "gate" in new_name:
+            weight_name = name.replace("gate", "w1")[:-7]
+            if weight_name not in hf_sd:
+                missing_weights = [
+                    name.replace("gate", "w1")[:-7],
+                    name.replace("gate", "w2")[:-7],
+                    name.replace("gate", "w3")[:-7],
+                ]
+                raise FusableWeightsMissingError(missing_weights)
+
         if "w1" in new_name or "w2" in new_name or "w3" in new_name:
+            gate_name = re.sub(r"w\d", "gate", name) + ".weight"
+            if gate_name not in hf_sd:
+                missing_weights = [
+                    gate_name,
+                    re.sub(r"w\d", "w1", name),
+                    re.sub(r"w\d", "w2", name),
+                    re.sub(r"w\d", "w3", name),
+                ]
+                missing_weights = [w for w in missing_weights if w != name]
+                raise FusableWeightsMissingError(missing_weights)
+            num_experts = hf_sd[gate_name].size(0)
             temp = new_sd[new_name]
             new_sd[new_name] = temp.reshape(
-                config.num_experts, config.hidden_dim, config.dim
+                num_experts, temp.size(0) // num_experts, temp.size(1)
             ).contiguous()
 
     if "gate" in new_name:

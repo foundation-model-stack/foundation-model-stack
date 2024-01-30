@@ -304,6 +304,7 @@ def load_state_dict_into_model(
                 fms_partial_sd = adapter(partial_sd, model_config)
             except FusableWeightsMissingError as e:
                 for weight in e.missing_weights:
+                    used_keys.add(weight)
                     partial_sd[weight] = state_dict[weight]
                     if partial_sd[weight].device != initial_device:
                         partial_sd[weight] = partial_sd[weight].to(
@@ -487,5 +488,7 @@ def _load_partial_state_dict(
                         rank,
                         world_size,
                     )
+                if key_steps[-1] in tp_module.moe_param_names():
+                    _copy_embedding(param, tensor_value, rank, world_size)
         except AttributeError:
             unused_params.append(key)
