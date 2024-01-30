@@ -8,18 +8,15 @@ from typing import Any, Callable, List, Mapping, MutableMapping, Optional, Union
 import torch
 
 from fms.modules.tp import TPModule
-from fms.utils.config import ModelConfig
 
 
-__adapters: MutableMapping[
-    str, MutableMapping[str, Callable[[Mapping, Optional[ModelConfig]], Mapping]]
-] = {}
+__adapters: MutableMapping[str, MutableMapping[str, Callable[[Mapping], Mapping]]] = {}
 
 
 def register_adapter(
     architecture: str,
     source: str,
-    adapter: Callable[[Mapping, Optional[ModelConfig]], Mapping],
+    adapter: Callable[[Mapping], Mapping],
 ):
     """
     Registers a state dict adapter to be available to the (de) serialization
@@ -32,9 +29,7 @@ def register_adapter(
     adapter: the class of the adapter. The class must accept one constructor
                 parameter, which will be a state dict (`OrderedDict`)
     """
-    sources: MutableMapping[
-        str, Callable[[Mapping, Optional[ModelConfig]], Mapping]
-    ] = {}
+    sources: MutableMapping[str, Callable[[Mapping], Mapping]] = {}
     if architecture in __adapters:
         sources = __adapters[architecture]
 
@@ -62,7 +57,7 @@ def list_sources(architecture: str):
 
 def _get_adapter(
     architecture: str, source: Optional[str]
-) -> Callable[[Mapping[str, Any], Optional[ModelConfig]], Mapping[str, Any]]:
+) -> Callable[[Mapping[str, Any]], Mapping[str, Any]]:
     if (
         source is None
         or architecture not in __adapters
@@ -71,16 +66,13 @@ def _get_adapter(
         # if no adapter is registered, assume the attributes are already in
         # fms format.
         # should we raise an error here instead?
-        return lambda x, config: x
+        return lambda x: x
     else:
         return __adapters[architecture][source]
 
 
 def get_adapted(
-    architecture: str,
-    source: Optional[str],
-    state_dict: Mapping[str, Any],
-    model_config: Optional[ModelConfig] = None,
+    architecture: str, source: Optional[str], state_dict: Mapping[str, Any]
 ) -> Mapping[str, Any]:
     """
     Convert a state dict to FMS format, using an adapter specified by name.
@@ -90,13 +82,12 @@ def get_adapted(
                     E.g. llama.
     source: A reference to an attribute format
     state_dict: the model.state_dict() to be converted/adapted.
-    model_config: the model config if it exists, else None
     """
     # sometimes we only load onto rank 0 so may not have a state_dict here.
     if not len(state_dict):
         return state_dict
     adapter = _get_adapter(architecture, source)
-    adapted = adapter(state_dict, model_config)
+    adapted = adapter(state_dict)
     return adapted
 
 
@@ -253,7 +244,6 @@ def load_state_dict_into_model(
     state_dict: MutableMapping[str, Any],
     architecture: str,
     source: str,
-    model_config: Optional[ModelConfig] = None,
     distributed_strategy: Optional[str] = None,
     checkpoint_sharding: Optional[str] = None,
     initial_device: torch.device = torch.device("cpu"),
@@ -274,7 +264,6 @@ def load_state_dict_into_model(
     source: If the weights in the state dict didn't come from an FMS model,
             `source` specifies which conversion function might be needed.
             See `serialization.list_sources(architecture)`
-    model_config: The config of the model, if it exists, otherwise None
     distributed_strategy: the kind of possibly-distributed model in which we
             intend to load these weights. E.g. tp, fsdp, None. Used for weight
             sharding.
@@ -301,7 +290,7 @@ def load_state_dict_into_model(
                 partial_sd = {key: state_dict[key]}
                 if partial_sd[key].device != initial_device:
                     partial_sd[key] = partial_sd[key].to(device=initial_device)
-                fms_partial_sd = adapter(partial_sd, model_config)
+                fms_partial_sd = adapter(partial_sd)
             except FusableWeightsMissingError as e:
                 for weight in e.missing_weights:
                     partial_sd[weight] = state_dict[weight]
@@ -309,7 +298,7 @@ def load_state_dict_into_model(
                         partial_sd[weight] = partial_sd[weight].to(
                             device=initial_device
                         )
-                fms_partial_sd = adapter(partial_sd, model_config)
+                fms_partial_sd = adapter(partial_sd)
             _load_partial_state_dict(
                 model, fms_partial_sd, needs_tp_sharding, rank, world_size
             )
