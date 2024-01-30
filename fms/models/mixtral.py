@@ -32,7 +32,7 @@ from fms.utils.tokenizers import _has_hf, get_tokenizer
 class MixtralConfig(ModelConfig):
     src_vocab_size: int = 32_000  # can be set by tokenizer
     dim: int = 4096
-    norm_eps: float = 1e-6
+    norm_eps: float = 1e-5
     nheads: int = 32
     kvheads: int = 8
     nlayers: int = 32
@@ -344,13 +344,11 @@ models.register_model(
 )
 
 
-def _hf_sd_to_fms_sd(hf_sd: Mapping, config: Optional[ModelConfig]) -> Mapping:
-    if not isinstance(config, MixtralConfig):
-        raise ValueError("This adapter requires a MixtralConfig")
+def _hf_sd_to_fms_sd(hf_sd: Mapping, config: MixtralConfig) -> Mapping:
     replacements = [
         (r"output.weight", "shared.head.weight"),
         (r"tok_embeddings.weight", "shared.emb.weight"),
-        (r"^model.norm", "dec_norm"),
+        (r"^norm", "dec_norm"),
         (r"^model.layers", "layers"),
         (r"attention\.wk", "attn.key"),
         (r"attention\.wv", "attn.value"),

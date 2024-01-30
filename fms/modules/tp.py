@@ -9,6 +9,7 @@ from torch.distributed.distributed_c10d import ProcessGroup
 from fms.distributed.tensorparallel import (
     apply_colwise_tp,
     apply_embedding_tp,
+    apply_moe_tp,
     apply_rowwise_tp,
 )
 
@@ -40,6 +41,9 @@ class TPModule(nn.Module, metaclass=ABCMeta):
     def embedding_param_names(self) -> List[str]:
         return []
 
+    def moe_param_names(self) -> List[str]:
+        return []
+
     @staticmethod
     @abstractmethod
     def import_module(module, group: ProcessGroup):
@@ -67,11 +71,20 @@ class TPModule(nn.Module, metaclass=ABCMeta):
                 self.world_size,
                 self.rank,
             )
+        if len(self.moe_param_names()) > 0:
+            apply_moe_tp(
+                self,
+                module,
+                self.moe_param_names(),
+                self.world_size,
+                self.rank,
+            )
         tp_sharded_modules = list(
             itertools.chain(
                 self.colwise_param_names(),
                 self.rowwise_param_names(),
                 self.embedding_param_names(),
+                self.moe_param_names(),
             )
         )
         with torch.no_grad():

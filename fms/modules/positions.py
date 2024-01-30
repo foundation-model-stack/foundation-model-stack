@@ -101,7 +101,7 @@ class Alibi(PositionEncoder):
 
 class RotaryEmbedding(PositionEncoder):
     def __init__(
-        self, dim: int, ratio: float = 10_000, max_seq_len=2048, ntk_scaling=False
+        self, dim: int, ratio: float = 10_000., max_seq_len=2048, ntk_scaling=False
     ):
         """
         This implementation of Rotary Position Embeddings (RoPE) avoids

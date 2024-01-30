@@ -47,6 +47,13 @@ def apply_embedding_tp(par_mod: nn.Embedding, mod: nn.Embedding, world_size, ran
     # print(f"For rank {rank}, we have the following weights: Base weight {mod.weight} bias {mod.bias}; Par weight {par_mod.weight}, bias {par_mod.bias}")
 
 
+def apply_moe_tp(par_mod: nn.Module, mod: nn.Module, param_names, world_size, rank):
+    output_size_per_partition = mod.intermediate_size // world_size
+    with torch.no_grad():
+        for param in param_names:
+            getattr(par_mod, param).copy_(torch.split(getattr(par_mod, param), output_size_per_partition, dim=1)[rank])
+
+
 def _all_reduce(input_: torch.Tensor) -> torch.Tensor:
     """All-reduce the input tensor across model parallel group."""
     world_size = torch.distributed.get_world_size()
