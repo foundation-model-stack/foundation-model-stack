@@ -4,7 +4,7 @@ import logging
 from tqdm import tqdm
 import torch
 from transformers import AutoTokenizer
-from auto_gptq import AutoGPTQForCausalLM  # or the correct class for AutoGPTQForCausalLM
+from auto_gptq import AutoGPTQForCausalLM 
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -57,43 +57,15 @@ def benchmark_generation_speed(model, tokenizer, prompt, batch_size, device, num
 
 
 
-# # Define the benchmark function
-# def benchmark_generation_speed(model, tokenizer, prompt, batch_size, device):
-#     token_dict = tokenizer([prompt] * batch_size, return_tensors="pt", padding="longest").to(device)
-
-#     # Warmup
-#     logger.info("Starting warmup...")
-#     for _ in tqdm(range(1), desc="Warmup", leave=False):
-#         with torch.inference_mode():
-#             _ = model.generate(**token_dict, min_length=30, max_length=30)
-
-#     # Benchmark
-#     logger.info("Starting benchmark...")
-#     start = time.time()
-#     with torch.inference_mode():
-#         outputs_ids = model.generate(**token_dict, min_length=30, max_length=30)
-#     end = time.time()
-
-#     # Calculate statistics
-#     generation_time = end - start
-#     num_generated_tokens = sum(len(output_ids) for output_ids in outputs_ids) - batch_size * len(token_dict['input_ids'][0])
-#     tokens_per_second = num_generated_tokens / generation_time
-
-#     # Log statistics
-#     logger.info(f"Batch size: {batch_size}, Time: {generation_time:.2f}s, Tokens/s: {tokens_per_second:.2f}, Total tokens: {num_generated_tokens}")
-
-#     # Return statistics for potential further analysis
-#     return generation_time, tokens_per_second, num_generated_tokens
-
 def main():
-    parser = argparse.ArgumentParser(description='Benchmark AutoGPTQForCausalLM with Configurable Settings')
-    parser.add_argument('--use_triton', type=lambda x: (str(x).lower() == 'true'), help='Use NVIDIA Triton for optimization')
+    parser = argparse.ArgumentParser(description='Benchmark Llama-70B')
+    parser.add_argument('--use_triton', type=lambda x: (str(x).lower() == 'true'), help='use Triton Kernel')
     parser.add_argument('--batch_size', type=int, required=True, help='Batch size for the benchmark')
     args = parser.parse_args()
 
-    # Set up device and model paths
+   
     device = "cuda:5"  
-    quantized_model_dir = '/net/storage149/autofs/css22/ccyang/fm-models/llama-gptq/gptq_output_act0_grp128_bluewiki'  # Replace with your model directory
+    quantized_model_dir = '/net/storage149/autofs/css22/ccyang/fm-models/llama-gptq/gptq_output_act0_grp128_bluewiki' 
 
     
     # Load tokenizer and model
