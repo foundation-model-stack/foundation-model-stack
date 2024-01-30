@@ -78,12 +78,12 @@ jobs:
         GITHUB_TOKEN: ${{ secrets.LAND_TOKEN }}
 
     - name: Create URL to the run output
-      if: ${{ failure() && steps.landPR.outcome == 'failure' }}
+      if: ${{ failure() && steps.landStack.outcome == 'failure' }}
       id: vars
       run: echo "run-url=https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >> $GITHUB_OUTPUT
 
     - name: Create comment
-      if: ${{ failure() && steps.landPR.outcome == 'failure' }}
+      if: ${{ failure() && steps.landStack.outcome == 'failure' }}
       uses: peter-evans/create-or-update-comment@v2
       with:
         token: ${{ secrets.LAND_TOKEN }}
