@@ -14,49 +14,73 @@ import sys
 import requests
 
 
-class GHStackChecks:
-    def __init__(self, token, event):
-        self.gh = requests.Session()
-        self.gh.headers.update(
-            {
-                "Authorization": f"Bearer {token}",
-                "Accept": "application/vnd.github+json",
-                "X-GitHub-Api-Version": "2022-11-28",
-            }
+def get_session(token):
+    gh = requests.Session()
+    gh.headers.update(
+        {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+        }
+    return gh
+
+# Check condition. Post GitHub comment and exit(1) in false
+def must(session, repo, pr, cond, msg):
+    if not cond:
+        print(msg)
+        session.post(
+            f"https://api.github.com/repos/{repo}/issues/{pr}/comments",
+            json={
+                "body": f"ghstack bot failed: {msg}",
+            },
         )
+        exit(1)
+
+
+# Check if the PR is in GHStack format or GitHub format
+def is_ghstack(session, event):
+    # Extract the PR from the event
+    pr = event["event"]["client_payload"]["pull_request"]
+    must(session, event["repository"], 0, "No PR object found in the event")
+
+    # Check the head_ref
+    head_ref = pr["head"]["ref"]
+    self.must(session, event["repository"], pr["number"], head_ref, "Not head ref found in the event")
+    return re.match(r"^gh/[A-Za-z0-9-]+/[0-9]+/head$", head_ref)
+
+
+class ChatOps:
+    def __init__(self, session, event):
+        self.gh = session
         self.event = event
-        self.REPO = event["repository"]
+
+        # Extract some useful data from the event
         self.PR = event["event"]["client_payload"]["pull_request"]
-        self.NUMBER = self.PR["number"]
-        self.pr_numbers = self.shared_checks()
+        self.REPO = event["repository"]
+        self.pr_ref = get_pr_ref()
 
-    def must(self, cond, msg):
-        if not cond:
-            print(msg)
-            self.gh.post(
-                f"https://api.github.com/repos/{self.REPO}/issues/{self.NUMBER}/comments",
-                json={
-                    "body": f"ghstack bot failed: {msg}",
-                },
-            )
-            exit(1)
-
-    def shared_checks(self):
-        self.head_ref = self.PR["head"]["ref"]
-        self.must(
-            self.head_ref
-            and re.match(r"^gh/[A-Za-z0-9-]+/[0-9]+/head$", self.head_ref),
-            "Not a ghstack PR",
-        )
-        self.orig_ref = self.head_ref.replace("/head", "/orig")
+        # Fetch the required branches locally
         print(":: Fetching newest main...")
         self.must(os.system("git fetch origin main") == 0, "Can't fetch main")
         print(":: Fetching orig branch...")
         self.must(
-            os.system(f"git fetch origin {self.orig_ref}") == 0,
+            os.system(f"git fetch origin {self.pr_ref}") == 0,
             "Can't fetch orig branch",
-        )
+    )
 
+    def must(self, cond, msg):
+        must(self.gh, self.REPO, self.NUMBER, cond, msg)
+
+
+class GHStack(ChatOps):
+    def __init__(self, session, event):
+        super().__init__()
+        self.pr_numbers = self.ghstack_pr_numbers()
+
+    def get_pr_ref(self)
+        return self.PR["head"]["ref"].replace("/head", "/orig")
+
+    def ghstack_pr_numbers(self):
         proc = subprocess.Popen(
             "git log FETCH_HEAD...$(git merge-base FETCH_HEAD origin/main)",
             stdout=subprocess.PIPE,
@@ -155,16 +179,129 @@ class GHStackChecks:
         print(":: All PRs are ready to be rebased!")
 
 
+class ChatOps:
+    def __init__(self, session, event):
+        self.gh = session
+        self.event = event
+
+        # Extract some useful data from the event
+        self.PR = event["event"]["client_payload"]["pull_request"]
+        self.REPO = event["repository"]
+        self.pr_ref = get_pr_ref()
+
+        # Fetch the required branches locally
+        print(":: Fetching newest main...")
+        self.must(os.system("git fetch origin main") == 0, "Can't fetch main")
+        print(":: Fetching orig branch...")
+        self.must(
+            os.system(f"git fetch origin {self.pr_ref}") == 0,
+            "Can't fetch orig branch",
+    )
+
+    def must(self, cond, msg):
+        must(self.gh, self.REPO, self.NUMBER, cond, msg)
+
+
+class GitHub(ChatOps):
+
+    def get_pr_ref(self)
+        return self.PR["head"]["ref"]
+
+    def land(self):
+        # Enforce requirements for the PR
+
+        # Checking Approvals
+        print(f":: Checking PR status #{self.NUMBER}... ", end="")
+        resp = self.gh.get(f"https://api.github.com/repos/{self.REPO}/pulls/{self.NUMBER}")
+        self.must(resp.ok, "Error Getting PR Object!")
+        pr_obj = resp.json()
+
+        resp = self.gh.get(
+            f"https://api.github.com/repos/{self.REPO}/pulls/{self.NUMBER}/reviews"
+        )
+        self.must(resp.ok, "Error Getting PR Reviews!")
+        reviews = resp.json()
+        idmap = {}
+        approved = False
+        for r in reviews:
+            s = r["state"]
+            if s not in ("COMMENTED",):
+                idmap[r["user"]["login"]] = r["state"]
+
+        for u, cc in idmap.items():
+            approved = approved or cc == "APPROVED"
+            self.must(
+                cc in ("APPROVED", "DISMISSED"),
+                f"@{u} has stamped PR #{n} `{cc}`, please resolve it first!",
+            )
+
+        self.must(approved, f"PR #{n} is not approved yet!")
+
+        # Checking CI Jobs
+        resp = self.gh.get(
+            f'https://api.github.com/repos/{self.REPO}/commits/{pr_obj["head"]["sha"]}/check-runs'
+        )
+        self.must(resp.ok, "Error getting check runs status!")
+        checkruns = resp.json()
+        for cr in checkruns["check_runs"]:
+            status = cr.get("conclusion", cr["status"])
+            name = cr["name"]
+            if name == "Copilot for PRs":
+                continue
+            self.must(
+                status in ("success", "neutral"),
+                f"PR #{n} check-run `{name}`'s status `{status}` is not success!",
+            )
+        print("SUCCESS!")
+
+        print(":: All PRs are ready to be landed!")
+
+    def rebase(self):
+        # Check if the PR owner matches the actor
+        actor = self.event["event"]["client_payload"]["github"]["actor"]
+        self.must(actor, "Event actor not found!")
+
+        pr_owner = self.PR["user"]["login"]
+        self.must(actor, "PR Owner not found!")
+
+        # If the comment was not left by the owner, it's only allowed for owners
+        if actor != pr_owner:
+            # Get the user permissions on the repo
+            resp = self.gh.get(
+                f"https://api.github.com/repos/{self.REPO}/collaborators/{actor}/permission"
+            )
+            self.must(
+                resp.ok,
+                f"User {actor} must be a maintainer {self.REPO} to rebase someone else's PR",
+            )
+            permissions = resp.json()
+
+            # Check if the actor is an OWNER (permission "write" or "admin")
+            # Reference: https://docs.github.com/en/rest/collaborators/collaborators?apiVersion=2022-11-28#check-if-a-user-is-a-repository-collaborator  # noqa: E501
+            self.must(
+                permissions["permission"] in ["write", "admin"],
+                f"User {actor} must be a maintainer {self.REPO} to rebase someone else's PR",
+            )
+
+        print(":: All PRs are ready to be rebased!")
+
+
 def main(check):
     # Setup the wrapper class
     EV = json.loads(sys.stdin.read())
-    ghstack_checks = GHStackChecks(os.environ["GITHUB_TOKEN"], EV)
+    session = get_session(os.environ["GITHUB_TOKEN"])
+    chatops = None
+
+    if is_ghstack(session, EV):
+        chatops = GHStack(session, EV)
+    else:
+        chatops = GitHub(session, EV)
 
     # Run the github action specific checks
     if check == "land":
-        ghstack_checks.land()
+        chatops.land()
     elif check == "rebase":
-        ghstack_checks.rebase()
+        chatops.rebase()
 
 
 if __name__ == "__main__":
