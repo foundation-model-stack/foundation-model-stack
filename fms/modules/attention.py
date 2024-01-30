@@ -15,7 +15,7 @@ from fms.distributed.tensorparallel import (
 from fms.modules.positions import PositionEncoder
 from fms.modules.tp import TPModule
 from fms.utils import smallest_power_greater_than
-from fms.utils.tensors import ExpandableTensor
+from fms.utils.tensors import create_expandable_tensor, ExpandableTensor
 
 
 class MultiHeadAttention(nn.Module):
@@ -187,10 +187,10 @@ class MultiHeadAttention(nn.Module):
             # -- see https://github.com/pytorch/pytorch/issues/93723
             else:
                 preallocate_length = smallest_power_greater_than(keys.size(2))
-                keys = ExpandableTensor(
+                keys = create_expandable_tensor(
                     keys, dim=2, preallocate_length=preallocate_length
                 )
-                values = ExpandableTensor(
+                values = create_expandable_tensor(
                     values, dim=2, preallocate_length=preallocate_length
                 )
 

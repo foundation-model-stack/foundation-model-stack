@@ -1,7 +1,9 @@
 import functools
+from networkx import fast_could_be_isomorphic
 
 from typing import Dict
 import torch
+from torch._dynamo import allow_in_graph
 
 
 _HANDLED_FUNCTIONS = {}
@@ -41,8 +43,30 @@ class ExpandableTensor(torch.Tensor):
             dimension `dim`
     """
 
-    def __init__(self, tensor, dim=0, preallocate_length=None):
-        super().__init__()
+    _underlying_tensor: torch.Tensor
+    _dim: int
+    _dim_length: int
+
+    @staticmethod
+    def __new__(cls, tensor: torch.Tensor, *, dim: int = 0, preallocate_length: int = None):
+        r = torch.Tensor._make_wrapper_subclass(  # type: ignore[attr-defined]
+            cls,
+            tensor.size(),
+            tensor.stride(),
+            tensor.storage_offset(),
+            None,
+            tensor.dtype,
+            tensor.layout,
+            tensor.device,
+            False,
+            False,
+            "sizes",
+            False,
+            False,
+        )
+        return r
+
+    def __init__(self, tensor, *, dim=0, preallocate_length=None):
         self._dim = dim
         self._dim_length = tensor.shape[dim]
         self._underlying_tensor = tensor
@@ -54,8 +78,6 @@ class ExpandableTensor(torch.Tensor):
             )
             self._tensor().copy_(tensor)
 
-    def __new__(cls, tensor, dim=0, preallocate_length=None):
-        return super().__new__(cls)
 
     def size(self, dim=None):
         # https://github.com/pytorch/pytorch/issues/111944
@@ -153,7 +175,7 @@ class ExpandableTensor(torch.Tensor):
             return torch.cat(tensors, dim, out=out)
 
     @classmethod
-    def __torch_function__(cls, func, types, args=(), kwargs=None):
+    def __torch_dispatch__(cls, func, types, args=(), kwargs=None):
         if kwargs is None:
             kwargs = {}
         if func not in _HANDLED_FUNCTIONS or not all(
@@ -162,3 +184,30 @@ class ExpandableTensor(torch.Tensor):
             args = [a._tensor() if type(a) == ExpandableTensor else a for a in args]
             return func(*args, **kwargs)
         return _HANDLED_FUNCTIONS[func](*args, **kwargs)
+    
+
+
+class _ExpandableFromTorchTensor(torch.autograd.Function):
+    @staticmethod
+    def forward(
+        ctx,
+        input: torch.Tensor,
+        dim: int,
+        preallocate_length: int,
+    ) -> "ExpandableTensor":
+        return ExpandableTensor(
+            input,
+            dim=dim,
+            preallocate_length=preallocate_length,
+        )
+
+    @staticmethod
+    def backward(ctx, g0: ExpandableTensor):  # type: ignore[override]
+        return g0._underlying_tensor, None, None
+    
+
+def create_expandable_tensor(tensor: torch.Tensor, dim, preallocate_length):
+    return _ExpandableFromTorchTensor.apply(tensor, dim, preallocate_length)
+
+allow_in_graph(ExpandableTensor)
+allow_in_graph(create_expandable_tensor)
