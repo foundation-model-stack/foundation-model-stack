@@ -52,7 +52,6 @@ def benchmark_generation_speed(model, tokenizer, prompt, batch_size, device, num
 
     # Log average statistics
     logger.info(f"Batch size: {batch_size}, Avg Time: {avg_generation_time:.2f}s, Avg Tokens/s: {avg_tokens_per_second:.2f}, Avg Total tokens: {avg_num_generated_tokens}")
-    # Return average statistics for potential further analysis
     return avg_generation_time, avg_tokens_per_second, avg_num_generated_tokens
 
 
@@ -63,12 +62,9 @@ def main():
     parser.add_argument('--batch_size', type=int, required=True, help='Batch size for the benchmark')
     args = parser.parse_args()
 
-   
     device = "cuda:5"  
     quantized_model_dir = '/net/storage149/autofs/css22/ccyang/fm-models/llama-gptq/gptq_output_act0_grp128_bluewiki' 
-
     
-    # Load tokenizer and model
     tokenizer = AutoTokenizer.from_pretrained(quantized_model_dir, use_fast=True)
     tokenizer.pad_token = tokenizer.eos_token
     
@@ -83,8 +79,6 @@ def main():
                                             use_triton=False, disable_exllamaV2=False, low_cpu_mem_usage=True, warmup_triton=False)
         
     model = torch.compile(model, mode="reduce-overhead")
-
-    # Run benchmark
     benchmark_generation_speed(model, tokenizer, "auto-gptq is a", args.batch_size, device)
 
 if __name__ == "__main__":
