@@ -71,6 +71,8 @@ jobs:
 
         # Checkout the */orig committer branch for rebase 
         # See https://github.com/ezyang/ghstack?tab=readme-ov-file#structure-of-submitted-pull-requests
+        # This is equivalent to "ghstack checkout <pr>", but it doesn't require
+        # extra API calls to GitHub
         HEAD_REF=$(echo '${{ toJson(github) }}' | jq -r .event.client_payload.pull_request.head.ref)
         ORIG_REF=$(printf "$HEAD_REF" | sed 's,/head$,/orig,g')
         git checkout -b rebase-branch "origin/${ORIG_REF}"
