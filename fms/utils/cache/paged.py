@@ -607,7 +607,9 @@ class CacheBlockGroup(List[CacheBlock]):
 
     def remove_tokens(self, num_tokens: int) -> List[CacheBlock]:
         # remove tokens and return the blocks to be freed
-        if num_tokens > list.__len__(self):
+        prefix_sequence_length = 0 if self.prefix is None else self.prefix.get_sequence_length()
+
+        if num_tokens > (self.get_sequence_length() - prefix_sequence_length):
             raise ValueError(
                 "the number of tokens to remove is greater than what exists in this cache block group not including the prefix"
             )
