@@ -22,7 +22,9 @@ def get_session(token):
             "Accept": "application/vnd.github+json",
             "X-GitHub-Api-Version": "2022-11-28",
         }
+    )
     return gh
+
 
 # Check condition. Post GitHub comment and exit(1) in false
 def must(session, repo, pr, cond, msg):
@@ -45,7 +47,13 @@ def is_ghstack(session, event):
 
     # Check the head_ref
     head_ref = pr["head"]["ref"]
-    self.must(session, event["repository"], pr["number"], head_ref, "Not head ref found in the event")
+    must(
+        session,
+        event["repository"],
+        pr["number"],
+        head_ref,
+        "Not head ref found in the event",
+    )
     return re.match(r"^gh/[A-Za-z0-9-]+/[0-9]+/head$", head_ref)
 
 
@@ -60,7 +68,7 @@ class ChatOps:
         self.NUMBER = self.PR["number"]
         self.PR_URL = self.PR["html_url"]
         self.PR_FROM_FORK = self.PR["head"]["repo"]["fork"]
-        self.pr_ref = get_pr_ref()
+        self.pr_ref = self.get_pr_ref()
 
         # Fetch the required branches locally
         print(":: Fetching newest main...")
@@ -69,7 +77,7 @@ class ChatOps:
         self.must(
             os.system(f"git fetch origin {self.pr_ref}") == 0,
             "Can't fetch orig branch",
-    )
+        )
 
     def must(self, cond, msg):
         must(self.gh, self.REPO, self.NUMBER, cond, msg)
@@ -151,12 +159,13 @@ class ChatOps:
                 f"User {actor} must be a maintainer {self.REPO} to rebase someone else's PR",
             )
 
+
 class GHStack(ChatOps):
     def __init__(self, session, event):
         super().__init__()
         self.pr_numbers = self.ghstack_pr_numbers()
 
-    def get_pr_ref(self)
+    def get_pr_ref(self):
         return self.PR["head"]["ref"].replace("/head", "/orig")
 
     def ghstack_pr_numbers(self):
@@ -193,8 +202,7 @@ class GHStack(ChatOps):
 
 
 class GitHub(ChatOps):
-
-    def get_pr_ref(self)
+    def get_pr_ref(self):
         return self.PR["head"]["ref"]
 
     def must(self, cond, msg):
@@ -206,7 +214,7 @@ class GitHub(ChatOps):
         print(":: The PR is ready to be landed!")
 
     def rebase(self):
-        rebase_prerequisites()
+        self.rebase_prerequisites()
         print(":: The PR is ready to be rebased!")
 
 
@@ -223,7 +231,7 @@ def main(check):
         chatops = GitHub(session, EV)
 
     # Set a number of useful environment variables
-    env_file = os.getenv('GITHUB_ENV')
+    env_file = os.getenv("GITHUB_ENV")
     with open(env_file, "a") as envfile:
         envfile.write("IS_GHSTACK=f{isgh}\n")
         envfile.write("REPO=f{chatops.REPO}\n")
