@@ -57,6 +57,9 @@ class ChatOps:
         # Extract some useful data from the event
         self.PR = event["event"]["client_payload"]["pull_request"]
         self.REPO = event["repository"]
+        self.NUMBER = self.PR["number"]
+        self.PR_URL = self.PR["html_url"]
+        self.PR_FROM_FORK = self.PR["head"]["repo"]["fork"]
         self.pr_ref = get_pr_ref()
 
         # Fetch the required branches locally
@@ -71,6 +74,82 @@ class ChatOps:
     def must(self, cond, msg):
         must(self.gh, self.REPO, self.NUMBER, cond, msg)
 
+    # Prerequisites before a PR can land
+    # If no pr is specified, self.NUMBER is used
+    def land_prerequisites(self, pr=None):
+        if pr is None:
+            pr = self.NUMBER
+        # Checking Approvals
+        print(f":: Checking PR status #{pr}... ", end="")
+        resp = self.gh.get(f"https://api.github.com/repos/{self.REPO}/pulls/{pr}")
+        self.must(resp.ok, "Error Getting PR Object!")
+        pr_obj = resp.json()
+
+        resp = self.gh.get(
+            f"https://api.github.com/repos/{self.REPO}/pulls/{pr}/reviews"
+        )
+        self.must(resp.ok, "Error Getting PR Reviews!")
+        reviews = resp.json()
+        idmap = {}
+        approved = False
+        for r in reviews:
+            s = r["state"]
+            if s not in ("COMMENTED",):
+                idmap[r["user"]["login"]] = r["state"]
+
+        for u, cc in idmap.items():
+            approved = approved or cc == "APPROVED"
+            self.must(
+                cc in ("APPROVED", "DISMISSED"),
+                f"@{pr} has stamped PR #{pr} `{cc}`, please resolve it first!",
+            )
+
+        self.must(approved, f"PR #{pr} is not approved yet!")
+
+        # Checking CI Jobs
+        resp = self.gh.get(
+            f'https://api.github.com/repos/{self.REPO}/commits/{pr_obj["head"]["sha"]}/check-runs'
+        )
+        self.must(resp.ok, "Error getting check runs status!")
+        checkruns = resp.json()
+        for cr in checkruns["check_runs"]:
+            status = cr.get("conclusion", cr["status"])
+            name = cr["name"]
+            if name == "Copilot for PRs":
+                continue
+            self.must(
+                status in ("success", "neutral"),
+                f"PR #{pr} check-run `{name}`'s status `{status}` is not success!",
+            )
+        print("SUCCESS!")
+
+    # Prerequisites before a PR can be rebased
+    def rebase_prerequisites(self):
+        # Check if the PR owner matches the actor
+        actor = self.event["event"]["client_payload"]["github"]["actor"]
+        self.must(actor, "Event actor not found!")
+
+        pr_owner = self.PR["user"]["login"]
+        self.must(actor, "PR Owner not found!")
+
+        # If the comment was not left by the owner, it's only allowed for owners
+        if actor != pr_owner:
+            # Get the user permissions on the repo
+            resp = self.gh.get(
+                f"https://api.github.com/repos/{self.REPO}/collaborators/{actor}/permission"
+            )
+            self.must(
+                resp.ok,
+                f"User {actor} must be a maintainer {self.REPO} to rebase someone else's PR",
+            )
+            permissions = resp.json()
+
+            # Check if the actor is an OWNER (permission "write" or "admin")
+            # Reference: https://docs.github.com/en/rest/collaborators/collaborators?apiVersion=2022-11-28#check-if-a-user-is-a-repository-collaborator  # noqa: E501
+            self.must(
+                permissions["permission"] in ["write", "admin"],
+                f"User {actor} must be a maintainer {self.REPO} to rebase someone else's PR",
+            )
 
 class GHStack(ChatOps):
     def __init__(self, session, event):
@@ -104,102 +183,13 @@ class GHStack(ChatOps):
         # Enforce requirements for every PR in the stack
         for n in self.pr_numbers:
             # Checking Approvals
-            print(f":: Checking PR status #{n}... ", end="")
-            resp = self.gh.get(f"https://api.github.com/repos/{self.REPO}/pulls/{n}")
-            self.must(resp.ok, "Error Getting PR Object!")
-            pr_obj = resp.json()
-
-            resp = self.gh.get(
-                f"https://api.github.com/repos/{self.REPO}/pulls/{self.NUMBER}/reviews"
-            )
-            self.must(resp.ok, "Error Getting PR Reviews!")
-            reviews = resp.json()
-            idmap = {}
-            approved = False
-            for r in reviews:
-                s = r["state"]
-                if s not in ("COMMENTED",):
-                    idmap[r["user"]["login"]] = r["state"]
-
-            for u, cc in idmap.items():
-                approved = approved or cc == "APPROVED"
-                self.must(
-                    cc in ("APPROVED", "DISMISSED"),
-                    f"@{u} has stamped PR #{n} `{cc}`, please resolve it first!",
-                )
-
-            self.must(approved, f"PR #{n} is not approved yet!")
-
-            # Checking CI Jobs
-            resp = self.gh.get(
-                f'https://api.github.com/repos/{self.REPO}/commits/{pr_obj["head"]["sha"]}/check-runs'
-            )
-            self.must(resp.ok, "Error getting check runs status!")
-            checkruns = resp.json()
-            for cr in checkruns["check_runs"]:
-                status = cr.get("conclusion", cr["status"])
-                name = cr["name"]
-                if name == "Copilot for PRs":
-                    continue
-                self.must(
-                    status in ("success", "neutral"),
-                    f"PR #{n} check-run `{name}`'s status `{status}` is not success!",
-                )
-            print("SUCCESS!")
+            self.land_prerequisites(n)
 
         print(":: All PRs are ready to be landed!")
 
     def rebase(self):
-        # Check if the PR owner matches the actor
-        actor = self.event["event"]["client_payload"]["github"]["actor"]
-        self.must(actor, "Event actor not found!")
-
-        pr_owner = self.PR["user"]["login"]
-        self.must(actor, "PR Owner not found!")
-
-        # If the comment was not left by the owner, it's only allowed for owners
-        if actor != pr_owner:
-            # Get the user permissions on the repo
-            resp = self.gh.get(
-                f"https://api.github.com/repos/{self.REPO}/collaborators/{actor}/permission"
-            )
-            self.must(
-                resp.ok,
-                f"User {actor} must be a maintainer {self.REPO} to rebase someone else's PR",
-            )
-            permissions = resp.json()
-
-            # Check if the actor is an OWNER (permission "write" or "admin")
-            # Reference: https://docs.github.com/en/rest/collaborators/collaborators?apiVersion=2022-11-28#check-if-a-user-is-a-repository-collaborator  # noqa: E501
-            self.must(
-                permissions["permission"] in ["write", "admin"],
-                f"User {actor} must be a maintainer {self.REPO} to rebase someone else's PR",
-            )
-
+        self.rebase_prerequisites()
         print(":: All PRs are ready to be rebased!")
-
-
-class ChatOps:
-    def __init__(self, session, event):
-        self.gh = session
-        self.event = event
-
-        # Extract some useful data from the event
-        self.PR = event["event"]["client_payload"]["pull_request"]
-        self.REPO = event["repository"]
-        self.pr_ref = get_pr_ref()
-
-        # Fetch the required branches locally
-        print(":: Fetching newest main...")
-        self.must(os.system("git fetch origin main") == 0, "Can't fetch main")
-        print(":: Fetching orig branch...")
-        self.must(
-            os.system(f"git fetch origin {self.pr_ref}") == 0,
-            "Can't fetch orig branch",
-    )
-
-    def must(self, cond, msg):
-        must(self.gh, self.REPO, self.NUMBER, cond, msg)
 
 
 class GitHub(ChatOps):
@@ -207,83 +197,17 @@ class GitHub(ChatOps):
     def get_pr_ref(self)
         return self.PR["head"]["ref"]
 
+    def must(self, cond, msg):
+        must(self.gh, self.REPO, self.NUMBER, cond, msg)
+
     def land(self):
         # Enforce requirements for the PR
-
-        # Checking Approvals
-        print(f":: Checking PR status #{self.NUMBER}... ", end="")
-        resp = self.gh.get(f"https://api.github.com/repos/{self.REPO}/pulls/{self.NUMBER}")
-        self.must(resp.ok, "Error Getting PR Object!")
-        pr_obj = resp.json()
-
-        resp = self.gh.get(
-            f"https://api.github.com/repos/{self.REPO}/pulls/{self.NUMBER}/reviews"
-        )
-        self.must(resp.ok, "Error Getting PR Reviews!")
-        reviews = resp.json()
-        idmap = {}
-        approved = False
-        for r in reviews:
-            s = r["state"]
-            if s not in ("COMMENTED",):
-                idmap[r["user"]["login"]] = r["state"]
-
-        for u, cc in idmap.items():
-            approved = approved or cc == "APPROVED"
-            self.must(
-                cc in ("APPROVED", "DISMISSED"),
-                f"@{u} has stamped PR #{n} `{cc}`, please resolve it first!",
-            )
-
-        self.must(approved, f"PR #{n} is not approved yet!")
-
-        # Checking CI Jobs
-        resp = self.gh.get(
-            f'https://api.github.com/repos/{self.REPO}/commits/{pr_obj["head"]["sha"]}/check-runs'
-        )
-        self.must(resp.ok, "Error getting check runs status!")
-        checkruns = resp.json()
-        for cr in checkruns["check_runs"]:
-            status = cr.get("conclusion", cr["status"])
-            name = cr["name"]
-            if name == "Copilot for PRs":
-                continue
-            self.must(
-                status in ("success", "neutral"),
-                f"PR #{n} check-run `{name}`'s status `{status}` is not success!",
-            )
-        print("SUCCESS!")
-
-        print(":: All PRs are ready to be landed!")
+        self.land_prerequisites()
+        print(":: The PR is ready to be landed!")
 
     def rebase(self):
-        # Check if the PR owner matches the actor
-        actor = self.event["event"]["client_payload"]["github"]["actor"]
-        self.must(actor, "Event actor not found!")
-
-        pr_owner = self.PR["user"]["login"]
-        self.must(actor, "PR Owner not found!")
-
-        # If the comment was not left by the owner, it's only allowed for owners
-        if actor != pr_owner:
-            # Get the user permissions on the repo
-            resp = self.gh.get(
-                f"https://api.github.com/repos/{self.REPO}/collaborators/{actor}/permission"
-            )
-            self.must(
-                resp.ok,
-                f"User {actor} must be a maintainer {self.REPO} to rebase someone else's PR",
-            )
-            permissions = resp.json()
-
-            # Check if the actor is an OWNER (permission "write" or "admin")
-            # Reference: https://docs.github.com/en/rest/collaborators/collaborators?apiVersion=2022-11-28#check-if-a-user-is-a-repository-collaborator  # noqa: E501
-            self.must(
-                permissions["permission"] in ["write", "admin"],
-                f"User {actor} must be a maintainer {self.REPO} to rebase someone else's PR",
-            )
-
-        print(":: All PRs are ready to be rebased!")
+        rebase_prerequisites()
+        print(":: The PR is ready to be rebased!")
 
 
 def main(check):
@@ -291,11 +215,21 @@ def main(check):
     EV = json.loads(sys.stdin.read())
     session = get_session(os.environ["GITHUB_TOKEN"])
     chatops = None
+    isgh = is_ghstack(session, EV)
 
-    if is_ghstack(session, EV):
+    if isgh:
         chatops = GHStack(session, EV)
     else:
         chatops = GitHub(session, EV)
+
+    # Set a number of useful environment variables
+    env_file = os.getenv('GITHUB_ENV')
+    with open(env_file, "a") as envfile:
+        envfile.write("IS_GHSTACK=f{isgh}\n")
+        envfile.write("REPO=f{chatops.REPO}\n")
+        envfile.write("PR_NUMBER=f{chatops.NUMBER}\n")
+        envfile.write("PR_REF=f{chatops.pr_ref}\n")
+        envfile.write("PR_URL=f{chatops.PR_URL}\n")
 
     # Run the github action specific checks
     if check == "land":
