@@ -80,7 +80,7 @@ jobs:
           github_oauth = $GITHUB_TOKEN
           github_username = fms-cibot
           remote_name = origin
-          EOF
+        EOF
 
           # Run the land command
           ghstack land "${PR_URL}"

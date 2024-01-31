@@ -43,7 +43,7 @@ def must(session, repo, pr, cond, msg):
 def is_ghstack(session, event):
     # Extract the PR from the event
     pr = event["event"]["client_payload"]["pull_request"]
-    must(session, event["repository"], 0, "No PR object found in the event")
+    must(session, event["repository"], 0, pr, "No PR object found in the event")
 
     # Check the head_ref
     head_ref = pr["head"]["ref"]
@@ -233,11 +233,11 @@ def main(check):
     # Set a number of useful environment variables
     env_file = os.getenv("GITHUB_ENV")
     with open(env_file, "a") as envfile:
-        envfile.write("IS_GHSTACK=f{isgh}\n")
-        envfile.write("REPO=f{chatops.REPO}\n")
-        envfile.write("PR_NUMBER=f{chatops.NUMBER}\n")
-        envfile.write("PR_REF=f{chatops.pr_ref}\n")
-        envfile.write("PR_URL=f{chatops.PR_URL}\n")
+        envfile.write(f"IS_GHSTACK={isgh}\n")
+        envfile.write(f"REPO={chatops.REPO}\n")
+        envfile.write(f"PR_NUMBER={chatops.NUMBER}\n")
+        envfile.write(f"PR_REF={chatops.pr_ref}\n")
+        envfile.write(f"PR_URL={chatops.PR_URL}\n")
 
     # Run the github action specific checks
     if check == "land":

@@ -72,7 +72,7 @@ jobs:
           github_oauth = $GITHUB_TOKEN
           github_username = afrittoli
           remote_name = origin
-          EOF
+        EOF
 
           # Checkout the */orig committer branch for rebase
           # See https://github.com/ezyang/ghstack?tab=readme-ov-file#structure-of-submitted-pull-requests
