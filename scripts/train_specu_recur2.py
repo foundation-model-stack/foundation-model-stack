@@ -59,6 +59,8 @@ class Speculator(nn.Module):
         self.ln = nn.ModuleList(
             [LayerNormParameterized(inner_dim, elementwise_shift=True, elementwise_scale=True) for _ in range(n_heads)]
         )
+        self.state_weight = .5**(.5/n_heads)
+        self.emb_weight = (1-self.state_weight**2)**.5
         self.a = nn.GELU()
         self.reset_params()
 
@@ -75,8 +77,8 @@ class Speculator(nn.Module):
         # inds: b n+3 (pred token, n+2, n+3)
         out = []
         for i in range(self.nheads):
-            z = self.emb[i](inds[:, i + 1 : i + 1 + state.size(1)]).mul(self.inner_dim**.5 / 32)  # b n d
-            state = self.a(self.ln[i](self.proj[i](state)+z))  # b n d
+            z = self.emb[i](inds[:, i + 1 : i + 1 + state.size(1)]).mul(self.emb_weight*(self.inner_dim/2)**.5)  # b n d
+            state = self.a(self.ln[i](self.proj[i](state)*self.state_weight+z))  # b n d
             out.append(self.head[i](state))  # b n v
         return torch.stack(out, dim=0)  # h b n v
 
