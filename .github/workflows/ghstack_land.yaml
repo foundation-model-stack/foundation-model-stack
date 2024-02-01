@@ -72,7 +72,7 @@ jobs:
         git config --global user.email "foundation-model-stack@googlegroups.com"
         git config --global user.name "Foundation Model Stack CI Bot"
 
-        if [[ "${IS_GHSTACK}" == "true" ]]; then
+        if [[ "${IS_GHSTACK}" == "True" ]]; then
           # Configure ghstack
           cat <<EOF > ~/.ghstackrc
           [ghstack]
@@ -85,9 +85,10 @@ jobs:
           # Run the land command
           ghstack land "${PR_URL}"
         else
-          # Rebase merge through the GitHub API
+          # Rebase merge through the GitHub API, which ensures all
+          # branch protection requirements are satisfied
           # Commits are not squashed, it's up to the PR owner to squash commits
-          gh pr merge --repo "${REPO}" --rebase
+          gh pr merge --repo "${REPO}" --rebase "${PR_URL}"
         fi
       env:
         GITHUB_TOKEN: ${{ secrets.LAND_TOKEN }}
@@ -95,7 +96,7 @@ jobs:
     - name: Create URL to the run output
       if: ${{ failure() && steps.landStack.outcome == 'failure' }}
       id: vars
-      run: echo "run-url=https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >> $GITHUB_OUTPUT
+      run: echo "run-url=https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >> "$GITHUB_OUTPUT"
 
     - name: Create comment
       if: ${{ failure() && steps.landStack.outcome == 'failure' }}

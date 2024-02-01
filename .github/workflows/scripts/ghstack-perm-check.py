@@ -33,7 +33,7 @@ def must(session, repo, pr, cond, msg):
         session.post(
             f"https://api.github.com/repos/{repo}/issues/{pr}/comments",
             json={
-                "body": f"ghstack bot failed: {msg}",
+                "body": f"fms bot failed: {msg}",
             },
         )
         exit(1)
@@ -54,7 +54,7 @@ def is_ghstack(session, event):
         head_ref,
         "Not head ref found in the event",
     )
-    return re.match(r"^gh/[A-Za-z0-9-]+/[0-9]+/head$", head_ref)
+    return bool(re.match(r"^gh/[A-Za-z0-9-]+/[0-9]+/head$", head_ref))
 
 
 class ChatOps:
@@ -76,7 +76,7 @@ class ChatOps:
         print(":: Fetching orig branch...")
         self.must(
             os.system(f"git fetch origin {self.pr_ref}") == 0,
-            "Can't fetch orig branch",
+            "Can't fetch orig branch {self.pr_ref}",
         )
 
     def must(self, cond, msg):
@@ -162,7 +162,7 @@ class ChatOps:
 
 class GHStack(ChatOps):
     def __init__(self, session, event):
-        super().__init__()
+        super().__init__(session, event)
         self.pr_numbers = self.ghstack_pr_numbers()
 
     def get_pr_ref(self):
@@ -203,7 +203,7 @@ class GHStack(ChatOps):
 
 class GitHub(ChatOps):
     def get_pr_ref(self):
-        return self.PR["head"]["ref"]
+        return f"pull/{self.NUMBER}/head"
 
     def must(self, cond, msg):
         must(self.gh, self.REPO, self.NUMBER, cond, msg)

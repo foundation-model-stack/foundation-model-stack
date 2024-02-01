@@ -64,7 +64,7 @@ jobs:
         git config --global user.email "foundation-model-stack@googlegroups.com"
         git config --global user.name "Foundation Model Stack CI Bot"
 
-        if [[ "${IS_GHSTACK}" == "true" ]]; then
+        if [[ "${IS_GHSTACK}" == "True" ]]; then
           # Configure ghstack
           cat <<EOF > ~/.ghstackrc
           [ghstack]
@@ -87,7 +87,7 @@ jobs:
         # The rebase command is the same for GHStack and GitHub PRs
         git rebase origin/main
 
-        if [[ "${IS_GHSTACK}" == "true" ]]; then
+        if [[ "${IS_GHSTACK}" == "True" ]]; then
           # Submit the rebased stack to updated the PRs
           ghstack submit
         else
@@ -102,6 +102,7 @@ jobs:
               exit 1
             fi
           fi
+        fi
       env:
         GITHUB_TOKEN: ${{ secrets.LAND_TOKEN }}
 
