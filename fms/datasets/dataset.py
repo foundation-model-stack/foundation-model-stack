@@ -397,6 +397,7 @@ class Buffer_Dataset(_Wrapper_Dataset):
         bos_token=None,
         eos_token=None,
         pad_token=None,
+        drop_final_token=None, # one-off fix for Llama training (sep already in data)
     ):
         super().__init__(dataset)
 
@@ -428,6 +429,7 @@ class Buffer_Dataset(_Wrapper_Dataset):
         self.pack_hard = pack_hard
         if not pack_hard:
             assert pad_token is not None, "Error: if using pads, you must supply a pad_token"
+        self.drop = drop_final_token
 
         self.state_params = ["buffer"]
 
@@ -437,6 +439,8 @@ class Buffer_Dataset(_Wrapper_Dataset):
         while len(buffer) + len(new) < length:
             buffer += new
             new = next(iterable)
+            if new[-1]==self.drop:
+                new = new[:-1]
 
         # Add bos if needed
         if self.bos is not None and (len(buffer) == 0 or buffer[0] != self.bos):
