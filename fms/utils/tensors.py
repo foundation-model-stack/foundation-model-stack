@@ -266,35 +266,19 @@ class PagedTensor(torch.Tensor):
             n_blocks_to_add = (total_num_blocks - prev_num_blocks).int()
             blocks_to_add = paged_tensor._allocate_blocks(torch.sum(n_blocks_to_add))
 
-            # print(f"block_mapping pre-padded: {paged_tensor.block_mapping}")
-            # print(f"n_blocks_to_add:{n_blocks_to_add}")
-            # print(f"blocks_to_add:{blocks_to_add}")
-
             # CALCULATE ROW INDICES
-
-
             # At what new-block indices do we enter a new row?
             rowbreak_thresh = n_blocks_to_add.cumsum(0)
             # A pseudo-arange representing new block indices (stays on gpu)
             newblock_inds = torch.ones_like(blocks_to_add).cumsum(0).unsqueeze(0).sub(1)
             # What row break thresholds does each index position qualify for
             below_thresh = newblock_inds < rowbreak_thresh.unsqueeze(1)
-            # print("Matrix of row candidacy:")
-            # print(below_thresh)
-            # print()
 
             # The first qualifying break represents the assigned sequence
             row_inds = below_thresh.int().argmax(0)
-            # print("Row indices:")
-            # print(row_inds)
-            # print()
 
             # CALCULATE COLUMN INDICES
-
             col_offsets = paged_tensor.block_mapping.count_nonzero(1)
-            # print("Col offsets per row:")
-            # print(col_offsets)
-            # print()
 
             # Does each new value belong to the same row as the prior one?
             row_match = row_inds.roll(1) == row_inds
@@ -304,30 +288,34 @@ class PagedTensor(torch.Tensor):
             col_increments -= f.pad(n_blocks_to_add.sub(1).clamp(min=0).cumsum(0), (1, 0))[:-1][row_inds]
             # Add the column offset for each row
             col_inds = col_increments + col_offsets[row_inds]
-            # print("Col inds:")
-            # print(col_inds)
-            # print()
-
-            # UPDATE BLOCK MAPPING
 
             paged_tensor.block_mapping[row_inds, col_inds] = blocks_to_add
-            paged_tensor.context_lengths = total_context_lengths
-            # print("Updated block mapping:")
-            # print(paged_tensor.block_mapping)
+            paged_tensor.context_lengths = total_context_lengths.int()
 
-            # for i, context_length in enumerate(context_lengths):
-            #     block_group = paged_tensor.block_mapping[i]
-            #     prev_context_length = paged_tensor.context_lengths[i]
-            #     total_context_length = prev_context_length + context_length
-            #     total_num_blocks = total_context_length // paged_tensor.block_size
-            #     if total_context_length % paged_tensor.block_size != 0:
-            #         total_num_blocks += 1
+            # if paged_tensor.is_key:
+            #     key_to_store = tensors[1].transpose(2, 1).reshape(-1, paged_tensor.kv_heads, paged_tensor.head_size)
+
+                # def get_slot_mapping(self, position: Optional[int] = None) -> List[int]:
+                #     slot_mapping = []
+                #     start = position if position else 0
+                #     for position_i in range(start, self.get_sequence_length()):
+                #         block_number = self.get_cache_block(position_i).block_number
+                #         block_offset = position_i % self.block_size
+                #         slot = block_number * self.block_size + block_offset
+                #         slot_mapping.append(slot)
+                #     return slot_mapping
+
+                # torch.ops.paged_attention.reshape_and_cache_key(key_to_store, paged_tensor.blob, )
+            # key_to_cache = keys.transpose(2, 1).reshape(-1, self.kv_heads, self.head_size)
+            # value_to_cache = values.transpose(2, 1).view(-1, self.kv_heads, self.head_size)
             #
-            #     blocks_to_add = total_num_blocks - block_group.size(0)
-            #     for _ in range(blocks_to_add):
-            #         block_group = torch.cat((block_group, paged_tensor._allocate_block()), dim=0)
-            #     paged_tensor.context_lengths[i].add_(context_length)
-            #     paged_tensor.block_mapping[i] = block_group
+            # self.data_layer = torch.ops.paged_attention.reshape_and_cache(
+            #     key_to_cache,
+            #     value_to_cache,
+            #     self.data_layer[0],
+            #     self.data_layer[1],
+            #     self.slot_mapping,
+            # )
 
         else:
             raise ValueError("PagedTensor only supports dimensions 0 and 1 for dim parameter")
@@ -354,9 +342,21 @@ if __name__ == "__main__":
     print(f"block_mapping pt2: {pt.block_mapping}")
     print(pt.context_lengths)
 
-    pt3 = torch.cat((pt2, torch.rand(4, 200)), dim=1)
-    print(f"block_mapping pt3: {pt3.block_mapping}")
-    print(pt3.context_lengths)
+    print(pt2.block_mapping.repeat_interleave(pt2.block_size, dim=1))
+
+    # def get_slot_mapping(self, position: Optional[int] = None) -> List[int]:
+    #     slot_mapping = []
+    #     start = position if position else 0
+    #     for position_i in range(start, self.get_sequence_length()):
+    #         block_number = self.get_cache_block(position_i).block_number
+    #         block_offset = position_i % self.block_size
+    #         slot = block_number * self.block_size + block_offset
+    #         slot_mapping.append(slot)
+    #     return slot_mapping
+
+    # pt3 = torch.cat((pt2, torch.rand(4, 200)), dim=1)
+    # print(f"block_mapping pt3: {pt3.block_mapping}")
+    # print(pt3.context_lengths)
 
     #
 

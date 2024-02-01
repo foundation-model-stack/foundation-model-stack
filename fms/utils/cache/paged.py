@@ -60,6 +60,78 @@ def _reshape_and_cache_lowering(key, value, key_cache, value_cache, slot_mapping
     )
     return key_cache, value_cache
 
+lib.define(
+    "reshape_and_cache_key(Tensor key, Tensor key_cache, Tensor slot_mapping) -> Tensor"
+)
+
+
+# needed for compile
+@torch.library.impl(lib, "reshape_and_cache_key", "Meta")
+def _reshape_and_cache_key_meta(key, key_cache, slot_mapping):
+    return key_cache.contiguous()
+
+
+@torch.library.impl(lib, "reshape_and_cache_key", "CUDA")
+def _reshape_and_cache_key(key, key_cache, slot_mapping):
+    key = key.contiguous()
+    key_cache = key_cache.contiguous()
+    slot_mapping = slot_mapping.contiguous()
+    cache_ops.reshape_and_cache_key(key, key_cache, slot_mapping)
+    return key_cache
+
+
+lowering.fallbacks.add(torch.ops.paged_attention.reshape_and_cache_key)
+
+
+@lowering.register_lowering(
+    torch.ops.paged_attention.reshape_and_cache_key, type_promotion_kind=None
+)
+def _reshape_and_cache_key_lowering(key, key_cache, slot_mapping):
+    PagedAttnKernel.create(
+        torch.ops.paged_attention.reshape_and_cache_key.default,
+        key,
+        key_cache,
+        slot_mapping,
+        mutated_inputs=[key_cache],
+    )
+    return key_cache
+
+lib.define(
+    "reshape_and_cache_value(Tensor value, Tensor value_cache, Tensor slot_mapping) -> Tensor"
+)
+
+
+# needed for compile
+@torch.library.impl(lib, "reshape_and_cache_value", "Meta")
+def _reshape_and_cache_key_meta(value, value_cache, slot_mapping):
+    return value_cache.contiguous()
+
+
+@torch.library.impl(lib, "reshape_and_cache_value", "CUDA")
+def _reshape_and_cache_key(value, value_cache, slot_mapping):
+    value = value.contiguous()
+    value_cache = value_cache.contiguous()
+    slot_mapping = slot_mapping.contiguous()
+    cache_ops.reshape_and_cache_value(value, value_cache, slot_mapping)
+    return value_cache
+
+
+lowering.fallbacks.add(torch.ops.paged_attention.reshape_and_cache_value)
+
+
+@lowering.register_lowering(
+    torch.ops.paged_attention.reshape_and_cache_value, type_promotion_kind=None
+)
+def _reshape_and_cache_value_lowering(value, value_cache, slot_mapping):
+    PagedAttnKernel.create(
+        torch.ops.paged_attention.reshape_and_cache_value.default,
+        value,
+        value_cache,
+        slot_mapping,
+        mutated_inputs=[value_cache],
+    )
+    return value_cache
+
 
 lib.define(
     "paged_attention_v2(Tensor out, Tensor exp_sums, Tensor max_logits, Tensor tmp_out, Tensor query, Tensor key_cache, Tensor value_cache, int num_kv_heads, float scale, Tensor block_tables, Tensor context_lens, int block_size, SymInt max_context_len, Tensor? alibi_slopes) -> Tensor"
