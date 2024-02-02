@@ -249,6 +249,7 @@ def train_func(args):
         max_expected_seq_len=16384,
         multiple_of=256,
     )
+    torch.set_default_dtype(torch.float32)
 
     # model = LlamaForCausalLM.from_pretrained(args.base_path) #"/lustre/llama_weights/hf/13B-F/")
     report("    Codellama loaded, building speculator...")
@@ -326,7 +327,7 @@ def train_func(args):
     # Optimizers
     report(lr=args.lr)
     optimizer = torch.optim.AdamW(
-        speculator.parameters(), weight_decay=0.1, lr=args.lr, betas=(args.beta1, args.beta2), foreach=False
+        speculator.parameters(), weight_decay=0.1, lr=args.lr, betas=(args.beta1, args.beta2) #, foreach=False
     )
 
     schedule = lambda x: min(
