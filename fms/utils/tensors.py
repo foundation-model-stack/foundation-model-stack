@@ -292,30 +292,23 @@ class PagedTensor(torch.Tensor):
             paged_tensor.block_mapping[row_inds, col_inds] = blocks_to_add
             paged_tensor.context_lengths = total_context_lengths.int()
 
-            # if paged_tensor.is_key:
-            #     key_to_store = tensors[1].transpose(2, 1).reshape(-1, paged_tensor.kv_heads, paged_tensor.head_size)
+            block_slots = paged_tensor.block_mapping.repeat_interleave(paged_tensor.block_size, dim=1)
+            roll_inds = torch.ones_like(block_slots).cumsum(1).sub(1)
+            roll_inds = roll_inds.add(paged_tensor.context_lengths.unsqueeze(1)) % roll_inds.size(1)
+            slot_mask = roll_inds.sign().cumprod(1)
 
-                # def get_slot_mapping(self, position: Optional[int] = None) -> List[int]:
-                #     slot_mapping = []
-                #     start = position if position else 0
-                #     for position_i in range(start, self.get_sequence_length()):
-                #         block_number = self.get_cache_block(position_i).block_number
-                #         block_offset = position_i % self.block_size
-                #         slot = block_number * self.block_size + block_offset
-                #         slot_mapping.append(slot)
-                #     return slot_mapping
+            block_offset = (roll_inds % paged_tensor.block_size) * (1 - slot_mask)
+            block_base = block_slots.gather(1, roll_inds) * (1 - slot_mask)
+            slot_map = block_base * paged_tensor.block_size + block_offset + slot_mask.neg()
+            print(f"slot_mapping: {slot_map}")
+            print(slot_map[:, -tensors[1].size(2):])
 
-                # torch.ops.paged_attention.reshape_and_cache_key(key_to_store, paged_tensor.blob, )
-            # key_to_cache = keys.transpose(2, 1).reshape(-1, self.kv_heads, self.head_size)
-            # value_to_cache = values.transpose(2, 1).view(-1, self.kv_heads, self.head_size)
-            #
-            # self.data_layer = torch.ops.paged_attention.reshape_and_cache(
-            #     key_to_cache,
-            #     value_to_cache,
-            #     self.data_layer[0],
-            #     self.data_layer[1],
-            #     self.slot_mapping,
-            # )
+            if paged_tensor.is_key:
+                # call reshape_and_cache_key
+                ...
+            else:
+                # call reshape_and_cache_value
+                ...
 
         else:
             raise ValueError("PagedTensor only supports dimensions 0 and 1 for dim parameter")
@@ -342,7 +335,18 @@ if __name__ == "__main__":
     print(f"block_mapping pt2: {pt.block_mapping}")
     print(pt.context_lengths)
 
-    print(pt2.block_mapping.repeat_interleave(pt2.block_size, dim=1))
+    # block_positions = (torch.ones_like(block_mapping_repeated).cumsum(dim=1) - 1)# % pt2.block_size
+    # print(block_positions)
+    #
+    # block_slots = bmap.repeat_interleave(16, dim=1)
+    # roll_inds = torch.ones_like(block_slots).cumsum(1).sub(1)
+    # roll_inds = roll_inds.add(clen.unsqueeze(1)) % roll_inds.size(1)
+    # slot_mask = roll_inds.sign().cumprod(1)
+    #
+    # slot_map = block_base * 16 + block_offset + slot_mask.neg()
+
+    # print(pt2.block_mapping.repeat_interleave(pt2.block_size, dim=1))
+    # print(block_positions)
 
     # def get_slot_mapping(self, position: Optional[int] = None) -> List[int]:
     #     slot_mapping = []
