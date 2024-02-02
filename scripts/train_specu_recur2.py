@@ -27,14 +27,16 @@ from torch.profiler import ProfilerAction, ProfilerActivity
 from torch.profiler import schedule as prof_schedule
 
 from fms.datasets import dataset as fmdata
-from fms import utils
+# from fms import utils
 from fms.modules.layernorm import LayerNormParameterized
-from fms.utils.from_closed import get_datasets_and_weights, setup_distributed
+from fms.utils.from_closed import get_datasets_and_weights, setup_distributed, pcount
 from fms.utils.io_ops_closed import (
+    Llama_Checkpointer,
     get_local_rank,
     get_rank,
     get_world_size,
     human_readable_report_and_log,
+    human_readable_time,
     run_rank_n,
 )
 from fm.utils.profiling import maybe_profile, trace_handler
@@ -296,7 +298,7 @@ def train_func(args):
 
     loss_fn = nn.CrossEntropyLoss(label_smoothing=args.label_smoothing)
 
-    num_params = [utils.pcount(model), utils.pcount(speculator)]
+    num_params = [pcount(model), pcount(speculator)]
 
     # # Load pretrained model from checkpoint
     # if len(args.base_path) > 0:
@@ -370,7 +372,7 @@ def train_func(args):
     sync_report("Datasets constructed!")
 
     # Open checkpointer
-    checkpointer = utils.Llama_Checkpointer(
+    checkpointer = Llama_Checkpointer(
         args.log_path,
         args.num_ckps,
         "ddp",
@@ -387,8 +389,7 @@ def train_func(args):
         reset_stepcount=args.reset_stepcount,
         strict=not args.flexible_load,
     )
-    signature = None if not args.make_signatures else utils.get_signature(model, device=local_rank, params=1)
-    report("Checkpoint loaded!", signature=signature)
+    report("Checkpoint loaded!")
 
     # Override loaded optim hyperparams with the current values
     for g in optimizer.param_groups:
@@ -499,11 +500,8 @@ def train_func(args):
             if (step + 1) % args.save_interval == 0:
                 if args.profile and prof.current_action == ProfilerAction.RECORD_AND_SAVE:
                     report("You are profiling a checkpointing step, be careful about it!")
-                signature = (
-                    None if not args.make_signatures else utils.get_signature(model, device=local_rank, params=1)
-                )
                 cudastats = torch.cuda.memory_summary(device=torch.cuda.current_device(), abbreviated=True)
-                report("Starting distributed checkpoint save...", signature=signature, mem_summary=cudastats)
+                report("Starting distributed checkpoint save...", mem_summary=cudastats)
                 overwritten = checkpointer.save(
                     step + 1,
                     speculator,
@@ -511,7 +509,6 @@ def train_func(args):
                     train_loader,
                     tokens_seen=tokens_seen,
                     loss=trainloss,
-                    signature=signature,
                 )
                 if overwritten:
                     report("Checkpoint", overwritten, "dumped")
@@ -530,7 +527,6 @@ def train_func(args):
         speculator,
         tokens_seen=tokens_seen,
         loss=trainloss,
-        signature=signature,
     )
     report("Final checkpoint written!")
     # Cleanup
@@ -540,4 +536,4 @@ def train_func(args):
 
 start = time.time()
 train_func(args)
-report("Job Complete!", total_time=utils.human_readable_time(time.time() - start))
+report("Job Complete!", total_time=human_readable_time(time.time() - start))
