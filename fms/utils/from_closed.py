@@ -122,7 +122,7 @@ def read_contents(data_src):
 
 def create_list_from_css(src_str, r, fn, pre_str):
     match = re.match(r, src_str)
-    assert match is not None and match.span()[1] == len(src_str), f"Not a valid comma separated string."
+    assert match is not None and match.span()[1] == len(src_str), f"{src_str} not a valid comma separated string."
 
     out = [pre_str + fn(x.strip()) if pre_str != "" else fn(x.strip()) for x in src_str.split(",")]
     return out
