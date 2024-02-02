@@ -142,7 +142,7 @@ def get_datasets_and_weights(args_datasets, args_weights):
         # with any number of repetitions of the same, separated by a comma and any amount of white space.
         # ("letters" here can include digits, "_" and "=")
         datasets = create_list_from_css(
-            datasets_str, "^([=\w]+(\/[=\w]+)*\/?)(\s*,\s*[=\w]+(\/[=\w]+)*\/?)*", lambda x: x, "dataset="
+            datasets_str, "^([=\w]+(\/[=\w]+)*\/?)(\s*,\s*[=\w]+(\/[=\w]+)*\/?)*", lambda x: x, ""
         )
     else:
         datasets = datasets_str
