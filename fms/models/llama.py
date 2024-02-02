@@ -119,9 +119,7 @@ class LLaMABlock(nn.Module):
         residual = x
         x = self.ln(x)
         x = self.attn(
-            q=x,
-            k=x,
-            v=x,
+            qkv=x,
             mask=mask,
             position_ids=position_ids,
             attn_algorithm=attn_algorithm,
@@ -386,6 +384,9 @@ def _rename_weights_to_fms(orig_sd):
         for pattern, repl in replacements:
             new_name = re.sub(pattern, repl, new_name)
         new_sd[new_name] = param
+
+        if "attn.query" in new_name or "attn.key" in new_name or "attn.value" in new_name:
+            raise serialization.FusableWeightsMissingError()
 
     return new_sd
 
