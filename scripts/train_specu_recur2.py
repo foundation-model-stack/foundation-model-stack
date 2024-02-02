@@ -173,6 +173,8 @@ torch.cuda.manual_seed_all(args.seed)
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.cuda.set_device(local_rank)
 
+torch.set_default_dtype(torch.bfloat16)
+
 args = validate_args(args, world_size)
 validate_arg_tokens(args, "pad,sep", allow_no_pad=True)
 
@@ -249,8 +251,8 @@ def train_func(args):
     report("    Codellama loaded...")
     # model = llama.convert_hf_llama(model)
     # report("    Converted to FMS...")
-    model = model.bfloat16()
-    report("    Converted to bf16...")
+    # model = model.bfloat16()
+    # report("    Converted to bf16...")
 
     # Wrap model
     report(f"Applying wrapper for parallelization mode={args.parallel_mode}...")
