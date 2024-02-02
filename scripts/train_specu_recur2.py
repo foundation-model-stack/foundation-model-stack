@@ -249,7 +249,7 @@ def train_func(args):
     )
 
     # model = LlamaForCausalLM.from_pretrained(args.base_path) #"/lustre/llama_weights/hf/13B-F/")
-    report("    Codellama loaded...")
+    report("    Codellama loaded, building speculator...")
     # model = llama.convert_hf_llama(model)
     # report("    Converted to FMS...")
     # model = model.bfloat16()
