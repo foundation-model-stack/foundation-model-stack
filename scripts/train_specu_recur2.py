@@ -26,11 +26,11 @@ from torch.distributed.fsdp.wrap import enable_wrap, transformer_auto_wrap_polic
 from torch.profiler import ProfilerAction, ProfilerActivity
 from torch.profiler import schedule as prof_schedule
 
-from fm import data as fmdata
-from fm import utils
-from fm.modules import LayerNormParameterized
-from fm.utils import (
-    get_datasets_and_weights,
+from fms import data as fmdata
+from fms import utils
+from fms.modules import LayerNormParameterized
+from fms.utils.from_closed import get_datasets_and_weights
+from fms.utils import (
     get_local_rank,
     get_rank,
     get_world_size,
