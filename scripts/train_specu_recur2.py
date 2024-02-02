@@ -38,7 +38,7 @@ from fm.utils import (
     run_rank_n,
 )
 from fm.utils.profiling import maybe_profile, trace_handler
-from fms.models import llama
+from fms.models import llama, get_model
 
 from transformers import LlamaForCausalLM
 
@@ -230,11 +230,26 @@ def train_func(args):
     # Model
     report("Constructing model...")
 
-    model = LlamaForCausalLM.from_pretrained(args.base_path) #"/lustre/llama_weights/hf/13B-F/")
+    model = get_model(
+        "llama",
+        "70b",
+        model_path=args.base_path,
+        device_type="cuda",
+        source="hf",
+        distributed_strategy="hsdp",
+        emb_dim=8192,
+        nheads=64,
+        kvheads=8,
+        nlayers=48,
+        hidden_grow_factor=2.6875,
+        max_expected_seq_len=16384,
+    )
+
+    # model = LlamaForCausalLM.from_pretrained(args.base_path) #"/lustre/llama_weights/hf/13B-F/")
     report("    Codellama loaded...")
-    model = llama.convert_hf_llama(model)
-    report("    Converted to FMS...")
-    model = model.cpu().bfloat16()
+    # model = llama.convert_hf_llama(model)
+    # report("    Converted to FMS...")
+    model = model.bfloat16()
     report("    Converted to bf16...")
 
     # Wrap model
@@ -252,14 +267,6 @@ def train_func(args):
     model.rot_emb.compute_freqs_cis(model.shared.emb.weight.device, args.seq_len)
     # model = torch.compile(model)
 
-
-    # model = get_model(
-    #     "llama",
-    #     "13b",
-    #     model_path="/lustre/llama_weights/13B-F/",
-    #     device_type="cuda",
-    #     source="meta",
-    # )
 
     # model = Llama(
     #     args.vocab,
