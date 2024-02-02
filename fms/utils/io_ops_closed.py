@@ -21,7 +21,7 @@ from torch.distributed.fsdp import FullStateDictConfig
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.distributed.fsdp import StateDictType
 
-from fms.utils.from_closed import get_local_rank, get_rank, run_rank_n, get_latest, get_oldest, human_readable, human_readable_time
+from fms.utils.from_closed import get_local_rank, get_rank, get_world_size, run_rank_n, get_latest, get_oldest, human_readable, human_readable_time
 
 
 @run_rank_n
