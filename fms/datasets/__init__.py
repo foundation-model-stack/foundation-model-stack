@@ -1,8 +1,8 @@
-from torch.utils.data import Dataset
-from typing import Callable, Mapping, Optional
-from fms.datasets.instructions import JsonInstructions
-from fms.datasets import text
-from fms.utils.tokenizers import BaseTokenizer
+# from torch.utils.data import Dataset
+# from typing import Callable, Mapping, Optional
+# from fms.datasets.instructions import JsonInstructions
+# from fms.datasets import text
+# from fms.utils.tokenizers import BaseTokenizer
 
 # __dataset_factory: Mapping[str, Callable[[str, BaseTokenizer], Dataset] | type] = {
 #     "instruction": JsonInstructions,
