@@ -184,7 +184,6 @@ class GatedLinearUnit(nn.Module):
         gain=1,
     ):
         super(GatedLinearUnit, self).__init__()
-        print(hidden_grow_factor)
         self.hidden_dim = int(hidden_grow_factor * emb_dim)
         if multiple_of:
             self.hidden_dim = multiple_of * (

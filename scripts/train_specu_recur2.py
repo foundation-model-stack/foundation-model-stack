@@ -245,6 +245,7 @@ def train_func(args):
         nlayers=48,
         hidden_grow_factor=2.6875,
         max_expected_seq_len=16384,
+        multiple_of=256,
     )
 
     # model = LlamaForCausalLM.from_pretrained(args.base_path) #"/lustre/llama_weights/hf/13B-F/")
