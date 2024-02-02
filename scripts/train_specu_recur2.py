@@ -29,7 +29,7 @@ from torch.profiler import schedule as prof_schedule
 from fms.datasets import dataset as fmdata
 from fms import utils
 from fms.modules.layernorm import LayerNormParameterized
-from fms.utils.from_closed import get_datasets_and_weights
+from fms.utils.from_closed import get_datasets_and_weights, setup_distributed
 from fms.utils.io_ops_closed import (
     get_local_rank,
     get_rank,
@@ -222,7 +222,7 @@ def train_func(args):
             WARNING="Grad accumulation has not been fully tested with FSDP. Correctness for this run is NOT guaranteed!"
         )
     report("Setting up NCCL...")
-    utils.setup_distributed()
+    setup_distributed()
 
     bsize = args.b_size
     effective_bsize = args.b_size * args.simulated_gpus
