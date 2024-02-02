@@ -57,6 +57,10 @@ For more information on reproducing the benchmarks and running some examples, se
 The support for HF models is provided by our HF model adapter. One can obtain similar latencies as tabulated above with HF models using our HF model adapter:
 
 ```python
+from fms.models import get_model
+from fms.models.hf import to_hf_api
+import torch
+from transformers import pipeline
 # fms model
 llama = get_model("llama", "13b")
 
