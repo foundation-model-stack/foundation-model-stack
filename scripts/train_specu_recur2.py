@@ -26,7 +26,7 @@ from torch.distributed.fsdp.wrap import enable_wrap, transformer_auto_wrap_polic
 from torch.profiler import ProfilerAction, ProfilerActivity
 from torch.profiler import schedule as prof_schedule
 
-from fms import datasets as fmdata
+from fms.datasets import dataset as fmdata
 from fms import utils
 from fms.modules.layernorm import LayerNormParameterized
 from fms.utils.from_closed import get_datasets_and_weights
