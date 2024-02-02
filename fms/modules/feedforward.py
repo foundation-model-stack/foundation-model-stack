@@ -65,7 +65,7 @@ class FeedForwardBlock(nn.Module):
         #  - Norm of output equals norm of input times gamma
         # when activation is relu-like
         for layer in ["w1", "w2"]:
-            nn.init.trunc_normal_(
+            nn.init.normal_(
                 getattr(self, layer).weight,
                 mean=0.0,
                 std=(2**0.5 * gain / self.w1.weight.numel() ** 0.5) ** 0.5,
@@ -207,7 +207,7 @@ class GatedLinearUnit(nn.Module):
         #  - Norm of output equals norm of input times gamma
         # when activation is relu-like and input is standard normal
         for layer in ["w1", "w2", "wg"]:
-            nn.init.trunc_normal_(
+            nn.init.normal_(
                 getattr(self, layer).weight,
                 mean=0.0,
                 std=(2 * gain**2 / self.grow_factor) ** (1 / 6) / self.width**0.5,

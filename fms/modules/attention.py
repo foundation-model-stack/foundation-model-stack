@@ -84,13 +84,13 @@ class MultiHeadAttention(nn.Module):
     def reset_params(self, gain=1):
         # Ensure softmax inputs are standard normal
         for layer in ["query", "key"]:
-            nn.init.trunc_normal_(
+            nn.init.normal_(
                 getattr(self, layer).weight, mean=0.0, std=self.emb_dim**-0.5
             )
         # Ensure projection layers have same scale (for normalized-step dataloaders like
         # AdamW / Sophia), and maintain input norm up to attention remix, in expectation
         for layer in ["value", "dense"]:
-            nn.init.trunc_normal_(
+            nn.init.normal_(
                 getattr(self, layer).weight,
                 mean=0.0,
                 std=(gain / (self.emb_dim * self.nheads * self.emb_v_per_head) ** 0.5)

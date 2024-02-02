@@ -93,7 +93,7 @@ class WordEmbedding(nn.Module):
         if self.reversible and not self.tie_weights:
             layers.append("head")
         for layer in layers:
-            nn.init.trunc_normal_(
+            nn.init.normal_(
                 getattr(self, layer).weight, mean=0.0, std=self.emb_dim**-0.5
             )
         if self.reversible and self.bias:
