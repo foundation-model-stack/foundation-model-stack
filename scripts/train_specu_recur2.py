@@ -175,7 +175,7 @@ torch.cuda.manual_seed_all(args.seed)
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.cuda.set_device(local_rank)
 
-torch.set_default_dtype(torch.bfloat16)
+# torch.set_default_dtype(torch.bfloat16)
 
 args = validate_args(args, world_size)
 validate_arg_tokens(args, "pad,sep", allow_no_pad=True)
@@ -248,7 +248,7 @@ def train_func(args):
         hidden_grow_factor=2.6875,
         max_expected_seq_len=16384,
         multiple_of=256,
-    )
+    ).bfloat16()
 
     # model = LlamaForCausalLM.from_pretrained(args.base_path) #"/lustre/llama_weights/hf/13B-F/")
     report("    Codellama loaded, building speculator...")
