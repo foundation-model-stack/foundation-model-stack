@@ -1,6 +1,6 @@
 from contextlib import nullcontext
 from functools import partial
-from typing import Any, Callable, Mapping, MutableMapping, Optional
+from typing import Callable, MutableMapping, Optional
 
 import torch
 from torch import nn
@@ -243,7 +243,10 @@ def get_model(
         if world_size > 1:
             distributed_strategy = "tp"
 
-    device = torch.device(device_type, local_rank)
+    if device_type == "cuda":
+        device = torch.device(device_type, local_rank)
+    else:
+        device = torch.device(device_type)
 
     if (
         _is_dp(distributed_strategy)
@@ -257,17 +260,17 @@ def get_model(
         initial_device = device
 
     if model_path is not None:
-        fms_sd = serialization.load_state_dict(
+        lazy_sd = serialization.load_state_dict(
             model_path,
-            distributed_strategy,
-            checkpoint_sharding,
-            initial_device,
-            local_rank,
-            world_size,
+            source=source,
+            distributed_strategy=distributed_strategy,
+            checkpoint_sharding=checkpoint_sharding,
+            initial_device=initial_device,
+            rank=local_rank,
+            world_size=world_size,
         )
-        fms_sd = serialization.get_adapted(architecture, source, fms_sd)
     else:
-        fms_sd = {}
+        lazy_sd = {}
 
     extra_args = kwargs
     if "distributed_strategy" not in extra_args:
@@ -278,31 +281,43 @@ def get_model(
             print("using model parallel")
             devices = [i for i in range(torch.cuda.device_count())]
             extra_args["distributed_strategy"] = UniformModelParallelStrategy(
-                devices, _guess_num_layers(fms_sd)
+                devices, _guess_num_layers(lazy_sd)
             )
 
+    # Create the model
     fms_model = _get_model_instance(
         architecture, variant, device=initial_device, extra_args=extra_args
     )
 
-    # In some cases we'd need to load the sd before distributing, in some cases
-    # after.
-    # e.g. a checkpoint can be loaded onto rank0 and synced across ranks by
-    # FSDP, but in most cases we need to load the rank-specific checkpoint
-    # onto the current rank.
+    # Choose when to wrap and load the model weights based on the combination
+    # distribution strategy and checkpoint sharding
     pre_load = (
         distributed_strategy in ["fsdp", "hsdp"] and checkpoint_sharding != "fsdp"
     )
 
-    if pre_load and local_rank == 0 and len(fms_sd):
-        fms_model.load_state_dict(fms_sd, strict=False)
+    def model_wrap(model):
+        if _is_dp(distributed_strategy):
+            return _fsdp_wrap(model, distributed_strategy, device, local_rank == 0)
+        return model
 
-    # post-init distribution
-    if _is_dp(distributed_strategy):
-        fms_model = _fsdp_wrap(fms_model, distributed_strategy, device, local_rank == 0)
+    if not pre_load:
+        fms_model = model_wrap(fms_model)
 
-    if not pre_load and len(fms_sd):
-        fms_model.load_state_dict(fms_sd, strict=False)
+    if len(lazy_sd):
+        serialization.load_state_dict_into_model(
+            fms_model,
+            lazy_sd,
+            architecture,
+            source if source is not None else "fms",
+            distributed_strategy,
+            checkpoint_sharding,
+            initial_device,
+            local_rank,
+            world_size,
+        )
+
+    if pre_load:
+        fms_model = model_wrap(fms_model)
 
     return fms_model
 

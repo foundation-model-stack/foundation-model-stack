@@ -191,8 +191,11 @@ class GatedLinearUnit(nn.Module):
             self.hidden_dim = multiple_of * (
                 (self.hidden_dim + multiple_of - 1) // multiple_of
             )
-        self.w1 = nn.Linear(emb_dim, self.hidden_dim, bias=use_bias)
-        self.wg = nn.Linear(emb_dim, self.hidden_dim, bias=use_bias)
+        self.wg_fused = nn.Linear(
+            emb_dim,
+            2 * self.hidden_dim,
+            bias=use_bias
+        )
         self.a = activation_fn
         self.p_dropout = p_dropout
         if p_dropout:
@@ -208,7 +211,7 @@ class GatedLinearUnit(nn.Module):
         #  - Norm of w1, wg and w2 are equal (for step-normalizing optimizers like AdamW / Sophia)
         #  - Norm of output equals norm of input times gamma
         # when activation is relu-like and input is standard normal
-        for layer in ["w1", "w2", "wg"]:
+        for layer in ["wg_fused", "w2"]:
             nn.init.trunc_normal_(
                 getattr(self, layer).weight,
                 mean=0.0,
@@ -218,7 +221,9 @@ class GatedLinearUnit(nn.Module):
                 getattr(self, layer).bias.data.zero_()
 
     def forward(self, x):
-        out = self.a(self.wg(x)) * self.w1(x)
+        out_fused = self.wg_fused(x)
+        wg, w1 = torch.split(out_fused, [self.hidden_dim, self.hidden_dim], dim=2)
+        out = self.a(wg) * w1
         if self.p_dropout:
             out = self.d(out)
         return self.w2(out)

@@ -1,6 +1,6 @@
 import math
 from typing import List, MutableMapping, Optional, Tuple, Union
-
+import rotary_emb
 import torch
 
 
@@ -230,6 +230,8 @@ class RotaryEmbedding(PositionEncoder):
         """
         assert len(q.size()) == 4
         assert len(k.size()) == 4
+
+        seq_len = max(k.size(2), q.size(2))
         if position_ids is None:
             # Compute position_ids based on cache config
             position_ids = torch.arange(
@@ -246,10 +248,29 @@ class RotaryEmbedding(PositionEncoder):
         freqs = self.cached_freqs[q.device.index][alpha][position_ids].unsqueeze(1)
 
         freqs = freqs.float()  # 1 1 L D/2 2 2
-        q_out = freqs.mul(q_.unsqueeze(-2)).sum(5).flatten(3)
-        k_out = freqs.mul(k_.unsqueeze(-2)).sum(5).flatten(3)
 
-        return q_out.type_as(q).contiguous(), k_out.type_as(k).contiguous()
+        # UNCOMMENT FOR rotary embedding kernel
+        # cos = freqs[0,0,:,:,0,0].unsqueeze(1)
+        # sin = freqs[0,0,:,:,1,0].unsqueeze(1)
+        # x1 = q_[:,:,:,:,0].transpose(1, 2)#.reshape(-1, q_.size(1), q_.size(3))
+        # x2 = q_[:,:,:,:,1].transpose(1, 2)#.reshape(-1, q_.size(1), q_.size(3))
+        # rotary_emb.apply_rotary(x1, x2, cos, sin, x1, x2, False)
+        # q_out = torch.stack((x1, x2), dim=-1).transpose(1, 2).reshape(*q.size()).type_as(q)
+        #
+        # x1 = k_[:, :, :, :, 0].transpose(1, 2)#.reshape(-1, k_.size(1), k_.size(3))
+        # x2 = k_[:, :, :, :, 1].transpose(1, 2)#.reshape(-1, k_.size(1), k_.size(3))
+        # rotary_emb.apply_rotary(x1, x2, cos, sin, x1, x2, False)
+        # k_out = torch.stack((x1, x2), dim=-1).transpose(1, 2).reshape(*k.size()).type_as(k)
+
+
+        q_out = (
+            freqs[:, :, -q.size(2) :, :, :, :].mul(q_.unsqueeze(-2)).sum(5).flatten(3)
+        ).type_as(q).contiguous()
+        k_out = (
+            freqs[:, :, -k.size(2) :, :, :, :].mul(k_.unsqueeze(-2)).sum(5).flatten(3)
+        ).type_as(q).contiguous()
+
+        return q_out, k_out
 
 
 def compute_position_ids(

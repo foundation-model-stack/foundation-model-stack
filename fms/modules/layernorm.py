@@ -3,6 +3,7 @@ import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import dropout_layer_norm
 
 
 class LayerNormParameterized(nn.Module):
@@ -58,16 +59,40 @@ class LayerNormParameterized(nn.Module):
             self.bias.data.zero_()
 
     def forward(self, x):
-        if self.use_mean:
-            x = x - x.mean(-1, keepdim=True)
-        # x = F.normalize(x, dim=-1)*math.sqrt(x.size(-1))
-        xf = x
-        if self.use_high_precision_pow:
-            xf = x.float()
-        xf = xf * torch.rsqrt(xf.pow(2).mean(-1, keepdim=True) + self.eps)
-        x = xf.type_as(x)
-        if self.elementwise_scale:
-            x = self.weight * x
-        if self.elementwise_shift:
-            x = x + self.bias
-        return x
+        original_x = x
+        # if self.use_mean:
+        #     x = x - x.mean(-1, keepdim=True)
+        # # x = F.normalize(x, dim=-1)*math.sqrt(x.size(-1))
+        # xf = x
+        # if self.use_high_precision_pow:
+        #     xf = x.float()
+        # xf = xf * torch.rsqrt(xf.pow(2).mean(-1, keepdim=True) + self.eps)
+        # x = xf.type_as(x)
+        # if self.elementwise_scale:
+        #     x = self.weight * x
+        # if self.elementwise_shift:
+        #     x = x + self.bias
+
+
+        # return x
+        # UNCOMMENT FOR layernorm kernel
+        original_shape = original_x.shape
+        normed_hidden_states, res, *rest = dropout_layer_norm.dropout_add_ln_fwd(
+            original_x.view(-1, original_shape[2]),
+            None,
+            self.weight,
+            None,
+            None,
+            None,
+            None,
+            None,
+            0.0,
+            self.eps,
+            1.0,
+            0,
+            None,
+            False,
+            True,  # Activate RMSNorm
+        )
+
+        return normed_hidden_states.view(*original_shape)
