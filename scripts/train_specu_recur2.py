@@ -240,7 +240,7 @@ def train_func(args):
         model_path=args.base_path,
         device_type="cuda",
         source="hf",
-        distributed_strategy="hsdp",
+        distributed_strategy="fsdp",
         emb_dim=8192,
         nheads=64,
         kvheads=8,
