@@ -39,6 +39,10 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r test-requirements.txt
         
+        # Enables the virtual env for following steps
+        echo "$VIRTUAL_ENV/bin" >> $GITHUB_PATH
+        echo "VIRTUAL_ENV=$VIRTUAL_ENV" >> $GITHUB_ENV
+
     - name: Test with pytest
       run: |
         pytest -vv -rP tests/
