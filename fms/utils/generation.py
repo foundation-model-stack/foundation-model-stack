@@ -86,6 +86,7 @@ def generate(
         else:
             logits = output
         logits = logits[:, -1, :]
+        # breakpoint()
 
         if do_sample:
             # get logits from last value in sequence nad scale

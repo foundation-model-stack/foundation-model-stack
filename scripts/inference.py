@@ -125,8 +125,8 @@ if args.compile:
     print("compiling model")
     # Bug with kv-cache in PT2.1
     torch._inductor.config.joint_graph_constant_folding = False
-    # compiling can make first inference pass slow
-    model = torch.compile(model, mode=args.compile_mode)
+    # compiling can make first inference pass slow backend="aot_eager"
+    model = torch.compile(model, mode=args.compile_mode, backend="aot_eager")
 
 
 def ids_for_prompt(prompt):
