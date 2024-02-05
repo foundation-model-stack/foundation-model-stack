@@ -16,4 +16,5 @@ setup(
         "Programming Language :: Python :: 3",
         "License :: OSI Approved :: Apache Software License",
     ],
+    package_data={"ibm-fms": ["py.typed"]},
 )
