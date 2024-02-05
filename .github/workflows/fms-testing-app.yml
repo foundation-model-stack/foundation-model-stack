@@ -29,6 +29,13 @@ jobs:
           ${{ runner.os }}-${{ steps.setup_python.outputs.python-version }}-venv-
     - name: Install dependencies
       run: |
+        # Create the virtual environment
+        python -m venv .venv
+        . ./.venv/bin/activate
+
+        # Install the dependencies
+        # In case of a cache hit on the primary key, this will be a no-op
+        # In case of a cache miss, but hit on a secondary key, this will update what's changed
         python -m pip install --upgrade pip
         pip install -r test-requirements.txt
         
