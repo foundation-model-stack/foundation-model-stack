@@ -139,7 +139,7 @@ class MultiHeadAttention(nn.Module):
         # split emb_dim as nheads*emb_dim_per_head
         # b x h x qlen x ds
         queries = self.query(q).view(
-            batch_size, q_len, -1, self.emb_kq_per_head
+            batch_size, q_len, self.nheads, self.emb_kq_per_head
         )
         queries = queries.transpose(2, 1)  # / (self.emb_kq_per_head**(1/4))
 
@@ -152,12 +152,12 @@ class MultiHeadAttention(nn.Module):
         # b x h x kvlen x ds
         if is_self or past_key_value_state is None:
             keys = self.key(k).view(
-                batch_size, kv_len, -1, self.emb_kq_per_head
+                batch_size, kv_len, self.kvheads, self.emb_kq_per_head
             )
             keys = keys.transpose(2, 1)  # / (self.emb_kq_per_head**(1/4))
 
             values = self.value(v).view(
-                batch_size, kv_len, -1, self.emb_v_per_head
+                batch_size, kv_len, self.kvheads, self.emb_v_per_head
             )
             values = values.transpose(2, 1)  # compatible with QK.T
 
@@ -202,7 +202,6 @@ class MultiHeadAttention(nn.Module):
             keys_e = keys
             values_e = values
 
-        # >>> if use SDPA
         if attn_algorithm:
             # Pick which fused attn kernels will run.
             use_flash = attn_algorithm == "flash"
@@ -234,28 +233,8 @@ class MultiHeadAttention(nn.Module):
         attn = (
             attn.transpose(2, 1)
             .contiguous()
-            .view(batch_size, q_len, -1)
+            .view(batch_size, q_len, self.nheads * self.emb_v_per_head)
         )
-        # <<< if use SDPA
-
-        # # >>> if use flash attn
-        # from flash_attn import flash_attn_func
-        # queries = queries.transpose(1, 2)
-        # keys_e = keys_e.transpose(1, 2)
-        # values_e = values_e.transpose(1, 2)
-        #
-        # attn = flash_attn_func(
-        #     queries,
-        #     keys_e,
-        #     values_e,
-        #     dropout_p=self.p_dropout if self.training else 0.0,
-        #     causal=is_causal_mask,
-        #     window_size=(4096, 4096),
-        # )
-        #
-        # attn = attn.reshape(batch_size, q_len, self.nheads * self.emb_v_per_head).contiguous()
-        # # <<< if use flash attn
-
         out = self.dense(attn)
 
         # if use_cache=True, we return the hidden_state as well as the kv cache
