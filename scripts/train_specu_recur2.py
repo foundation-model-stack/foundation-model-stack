@@ -498,7 +498,7 @@ def train_func(args):
                 start = time.time()
 
             # Checkpoint model
-            ƒ
+            
             torch.cuda.empty_cache()
             if (step + 1) % args.save_interval == 0:
                 if args.profile and prof.current_action == ProfilerAction.RECORD_AND_SAVE:
