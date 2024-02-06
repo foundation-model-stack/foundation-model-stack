@@ -106,6 +106,8 @@ def generate(
             next_input = next_val
         else:
             next_input = result
+        print("Not being compiled:", kwargs["past_key_value_states"][0][0])
+        breakpoint()
 
     if not batched:
         result = result[0]

@@ -84,13 +84,17 @@ class ExpandableTensor(torch.Tensor):
             # with cm:
             cat_slice = torch.index_select(tensor, dim, torch.tensor([self._dim_length-1], dtype=torch.long, device=tensor.device)).expand(*reshape_sizes)
             self._underlying_tensor = torch.cat((self._underlying_tensor, cat_slice), dim=dim)
-        torch._dynamo.mark_dynamic(self, self._dim)
+        # torch._dynamo.mark_dynamic(self, self._dim)
 
-    # @_implements(torch.ops.aten.sym_size.default)
-    # def sym_size(self, dim=None):
-    #     return None
+    @_implements(torch.ops.aten.sym_size.default)
+    def sym_size(self, dim=None):
+        sizes_list = list(self._underlying_tensor.size())
+        sizes_list[self._dim] = self._dim_length
+        if dim is None:
+            return torch.Size(sizes_list)
+        else:
+            return sizes_list[dim]
 
-    
     @_implements(torch.ops.aten.size.default)
     def size(self, dim=None):
         # https://github.com/pytorch/pytorch/issues/111944
@@ -100,7 +104,31 @@ class ExpandableTensor(torch.Tensor):
             return torch.Size(sizes_list)
         else:
             return sizes_list[dim]
+        
+    @_implements(torch.ops.aten.sym_stride.default)
+    def sym_stride(self, dim=None):
+        # https://github.com/pytorch/pytorch/issues/111944
+        if dim is None:
+            return self._underlying_tensor.stride()
+        else:
+            return self._underlying_tensor.stride(dim)
+        
+    @_implements(torch.ops.aten.dim.default)
+    def dim(self):
+        return self._underlying_tensor.dim()
+    
+    @_implements(torch.ops.aten.sym_storage_offset.default)
+    def sym_storage_offset(self):
+        return self._underlying_tensor.storage_offset()
 
+    @_implements(torch.ops.aten.is_contiguous.default)
+    def is_contiguous(self, memory_format=torch.contiguous_format):
+        from torch._prims_common import is_contiguous_for_memory_format
+
+        if self._dim_length != self._underlying_tensor.size(self._dim):
+            return False
+        return self._underlying_tensor.is_contiguous(memory_format=memory_format)
+    
     def _append(self, tensor):
         """
         Returns a tensor equivalent to the result of
@@ -122,8 +150,7 @@ class ExpandableTensor(torch.Tensor):
             offset = self._dim_length * strides[self._dim]
             view = view.as_strided(size=sizes, stride=strides, storage_offset=offset)
             view.copy_(tensor)
-            result = ExpandableTensor(self._underlying_tensor, dim=self._dim)
-            result._dim_length = self._dim_length + tensor.shape[dim]
+            result = ExpandableTensor(self._underlying_tensor, dim=self._dim, dim_length=self._dim_length + tensor.shape[dim])
             return result
         else:
             # create new expandable tensor
@@ -136,10 +163,12 @@ class ExpandableTensor(torch.Tensor):
         """
         Returns a view of the tensor excluding preallocated space
         """
-        view = self._underlying_tensor.view_as(self._underlying_tensor)
-        sizes = list(view.size())
+        # view = self._underlying_tensor.view_as(self._underlying_tensor)
+        # with torch._dispatch.python.no_python_dispatcher():
+        print("View op:", type(self._underlying_tensor))
+        sizes = list(self._underlying_tensor.size())
         sizes[self._dim] = self._dim_length
-        view = view.as_strided(size=sizes, stride=view.stride())
+        view = self._underlying_tensor.as_strided(size=sizes, stride=self._underlying_tensor.stride())
         return view
 
     def __repr__(self):
@@ -189,27 +218,22 @@ class ExpandableTensor(torch.Tensor):
 
     @classmethod
     def __torch_dispatch__(cls, func, types, args=(), kwargs=None):
+        print(func)
         if kwargs is None:
             kwargs = {}
-        if any([type(a) == ExpandableTensor and isinstance(a._underlying_tensor, FunctionalTensor) for a in args]):
-            cm = FunctionalTensorMode()
+        if func not in _HANDLED_FUNCTIONS or not all(
+            issubclass(t, (torch.Tensor, ExpandableTensor)) for t in types
+        ):
+            parsed_args = tuple([a._tensor() if type(a) == ExpandableTensor else a for a in args])
+            out = func(*parsed_args, **kwargs)
         else:
-            cm = contextlib.nullcontext()
-        with cm:
-            if func not in _HANDLED_FUNCTIONS or not all(
-                issubclass(t, (torch.Tensor, ExpandableTensor)) for t in types
-            ):
-                args = tuple([a._tensor() if type(a) == ExpandableTensor else a for a in args])
-                out = func(*args, **kwargs)
-            else:
-                out = _HANDLED_FUNCTIONS[func](*args, **kwargs)
+            out = _HANDLED_FUNCTIONS[func](*args, **kwargs)
         return return_and_correct_aliasing(func, args, kwargs, out)
     
     @classmethod
     def __torch_function__(cls, func, types, args=(), kwargs=None):
         if kwargs is None:
             kwargs = {}
-
         try:
             return expandable_torch_function(func, *args, **kwargs)
         except NotImplementedError:

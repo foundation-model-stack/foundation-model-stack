@@ -187,12 +187,8 @@ class MultiHeadAttention(nn.Module):
             # -- see https://github.com/pytorch/pytorch/issues/93723
             else:
                 preallocate_length = smallest_power_greater_than(keys.size(2))
-                keys = create_expandable_tensor(
-                    keys, dim=2, preallocate_length=preallocate_length
-                )
-                values = create_expandable_tensor(
-                    values, dim=2, preallocate_length=preallocate_length
-                )
+                keys = create_expandable_tensor(keys, dim=2, preallocate_length=preallocate_length)
+                values = create_expandable_tensor(values, dim=2, preallocate_length=preallocate_length)
 
         # Merge rel pos bias and mask into single float mask
         if mask is not None:

@@ -110,7 +110,7 @@ else:
 model = get_model(
     args.architecture,
     args.variant,
-    model_path=args.model_path,
+    # model_path=args.model_path,
     device_type=args.device_type,
     source=args.model_source,
     distributed_strategy=distr_param,
