@@ -2,6 +2,9 @@ import argparse
 import itertools
 import os
 
+## MONKEYPATCH (before torch import)
+import fms.utils.dispatch_fix
+
 import torch
 import torch._inductor.config
 from torch import distributed as dist
@@ -116,7 +119,7 @@ model = get_model(
     distributed_strategy=distr_param,
     group=dist.group.WORLD,
 )
-tokenizer = tokenizers.get_tokenizer(args.tokenizer)
+# tokenizer = tokenizers.get_tokenizer(args.tokenizer)
 model.eval()
 torch.set_grad_enabled(False)
 print("loading complete on rank", local_rank)
@@ -166,8 +169,8 @@ else:
     )
     prompt2 = template.format("Explain some popular greetings in Spanish.")
 
-prompt1 = ids_for_prompt(prompt1)
-prompt2 = ids_for_prompt(prompt2)
+# prompt1 = ids_for_prompt(prompt1)
+# prompt2 = ids_for_prompt(prompt2)
 
 max_len = max([len(prompt) for prompt in [prompt1, prompt2]])
 # prompt1 = pad_prompt(prompt1, max_len)
@@ -176,7 +179,7 @@ max_len = max([len(prompt) for prompt in [prompt1, prompt2]])
 # prompt2 = pad_prompt(prompt2, max_len)
 # ids = torch.stack((prompt2, prompt1), dim=0)
 
-ids = prompt1.unsqueeze(0)
+ids = torch.randint(0, 100, (1, 48), dtype=torch.int, device=device)
 
 
 def print_result(result):

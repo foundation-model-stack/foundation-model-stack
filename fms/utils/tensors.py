@@ -1,12 +1,9 @@
-import contextlib
 from typing import Dict
 import functools
 
 import torch
 from torch._dynamo import allow_in_graph
-from torch._guards import detect_fake_mode
 from torch.utils._python_dispatch import return_and_correct_aliasing
-from torch._subclasses.functional_tensor import FunctionalTensor, FunctionalTensorMode
 
 _HANDLED_FUNCTIONS = {}
 
@@ -123,8 +120,6 @@ class ExpandableTensor(torch.Tensor):
 
     @_implements(torch.ops.aten.is_contiguous.default)
     def is_contiguous(self, memory_format=torch.contiguous_format):
-        from torch._prims_common import is_contiguous_for_memory_format
-
         if self._dim_length != self._underlying_tensor.size(self._dim):
             return False
         return self._underlying_tensor.is_contiguous(memory_format=memory_format)
@@ -163,9 +158,6 @@ class ExpandableTensor(torch.Tensor):
         """
         Returns a view of the tensor excluding preallocated space
         """
-        # view = self._underlying_tensor.view_as(self._underlying_tensor)
-        # with torch._dispatch.python.no_python_dispatcher():
-        print("View op:", type(self._underlying_tensor))
         sizes = list(self._underlying_tensor.size())
         sizes[self._dim] = self._dim_length
         view = self._underlying_tensor.as_strided(size=sizes, stride=self._underlying_tensor.stride())

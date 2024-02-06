@@ -86,7 +86,6 @@ def generate(
         else:
             logits = output
         logits = logits[:, -1, :]
-        # breakpoint()
 
         if do_sample:
             # get logits from last value in sequence nad scale
@@ -107,7 +106,6 @@ def generate(
         else:
             next_input = result
         print("Not being compiled:", kwargs["past_key_value_states"][0][0])
-        breakpoint()
 
     if not batched:
         result = result[0]
