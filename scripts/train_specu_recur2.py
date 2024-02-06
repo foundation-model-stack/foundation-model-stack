@@ -205,6 +205,7 @@ mp_policy = (
     )
 )
 wrapping_policy = functools.partial(transformer_auto_wrap_policy, transformer_layer_cls={llama.LLaMABlock})
+specu_wrap_policy = functools.partial(transformer_auto_wrap_policy, transformer_layer_cls={nn.ModuleList})
 model_sharding_strategies = {
     "fsdp": ShardingStrategy.FULL_SHARD,
     "hsdp": ShardingStrategy.HYBRID_SHARD,
@@ -311,9 +312,9 @@ def train_func(args):
 
     speculator = FSDP(
         speculator,
-        auto_wrap_policy=None,
+        auto_wrap_policy=specu_wrap_policy,
         mixed_precision=mp_policy,
-        sharding_strategy=ShardingStrategy.NO_SHARD,
+        sharding_strategy=model_sharding_strategy,
         device_id=local_rank,
         limit_all_gathers=True,
         use_orig_params=True,
@@ -525,6 +526,8 @@ def train_func(args):
                 prof.step()
 
     sync_report(msg="Writing final checkpoint", step=step + 1)
+    del model
+    torch.cuda.empty_cache()
     checkpointer.save_single_file(
         step + 1,
         speculator,
