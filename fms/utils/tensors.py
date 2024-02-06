@@ -47,13 +47,15 @@ class ExpandableTensor(torch.Tensor):
     _dim_length: int
 
     @staticmethod
-    def __new__(cls, tensor: torch.Tensor, *, dim: int = 0, preallocate_length: int = None, dim_length=None):
+    def __new__(cls, tensor: torch.Tensor, *, dim: int = 0, preallocate_length: int = None, dim_length: int = None, stride=None):
         sizes = list(tensor.size())
-        sizes[dim] = preallocate_length if preallocate_length is not None else sizes[dim]
+        if dim_length is not None:
+            sizes[dim] = dim_length
+
         r = torch.Tensor._make_wrapper_subclass(  # type: ignore[attr-defined]
             cls,
             sizes,
-            tensor.stride(),
+            stride if stride is not None else tensor.stride(),
             tensor.storage_offset(),
             None,
             tensor.dtype,
@@ -61,54 +63,51 @@ class ExpandableTensor(torch.Tensor):
             tensor.device,
             False,
             False,
-            "sizes",
+            None,
             False,
             False,
         )
         return r
 
-    def __init__(self, tensor, *, dim=0, preallocate_length=None, dim_length=None):
+    def __init__(self, tensor: torch.Tensor, *, dim:int = 0, preallocate_length: int = None, dim_length: int = None, stride=None):
         self._dim = dim
-        self._dim_length = tensor.shape[dim] if dim_length is None else dim_length
+        self._dim_length = tensor.size(dim) if dim_length is None else dim_length
         self._underlying_tensor = tensor
-        if preallocate_length is not None and preallocate_length > self._underlying_tensor.shape[dim]:
+        if preallocate_length is not None and preallocate_length > self._underlying_tensor.size(dim):
             sizes = list(tensor.size())
             sizes[dim] = preallocate_length - sizes[dim]
             reshape_sizes = [-1 for _ in sizes]
             reshape_sizes[dim] = sizes[dim]
-            # fake_mode = detect_fake_mode(tensor)
-            # cm = contextlib.nullcontext() if fake_mode is None else fake_mode
-            # with cm:
             cat_slice = torch.index_select(tensor, dim, torch.tensor([self._dim_length-1], dtype=torch.long, device=tensor.device)).expand(*reshape_sizes)
             self._underlying_tensor = torch.cat((self._underlying_tensor, cat_slice), dim=dim)
         # torch._dynamo.mark_dynamic(self, self._dim)
 
-    @_implements(torch.ops.aten.sym_size.default)
-    def sym_size(self, dim=None):
-        sizes_list = list(self._underlying_tensor.size())
-        sizes_list[self._dim] = self._dim_length
-        if dim is None:
-            return torch.Size(sizes_list)
-        else:
-            return sizes_list[dim]
+    # @_implements(torch.ops.aten.sym_size.default)
+    # def sym_size(self, dim=None):
+    #     sizes_list = list(self._underlying_tensor.size())
+    #     sizes_list[self._dim] = self._dim_length
+    #     if dim is None:
+    #         return torch.Size(sizes_list)
+    #     else:
+    #         return sizes_list[dim]
 
-    @_implements(torch.ops.aten.size.default)
-    def size(self, dim=None):
-        # https://github.com/pytorch/pytorch/issues/111944
-        sizes_list = list(self._underlying_tensor.size())
-        sizes_list[self._dim] = self._dim_length
-        if dim is None:
-            return torch.Size(sizes_list)
-        else:
-            return sizes_list[dim]
+    # @_implements(torch.ops.aten.size.default)
+    # def size(self, dim=None):
+    #     # https://github.com/pytorch/pytorch/issues/111944
+    #     sizes_list = list(self._underlying_tensor.size())
+    #     sizes_list[self._dim] = self._dim_length
+    #     if dim is None:
+    #         return torch.Size(sizes_list)
+    #     else:
+    #         return sizes_list[dim]
         
-    @_implements(torch.ops.aten.sym_stride.default)
-    def sym_stride(self, dim=None):
-        # https://github.com/pytorch/pytorch/issues/111944
-        if dim is None:
-            return self._underlying_tensor.stride()
-        else:
-            return self._underlying_tensor.stride(dim)
+    # @_implements(torch.ops.aten.sym_stride.default)
+    # def sym_stride(self, dim=None):
+    #     # https://github.com/pytorch/pytorch/issues/111944
+    #     if dim is None:
+    #         return self._underlying_tensor.stride()
+    #     else:
+    #         return self._underlying_tensor.stride(dim)
         
     @_implements(torch.ops.aten.dim.default)
     def dim(self):
@@ -124,7 +123,7 @@ class ExpandableTensor(torch.Tensor):
             return False
         return self._underlying_tensor.is_contiguous(memory_format=memory_format)
     
-    def _append(self, tensor):
+    def _append(self, tensor: torch.Tensor):
         """
         Returns a tensor equivalent to the result of
         `torch.cat( (self, tensor), dim=self._dim)`, possibly modifying `self`
@@ -136,14 +135,13 @@ class ExpandableTensor(torch.Tensor):
         for i in range(len(expected)):
             if i != dim:
                 assert expected[i] == tensor_sizes[i]
-        if self.size()[dim] + tensor.size()[dim] <= self._underlying_tensor.size()[dim]:
+        if self.size(dim) + tensor.size(dim) <= self._underlying_tensor.size(dim):
             # copy into tail of _tensor
-            view = self._underlying_tensor
-            sizes = list(view.size())
-            sizes[self._dim] = tensor.size()[dim]
-            strides = self._underlying_tensor.stride()
+            sizes = list(self.size())
+            sizes[self._dim] = tensor.size(dim)
+            strides = self.stride()
             offset = self._dim_length * strides[self._dim]
-            view = view.as_strided(size=sizes, stride=strides, storage_offset=offset)
+            view = self._underlying_tensor.as_strided(size=sizes, stride=strides, storage_offset=offset)
             view.copy_(tensor)
             result = ExpandableTensor(self._underlying_tensor, dim=self._dim, dim_length=self._dim_length + tensor.shape[dim])
             return result
@@ -160,6 +158,7 @@ class ExpandableTensor(torch.Tensor):
         """
         sizes = list(self._underlying_tensor.size())
         sizes[self._dim] = self._dim_length
+        # print(type(self), self.size(), self.stride(), self._has_symbolic_sizes_strides)
         view = self._underlying_tensor.as_strided(size=sizes, stride=self._underlying_tensor.stride())
         return view
 
@@ -188,6 +187,7 @@ class ExpandableTensor(torch.Tensor):
             _underlying_tensor,
             dim=_dim,
             dim_length=outer_size[_dim],
+            stride=outer_stride,
         )
 
     @_implements(torch.ops.aten.cat.default)
