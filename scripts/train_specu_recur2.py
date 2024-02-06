@@ -464,7 +464,7 @@ def train_func(args):
                     sync_report("Got through backward pass")
 
                 # deallocating GPU memory for the pred tensor
-                del preds, targ, embeds
+                del preds, targ, embeds, inp
 
             optimizer.step()
             scheduler.step()
@@ -498,6 +498,8 @@ def train_func(args):
                 start = time.time()
 
             # Checkpoint model
+            ƒ
+            torch.cuda.empty_cache()
             if (step + 1) % args.save_interval == 0:
                 if args.profile and prof.current_action == ProfilerAction.RECORD_AND_SAVE:
                     report("You are profiling a checkpointing step, be careful about it!")
