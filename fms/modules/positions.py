@@ -96,6 +96,45 @@ class Alibi(PositionEncoder):
 
         return attn_mask
 
+class ComplexRotaryEmbedding(PositionEncoder):
+    def __init__(self, dim, max_position_embeddings=2048, theta=10000, device=None):
+        super(ComplexRotaryEmbedding, self).__init__()
+        self.freqs = 1.0 / (theta ** (torch.arange(0, dim, 2, device=device)[: (dim // 2)].float() / dim))
+        self.compute_freqs_cis(max_position_embeddings)
+
+    def compute_freqs_cis(self, max_position_embeddings=2048):
+        t = torch.arange(max_position_embeddings, device=self.freqs.device, dtype=self.freqs.dtype)
+        freqs = torch.outer(t, self.freqs).float()
+        self.max_seq_len_cached = max_position_embeddings
+        self.cached_freqs_cis = torch.polar(torch.ones_like(freqs), freqs)
+
+    def reshape_for_broadcast(self, x: torch.Tensor, cur_freqs_cis):
+        ndim = x.ndim
+        # assert 1 < ndim
+        # assert cur_freqs_cis.shape == (x.shape[0], x.shape[1], x.shape[-1])
+        shape = [d if i == 1 or i == ndim - 1 or i == 0 else 1 for i, d in enumerate(x.shape)]
+        return cur_freqs_cis.view(*shape)
+
+    def adjusted_qk(
+        self,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        position_ids: Optional[torch.Tensor] = None,
+        use_cache=False,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        seq_len = q.shape[2]
+        if position_ids is None:
+            # Compute position_ids based on cache config
+            position_ids = torch.arange(
+                0, q.size(1), dtype=torch.long, device=q.device
+            ).repeat(q.size(0), 1)
+        cur_freqs_cis = self.cached_freqs_cis[position_ids]
+        q_ = torch.view_as_complex(q.float().reshape(*q.shape[:-1], -1, 2))
+        k_ = torch.view_as_complex(k.float().reshape(*k.shape[:-1], -1, 2))
+        freqs_cis = self.reshape_for_broadcast(q_, cur_freqs_cis)
+        q_out = torch.view_as_real(q_ * freqs_cis).flatten(3)
+        k_out = torch.view_as_real(k_ * freqs_cis).flatten(3)
+        return q_out.type_as(q), k_out.type_as(k)
 
 class RotaryEmbedding(PositionEncoder):
     def __init__(
@@ -124,6 +163,7 @@ class RotaryEmbedding(PositionEncoder):
         self.max_seq_len_cached: MutableMapping[int, int] = {}
         self.ntk_scaling = ntk_scaling
         self.max_seq_len = max_seq_len
+        self.cached_alpha = None
 
     def _alpha(self, seq_len) -> int:
         if not self.ntk_scaling:
@@ -194,7 +234,7 @@ class RotaryEmbedding(PositionEncoder):
                 torch.cos(freqs),
             ],
             dim=2,
-        ).view(*freqs.size(), 2, 2)
+        ).reshape(*freqs.size(), 2, 2)
 
         return alpha
 
@@ -239,8 +279,8 @@ class RotaryEmbedding(PositionEncoder):
             ).repeat(q.size(0), 1)
         seq_len = q.size(2)
 
-        q_ = q.float().reshape(*q.size()[:-1], -1, 2)  # B H L D/2 2
-        k_ = k.float().reshape(*k.size()[:-1], -1, 2)  # B H L D/2 2
+        q_ = q.float().view(*q.size()[:-1], -1, 2)  # B H L D/2 2
+        k_ = k.float().view(*k.size()[:-1], -1, 2)  # B H L D/2 2
 
         # the max start position should be based on the max first position of each sequence
         max_start_pos = torch.max(position_ids[:, 0])
@@ -250,25 +290,25 @@ class RotaryEmbedding(PositionEncoder):
         freqs = freqs.float()  # 1 1 L D/2 2 2
 
         # UNCOMMENT FOR rotary embedding kernel
-        # cos = freqs[0,0,:,:,0,0].unsqueeze(1)
-        # sin = freqs[0,0,:,:,1,0].unsqueeze(1)
-        # x1 = q_[:,:,:,:,0].transpose(1, 2)#.reshape(-1, q_.size(1), q_.size(3))
-        # x2 = q_[:,:,:,:,1].transpose(1, 2)#.reshape(-1, q_.size(1), q_.size(3))
-        # rotary_emb.apply_rotary(x1, x2, cos, sin, x1, x2, False)
-        # q_out = torch.stack((x1, x2), dim=-1).transpose(1, 2).reshape(*q.size()).type_as(q)
-        #
-        # x1 = k_[:, :, :, :, 0].transpose(1, 2)#.reshape(-1, k_.size(1), k_.size(3))
-        # x2 = k_[:, :, :, :, 1].transpose(1, 2)#.reshape(-1, k_.size(1), k_.size(3))
-        # rotary_emb.apply_rotary(x1, x2, cos, sin, x1, x2, False)
-        # k_out = torch.stack((x1, x2), dim=-1).transpose(1, 2).reshape(*k.size()).type_as(k)
+        cos = freqs[0,0,:,:,0,0].unsqueeze(1)
+        sin = freqs[0,0,:,:,1,0].unsqueeze(1)
+        x1 = q_[:,:,:,:,0]#.transpose(1, 2)#.reshape(-1, q_.size(1), q_.size(3))
+        x2 = q_[:,:,:,:,1]#.transpose(1, 2)#.reshape(-1, q_.size(1), q_.size(3))
+        rotary_emb.apply_rotary(x1, x2, cos, sin, x1, x2, False)
+        q_out = torch.stack((x1, x2), dim=-1).view(*q.size()).type_as(q)
+
+        x1 = k_[:, :, :, :, 0]#.transpose(1, 2)#.reshape(-1, k_.size(1), k_.size(3))
+        x2 = k_[:, :, :, :, 1]#.transpose(1, 2)#.reshape(-1, k_.size(1), k_.size(3))
+        rotary_emb.apply_rotary(x1, x2, cos, sin, x1, x2, False)
+        k_out = torch.stack((x1, x2), dim=-1).view(*k.size()).type_as(k)
 
 
-        q_out = (
-            freqs[:, :, -q.size(2) :, :, :, :].mul(q_.unsqueeze(-2)).sum(5).flatten(3)
-        ).type_as(q).contiguous()
-        k_out = (
-            freqs[:, :, -k.size(2) :, :, :, :].mul(k_.unsqueeze(-2)).sum(5).flatten(3)
-        ).type_as(q).contiguous()
+        # q_out = (
+        #     freqs[:, :, -q.size(2) :, :, :, :].mul(q_.unsqueeze(-2)).sum(5).flatten(3)
+        # ).type_as(q).contiguous()
+        # k_out = (
+        #     freqs[:, :, -k.size(2) :, :, :, :].mul(k_.unsqueeze(-2)).sum(5).flatten(3)
+        # ).type_as(q).contiguous()
 
         return q_out, k_out
 

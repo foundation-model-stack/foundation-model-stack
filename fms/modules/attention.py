@@ -143,13 +143,13 @@ class MultiHeadAttention(nn.Module):
 
             queries = q.view(
                 batch_size, q_len, self.nheads, self.emb_kq_per_head
-            ).transpose(2, 1)
+            )#.transpose(2, 1)
             keys = k.view(
                 batch_size, q_len, self.kvheads, self.emb_kq_per_head
-            ).transpose(2, 1)
+            )#.transpose(2, 1)
             values = v.view(
                 batch_size, q_len, self.kvheads, self.emb_v_per_head
-            ).transpose(2, 1)
+            )
 
             # You want to apply rotary embeddings pre-cache
             if self.position_encoder is not None:
@@ -175,6 +175,10 @@ class MultiHeadAttention(nn.Module):
             attn = cache_data_layer.attend(queries, keys, values)
         # otherwise we always fall back into SDPA as this is either a prompt or it is a single contiguous cache
         else:
+            queries = queries.transpose(2, 1)
+            keys = keys.transpose(2, 1)
+            values = values.transpose(2, 1)
+
             # Merge rel pos bias and mask into single float mask
             if mask is not None:
                 # Our expected mask format is bs x q_len x k_len, so to make it broadcastable

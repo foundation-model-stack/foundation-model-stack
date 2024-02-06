@@ -21,7 +21,7 @@ from fms.modules.attention import MultiHeadAttention
 from fms.modules.embedding import WordEmbedding
 from fms.modules.feedforward import GatedLinearUnit
 from fms.modules.layernorm import LayerNormParameterized
-from fms.modules.positions import RotaryEmbedding
+from fms.modules.positions import RotaryEmbedding, ComplexRotaryEmbedding
 from fms.utils import serialization
 from fms.utils.activation import str_to_activation
 from fms.utils.config import ModelConfig
@@ -114,10 +114,10 @@ class LLaMABlock(nn.Module):
         use_cache=False,
         is_causal_mask=False,
         attn_algorithm=None,
+        residual=None,
     ):
         # first we do MHA and Add&Norm
-        residual = x
-        x = self.ln(x)
+        x, residual = self.ln(x, residual)
         x = self.attn(
             qkv=x,
             mask=mask,
@@ -133,20 +133,17 @@ class LLaMABlock(nn.Module):
             x, cache = x
         if self.config.p_dropout != 0:
             x = self.dropout(x)
-        # residual connection
-        x = x + residual
 
         # then we do FF and Add&Norm
-        residual = x
-        x = self.ff_ln(x)
+        x, residual = self.ff_ln(x, residual)
         x = self.ff_sub_layer(x)
-        if self.config.p_dropout != 0:
-            x = self.dropout(x)
-        # another residual
-        x = x + residual
+        # if self.config.p_dropout != 0:
+        #     x = self.dropout(x)
+        # # another residual
+        # x = x + residual
 
         if use_cache:
-            return (x, cache)
+            return (x, cache, residual)
         else:
             return x
 
@@ -181,10 +178,15 @@ class LLaMA(nn.Module):
         )
         self.shared = self.distributed_strategy.distribute_module(shared)
 
-        self.rot_emb = RotaryEmbedding(
+        # self.rot_emb = RotaryEmbedding(
+        #     dim=self.config.emb_dim // self.config.nheads,
+        #     ntk_scaling=self.config.ntk_scaling,
+        #     max_seq_len=self.config.max_expected_seq_len,
+        # )
+        self.rot_emb = ComplexRotaryEmbedding(
             dim=self.config.emb_dim // self.config.nheads,
-            ntk_scaling=self.config.ntk_scaling,
-            max_seq_len=self.config.max_expected_seq_len,
+            max_position_embeddings=self.config.max_expected_seq_len,
+            device="cuda",
         )
         # uncomment this to just compile the rotary embedding
         # self.rot_emb.adjusted_qk = torch.compile(self.rot_emb.adjusted_qk)
@@ -232,10 +234,10 @@ class LLaMA(nn.Module):
                 self.rot_emb.compute_freqs_cis(
                     torch.device("cuda", dev_idx), self.config.max_expected_seq_len
                 )
-        else:
-            self.rot_emb.compute_freqs_cis(
-                self.shared.emb.weight.device, self.config.max_expected_seq_len
-            )
+        # else:
+        #     self.rot_emb.compute_freqs_cis(
+        #         self.shared.emb.weight.device, self.config.max_expected_seq_len
+        #     )
 
     def _helper(
         self,
@@ -269,7 +271,7 @@ class LLaMA(nn.Module):
 
         # this is the output cache for all the decoder layers
         present_key_value_states = []
-
+        residual=None
         for i, layer in enumerate(self.layers):
             output = layer(
                 x=x_in,
@@ -281,17 +283,18 @@ class LLaMA(nn.Module):
                 use_cache=use_cache,
                 is_causal_mask=is_causal_mask,
                 attn_algorithm=attn_algorithm,
+                residual=residual
             )
 
             if use_cache:
-                x_in, present_key_value_state = output
+                x_in, present_key_value_state, residual = output
                 present_key_value_states.append(present_key_value_state)
 
             else:
                 x_in = output
 
         dec_out = x_in
-        dec_out = self.dec_norm(dec_out)
+        dec_out, _ = self.dec_norm(dec_out, residual)
         if self.config.p_dropout:
             dec_out = self.dropout(dec_out)
 

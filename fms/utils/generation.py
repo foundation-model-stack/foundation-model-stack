@@ -1,10 +1,12 @@
+import functools
 from typing import Any, Callable, List, MutableMapping, Optional, Union
 
 import torch
 import torch.nn.functional as F
 from torch import distributed as dist
+from torch._C._profiler import ProfilerActivity
 
-from fms.utils.cache import CacheDataWithMetadata, KVCacheManager
+from fms.utils.cache import CacheDataWithMetadata, KVCacheManager, OutOfPlaceCacheData
 from fms.utils.cache.expandable import ExpandableKVCacheManager
 
 
@@ -23,6 +25,10 @@ def _make_cache_contiguous(past_key_value_states):
             # torch._dynamo.mark_dynamic(n_kv_s[layer_idx][tensor_idx], 2)
     return n_kv_s
 
+def trace_handler(p, output_path, extra_name=""):
+    output = p.key_averages().table(sort_by="self_cuda_time_total", row_limit=10)
+    print(output)
+    p.export_chrome_trace(f"{output_path}/trace_step{str(p.step_num)}_{extra_name}.json")
 
 def generate(
     model: Union[Callable, torch.nn.Module],
@@ -90,6 +96,21 @@ def generate(
                 device=input_ids.device,
             )
 
+    # with torch.profiler.profile(
+    #         activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
+    #         schedule=torch.profiler.schedule(
+    #             skip_first=5,
+    #             wait=0,
+    #             warmup=3,
+    #             active=1,
+    #             repeat=1,
+    #         ),
+    #         on_trace_ready=functools.partial(trace_handler, output_path="/lustre/jmrosenk/trace_generate_paged_attn", extra_name="0"),
+    #         with_stack=True,
+    #         profile_memory=True,
+    #         record_shapes=True,
+    # ) as prof:
+
     for i in range(max_new_tokens):
         input_ids = next_input[:, -max_seq_len:]
 
@@ -151,6 +172,8 @@ def generate(
             next_input = next_val
         else:
             next_input = result
+
+            # prof.step()
 
     if not batched:
         result = result[0]

@@ -58,7 +58,7 @@ class LayerNormParameterized(nn.Module):
         if self.elementwise_shift:
             self.bias.data.zero_()
 
-    def forward(self, x):
+    def forward(self, x, residual=None):
         original_x = x
         # if self.use_mean:
         #     x = x - x.mean(-1, keepdim=True)
@@ -79,7 +79,7 @@ class LayerNormParameterized(nn.Module):
         original_shape = original_x.shape
         normed_hidden_states, res, *rest = dropout_layer_norm.dropout_add_ln_fwd(
             original_x.view(-1, original_shape[2]),
-            None,
+            None if residual is None else residual.view(-1, original_shape[2]),
             self.weight,
             None,
             None,
@@ -94,5 +94,8 @@ class LayerNormParameterized(nn.Module):
             False,
             True,  # Activate RMSNorm
         )
+        normed_hidden_states = normed_hidden_states.view(*original_shape)
+        if res is None:
+            res = original_x
 
-        return normed_hidden_states.view(*original_shape)
+        return normed_hidden_states, res
