@@ -175,7 +175,7 @@ torch.cuda.manual_seed_all(args.seed)
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.cuda.set_device(local_rank)
 
-torch.set_default_dtype(torch.bfloat16)
+# torch.set_default_dtype(torch.bfloat16)
 
 args = validate_args(args, world_size)
 validate_arg_tokens(args, "pad,sep", allow_no_pad=True)
@@ -205,7 +205,6 @@ mp_policy = (
     )
 )
 wrapping_policy = functools.partial(transformer_auto_wrap_policy, transformer_layer_cls={llama.LLaMABlock})
-specu_wrap_policy = functools.partial(transformer_auto_wrap_policy, transformer_layer_cls={nn.ModuleList})
 model_sharding_strategies = {
     "fsdp": ShardingStrategy.FULL_SHARD,
     "hsdp": ShardingStrategy.HYBRID_SHARD,
@@ -235,43 +234,43 @@ def train_func(args):
     # Model
     report("Constructing model...")
 
-    model = get_model(
-        "llama",
-        "70b",
-        model_path=args.base_path,
-        device_type="cuda",
-        source="hf",
-        distributed_strategy="hsdp",
-        emb_dim=8192,
-        nheads=64,
-        kvheads=8,
-        nlayers=48,
-        hidden_grow_factor=2.6875,
-        max_expected_seq_len=16384,
-        multiple_of=256,
-    )
-    torch.set_default_dtype(torch.float32)
-
-    # model = LlamaForCausalLM.from_pretrained(args.base_path) #"/lustre/llama_weights/hf/13B-F/")
-    report("    Codellama loaded, building speculator...")
-    # model = llama.convert_hf_llama(model)
-    # report("    Converted to FMS...")
-    # model = model.bfloat16()
-    # report("    Converted to bf16...")
-
-    # Wrap model
-    # report(f"Applying wrapper for parallelization mode={args.parallel_mode}...")
-    # model = FSDP(
-    #     model,
-    #     auto_wrap_policy=wrapping_policy,
-    #     mixed_precision=mp_policy,
-    #     sharding_strategy=model_sharding_strategy,
-    #     device_id=local_rank,
-    #     limit_all_gathers=True,
-    #     use_orig_params=True,
+    # model = get_model(
+    #     "llama",
+    #     "70b",
+    #     model_path=args.base_path,
+    #     device_type="cuda",
+    #     source="hf",
+    #     distributed_strategy="hsdp",
+    #     emb_dim=8192,
+    #     nheads=64,
+    #     kvheads=8,
+    #     nlayers=48,
+    #     hidden_grow_factor=2.6875,
+    #     max_expected_seq_len=16384,
+    #     multiple_of=256,
     # )
-    # model.to(device=local_rank)
-    # model.rot_emb.compute_freqs_cis(model.shared.emb.weight.device, args.seq_len)
+    # torch.set_default_dtype(torch.float32)
+
+    model = LlamaForCausalLM.from_pretrained("/lustre/llama_weights/hf/13B-F/") #args.base_path)
+    report("    Codellama loaded...")
+    model = llama.convert_hf_llama(model)
+    report("    Converted to FMS...")
+    model = model.bfloat16()
+    report("    Converted to bf16...")
+
+    Wrap model
+    report(f"Applying wrapper for parallelization mode={args.parallel_mode}...")
+    model = FSDP(
+        model,
+        auto_wrap_policy=wrapping_policy,
+        mixed_precision=mp_policy,
+        sharding_strategy=model_sharding_strategy,
+        device_id=local_rank,
+        limit_all_gathers=True,
+        use_orig_params=True,
+    )
+    model.to(device=local_rank)
+    model.rot_emb.compute_freqs_cis(model.shared.emb.weight.device, args.seq_len)
     # model = torch.compile(model)
 
 
@@ -312,9 +311,9 @@ def train_func(args):
 
     speculator = FSDP(
         speculator,
-        auto_wrap_policy=specu_wrap_policy,
+        auto_wrap_policy=None,
         mixed_precision=mp_policy,
-        sharding_strategy=model_sharding_strategy,
+        sharding_strategy=ShardingStrategy.NO_SHARD,
         device_id=local_rank,
         limit_all_gathers=True,
         use_orig_params=True,
@@ -499,7 +498,6 @@ def train_func(args):
                 start = time.time()
 
             # Checkpoint model
-            
             torch.cuda.empty_cache()
             if (step + 1) % args.save_interval == 0:
                 if args.profile and prof.current_action == ProfilerAction.RECORD_AND_SAVE:
@@ -526,8 +524,6 @@ def train_func(args):
                 prof.step()
 
     sync_report(msg="Writing final checkpoint", step=step + 1)
-    del model
-    torch.cuda.empty_cache()
     checkpointer.save_single_file(
         step + 1,
         speculator,
