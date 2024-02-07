@@ -258,7 +258,7 @@ def train_func(args):
     model = model.bfloat16()
     report("    Converted to bf16...")
 
-    Wrap model
+    # Wrap model
     report(f"Applying wrapper for parallelization mode={args.parallel_mode}...")
     model = FSDP(
         model,
