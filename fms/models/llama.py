@@ -178,11 +178,13 @@ class LLaMA(nn.Module):
         )
         self.shared = self.distributed_strategy.distribute_module(shared)
 
+        # USE THIS FOR KERNEL ROTARY EMBEDDING
         # self.rot_emb = RotaryEmbedding(
         #     dim=self.config.emb_dim // self.config.nheads,
         #     ntk_scaling=self.config.ntk_scaling,
         #     max_seq_len=self.config.max_expected_seq_len,
         # )
+        # USE THIS FOR COMPLEX NUMBERS ROTARY EMBEDDING
         self.rot_emb = ComplexRotaryEmbedding(
             dim=self.config.emb_dim // self.config.nheads,
             max_position_embeddings=self.config.max_expected_seq_len,

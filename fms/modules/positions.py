@@ -292,17 +292,20 @@ class RotaryEmbedding(PositionEncoder):
         # UNCOMMENT FOR rotary embedding kernel
         cos = freqs[0,0,:,:,0,0].unsqueeze(1)
         sin = freqs[0,0,:,:,1,0].unsqueeze(1)
-        x1 = q_[:,:,:,:,0]#.transpose(1, 2)#.reshape(-1, q_.size(1), q_.size(3))
-        x2 = q_[:,:,:,:,1]#.transpose(1, 2)#.reshape(-1, q_.size(1), q_.size(3))
+        x1 = q_[:,:,:,:,0]
+        x2 = q_[:,:,:,:,1]
         rotary_emb.apply_rotary(x1, x2, cos, sin, x1, x2, False)
         q_out = torch.stack((x1, x2), dim=-1).view(*q.size()).type_as(q)
 
-        x1 = k_[:, :, :, :, 0]#.transpose(1, 2)#.reshape(-1, k_.size(1), k_.size(3))
-        x2 = k_[:, :, :, :, 1]#.transpose(1, 2)#.reshape(-1, k_.size(1), k_.size(3))
+        x1 = k_[:, :, :, :, 0]
+        x2 = k_[:, :, :, :, 1]
         rotary_emb.apply_rotary(x1, x2, cos, sin, x1, x2, False)
         k_out = torch.stack((x1, x2), dim=-1).view(*k.size()).type_as(k)
 
 
+        # UNCOMMENT for compile optimized implementation
+        # todo: I have not fixed these 2 lines since I have fixed the transpose and reshape issues,
+        #  but should just be a simple switch of dimensions to use
         # q_out = (
         #     freqs[:, :, -q.size(2) :, :, :, :].mul(q_.unsqueeze(-2)).sum(5).flatten(3)
         # ).type_as(q).contiguous()

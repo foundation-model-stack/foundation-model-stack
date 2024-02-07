@@ -147,7 +147,7 @@ if world_size > 1:
     dist.init_process_group()
 
 print("loading model")
-model = models.get_model(args.architecture, args.variant, device_type=args.device_type)
+model = models.get_model(args.architecture, args.variant, device_type=args.device_type, max_expected_seq_len=2048)
 tokenizer = tokenizers.get_tokenizer(args.tokenizer)
 
 model.eval()
@@ -201,7 +201,7 @@ ids = torch.randint(
 
 # torch.testing.assert_close(expected, expected2)
 
-repeat = 3
+repeat = 5
 
 
 # The function we're measuring, with or without caching.
@@ -326,6 +326,7 @@ if not args.skip_eager_runs:
         if not args.skip_nokvcache_runs:
             bench_end_to_end(False, e2e_expected_nocache)
         if not args.skip_paged_kvcache_runs:
+            end_to_end(model, True, e2e_expected_nocache, kv_cache_manager)
             bench_end_to_end(True, e2e_expected_nocache, kv_cache_manager)
 
 if not args.skip_compile_runs:

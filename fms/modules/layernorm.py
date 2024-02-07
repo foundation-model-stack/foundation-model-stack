@@ -60,6 +60,7 @@ class LayerNormParameterized(nn.Module):
 
     def forward(self, x, residual=None):
         original_x = x
+        # UNCOMMENT FOR old implementation
         # if self.use_mean:
         #     x = x - x.mean(-1, keepdim=True)
         # # x = F.normalize(x, dim=-1)*math.sqrt(x.size(-1))

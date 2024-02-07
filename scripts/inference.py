@@ -209,12 +209,12 @@ max_len = max([len(prompt) for prompt in [prompt1, prompt2, prompt3, prompt4]])
 
 # LLaMA 7B did better on the spanish prompt vs 13B.
 # TODO: add a better english prompt to demonstrate padding/batching.
-prompt1 = pad_prompt(prompt1, max_len)
-prompt2 = pad_prompt(prompt2, max_len)
-prompt3 = pad_prompt(prompt3, max_len)
-prompt4 = pad_prompt(prompt4, max_len)
-ids = torch.stack((prompt1, prompt2, prompt3, prompt4), dim=0)
-
+# prompt1 = pad_prompt(prompt1, max_len)
+# prompt2 = pad_prompt(prompt2, max_len)
+# prompt3 = pad_prompt(prompt3, max_len)
+# prompt4 = pad_prompt(prompt4, max_len)
+# ids = torch.stack((prompt1, prompt2, prompt3, prompt4), dim=0)
+ids = prompt1.unsqueeze(0)
 
 def print_result(result):
     if local_rank != 0:
