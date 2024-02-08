@@ -352,12 +352,12 @@ class PagedAttentionCacheDataLayer(AttentionComputationMixin, CacheDataLayer):
     def store(
         self, keys: torch.Tensor, values: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        # k/v: b h n d
+
         if self.unflatten_indices is not None:
-            # inp: 1 h n' d
+            # inp: n' h d
             # inds: b k n
-            keys = select_inflate_dim(keys[0].transpose(0, 1), self.unflatten_indices)  # b k n h d
-            values = select_inflate_dim(values[0].transpose(0, 1), self.unflatten_indices)
+            keys = select_inflate_dim(keys, self.unflatten_indices)  # b k n h d
+            values = select_inflate_dim(values, self.unflatten_indices)
             key_to_cache = keys.view(-1, *keys.size()[3:])
             value_to_cache = values.view(-1, *values.size()[3:])  # bkn h d
         else:
