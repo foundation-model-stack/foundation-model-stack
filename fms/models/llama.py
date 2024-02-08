@@ -218,8 +218,6 @@ class LLaMA(nn.Module):
         if self.config.p_dropout:
             self.dropout = nn.Dropout(self.config.p_dropout)
 
-        self.reset_params()
-
     def get_config(self) -> LLaMAConfig:
         return self.config
 
@@ -228,12 +226,11 @@ class LLaMA(nn.Module):
         return cls(config)
 
     def reset_params(self):
-        # Modules are self-initializing, we're just going to down-scale the final prediction head to be
-        # mixed-fan (inputs and gradients scale to the same inverse factors) if it isn't tied
-        self.shared.head.weight.data.normal_(
-            0, 1 / math.sqrt(math.sqrt(self.width * self.shared.vocab_size))
-        )
-
+        # Call reset_params for relevant sub-layers
+        for m in self.modules():
+            if hasattr(m, "reset_params"):
+                m.reset_params()
+        
         if isinstance(self.distributed_strategy, UniformModelParallelStrategy):
             for dev_idx in set(self.distributed_strategy.layer_to_device):
                 self.rot_emb.compute_freqs_cis(
