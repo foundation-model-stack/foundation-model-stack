@@ -230,7 +230,7 @@ class LLaMA(nn.Module):
         for m in self.modules():
             if hasattr(m, "reset_params"):
                 m.reset_params()
-        
+
         if isinstance(self.distributed_strategy, UniformModelParallelStrategy):
             for dev_idx in set(self.distributed_strategy.layer_to_device):
                 self.rot_emb.compute_freqs_cis(
