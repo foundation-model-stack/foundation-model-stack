@@ -124,7 +124,7 @@ class RotaryEmbedding(PositionEncoder):
         self.ratio = ratio
         self.cached_freqs: MutableMapping[int, MutableMapping[int, torch.Tensor]] = {}
         self.max_seq_len_cached: MutableMapping[int, int] = {}
-        dev_idxs = [None].extend(range(torch.cuda.device_count()))
+        dev_idxs = list(range(torch.cuda.device_count())).append(None)
         for dev_idx in dev_idxs:
             self.cached_freqs[dev_idx] = {}
             self.max_seq_len_cached[dev_idx] = 0
