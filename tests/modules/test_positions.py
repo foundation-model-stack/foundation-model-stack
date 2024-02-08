@@ -233,3 +233,25 @@ class RotaryEmbeddingTests(unittest.TestCase):
         # being double the length is equivalent to being (approximately) half the base
         torch.testing.assert_close(adj_q, ntk_q)
         torch.testing.assert_close(adj_k, ntk_k)
+    
+
+    def test_hf_equiv(self):
+        from transformers.models.llama.modeling_llama import apply_rotary_pos_emb, LlamaRotaryEmbedding
+        B=2
+        Heads=4
+        SeqLen=8
+        Dim=16
+        x = torch.randn(B, Heads, SeqLen, Dim)
+
+        e = RotaryEmbedding(Dim)
+        qr, kr = e.adjusted_qk(x, x)
+
+        hf_rot = LlamaRotaryEmbedding(Dim)
+        cos, sin = hf_rot(x, seq_len=SeqLen)
+
+        position_ids = torch.arange(0, SeqLen, device=x.device, dtype=torch.long)
+        position_ids = torch.stack([position_ids, position_ids], dim=0)
+        hf_rotated_q, hf_rotated_k = apply_rotary_pos_emb(x, x, cos=cos, sin=sin, position_ids=position_ids)
+        
+        torch.testing.assert_close(hf_rotated_q, qr)
+        torch.testing.assert_close(hf_rotated_k, kr)

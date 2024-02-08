@@ -141,6 +141,11 @@ class RotaryEmbedding(PositionEncoder):
             alpha = int(alpha)
             return alpha
 
+    def rotate_half(self, x):
+        return torch.cat((
+            -x[..., x.shape[-1] // 2 :],
+             x[..., : x.shape[-1] // 2]), dim=-1)
+    
     def compute_freqs_cis(self, device, max_seq_len=2048):
         # NTK scaling.
         # https://arxiv.org/abs/2306.15595
@@ -184,6 +189,7 @@ class RotaryEmbedding(PositionEncoder):
             ratio
             ** (torch.arange(0, dim, 2, device=device)[: (dim // 2)].float() / dim)
         )
+        freqs = torch.cat((freqs, freqs))
 
         t = torch.arange(max_seq_len, device=device, dtype=freqs.dtype)
         freqs = torch.outer(t, freqs).float()
@@ -191,24 +197,12 @@ class RotaryEmbedding(PositionEncoder):
         self.cached_freqs[dev_idx][alpha] = torch.stack(
             [
                 torch.cos(freqs),
-                -torch.sin(freqs),
                 torch.sin(freqs),
-                torch.cos(freqs),
             ],
             dim=2,
-        ).view(*freqs.size(), 2, 2)
+        ).to(torch.get_default_dtype()).view(*freqs.size(), 1, 2)
 
         return alpha
-
-    def reshape_for_broadcast(self, x: torch.Tensor, cur_freqs):
-        ndim = x.ndim
-        assert 1 < ndim, ndim
-        assert cur_freqs.size()[:2] == (
-            x.size(2),
-            x.size(-2),
-        ), f"for {cur_freqs.size()} and {x.size()}"
-        shape = [d if i == 2 or i >= ndim - 2 else 1 for i, d in enumerate(x.size())]
-        return cur_freqs.view(*shape, 2)
 
     def adjusted_qk(
         self,
@@ -243,20 +237,28 @@ class RotaryEmbedding(PositionEncoder):
             if use_cache and past_kv_state is not None:
                 position_ids += past_kv_state[0].size(2)
 
-        q_ = q.float().reshape(*q.size()[:-1], -1, 2)  # B H L D/2 2
-        k_ = k.float().reshape(*k.size()[:-1], -1, 2)  # B H L D/2 2
+        q_rh = self.rotate_half(q) # B H L D
+        k_rh = self.rotate_half(k)
+
+        q = q.reshape(*q.size()[:-1], -1, 1) # B H L D 1
+        k = k.reshape(*k.size()[:-1], -1, 1)
+
+        q_rh = q_rh.reshape(*q_rh.size()[:-1], -1, 1) # B H L D 1
+        k_rh = k_rh.reshape(*k_rh.size()[:-1], -1, 1) 
+
+        q_stacked = torch.stack((q, q_rh), dim=-1) # B H L D 1 2
+        k_stacked = torch.stack((k, k_rh), dim=-1)
 
         # the max start position should be based on the max first position of each sequence
         max_start_pos = torch.max(position_ids[:, 0])
         alpha = self.compute_freqs_cis(q.device, max_start_pos + seq_len)
-        freqs = self.cached_freqs[q.device.index][alpha][position_ids].unsqueeze(1)
+        freqs = self.cached_freqs[q.device.index][alpha][position_ids].unsqueeze(1) # B 1 L D 1 2
 
-        freqs = freqs.float()  # 1 1 L D/2 2 2
         q_out = (
-            freqs[:, :, -q.size(2) :, :, :, :].mul(q_.unsqueeze(-2)).sum(5).flatten(3)
+            freqs[:, :, -q_stacked.size(2) :, :, :, :].mul(q_stacked).sum(5).flatten(3)
         )
         k_out = (
-            freqs[:, :, -k.size(2) :, :, :, :].mul(k_.unsqueeze(-2)).sum(5).flatten(3)
+            freqs[:, :, -k_stacked.size(2) :, :, :, :].mul(k_stacked).sum(5).flatten(3)
         )
 
         return q_out.type_as(q).contiguous(), k_out.type_as(k).contiguous()
