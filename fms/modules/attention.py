@@ -83,9 +83,7 @@ class MultiHeadAttention(nn.Module):
         # Ensure softmax inputs are standard normal
         layers = ["query", "key", "value", "dense"]
         for layer in layers:
-            nn.init.trunc_normal_(
-                getattr(self, layer).weight, mean=0.0, std=0.02
-            )
+            nn.init.trunc_normal_(getattr(self, layer).weight, mean=0.0, std=0.02)
             if self.use_bias:
                 getattr(self, layer).bias.data.zero_()
 
