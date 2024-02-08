@@ -1,5 +1,5 @@
 import math
-from typing import MutableMapping, Optional, Tuple
+from typing import MutableMapping, Optional, Tuple, List
 
 import torch
 from torch import nn

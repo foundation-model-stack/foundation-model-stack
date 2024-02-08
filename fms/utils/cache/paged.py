@@ -385,15 +385,6 @@ class PagedAttentionCacheDataLayer(AttentionComputationMixin, CacheDataLayer):
         # Pre-allocate the output tensor.
         attn = torch.empty_like(query)
 
-        context_lengths = self.context_lengths # bk
-        inflate_factor = self.query_length if self.unflatten_indices is None else self.unflatten_indices.size(-1)
-        context_lengths = context_lengths.unsqueeze(1).expand(-1, inflate_factor) # bk n
-        context_lengths = context_lengths.sub(context_lengths.sign().cumsum(1).flip([1]).sub(1)).int().view(-1) # bkn
-        block_mappings = self.block_mapping.repeat_interleave(inflate_factor, dim=0) # bkn n_blocks
-        if self.flatten_indices is not None:
-            context_lengths = select_inflate_dim(context_lengths, self.flatten_indices) # n'
-            block_mappings = select_inflate_dim(block_mappings, self.flatten_indices) # n' n_blocks
-
         # TODO: Check with v2
         num_seqs, num_heads, head_size = query.shape
         _PARTITION_SIZE = 512
@@ -414,8 +405,8 @@ class PagedAttentionCacheDataLayer(AttentionComputationMixin, CacheDataLayer):
                 self.data_layer[1],
                 self.kv_heads,
                 self.scale,
-                block_mappings,
-                context_lengths,
+                self.block_mapping,
+                self.context_lengths,
                 self.block_size,
                 self.max_sequence_length,
                 None,
@@ -444,8 +435,8 @@ class PagedAttentionCacheDataLayer(AttentionComputationMixin, CacheDataLayer):
                 self.data_layer[1],
                 self.kv_heads,
                 self.scale,
-                block_mappings,
-                context_lengths,
+                self.block_mapping,
+                self.context_lengths,
                 self.block_size,
                 self.max_sequence_length,
                 None,
