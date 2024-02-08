@@ -80,12 +80,11 @@ class MultiHeadAttention(nn.Module):
         self.previous_math: bool = torch.backends.cuda.math_sdp_enabled()
 
     def reset_params(self):
-        # Ensure softmax inputs are standard normal
-        layers = ["query", "key", "value", "dense"]
-        for layer in layers:
-            nn.init.trunc_normal_(getattr(self, layer).weight, mean=0.0, std=0.02)
-            if self.use_bias:
-                getattr(self, layer).bias.data.zero_()
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.trunc_normal_(m.weight, mean=0.0, std=0.02)
+                if self.use_bias:
+                    m.bias.data.zero_()
 
     def forward(
         self,
