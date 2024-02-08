@@ -60,7 +60,9 @@ class FeedForwardBlock(nn.Module):
     def reset_params(self):
         for layer in ["w1", "w2"]:
             nn.init.trunc_normal_(
-                getattr(self, layer).weight, mean=0.0, std=0.02,
+                getattr(self, layer).weight,
+                mean=0.0,
+                std=0.02,
             )
             if self.use_bias:
                 getattr(self, layer).bias.data.zero_()
@@ -194,7 +196,9 @@ class GatedLinearUnit(nn.Module):
     def reset_params(self):
         for layer in ["w1", "w2", "wg"]:
             nn.init.trunc_normal_(
-                getattr(self, layer).weight, mean=0.0, std=0.02,
+                getattr(self, layer).weight,
+                mean=0.0,
+                std=0.02,
             )
             if self.use_bias:
                 getattr(self, layer).bias.data.zero_()
