@@ -48,7 +48,6 @@ class MultiHeadAttention(nn.Module):
         p_dropout=None,
         use_bias=False,
         position_encoder: Optional[PositionEncoder] = None,
-        gain=1,
     ):
         super(MultiHeadAttention, self).__init__()
         self.nheads = nheads
@@ -79,25 +78,15 @@ class MultiHeadAttention(nn.Module):
             torch.backends.cuda.mem_efficient_sdp_enabled()
         )
         self.previous_math: bool = torch.backends.cuda.math_sdp_enabled()
-        self.reset_params(gain)
 
-    def reset_params(self, gain=1):
+    def reset_params(self):
         # Ensure softmax inputs are standard normal
-        for layer in ["query", "key"]:
+        layers = ["query", "key", "value", "dense"]
+        for layer in layers:
             nn.init.trunc_normal_(
-                getattr(self, layer).weight, mean=0.0, std=self.emb_dim**-0.5
+                getattr(self, layer).weight, mean=0.0, std=0.02
             )
-        # Ensure projection layers have same scale (for normalized-step dataloaders like
-        # AdamW / Sophia), and maintain input norm up to attention remix, in expectation
-        for layer in ["value", "dense"]:
-            nn.init.trunc_normal_(
-                getattr(self, layer).weight,
-                mean=0.0,
-                std=(gain / (self.emb_dim * self.nheads * self.emb_v_per_head) ** 0.5)
-                ** 0.5,
-            )  # Using explicit terms instead of numel to account for eventual MQA addition
-        if self.use_bias:
-            for layer in ["query", "key", "value", "dense"]:
+            if self.use_bias:
                 getattr(self, layer).bias.data.zero_()
 
     def forward(
@@ -270,7 +259,6 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
         p_dropout=None,
         use_bias=False,
         position_encoder: Optional[PositionEncoder] = None,
-        gain=1,
         group: Optional[ProcessGroup] = None,
     ):
         assert torch.distributed.is_initialized()
@@ -289,7 +277,6 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
             p_dropout,
             use_bias,
             position_encoder,
-            gain,
         )
         self.setup_tp(rank, world_size)
 
