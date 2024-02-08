@@ -124,6 +124,10 @@ class RotaryEmbedding(PositionEncoder):
         self.ratio = ratio
         self.cached_freqs: MutableMapping[int, MutableMapping[int, torch.Tensor]] = {}
         self.max_seq_len_cached: MutableMapping[int, int] = {}
+        dev_idxs = [None].extend(range(torch.cuda.device_count()))
+        for dev_idx in dev_idxs:
+            self.cached_freqs[dev_idx] = {}
+            self.max_seq_len_cached[dev_idx] = 0
         self.ntk_scaling = ntk_scaling
         self.max_seq_len = max_seq_len
 
@@ -154,11 +158,6 @@ class RotaryEmbedding(PositionEncoder):
         alpha = self._alpha(max_seq_len)
         dev_idx = device.index
 
-        if dev_idx not in self.cached_freqs:
-            self.cached_freqs[dev_idx] = {}
-        if dev_idx not in self.max_seq_len_cached:
-            self.max_seq_len_cached[dev_idx] = 0
-
         # This condition can be combined with the model using Rotary calling this method
         # on model init when device is known to avoid a graph break (see llama.py)
         if self.ntk_scaling:
@@ -187,7 +186,7 @@ class RotaryEmbedding(PositionEncoder):
 
         t = torch.arange(max_seq_len, device=device, dtype=freqs.dtype)
         freqs = torch.outer(t, freqs).float()
-        self.max_seq_len_cached[dev_idx] = max_seq_len
+        self.max_seq_len_cached[dev_idx] = max_seq_len.item()
         self.cached_freqs[dev_idx][alpha] = torch.stack(
             [
                 torch.cos(freqs),
