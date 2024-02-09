@@ -1,6 +1,7 @@
 import argparse
 import itertools
 import os
+import time
 
 import torch
 import torch._inductor.config
@@ -99,7 +100,7 @@ if args.device_type == "cuda":
 else:
     device = torch.device(args.device_type)
 
-torch.set_default_device(device)
+# torch.set_default_device(device)
 torch.set_default_dtype(torch.half)
 
 # requires setting environment variable: `CUBLAS_WORKSPACE_CONFIG=:4096:8`
@@ -242,6 +243,7 @@ def infer(use_cache, do_sample):
         # without ntk scaling, extending the seq length too far gives bogus results.
         max_seq_len = model.config.max_expected_seq_len
 
+    start = time.time()
     result = generate(
         model,
         ids,
@@ -251,6 +253,8 @@ def infer(use_cache, do_sample):
         do_sample=do_sample,
         max_seq_len=max_seq_len,
     )
+    end = time.time()
+    print(f"time: {(end - start) / 100}")
     for i in range(result.shape[0]):
         print_result(result[i])
 
@@ -258,7 +262,7 @@ def infer(use_cache, do_sample):
 if args.compile:
     print("compiling model")
     # Bug with kv-cache in PT2.1
-    torch._inductor.config.joint_graph_constant_folding = False
+    # torch._inductor.config.joint_graph_constant_folding = False
     # compiling can make first inference pass slow
     model = torch.compile(model, mode=args.compile_mode)
 
@@ -267,3 +271,5 @@ do_sample = [False]
 
 for sample, cache in itertools.product(do_sample, [use_cache]):
     infer(cache, sample)
+
+infer(True, False)

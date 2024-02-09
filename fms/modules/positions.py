@@ -290,30 +290,30 @@ class RotaryEmbedding(PositionEncoder):
         freqs = freqs.float()  # 1 1 L D/2 2 2
 
         # UNCOMMENT FOR rotary embedding kernel
-        cos = freqs[0,0,:,:,0,0].unsqueeze(1)
-        sin = freqs[0,0,:,:,1,0].unsqueeze(1)
-        x1 = q_[:,:,:,:,0]
-        x2 = q_[:,:,:,:,1]
-        rotary_emb.apply_rotary(x1, x2, cos, sin, x1, x2, False)
-        q_out = torch.stack((x1, x2), dim=-1).view(*q.size()).type_as(q)
-
-        x1 = k_[:, :, :, :, 0]
-        x2 = k_[:, :, :, :, 1]
-        rotary_emb.apply_rotary(x1, x2, cos, sin, x1, x2, False)
-        k_out = torch.stack((x1, x2), dim=-1).view(*k.size()).type_as(k)
+        # cos = freqs[0,0,:,:,0,0].unsqueeze(1)
+        # sin = freqs[0,0,:,:,1,0].unsqueeze(1)
+        # x1 = q_[:,:,:,:,0]
+        # x2 = q_[:,:,:,:,1]
+        # rotary_emb.apply_rotary(x1, x2, cos, sin, x1, x2, False)
+        # q_out = torch.stack((x1, x2), dim=-1).view(*q.size()).type_as(q)
+        #
+        # x1 = k_[:, :, :, :, 0]
+        # x2 = k_[:, :, :, :, 1]
+        # rotary_emb.apply_rotary(x1, x2, cos, sin, x1, x2, False)
+        # k_out = torch.stack((x1, x2), dim=-1).view(*k.size()).type_as(k)
 
 
         # UNCOMMENT for compile optimized implementation
         # todo: I have not fixed these 2 lines since I have fixed the transpose and reshape issues,
         #  but should just be a simple switch of dimensions to use
-        # q_out = (
-        #     freqs[:, :, -q.size(2) :, :, :, :].mul(q_.unsqueeze(-2)).sum(5).flatten(3)
-        # ).type_as(q).contiguous()
-        # k_out = (
-        #     freqs[:, :, -k.size(2) :, :, :, :].mul(k_.unsqueeze(-2)).sum(5).flatten(3)
-        # ).type_as(q).contiguous()
+        q_out = (
+            freqs[:, -q.size(1):, :, None, :, :, :].mul(q_.unsqueeze(-2)).sum(6).flatten(4)
+        ).type_as(q)
+        k_out = (
+            freqs[:, -k.size(1):, :, None, :, :, :].mul(k_.unsqueeze(-2)).sum(6).flatten(4)
+        ).type_as(k)
 
-        return q_out, k_out
+        return q_out.view_as(q), k_out.view_as(k)
 
 
 def compute_position_ids(

@@ -274,39 +274,39 @@ def _paged_attention_v1_lowering(
 
 
 # Available starting PT 2.2
-class NoneLayout(ir.IRNode):
-    def __init__(self, device):
-        self.device = device
-        self.size = [0]
-        self.stride = [0]
-
-    def storage_size(self):
-        return 0
-
-    def as_fixed(self):
-        return self
+# class NoneLayout(ir.IRNode):
+#     def __init__(self, device):
+#         self.device = device
+#         self.size = [0]
+#         self.stride = [0]
+#
+#     def storage_size(self):
+#         return 0
+#
+#     def as_fixed(self):
+#         return self
 
 
 # Available starting PT 2.2
-class MutationOutput(ir.ExternKernel):
-    def get_mutation_names(self):
-        return [self.inputs[0].get_name()]
-
-    def __init__(self, layout, input, parent):
-        super().__init__(None, layout, [input, parent], ())
-        self.name = V.graph.register_buffer(self)
-
-    def should_allocate(self):
-        return False
-
-    def is_no_op(self):
-        return True
-
-    def has_side_effects(self):
-        return True
-
-    def get_alias_names(self):
-        return [self.inputs[0].get_name()]
+# class MutationOutput(ir.ExternKernel):
+#     def get_mutation_names(self):
+#         return [self.inputs[0].get_name()]
+#
+#     def __init__(self, layout, input, parent):
+#         super().__init__(None, layout, [input, parent], ())
+#         self.name = V.graph.register_buffer(self)
+#
+#     def should_allocate(self):
+#         return False
+#
+#     def is_no_op(self):
+#         return True
+#
+#     def has_side_effects(self):
+#         return True
+#
+#     def get_alias_names(self):
+#         return [self.inputs[0].get_name()]
 
 
 class PagedAttnKernel(ir.FallbackKernel):
@@ -324,23 +324,21 @@ class PagedAttnKernel(ir.FallbackKernel):
                 tensor_args,
                 non_tensor_args,
                 unflatten_args,
-                schema,
             ) = cls.process_kernel(kernel, *args, **kwargs)
         for tensor_arg in tensor_args:
             tensor_arg.realize()
 
         packed = cls(
-            NoneLayout(tensor_args[0].get_device()),
+            ir.NoneLayout(tensor_args[0].get_device()),
             kernel,
             tensor_args,
             non_tensor_args,
             unflatten_args,
-            schema=schema,
         )
         # Mark inplace inputs as mutated
         for kernel_input in mutated_inputs:
             V.graph.mark_buffer_mutated(kernel_input.get_name())
-            MutationOutput(kernel_input.layout, kernel_input, packed)
+            ir.MutationOutput(kernel_input.layout, kernel_input, packed)
 
 
 @dataclasses.dataclass
