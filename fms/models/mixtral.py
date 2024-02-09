@@ -335,7 +335,7 @@ class Mixtral(nn.Module):
 
         if only_last_token:
             output = output[:, -1, :]
-        preds = self.head(output, reverse=True)
+        preds = self.head(output)
 
         if use_cache:
             return preds, cache
@@ -364,9 +364,9 @@ models.register_model(
 def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
     replacements = [
         (r"output.weight", "head.weight"),
-        (r"tok_embeddings.weight", "embedding.weight"),
+        (r"tok_embeddings.weight", "base_model.embedding.weight"),
         (r"^norm", "base_model.dec_norm"),
-        (r"^model.layers", "base_model.layers"),
+        (r"^layers", "base_model.layers"),
         (r"attention\.wk", "attn.key"),
         (r"attention\.wv", "attn.value"),
         (r"attention\.wq", "attn.query"),
