@@ -485,13 +485,12 @@ def train_func(args):
                     targs, embeds = generate(model, inp, 4096, args.seq_len, do_sample=True)
                 targs = targs[:, -args.seq_len :]
                 embeds = embeds[:, -args.seq_len : -args.n_specu_heads]
-                print("Entering specu:", embeds.size(), targs.size())
                 preds = speculator(embeds.detach(), targs[:, :-1].detach())
-                print("Exiting specu:", preds.size())
                 losses = []
                 for i in range(args.n_specu_heads):
                     pred = preds[i]
                     targ = targs[:, i + 1 : pred.size(1) + i + 1]  # b n
+                    sync_report(i, pred.size(), targ.size())
                     loss = loss_fn(pred.reshape(-1, pred.size(2)), targ.long().reshape(-1))
                     loss = loss.div(emu_factor)
                     losses.append(loss)
