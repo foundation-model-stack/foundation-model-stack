@@ -26,15 +26,16 @@ from torch.distributed.fsdp.wrap import enable_wrap, transformer_auto_wrap_polic
 from torch.profiler import ProfilerAction, ProfilerActivity
 from torch.profiler import schedule as prof_schedule
 
-from fm import data as fmdata
-from fm import utils
-from fm.modules import LayerNormParameterized
-from fm.utils import (
-    get_datasets_and_weights,
+from fms.datasets import dataset as fmdata
+from fms.modules.layernorm import LayerNormParameterized
+from fms.utils.from_closed import get_datasets_and_weights, setup_distributed, pcount
+from fms.utils.io_ops_closed import (
+    Llama_Checkpointer,
     get_local_rank,
     get_rank,
     get_world_size,
     human_readable_report_and_log,
+    human_readable_time,
     run_rank_n,
 )
 from fm.utils.profiling import maybe_profile, trace_handler
@@ -312,7 +313,7 @@ def train_func(args):
             WARNING="Grad accumulation has not been fully tested with FSDP. Correctness for this run is NOT guaranteed!"
         )
     report("Setting up NCCL...")
-    utils.setup_distributed()
+    setup_distributed()
 
     bsize = args.b_size
     effective_bsize = args.b_size * args.simulated_gpus
@@ -347,7 +348,7 @@ def train_func(args):
 
     loss_fn = nn.CrossEntropyLoss(label_smoothing=args.label_smoothing)
 
-    num_params = [utils.pcount(model), utils.pcount(speculator)]
+    num_params = [pcount(model), pcount(speculator)]
 
     speculator = FSDP(
         speculator,
@@ -413,7 +414,7 @@ def train_func(args):
     sync_report("Datasets constructed!")
 
     # Open checkpointer
-    checkpointer = utils.Llama_Checkpointer(
+    checkpointer = Llama_Checkpointer(
         args.log_path,
         args.num_ckps,
         "ddp",
@@ -430,7 +431,7 @@ def train_func(args):
         reset_stepcount=args.reset_stepcount,
         strict=not args.flexible_load,
     )
-    signature = None if not args.make_signatures else utils.get_signature(model, device=local_rank, params=1)
+    signature = None
     report("Checkpoint loaded!", signature=signature)
 
     # Override loaded optim hyperparams with the current values
@@ -546,9 +547,7 @@ def train_func(args):
                 torch.cuda.empty_cache()
                 if args.profile and prof.current_action == ProfilerAction.RECORD_AND_SAVE:
                     report("You are profiling a checkpointing step, be careful about it!")
-                signature = (
-                    None if not args.make_signatures else utils.get_signature(model, device=local_rank, params=1)
-                )
+                signature = None
                 cudastats = torch.cuda.memory_summary(device=torch.cuda.current_device(), abbreviated=True)
                 report("Starting distributed checkpoint save...", signature=signature, mem_summary=cudastats)
                 overwritten = checkpointer.save(
@@ -587,4 +586,4 @@ def train_func(args):
 
 start = time.time()
 train_func(args)
-report("Job Complete!", total_time=utils.human_readable_time(time.time() - start))
+report("Job Complete!", total_time=human_readable_time(time.time() - start))
