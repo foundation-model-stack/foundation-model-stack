@@ -77,6 +77,12 @@ parser.add_argument(
     action="store_true",
     help="This is a distributed job (multiple instances run with RANK+WORLD_SIZE)",
 )
+parser.add_argument(
+    "--checkpoint_sharding",
+    type=str,
+    default=None,
+    help="type of weight sharding. E.g. tensor-parallel (tp), None",
+)
 parser.add_argument("--context_file", type=str, default=None, help="File to summarize")
 
 args = parser.parse_args()
@@ -115,6 +121,7 @@ model = get_model(
     source=args.model_source,
     distributed_strategy=distr_param,
     group=dist.group.WORLD,
+    checkpoint_sharding=args.checkpoint_sharding,
 )
 tokenizer = tokenizers.get_tokenizer(args.tokenizer)
 model.eval()

@@ -56,20 +56,10 @@ def get_model(
     model.load_state_dict(new_hf_sd, strict=False)
     with torch.no_grad():
         for i, layer in enumerate(hf_model.transformer.h):
-            # q, k, v = layer.attn.c_attn.weight.split([2048, 128, 128], dim=0)
-            # q_bias, k_bias, v_bias = layer.attn.c_attn.bias.split(
-            #     [2048, 128, 128], dim=0
-            # )
             model.base_model.layers[i].attn.qkv_fused.weight.copy_(
                 layer.attn.c_attn.weight
             )
             model.base_model.layers[i].attn.qkv_fused.bias.copy_(layer.attn.c_attn.bias)
-            # model.base_model.layers[i].attn.query.weight.copy_(q)
-            # model.base_model.layers[i].attn.query.bias.copy_(q_bias)
-            # model.base_model.layers[i].attn.key.weight.copy_(k)
-            # model.base_model.layers[i].attn.key.bias.copy_(k_bias)
-            # model.base_model.layers[i].attn.value.weight.copy_(v)
-            # model.base_model.layers[i].attn.value.bias.copy_(v_bias)
             # if the model was not provided to us, we can assume we don't want
             # the layers to persist in memory
             if not hf_model_in_memory:
