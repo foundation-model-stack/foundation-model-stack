@@ -58,15 +58,19 @@ class MultiHeadAttention(nn.Module):
         self.emb_v_per_head = emb_v
         self.p_dropout = p_dropout if p_dropout is not None else 0.0
         self.use_bias = use_bias
-        self.query = nn.Linear(
-            self.emb_dim, self.nheads * self.emb_kq_per_head, bias=use_bias
+
+        self.splits = [
+            self.nheads * self.emb_kq_per_head,
+            self.kvheads * self.emb_kq_per_head,
+            self.kvheads * self.emb_v_per_head,
+        ]
+
+        self.qkv_fused = nn.Linear(
+            self.emb_dim,
+            sum(self.splits),
+            bias=use_bias,
         )
-        self.key = nn.Linear(
-            self.emb_dim, self.kvheads * self.emb_kq_per_head, bias=use_bias
-        )
-        self.value = nn.Linear(
-            self.emb_dim, self.kvheads * self.emb_v_per_head, bias=use_bias
-        )
+
         self.dense = nn.Linear(
             self.nheads * self.emb_v_per_head, self.emb_dim, bias=use_bias
         )
@@ -83,28 +87,23 @@ class MultiHeadAttention(nn.Module):
 
     def reset_params(self, gain=1):
         # Ensure softmax inputs are standard normal
-        for layer in ["query", "key"]:
-            nn.init.trunc_normal_(
-                getattr(self, layer).weight, mean=0.0, std=self.emb_dim**-0.5
-            )
+        self.qkv_fused.weight.data[
+        : self.emb_kq_per_head * (self.nheads + self.kvheads)
+        ].normal_(0, self.emb_dim ** -0.5)
         # Ensure projection layers have same scale (for normalized-step dataloaders like
         # AdamW / Sophia), and maintain input norm up to attention remix, in expectation
-        for layer in ["value", "dense"]:
-            nn.init.trunc_normal_(
-                getattr(self, layer).weight,
-                mean=0.0,
-                std=(gain / (self.emb_dim * self.nheads * self.emb_v_per_head) ** 0.5)
-                ** 0.5,
-            )  # Using explicit terms instead of numel to account for eventual MQA addition
+        self.qkv_fused.weight.data[
+        self.emb_kq_per_head * (self.nheads + self.kvheads):
+        ].normal_(
+            0, (gain / (self.emb_dim * self.nheads * self.emb_v_per_head) ** 0.5) ** 0.5
+        )
         if self.use_bias:
-            for layer in ["query", "key", "value", "dense"]:
+            for layer in ["qkv_fused", "dense"]:
                 getattr(self, layer).bias.data.zero_()
 
     def forward(
         self,
-        q,
-        k,
-        v,
+        qkv,
         mask: Optional[Tensor] = None,
         position_ids=None,
         attn_algorithm=None,
@@ -134,33 +133,21 @@ class MultiHeadAttention(nn.Module):
 
         # q, k, v: batch_size x seq_len x emb_dim
         # mask: batch_size x seq_len x seq_len
-        batch_size, q_len, _ = q.size()
-        kv_len = k.size(1)
+        batch_size, q_len, _ = qkv.size()
 
-        # split emb_dim as nheads*emb_dim_per_head
-        # b x h x qlen x ds
-        queries = self.query(q).view(
-            batch_size, q_len, self.nheads, self.emb_kq_per_head
-        )
-        queries = queries.transpose(2, 1)  # / (self.emb_kq_per_head**(1/4))
-
-        # if this is self attention, we always recompute
-        # cross attention only gets computed when a cache does not exist
-        # if we dont have the cache yet, we need to compute
-        # d x (h x ds)
-        # b x kvlen x d
-        # b x kvlen x h x ds
-        # b x h x kvlen x ds
         if is_self or past_key_value_state is None:
-            keys = self.key(k).view(
-                batch_size, kv_len, self.kvheads, self.emb_kq_per_head
-            )
-            keys = keys.transpose(2, 1)  # / (self.emb_kq_per_head**(1/4))
+            q, k, v = self.qkv_fused(qkv).split(self.splits, dim=-1)
 
-            values = self.value(v).view(
-                batch_size, kv_len, self.kvheads, self.emb_v_per_head
-            )
-            values = values.transpose(2, 1)  # compatible with QK.T
+            # note: transposes will be moved in a later PR to fix dis-contiguous tensor issues
+            queries = q.view(
+                batch_size, q_len, self.nheads, self.emb_kq_per_head
+            ).transpose(2, 1)
+            keys = k.view(
+                batch_size, q_len, self.kvheads, self.emb_kq_per_head
+            ).transpose(2, 1)
+            values = v.view(
+                batch_size, q_len, self.kvheads, self.emb_v_per_head
+            ).transpose(2, 1)
 
             # You want to apply rotary embeddings pre-cache
             if self.position_encoder is not None:
@@ -322,9 +309,7 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
 
     def forward(
         self,
-        q,
-        k,
-        v,
+        qkv,
         mask=None,
         position_ids=None,
         attn_algorithm=None,
@@ -336,17 +321,12 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
         """
         Check MultiHeadAttention for up-to-date arguments and docs
         """
-
-        q_par = copy_to_tensor_model_parallel_region(q)
-        k_par = copy_to_tensor_model_parallel_region(k)
-        v_par = copy_to_tensor_model_parallel_region(v)
+        qkv_par = copy_to_tensor_model_parallel_region(qkv)
         # rel_pos_bias_par = copy_to_tensor_model_parallel_region(rel_pos_bias)
 
         out_par = MultiHeadAttention.forward(
             self,
-            q_par,
-            k_par,
-            v_par,
+            qkv_par,
             mask,
             position_ids,
             attn_algorithm,

@@ -126,9 +126,7 @@ class LLaMABlock(nn.Module):
         residual = x
         x = self.ln(x)
         x = self.attn(
-            q=x,
-            k=x,
-            v=x,
+            qkv=x,
             mask=mask,
             position_ids=position_ids,
             attn_algorithm=attn_algorithm,
@@ -394,6 +392,19 @@ def _rename_weights_to_fms(orig_sd):
             new_name = re.sub(pattern, repl, new_name)
         new_sd[new_name] = param
 
+        if "attn.query" in new_name or "attn.key" in new_name or "attn.value" in new_name:
+            unfused_weights = [
+                re.sub(r"w[qkv]", "wq", name),
+                re.sub(r"w[qkv]", "wk", name),
+                re.sub(r"w[qkv]", "wv", name),
+            ]
+            missing_weights = [w for w in unfused_weights if w not in orig_sd.keys()]
+            if len(missing_weights) != 0:
+                raise serialization.FusableWeightsMissingError(missing_weights)
+
+            new_sd[re.sub(r"attn.(query|key|value)", "attn.qkv_fused", new_name)] = torch.cat([orig_sd[w] for w in unfused_weights], dim=0)
+
+
     return new_sd
 
 
@@ -422,21 +433,37 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
             new_name = re.sub(pattern, repl, new_name)
         new_sd[new_name] = param
 
-        # hf -> fms requires a transpose operation for the query and key
-        if bool(trans_required_pattern.match(new_name)):
-            temp = new_sd[new_name]
-            # nheads is used in the transformation required for hf->fms
-            # here we are using 128 as this value fits with all popular models
-            #   7B, 13B, 70B to recover the number of heads
-            nheads = int(temp.size(0) / 128)
+        if "attn.query" in new_name or "attn.key" in new_name or "attn.value" in new_name:
 
-            temp = (
-                temp.view(nheads, 2, -1, temp.size(1))
-                .transpose(1, 2)
-                .reshape(*temp.size())
-            )
+            unfused_weights = [
+                re.sub(r"self_attn\.[kvq]_proj", "self_attn.q_proj", name),
+                re.sub(r"self_attn\.[kvq]_proj", "self_attn.k_proj", name),
+                re.sub(r"self_attn\.[kvq]_proj", "self_attn.v_proj", name),
+            ]
+            missing_weights = [w for w in unfused_weights if w not in hf_sd.keys()]
+            if len(missing_weights) != 0:
+                raise serialization.FusableWeightsMissingError(missing_weights)
 
-            new_sd[new_name] = temp
+            raw_mapping = {w: hf_sd[w] for w in unfused_weights}
+
+            # q=0, k=1
+            for unfused_weight_key in unfused_weights[:2]:
+                temp = raw_mapping[unfused_weight_key]
+                # nheads is used in the transformation required for hf->fms
+                # here we are using 128 as this value fits with all popular models
+                #   7B, 13B, 70B to recover the number of heads
+                nheads = int(temp.size(0) / 128)
+
+                temp = (
+                    temp.view(nheads, 2, -1, temp.size(1))
+                    .transpose(1, 2)
+                    .reshape(*temp.size())
+                )
+
+                raw_mapping[unfused_weight_key] = temp
+
+
+            new_sd[re.sub(r"attn.(query|key|value)", "attn.qkv_fused", new_name)] = torch.cat([raw_mapping[w] for w in unfused_weights], dim=0)
 
     return new_sd
 

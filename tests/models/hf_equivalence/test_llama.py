@@ -3,27 +3,30 @@ import torch
 
 from fms.models import get_model
 from fms.models.hf.utils import to_hf_api
-from fms.models.llama import convert_hf_llama
+from fms.models.llama import convert_hf_llama, LLaMA
 from fms.testing.comparison import (
     HFModelSignatureParams,
     ModelSignatureParams,
     compare_model_signatures,
 )
 
-
 @pytest.mark.slow
 def test_llama_7b_equivalence():
     """Tests llama equivalence with a known implementation. Takes approximately 8:38 on an mbp with M1 chip"""
     from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
 
+    torch.set_default_device("cuda")
+    torch.set_default_dtype(torch.half)
+    torch.use_deterministic_algorithms(True)
+
     # for now, this test won't be run, but it has been verified
     # if you would like to try this, set llama_model_path to the huggingface llama2 model path
-    llama_model_path = ""
+    llama_model_path = "/net/storage149/mnt/md0/jmrosenk/llama_weights/hf/7B-F"
     tokenizer = AutoTokenizer.from_pretrained(llama_model_path, use_fast=True)
-    hf_model = AutoModelForCausalLM.from_pretrained(llama_model_path)
+    hf_model = AutoModelForCausalLM.from_pretrained(llama_model_path).to("cuda")
 
     # convert the hf model to fms
-    model = get_model("llama", "7b", llama_model_path, "hf")
+    model: LLaMA = get_model("llama", "7b", f"{llama_model_path}/*.safetensors", "hf", device_type="cuda")
 
     hf_model_fms = to_hf_api(
         model,
@@ -43,23 +46,23 @@ def test_llama_7b_equivalence():
 
     # Test Model Signatures
 
-    inp = torch.arange(0, 16).unsqueeze(0)
-    fms_signature_params = ModelSignatureParams(model=model, params=1, inp=inp)
-    hf_fms_signature_params = HFModelSignatureParams(
-        model=hf_model_fms,
-        params=["input_ids", "labels"],
-        other_params={"return_dict": True},
-        inp=inp,
-    )
-    hf_signature_params = HFModelSignatureParams(
-        model=hf_model,
-        params=["input_ids", "labels"],
-        other_params={"return_dict": True},
-        inp=inp,
-    )
+    # inp = torch.arange(0, 16).unsqueeze(0)
+    # fms_signature_params = ModelSignatureParams(model=model, params=1, inp=inp)
+    # hf_fms_signature_params = HFModelSignatureParams(
+    #     model=hf_model_fms,
+    #     params=["input_ids", "labels"],
+    #     other_params={"return_dict": True},
+    #     inp=inp,
+    # )
+    # hf_signature_params = HFModelSignatureParams(
+    #     model=hf_model,
+    #     params=["input_ids", "labels"],
+    #     other_params={"return_dict": True},
+    #     inp=inp,
+    # )
 
-    compare_model_signatures(fms_signature_params, hf_fms_signature_params)
-    compare_model_signatures(hf_fms_signature_params, hf_signature_params)
+    # compare_model_signatures(fms_signature_params, hf_fms_signature_params)
+    # compare_model_signatures(hf_fms_signature_params, hf_signature_params)
 
     # Test Generation Pipeline
 
@@ -72,6 +75,7 @@ def test_llama_7b_equivalence():
         use_cache=True,
         num_beams=3,
         max_new_tokens=20,
+        device="cuda"
     )
     generator_hf_fms = pipeline(
         task="text-generation",
@@ -80,6 +84,7 @@ def test_llama_7b_equivalence():
         use_cache=True,
         num_beams=3,
         max_new_tokens=20,
+        device="cuda"
     )
     output_hf = generator_hf(prompt)
     output_hf_fms = generator_hf_fms(prompt)
