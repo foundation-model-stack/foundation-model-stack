@@ -485,7 +485,9 @@ def train_func(args):
                     targs, embeds = generate(model, inp, 4096, args.seq_len, do_sample=True)
                 targs = targs[:, -args.seq_len :]
                 embeds = embeds[:, -args.seq_len : -args.n_specu_heads]
+                sync_report("Entering specu", embeds.size(), targs.size())
                 preds = speculator(embeds.detach(), targs[:, :-1].detach())
+                sync_report("Exiting specu", preds.size())
                 losses = []
                 for i in range(args.n_specu_heads):
                     pred = preds[i]
