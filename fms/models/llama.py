@@ -392,7 +392,11 @@ def _rename_weights_to_fms(orig_sd):
             new_name = re.sub(pattern, repl, new_name)
         new_sd[new_name] = param
 
-        if "attn.query" in new_name or "attn.key" in new_name or "attn.value" in new_name:
+        if (
+            "attn.query" in new_name
+            or "attn.key" in new_name
+            or "attn.value" in new_name
+        ):
             unfused_weights = [
                 re.sub(r"w[qkv]", "wq", name),
                 re.sub(r"w[qkv]", "wk", name),
@@ -402,8 +406,9 @@ def _rename_weights_to_fms(orig_sd):
             if len(missing_weights) != 0:
                 raise serialization.FusableWeightsMissingError(missing_weights)
 
-            new_sd[re.sub(r"attn.(query|key|value)", "attn.qkv_fused", new_name)] = torch.cat([orig_sd[w] for w in unfused_weights], dim=0)
-
+            new_sd[
+                re.sub(r"attn.(query|key|value)", "attn.qkv_fused", new_name)
+            ] = torch.cat([orig_sd[w] for w in unfused_weights], dim=0)
 
     return new_sd
 
@@ -433,8 +438,11 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
             new_name = re.sub(pattern, repl, new_name)
         new_sd[new_name] = param
 
-        if "attn.query" in new_name or "attn.key" in new_name or "attn.value" in new_name:
-
+        if (
+            "attn.query" in new_name
+            or "attn.key" in new_name
+            or "attn.value" in new_name
+        ):
             unfused_weights = [
                 re.sub(r"self_attn\.[kvq]_proj", "self_attn.q_proj", name),
                 re.sub(r"self_attn\.[kvq]_proj", "self_attn.k_proj", name),
@@ -462,8 +470,9 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
 
                 raw_mapping[unfused_weight_key] = temp
 
-
-            new_sd[re.sub(r"attn.(query|key|value)", "attn.qkv_fused", new_name)] = torch.cat([raw_mapping[w] for w in unfused_weights], dim=0)
+            new_sd[
+                re.sub(r"attn.(query|key|value)", "attn.qkv_fused", new_name)
+            ] = torch.cat([raw_mapping[w] for w in unfused_weights], dim=0)
 
     return new_sd
 

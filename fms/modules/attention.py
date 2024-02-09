@@ -88,12 +88,12 @@ class MultiHeadAttention(nn.Module):
     def reset_params(self, gain=1):
         # Ensure softmax inputs are standard normal
         self.qkv_fused.weight.data[
-        : self.emb_kq_per_head * (self.nheads + self.kvheads)
-        ].normal_(0, self.emb_dim ** -0.5)
+            : self.emb_kq_per_head * (self.nheads + self.kvheads)
+        ].normal_(0, self.emb_dim**-0.5)
         # Ensure projection layers have same scale (for normalized-step dataloaders like
         # AdamW / Sophia), and maintain input norm up to attention remix, in expectation
         self.qkv_fused.weight.data[
-        self.emb_kq_per_head * (self.nheads + self.kvheads):
+            self.emb_kq_per_head * (self.nheads + self.kvheads) :
         ].normal_(
             0, (gain / (self.emb_dim * self.nheads * self.emb_v_per_head) ** 0.5) ** 0.5
         )
