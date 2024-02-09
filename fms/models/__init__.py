@@ -1,6 +1,6 @@
 from contextlib import nullcontext
 from functools import partial
-from typing import Callable, MutableMapping, Optional
+from typing import Any, Callable, MutableMapping, Optional
 
 import torch
 from torch import nn
@@ -314,7 +314,7 @@ def get_model(
             local_rank,
             world_size,
         )
-    elif hasattr(fms_model, 'reset_parameters'):
+    elif hasattr(fms_model, "reset_parameters"):
         fms_model.reset_parameters()
 
     if pre_load:
