@@ -44,5 +44,11 @@ jobs:
               "permission": "none",
               "issue_type": "issue",
               "repository": "foundation-model-stack/foundation-model-stack"
+            },
+            {
+              "command": "rebase",
+              "permission": "none",
+              "issue_type": "pull-request",
+              "repository": "foundation-model-stack/foundation-model-stack"
             }
           ]

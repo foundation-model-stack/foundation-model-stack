@@ -1,7 +1,8 @@
 import math
 import re
 from dataclasses import dataclass
-from typing import Mapping, Optional
+from tkinter import X
+from typing import List, Mapping, Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -13,7 +14,7 @@ from fms.distributed.strategy import (
     UniformModelParallelStrategy,
 )
 from fms.modules.attention import MultiHeadAttention
-from fms.modules.embedding import WordEmbedding
+from fms.modules.embedding import LMHead, WordEmbedding
 from fms.modules.feedforward import MOEFeedForward
 from fms.modules.layernorm import LayerNormParameterized
 from fms.modules.positions import RotaryEmbedding
@@ -146,14 +147,14 @@ class MixtralBlock(nn.Module):
             return x
 
 
-class Mixtral(nn.Module):
+class MixtralHeadless(nn.Module):
     def __init__(
         self,
         config: Optional[MixtralConfig] = None,
         distributed_strategy: DistributedStrategy = NoOpStrategy,
         **kwargs,
     ):
-        super(Mixtral, self).__init__()
+        super(MixtralHeadless, self).__init__()
         if config is not None:
             self.config = config
         else:
@@ -165,16 +166,10 @@ class Mixtral(nn.Module):
         self.pad_id = self.config.pad_id
         self.max_expected_seq_len = self.config.max_expected_seq_len
 
-        shared = WordEmbedding(
-            self.config.src_vocab_size,
-            self.config.dim,
-            padding_idx=self.config.pad_id,
-            abs_pos=False,
-            reversible=True,
-            tie_weights=False,
-            bias=False,
+        embedding = nn.Embedding(
+            self.config.src_vocab_size, self.config.dim, padding_idx=self.config.pad_id
         )
-        self.shared = self.distributed_strategy.distribute_module(shared)
+        self.embedding = self.distributed_strategy.distribute_module(embedding)
 
         self.rot_emb = RotaryEmbedding(
             dim=self.config.dim // self.config.nheads,
@@ -189,7 +184,7 @@ class Mixtral(nn.Module):
                 )
         else:
             self.rot_emb.compute_freqs_cis(
-                self.shared.emb.weight.device, self.config.max_expected_seq_len
+                self.embedding.weight.device, self.config.max_expected_seq_len
             )
 
         layers = []
@@ -216,38 +211,32 @@ class Mixtral(nn.Module):
 
         self.reset_params()
 
-    def get_config(self) -> MixtralConfig:
-        return self.config
-
-    @classmethod
-    def from_config(cls, config: MixtralConfig) -> "Mixtral":
-        return cls(config)
-
     def reset_params(self):
-        # Modules are self-initializing, we're just going to down-scale the final prediction head to be
-        # mixed-fan (inputs and gradients scale to the same inverse factors) if it isn't tied
-        self.shared.head.weight.data.normal_(
-            0, 1 / math.sqrt(math.sqrt(self.width * self.shared.vocab_size))
+        nn.init.trunc_normal_(
+            self.embedding.weight, mean=0.0, std=self.config.dim**-0.5
         )
+        # Preserve pad index dummy-hood
+        if self.config.pad_id is not None:
+            self.embedding.weight.data[self.config.pad_id].zero_()
 
-    def _helper(
+    def forward(
         self,
-        x_in,
-        mask=None,
-        position_ids=None,
-        past_key_value_states=None,
-        use_cache=False,
-        attn_algorithm=None,
+        x: torch.Tensor,
+        mask: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.Tensor] = None,
+        past_key_value_states: Optional[List[Tuple[torch.Tensor, torch.Tensor]]] = None,
+        use_cache: bool = False,
+        attn_algorithm: Optional[str] = None,
     ):
         # Embed the given vocabulary indices using the given attention mask, with pre-/post-norm and dropout as specified
-        # x_in: batch_size x seq_len
+        # x: batch_size x seq_len
         # mask: batch_size x seq_len x seq_len
         # bias: nheads x seq_len x seq_len
         if past_key_value_states is None or len(past_key_value_states) == 0:
             past_key_value_states = [None for _ in range(len(self.layers))]
 
-        qlen = x_in.size(1)
-        klen = x_in.size(1)
+        qlen = x.size(1)
+        klen = x.size(1)
 
         # if we are using the cache, the key length needs to be extended with the past keys length
         if use_cache and past_key_value_states[0] is not None:
@@ -264,14 +253,14 @@ class Mixtral(nn.Module):
         else:
             is_causal_mask = False
 
-        x_in = self.shared(x_in)
+        x = self.embedding(x)
 
         # this is the output cache for all the decoder layers
         present_key_value_states = []
 
         for i, layer in enumerate(self.layers):
             output = layer(
-                x=x_in,
+                x=x,
                 mask=mask,
                 position_ids=position_ids,
                 past_key_value_state=past_key_value_states[i],
@@ -281,36 +270,72 @@ class Mixtral(nn.Module):
             )
 
             if use_cache:
-                x_in, present_key_value_state = output
+                x, present_key_value_state = output
                 present_key_value_states.append(present_key_value_state)
 
             else:
-                x_in = output
+                x = output
 
-        dec_out = x_in
+        dec_out = x
         dec_out = self.dec_norm(dec_out)
         if self.config.p_dropout:
             dec_out = self.dropout(dec_out)
 
         return dec_out, present_key_value_states
 
+
+class Mixtral(nn.Module):
+    def __init__(
+        self,
+        config: Optional[MixtralConfig] = None,
+        distributed_strategy: DistributedStrategy = NoOpStrategy,
+        **kwargs,
+    ):
+        super(Mixtral, self).__init__()
+        if config is not None:
+            self.config = config
+        else:
+            self.config = MixtralConfig()
+        self.config = self.config.updated(**kwargs)
+        self.distributed_strategy = distributed_strategy
+
+        self.base_model = MixtralHeadless(self.config, self.distributed_strategy)
+        head = LMHead(self.config.dim, self.config.src_vocab_size, bias=False)
+        self.head = self.distributed_strategy.distribute_module(head)
+
+        self.reset_params()
+
+    def get_config(self) -> MixtralConfig:
+        return self.config
+
+    @classmethod
+    def from_config(cls, config: MixtralConfig) -> "Mixtral":
+        return cls(config)
+
+    def reset_params(self):
+        # Modules are self-initializing, we're just going to down-scale the final prediction head to be
+        # mixed-fan (inputs and gradients scale to the same inverse factors) if it isn't tied
+        self.head.weight.data.normal_(
+            0, 1 / math.sqrt(math.sqrt(self.config.dim * self.config.src_vocab_size))
+        )
+
     def forward(
         self,
-        x,
-        mask=None,
-        position_ids=None,
-        past_key_value_states=None,
-        use_cache=False,
-        only_last_token=False,
-        attn_algorithm=None,
+        x: torch.Tensor,
+        mask: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.Tensor] = None,
+        past_key_value_states: Optional[List[Tuple[torch.Tensor, torch.Tensor]]] = None,
+        use_cache: bool = False,
+        only_last_token: bool = False,
+        attn_algorithm: Optional[str] = None,
     ):
-        output, cache = self._helper(
+        output, cache = self.base_model(
             x, mask, position_ids, past_key_value_states, use_cache, attn_algorithm
         )
 
         if only_last_token:
             output = output[:, -1, :]
-        preds = self.shared(output, reverse=True)
+        preds = self.head(output, reverse=True)
 
         if use_cache:
             return preds, cache
@@ -319,8 +344,6 @@ class Mixtral(nn.Module):
 
 
 # Register common Mixtral variants with the model registration API
-
-
 _8x7b_config = MixtralConfig()
 
 _architecture_name = "mixtral"
@@ -340,10 +363,10 @@ models.register_model(
 
 def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
     replacements = [
-        (r"output.weight", "shared.head.weight"),
-        (r"tok_embeddings.weight", "shared.emb.weight"),
-        (r"^norm", "dec_norm"),
-        (r"^model.layers", "layers"),
+        (r"output.weight", "head.weight"),
+        (r"tok_embeddings.weight", "embedding.weight"),
+        (r"^norm", "base_model.dec_norm"),
+        (r"^model.layers", "base_model.layers"),
         (r"attention\.wk", "attn.key"),
         (r"attention\.wv", "attn.value"),
         (r"attention\.wq", "attn.query"),

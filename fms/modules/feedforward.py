@@ -300,7 +300,22 @@ class TPGatedLinearUnit(GatedLinearUnit, TPModule):
 
 
 class ConditionalFeedForward(nn.Module):
-    def __init__(self, num_experts, dim, intermediate_size):
+    """
+    This class represents the expert feed forward networks of an MoE FF layer.
+
+    For more information, see the review paper in https://arxiv.org/pdf/2209.01667.pdf
+
+    Args
+    ----
+    num_experts : int
+        The number of expert feed forward networks.
+    dim : int
+        The embedding dimension for the transformer model.
+    intermediate_size : int
+        The intermediate size for the expert networks.
+    """
+
+    def __init__(self, num_experts: int, dim: int, intermediate_size: int):
         super().__init__()
         self.num_experts = num_experts
         self.dim = dim
@@ -310,6 +325,7 @@ class ConditionalFeedForward(nn.Module):
         self.w3 = nn.Parameter(torch.empty(num_experts, intermediate_size, dim))
 
     def forward(self, x: torch.Tensor, expert_indices: torch.Tensor) -> torch.Tensor:
+        # T = num_tokens, E = num_experts, D = hidden dim, A = activated experts
         w1_weights = self.w1[expert_indices].transpose(-1, -2)  # [T, A, D, D]
         w3_weights = self.w3[expert_indices].transpose(-1, -2)  # [T, A, D, D]
         w2_weights = self.w2[expert_indices]  # [T, A, D, D]
@@ -321,21 +337,24 @@ class ConditionalFeedForward(nn.Module):
 
 class TPConditionalFeedForward(ConditionalFeedForward, TPModule):
     """
+    This class represents the expert feed forward networks of an MoE FF layer.
+    This subclass adds TP support.
+
     Args
     ----
-    Check ConditionalFeedForward for up-to-date docs
-
-    world_size: int
-        the number of processes running this model in TP
-    rank: int
-        the index of this process wrt to the rest running the model in TP
+    num_experts : int
+        The number of expert feed forward networks.
+    dim : int
+        The embedding dimension for the transformer model.
+    intermediate_size : int
+        The intermediate size for the expert networks.
     """
 
     def __init__(
         self,
-        num_experts,
-        dim,
-        intermediate_size,
+        num_experts: int,
+        dim: int,
+        intermediate_size: int,
         group: Optional[ProcessGroup] = None,
     ):
         assert torch.distributed.is_initialized()
@@ -343,7 +362,7 @@ class TPConditionalFeedForward(ConditionalFeedForward, TPModule):
 
         assert (
             intermediate_size % world_size == 0
-        ), "Hidden dim must be divisible by world size"
+        ), "Intermediate size must be divisible by world size"
         ConditionalFeedForward.__init__(
             self,
             num_experts,
@@ -375,8 +394,32 @@ class TPConditionalFeedForward(ConditionalFeedForward, TPModule):
 
 
 class MOEFeedForward(nn.Module):
+    """
+    A Sparse Mixture Of Experts (MoE) Feed Forward layer. The output of this layer for a
+    given input is determined by the weighted sum of the outputs of a subset of size
+    `num_activated_experts` of the `num_experts` expert networks. The weights are given
+    by the gating network, then passed through a topK and a softmax filter to make it _sparse_.
+
+    For more information, see the review paper in https://arxiv.org/pdf/2209.01667.pdf
+
+    Args
+    ----
+    num_experts : int
+        The number of expert feed forward networks.
+    num_activated_experts : int
+        How many experts can be activated at any single time.
+    dim : int
+        The embedding dimension for the transformer model.
+    intermediate_size : int
+        The intermediate size for the expert networks.
+    """
+
     def __init__(
-        self, num_experts, num_activated_experts, dim, intermediate_size
+        self,
+        num_experts: int,
+        num_activated_experts: int,
+        dim: int,
+        intermediate_size: int,
     ) -> None:
         super().__init__()
         self.gate = nn.Linear(dim, num_experts, bias=False)
