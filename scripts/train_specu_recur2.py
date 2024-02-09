@@ -251,8 +251,8 @@ def train_func(args):
     # )
     # torch.set_default_dtype(torch.float32)
 
-    model = LlamaForCausalLM.from_pretrained("/lustre/llama_weights/hf/13B-F/") #args.base_path)
-    report("    Codellama loaded...")
+    model = LlamaForCausalLM.from_pretrained(args.base_path)
+    report("    Base model loaded...")
     model = llama.convert_hf_llama(model)
     report("    Converted to FMS...")
     model = model.bfloat16()
