@@ -259,6 +259,7 @@ def get_model(
     else:
         initial_device = device
 
+    lazy_sd: MutableMapping[str, Any] = {}
     if model_path is not None:
         lazy_sd = serialization.load_state_dict(
             model_path,
@@ -313,6 +314,8 @@ def get_model(
             local_rank,
             world_size,
         )
+    elif hasattr(fms_model, 'reset_parameters'):
+        fms_model.reset_parameters()
 
     if pre_load:
         fms_model = model_wrap(fms_model)
