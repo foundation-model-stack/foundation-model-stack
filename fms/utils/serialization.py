@@ -56,7 +56,7 @@ def list_sources(architecture: str):
     return list(__adapters[architecture].keys())
 
 
-def __fms_weights_preprocessing(orig_sd: Mapping) -> Mapping:
+def __fms_weights_preprocessing(orig_sd: Mapping, architecture: str) -> Mapping:
     new_sd = {}
     for name, param in orig_sd.items():
         # logic to handle weights coming from an older unfused model
@@ -91,6 +91,36 @@ def __fms_weights_preprocessing(orig_sd: Mapping) -> Mapping:
                     name,
                 )
             ] = torch.cat([orig_sd[w] for w in unfused_weights], dim=0)
+        elif architecture in ("llama",) and (
+            "ff_sub_layer.wg_fused" not in name
+            and "ff_sub_layer.wg" in name
+            or "ff_sub_layer.w1" in name
+        ):
+            weight_type = name.split(".")[-1]
+
+            unfused_weights = [
+                re.sub(
+                    rf"ff_sub_layer.(wg|w1).{weight_type}",
+                    f"ff_sub_layer.wg.{weight_type}",
+                    name,
+                ),
+                re.sub(
+                    rf"ff_sub_layer.(wg|w1).{weight_type}",
+                    f"ff_sub_layer.w1.{weight_type}",
+                    name,
+                ),
+            ]
+            missing_weights = [w for w in unfused_weights if w not in orig_sd.keys()]
+            if len(missing_weights) != 0:
+                raise FusableWeightsMissingError(missing_weights)
+
+            new_sd[
+                re.sub(
+                    rf"ff_sub_layer.(w1|wg).{weight_type}",
+                    f"ff_sub_layer.wg_fused.{weight_type}",
+                    name,
+                )
+            ] = torch.cat([orig_sd[w] for w in unfused_weights], dim=0)
         else:
             new_sd[name] = param
 
@@ -108,7 +138,7 @@ def _get_adapter(
         # if no adapter is registered, assume the attributes are already in
         # fms format.
         # handle any necessary weight conversions here to solve weight backwards compatibility issues
-        return __fms_weights_preprocessing
+        return lambda mapping: __fms_weights_preprocessing(mapping, architecture)
     else:
         return __adapters[architecture][source]
 
