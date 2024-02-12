@@ -36,7 +36,7 @@ parser.add_argument(
 parser.add_argument(
     "--variant",
     type=str,
-    default="7b",
+    default="micro",
     help="The model variant (configuration) to benchmark. E.g. 7b, 13b, 70b.",
 )
 parser.add_argument(
