@@ -138,7 +138,7 @@ class ChatOps:
         self.must(actor, "Event actor not found!")
 
         pr_owner = self.PR["user"]["login"]
-        self.must(actor, "PR Owner not found!")
+        self.must(pr_owner, "PR Owner not found!")
 
         # If the comment was not left by the owner, it's only allowed for owners
         if actor != pr_owner:
