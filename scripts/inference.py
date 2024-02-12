@@ -2,6 +2,9 @@ import argparse
 import itertools
 import os
 
+## MONKEYPATCH (before torch import)
+import fms.utils.dispatch_fix
+
 import torch
 import torch._inductor.config
 from torch import distributed as dist
@@ -89,7 +92,7 @@ else:
     device = torch.device(args.device_type)
 
 torch.set_default_device(device)
-torch.set_default_dtype(torch.half)
+# torch.set_default_dtype(torch.half)
 
 # requires setting environment variable: `CUBLAS_WORKSPACE_CONFIG=:4096:8`
 if args.deterministic:
@@ -110,13 +113,13 @@ else:
 model = get_model(
     args.architecture,
     args.variant,
-    model_path=args.model_path,
+    # model_path=args.model_path,
     device_type=args.device_type,
     source=args.model_source,
     distributed_strategy=distr_param,
     group=dist.group.WORLD,
 )
-tokenizer = tokenizers.get_tokenizer(args.tokenizer)
+# tokenizer = tokenizers.get_tokenizer(args.tokenizer)
 model.eval()
 torch.set_grad_enabled(False)
 print("loading complete on rank", local_rank)
@@ -125,8 +128,8 @@ if args.compile:
     print("compiling model")
     # Bug with kv-cache in PT2.1
     torch._inductor.config.joint_graph_constant_folding = False
-    # compiling can make first inference pass slow
-    model = torch.compile(model, mode=args.compile_mode)
+    # compiling can make first inference pass slow backend="aot_eager"
+    model = torch.compile(model, mode=args.compile_mode, backend="aot_eager")
 
 
 def ids_for_prompt(prompt):
@@ -166,8 +169,8 @@ else:
     )
     prompt2 = template.format("Explain some popular greetings in Spanish.")
 
-prompt1 = ids_for_prompt(prompt1)
-prompt2 = ids_for_prompt(prompt2)
+# prompt1 = ids_for_prompt(prompt1)
+# prompt2 = ids_for_prompt(prompt2)
 
 max_len = max([len(prompt) for prompt in [prompt1, prompt2]])
 # prompt1 = pad_prompt(prompt1, max_len)
@@ -176,7 +179,7 @@ max_len = max([len(prompt) for prompt in [prompt1, prompt2]])
 # prompt2 = pad_prompt(prompt2, max_len)
 # ids = torch.stack((prompt2, prompt1), dim=0)
 
-ids = prompt1.unsqueeze(0)
+ids = torch.randint(0, 100, (1, 60), dtype=torch.int, device=device)
 
 
 def print_result(result):
