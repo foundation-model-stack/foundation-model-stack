@@ -138,23 +138,25 @@ class MultiHeadAttention(nn.Module):
         elif k is not None and v is not None:
             qkv = torch.cat((q, k, v), dim=-1)
         else:
-            raise ValueError("both k and v must either be given as tensors or both None")
+            raise ValueError(
+                "both k and v must either be given as tensors or both None"
+            )
 
         # q, k, v: batch_size x seq_len x emb_dim
         # mask: batch_size x seq_len x seq_len
         batch_size, q_len, _ = qkv.size()
 
         if is_self or past_key_value_state is None:
-            q, k, v = self.qkv_fused(qkv).split(self.splits, dim=-1)
+            q_out, k_out, v_out = self.qkv_fused(qkv).split(self.splits, dim=-1)
 
             # note: transposes will be moved in a later PR to fix dis-contiguous tensor issues
-            queries = q.view(
+            queries = q_out.view(
                 batch_size, q_len, self.nheads, self.emb_kq_per_head
             ).transpose(2, 1)
-            keys = k.view(
+            keys = k_out.view(
                 batch_size, q_len, self.kvheads, self.emb_kq_per_head
             ).transpose(2, 1)
-            values = v.view(
+            values = v_out.view(
                 batch_size, q_len, self.kvheads, self.emb_v_per_head
             ).transpose(2, 1)
 
@@ -341,7 +343,9 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
             k_par = copy_to_tensor_model_parallel_region(k)
             v_par = copy_to_tensor_model_parallel_region(v)
         else:
-            raise ValueError("both k and v must either be given as tensors or both None")
+            raise ValueError(
+                "both k and v must either be given as tensors or both None"
+            )
 
         out_par = MultiHeadAttention.forward(
             self,
