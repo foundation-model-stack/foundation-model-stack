@@ -321,8 +321,8 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
     def forward(
         self,
         q,
-        k,
-        v,
+        k=None,
+        v=None,
         mask=None,
         position_ids=None,
         attn_algorithm=None,
