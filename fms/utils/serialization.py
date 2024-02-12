@@ -56,24 +56,10 @@ def list_sources(architecture: str):
     return list(__adapters[architecture].keys())
 
 
-def _get_adapter(
-    architecture: str, source: Optional[str]
-) -> Callable[[Mapping[str, Any]], Mapping[str, Any]]:
-    if (
-        source is None
-        or architecture not in __adapters
-        or source not in __adapters[architecture]
-    ):
-        # if no adapter is registered, assume the attributes are already in
-        # fms format.
-        # should we raise an error here instead?
-        return lambda x: x
-    else:
-        return __adapters[architecture][source]
-
-def _fms_weights_preprocessing(orig_sd: Mapping) -> Mapping:
+def __fms_weights_preprocessing(orig_sd: Mapping) -> Mapping:
     new_sd = {}
     for name, param in orig_sd.items():
+        # logic to handle weights coming from an older unfused model
         if (
                 "attn.query" in name
                 or "attn.key" in name
@@ -93,8 +79,25 @@ def _fms_weights_preprocessing(orig_sd: Mapping) -> Mapping:
             new_sd[
                 re.sub(rf"attn.(query|key|value).{weight_type}", f"attn.qkv_fused.{weight_type}", name)
             ] = torch.cat([orig_sd[w] for w in unfused_weights], dim=0)
+        else:
+            new_sd[name] = param
 
     return new_sd
+
+def _get_adapter(
+    architecture: str, source: Optional[str]
+) -> Callable[[Mapping[str, Any]], Mapping[str, Any]]:
+    if (
+        source is None
+        or architecture not in __adapters
+        or source not in __adapters[architecture]
+    ):
+        # if no adapter is registered, assume the attributes are already in
+        # fms format.
+        # handle any necessary weight conversions here to solve weight backwards compatibility issues
+        return __fms_weights_preprocessing
+    else:
+        return __adapters[architecture][source]
 
 
 def get_adapted(

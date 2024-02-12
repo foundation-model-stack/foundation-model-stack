@@ -269,6 +269,8 @@ def get_model(
             rank=local_rank,
             world_size=world_size,
         )
+    else:
+        lazy_sd = {}
 
     extra_args = kwargs
     if "distributed_strategy" not in extra_args:
