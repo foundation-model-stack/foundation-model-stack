@@ -169,9 +169,17 @@ class ExpandableTensor(torch.Tensor):
             ]
             return torch.cat(tensors, dim, out=out)
 
+    # @_implements(torch.ops.aten.copy_.default)
+    # def copy_(self, src: torch.Tensor, non_blocking: bool = False) -> "ExpandableTensor":
+    #     if type(src) == ExpandableTensor:
+    #         self._underlying_tensor.copy_(src._underlying_tensor, non_blocking=non_blocking)
+    #     else:
+    #         self._tensor().copy_(src, non_blocking=non_blocking)
+    #     return self
+
     @classmethod
     def __torch_dispatch__(cls, func, types, args=(), kwargs=None):
-        print(func)
+        print("Running custom dispatch for: ", func)
         if kwargs is None:
             kwargs = {}
         if func not in _HANDLED_FUNCTIONS or not all(

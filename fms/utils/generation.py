@@ -72,6 +72,7 @@ def generate(
 
     for _ in range(max_new_tokens):
         input_ids = next_input[:, -max_seq_len:]
+        print("Running forward")
         output = model(input_ids, **kwargs)
         if use_cache:
             logits, past_key_value_states = output
