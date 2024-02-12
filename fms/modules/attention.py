@@ -103,7 +103,9 @@ class MultiHeadAttention(nn.Module):
 
     def forward(
         self,
-        qkv,
+        q: torch.Tensor,
+        k: Optional[torch.Tensor] = None,
+        v: Optional[torch.Tensor] = None,
         mask: Optional[Tensor] = None,
         position_ids=None,
         attn_algorithm=None,
@@ -130,6 +132,13 @@ class MultiHeadAttention(nn.Module):
             returned in the form (hidden_state, cache) where hidden_state is a tensor and cache is of the form specified
             in past_key_value_state
         """
+
+        if k is None and v is None:
+            qkv = q
+        elif k is not None and v is not None:
+            qkv = torch.cat((q, k, v), dim=-1)
+        else:
+            raise ValueError("both k and v must either be given as tensors or both None")
 
         # q, k, v: batch_size x seq_len x emb_dim
         # mask: batch_size x seq_len x seq_len
@@ -309,7 +318,9 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
 
     def forward(
         self,
-        qkv,
+        q,
+        k,
+        v,
         mask=None,
         position_ids=None,
         attn_algorithm=None,
@@ -321,12 +332,22 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
         """
         Check MultiHeadAttention for up-to-date arguments and docs
         """
-        qkv_par = copy_to_tensor_model_parallel_region(qkv)
-        # rel_pos_bias_par = copy_to_tensor_model_parallel_region(rel_pos_bias)
+        if k is None and v is None:
+            q_par = copy_to_tensor_model_parallel_region(q)
+            k_par = None
+            v_par = None
+        elif k is not None and v is not None:
+            q_par = copy_to_tensor_model_parallel_region(q)
+            k_par = copy_to_tensor_model_parallel_region(k)
+            v_par = copy_to_tensor_model_parallel_region(v)
+        else:
+            raise ValueError("both k and v must either be given as tensors or both None")
 
         out_par = MultiHeadAttention.forward(
             self,
-            qkv_par,
+            q_par,
+            k_par,
+            v_par,
             mask,
             position_ids,
             attn_algorithm,

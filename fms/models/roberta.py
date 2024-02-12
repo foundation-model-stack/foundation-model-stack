@@ -73,7 +73,7 @@ class RoBERTaBlock(nn.Module):
         residual = x
         # self attention
         x = self.attn(
-            qkv=x,
+            q=x,
             mask=mask,
             attn_algorithm=attn_algorithm,
             is_self=True,

@@ -1,5 +1,6 @@
 import collections
 import os
+import re
 from collections import ChainMap
 from collections.abc import Iterable
 from pathlib import Path
@@ -69,6 +70,31 @@ def _get_adapter(
         return lambda x: x
     else:
         return __adapters[architecture][source]
+
+def _fms_weights_preprocessing(orig_sd: Mapping) -> Mapping:
+    new_sd = {}
+    for name, param in orig_sd.items():
+        if (
+                "attn.query" in name
+                or "attn.key" in name
+                or "attn.value" in name
+        ):
+            weight_type = name.split(".")[-1]
+
+            unfused_weights = [
+                re.sub(rf"attn.(query|key|value).{weight_type}", f"attn.query.{weight_type}", name),
+                re.sub(rf"attn.(query|key|value).{weight_type}", f"attn.key.{weight_type}", name),
+                re.sub(rf"attn.(query|key|value).{weight_type}", f"attn.value.{weight_type}", name),
+            ]
+            missing_weights = [w for w in unfused_weights if w not in orig_sd.keys()]
+            if len(missing_weights) != 0:
+                raise FusableWeightsMissingError(missing_weights)
+
+            new_sd[
+                re.sub(rf"attn.(query|key|value).{weight_type}", f"attn.qkv_fused.{weight_type}", name)
+            ] = torch.cat([orig_sd[w] for w in unfused_weights], dim=0)
+
+    return new_sd
 
 
 def get_adapted(
