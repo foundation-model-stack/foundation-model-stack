@@ -136,6 +136,9 @@ class MultiHeadAttention(nn.Module):
         if k is None and v is None:
             qkv = q
         elif k is not None and v is not None:
+            # Note: for encoder/decoder models with cross attn, this line may need to be changed as kv will be fused and
+            # q will be kept separate. For now, we are not running any encoder/decoder models through this layer and
+            # this line will not get executed.
             qkv = torch.cat((q, k, v), dim=0)
         else:
             raise ValueError(
