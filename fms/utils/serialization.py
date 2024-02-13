@@ -454,7 +454,10 @@ def _load_partial_state_dict(
                 _copy_if_present(param, tensor_value)
             elif tp_module is not None:
                 # Handle TP sharding
-                if key_steps[-2] in tp_module.colwise_param_names():
+                if (
+                    key_steps[-2] in tp_module.colwise_param_names()
+                    or "self" in tp_module.colwise_param_names()
+                ):
                     _copy_colwise(
                         param,
                         tensor_value,
@@ -462,7 +465,10 @@ def _load_partial_state_dict(
                         rank,
                         world_size,
                     )
-                if key_steps[-2] in tp_module.rowwise_param_names():
+                if (
+                    key_steps[-2] in tp_module.rowwise_param_names()
+                    or "self" in tp_module.rowwise_param_names()
+                ):
                     _copy_rowwise(
                         param,
                         tensor_value,
@@ -470,7 +476,10 @@ def _load_partial_state_dict(
                         rank,
                         world_size,
                     )
-                if key_steps[-2] in tp_module.embedding_param_names():
+                if (
+                    key_steps[-2] in tp_module.embedding_param_names()
+                    or "self" in tp_module.embedding_param_names()
+                ):
                     _copy_embedding(
                         param,
                         tensor_value,

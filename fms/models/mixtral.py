@@ -14,8 +14,8 @@ from fms.distributed.strategy import (
     UniformModelParallelStrategy,
 )
 from fms.modules.attention import MultiHeadAttention
-from fms.modules.embedding import LMHead, WordEmbedding
 from fms.modules.feedforward import MOEFeedForward
+from fms.modules.head import LMHead
 from fms.modules.layernorm import LayerNormParameterized
 from fms.modules.positions import RotaryEmbedding
 from fms.utils import serialization
@@ -233,13 +233,15 @@ class MixtralHeadless(nn.Module):
         # mask: batch_size x seq_len x seq_len
         # bias: nheads x seq_len x seq_len
         if past_key_value_states is None or len(past_key_value_states) == 0:
-            past_key_value_states = [None for _ in range(len(self.layers))]
+            past_key_value_states = [
+                (torch.empty(0), torch.empty(0)) for _ in range(len(self.layers))
+            ]
 
         qlen = x.size(1)
         klen = x.size(1)
 
         # if we are using the cache, the key length needs to be extended with the past keys length
-        if use_cache and past_key_value_states[0] is not None:
+        if use_cache and past_key_value_states[0][0].numel() > 0:
             klen += past_key_value_states[0][0].size(-2)
 
         # if mask is none, we need to specify causal mask

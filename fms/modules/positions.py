@@ -240,7 +240,7 @@ class RotaryEmbedding(PositionEncoder):
             position_ids = torch.arange(
                 0, seq_len, dtype=torch.long, device=q.device
             ).repeat(k.size(0), 1)
-            if use_cache and past_kv_state is not None:
+            if use_cache and past_kv_state is not None and past_kv_state[0].numel() > 0:
                 position_ids += past_kv_state[0].size(2)
 
         q_ = q.float().reshape(*q.size()[:-1], -1, 2)  # B H L D/2 2
