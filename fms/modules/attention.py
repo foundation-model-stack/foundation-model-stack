@@ -136,7 +136,7 @@ class MultiHeadAttention(nn.Module):
         if k is None and v is None:
             qkv = q
         elif k is not None and v is not None:
-            qkv = torch.cat((q, k, v), dim=-1)
+            qkv = torch.cat((q, k, v), dim=0)
         else:
             raise ValueError(
                 "both k and v must either be given as tensors or both None"
