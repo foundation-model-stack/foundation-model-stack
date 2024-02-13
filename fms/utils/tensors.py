@@ -106,12 +106,12 @@ class ExpandableTensor(torch.Tensor):
             # copy into tail of _tensor
             view = self._underlying_tensor.narrow(dim, self._dim_length, tensor.size(dim))
             view.copy_(tensor)
-            result = ExpandableTensor(self._underlying_tensor, dim=self._dim, dim_length=self._dim_length + tensor.size(dim))
+            result = ExpandableTensor(self._underlying_tensor, dim=self._dim, dim_length=self.size(dim) + tensor.size(dim))
             return result
         else:
             # create new expandable tensor
             expanded = ExpandableTensor(
-                self._tensor(), dim=self._dim, preallocate_length=self._underlying_tensor.shape[dim] * 2
+                self._tensor(), dim=self._dim, preallocate_length=self._underlying_tensor.size(dim) * 2
             )
             return expanded._append(tensor)
 
@@ -120,8 +120,7 @@ class ExpandableTensor(torch.Tensor):
         Returns a view of the tensor excluding preallocated space
         """
         # print("Calling _tensor()", self.size(), self._underlying_tensor.size(), self.stride(), self._underlying_tensor.stride())
-        view = self._underlying_tensor.narrow(self._dim, 0, self._dim_length)
-        return view
+        return self._underlying_tensor.narrow(self._dim, 0, self._dim_length)
 
     def __repr__(self):
         return f"ExpandableTensor(dim: {self._dim}, allocated_length: {self._underlying_tensor.size(self._dim)}, used_length: {self._dim_length}): " + self._tensor().__repr__()
