@@ -94,7 +94,6 @@ if args.device_type == "cuda":
 else:
     device = torch.device(args.device_type)
 
-torch.set_default_device(device)
 torch.set_default_dtype(torch.half)
 
 # requires setting environment variable: `CUBLAS_WORKSPACE_CONFIG=:4096:8`
