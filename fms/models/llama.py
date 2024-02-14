@@ -229,7 +229,7 @@ class LLaMA(nn.Module):
         # Call reset_parameters for relevant sub-layers
         for m in self.modules():
             if (
-                isinstance(m, MultiHeadAttention) 
+                isinstance(m, MultiHeadAttention)
                 or isinstance(m, WordEmbedding)
                 or isinstance(m, GatedLinearUnit)
                 or isinstance(m, LayerNormParameterized)
