@@ -4,7 +4,7 @@ import re
 from collections import ChainMap
 from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Callable, List, Mapping, MutableMapping, Optional, Union
+from typing import Any, Callable, List, Mapping, MutableMapping, Optional, Tuple, Union
 
 import torch
 
@@ -56,43 +56,79 @@ def list_sources(architecture: str):
     return list(__adapters[architecture].keys())
 
 
+def __legacy_attn_unfused_to_fused_weight_conversion(
+    name: str, orig_sd: Mapping
+) -> Optional[Tuple[str, torch.Tensor]]:
+    """
+    function which converts unfused fms weights to fused fms weights in the case the model was using the older unfused
+    weights (version 0.0.3)
+
+    Args:
+        name: str
+            current name to convert
+        orig_sd: Mapping
+            a mapping from a name to a param, in most cases will be a singleton, however when
+
+    Returns:
+    Optional[Tuple[str, torch.Tensor]]
+        if query/key/value all exist in the given state dict, a tuple of the new fused name as well as weights will be
+        returned from this function
+        if one of query, key, or value exists in state dict (not all together), a FusableWeightsMissingError will be
+        raised with the weights that are missing
+        otherwise this function will return None signifying that no preprocessing needed to be done for this name param
+    """
+    # if we find query/key/value, this means the weights are unfused and therefore need to be fused
+    if "attn.query" in name or "attn.key" in name or "attn.value" in name:
+        weight_type = name.split(".")[-1]
+
+        unfused_weights = [
+            re.sub(
+                rf"attn.(query|key|value).{weight_type}",
+                f"attn.query.{weight_type}",
+                name,
+            ),
+            re.sub(
+                rf"attn.(query|key|value).{weight_type}",
+                f"attn.key.{weight_type}",
+                name,
+            ),
+            re.sub(
+                rf"attn.(query|key|value).{weight_type}",
+                f"attn.value.{weight_type}",
+                name,
+            ),
+        ]
+        missing_weights = [w for w in unfused_weights if w not in orig_sd.keys()]
+        if len(missing_weights) != 0:
+            raise FusableWeightsMissingError(missing_weights)
+
+        result = (
+            re.sub(
+                rf"attn.(query|key|value).{weight_type}",
+                f"attn.qkv_fused.{weight_type}",
+                name,
+            ),
+            torch.cat([orig_sd[w] for w in unfused_weights], dim=0),
+        )
+
+        return result
+    return None
+
+
 def __fms_weights_preprocessing(orig_sd: Mapping) -> Mapping:
+    # list of preprocessors to handle conversion of legacy weights
+    preprocessors = [__legacy_attn_unfused_to_fused_weight_conversion]
+
     new_sd = {}
     for name, param in orig_sd.items():
-        # logic to handle weights coming from an older unfused model
-        if "attn.query" in name or "attn.key" in name or "attn.value" in name:
-            weight_type = name.split(".")[-1]
+        for preprocessor in preprocessors:
+            preprocessor_out = preprocessor(name, orig_sd)
 
-            unfused_weights = [
-                re.sub(
-                    rf"attn.(query|key|value).{weight_type}",
-                    f"attn.query.{weight_type}",
-                    name,
-                ),
-                re.sub(
-                    rf"attn.(query|key|value).{weight_type}",
-                    f"attn.key.{weight_type}",
-                    name,
-                ),
-                re.sub(
-                    rf"attn.(query|key|value).{weight_type}",
-                    f"attn.value.{weight_type}",
-                    name,
-                ),
-            ]
-            missing_weights = [w for w in unfused_weights if w not in orig_sd.keys()]
-            if len(missing_weights) != 0:
-                raise FusableWeightsMissingError(missing_weights)
+            if preprocessor_out is not None:
+                name, param = preprocessor_out
+                break
 
-            new_sd[
-                re.sub(
-                    rf"attn.(query|key|value).{weight_type}",
-                    f"attn.qkv_fused.{weight_type}",
-                    name,
-                )
-            ] = torch.cat([orig_sd[w] for w in unfused_weights], dim=0)
-        else:
-            new_sd[name] = param
+        new_sd[name] = param
 
     return new_sd
 
