@@ -7,8 +7,8 @@ import timeit
 import torch
 from torch import distributed as dist
 from torch._dynamo import OptimizedModule
-from fms import models
 
+from fms import models
 from fms.utils import generation, print0, tokenizers
 
 

@@ -97,6 +97,9 @@ class MultiHeadAttention(nn.Module):
         ].normal_(
             0, (gain / (self.emb_dim * self.nheads * self.emb_v_per_head) ** 0.5) ** 0.5
         )
+        self.dense.weight.data.normal_(
+            0, (gain / (self.emb_dim * self.nheads * self.emb_v_per_head) ** 0.5) ** 0.5
+        )
         if self.use_bias:
             for layer in ["qkv_fused", "dense"]:
                 getattr(self, layer).bias.data.zero_()
