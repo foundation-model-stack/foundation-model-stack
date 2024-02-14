@@ -438,7 +438,13 @@ class MOEFeedForward(nn.Module):
             expert_weights, self.num_activated_experts, dim=-1
         )  # [T, A], [T, A]
         expert_weights /= expert_weights.sum(dim=-1, keepdim=True)  # [T, A]
-        expert_outs = self.cond_ffn(x, expert_indices)
+        # Given the balloning memory requirements, only process at most 10 tokens at a time
+        if x.shape[0] > 10:
+            split_x = x.chunk(x.shape[0] // 10 + 1)
+            split_ei = expert_indices.chunk(expert_indices.shape[0] // 10 + 1)
+            expert_outs = torch.cat([self.cond_ffn(x_i, ei_i) for x_i, ei_i in zip(split_x, split_ei)], dim=0)
+        else:
+            expert_outs = self.cond_ffn(x, expert_indices)
         return torch.einsum("tai,ta -> ti", expert_outs, expert_weights).view(
             B, S, self.dim
         )

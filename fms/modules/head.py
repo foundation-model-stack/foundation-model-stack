@@ -88,7 +88,8 @@ class ClassificationHead(nn.Module):
 
 class LMHead(nn.Linear):
     # To differentiate for TP
-    pass
+    def forward(self, x):
+        return super().forward(x)
 
 
 class TPLMHead(LMHead, TPModule):

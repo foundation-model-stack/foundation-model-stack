@@ -169,7 +169,7 @@ class MultiHeadAttention(nn.Module):
                 )
 
         # if you want to use caching and past_key_value_state is not None meaning you have values in your cache
-        if use_cache and past_key_value_state is not None:
+        if use_cache and past_key_value_state is not None and past_key_value_state[0].numel() > 0:
             if is_self:
                 keys = torch.cat((past_key_value_state[0], keys), dim=2)
                 values = torch.cat((past_key_value_state[1], values), dim=2)

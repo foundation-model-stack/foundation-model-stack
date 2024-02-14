@@ -132,8 +132,9 @@ local_rank = int(os.getenv("LOCAL_RANK", 0))
 world_size = int(os.getenv("WORLD_SIZE", 1))
 device = torch.device(args.device_type, local_rank)
 
-torch.set_default_device(device)
+# torch.set_default_device(device)
 torch.set_default_dtype(torch.half)
+torch.cuda.set_device(device)
 
 if world_size > 1:
     dist.init_process_group()
@@ -141,7 +142,7 @@ if world_size > 1:
 print("loading model")
 model = models.get_model(args.architecture, args.variant, device_type=args.device_type)
 tokenizer = tokenizers.get_tokenizer(args.tokenizer)
-
+print(torch.cuda.memory_allocated(device) /1024 /1024/1024)
 model.eval()
 torch.set_grad_enabled(False)
 print(f"loading complete on rank {local_rank}")
