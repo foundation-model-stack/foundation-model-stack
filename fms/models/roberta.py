@@ -352,3 +352,6 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping[Any, Any]) -> Mapping[Any, Any]:
 
 
 serialization.register_adapter("roberta", "hf", _hf_sd_to_fms_sd)
+serialization._register_legacy_weight_preprocessor(
+    "roberta", serialization._legacy_attn_unfused_to_fused_weight_conversion
+)

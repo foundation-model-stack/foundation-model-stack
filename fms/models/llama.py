@@ -411,6 +411,21 @@ def _rename_weights_to_fms(orig_sd):
                 re.sub(r"attn.(query|key|value)", "attn.qkv_fused", new_name)
             ] = torch.cat([orig_sd[w] for w in unfused_weights], dim=0)
 
+        # llama in meta has unfused mlp weights, so these weights must be converted to fused weights in fms
+        if "ff_sub_layer.wg" in new_name or "ff_sub_layer.wg" in new_name:
+            unfused_weights = [
+                re.sub(r"w[13]", "w1", name),
+                re.sub(r"w[13]", "w3", name),
+            ]
+
+            missing_weights = [w for w in unfused_weights if w not in orig_sd.keys()]
+            if len(missing_weights) != 0:
+                raise serialization.FusableWeightsMissingError(missing_weights)
+
+            new_sd[
+                re.sub(r"ff_sub_layer.(w1|wg)", "ff_sub_layer.wg_fused", new_name)
+            ] = torch.cat([orig_sd[w] for w in unfused_weights], dim=0)
+
     return new_sd
 
 
@@ -475,11 +490,32 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
                 re.sub(r"attn.(query|key|value)", "attn.qkv_fused", new_name)
             ] = torch.cat([raw_mapping[w] for w in unfused_weights], dim=0)
 
+        # llama in hf has unfused mlp weights, so these weights must be converted to fused weights in fms
+        if "ff_sub_layer.wg" in new_name or "ff_sub_layer.w1" in new_name:
+            unfused_weights = [
+                re.sub(r"mlp.(gate|up)_proj", "mlp.gate_proj", name),
+                re.sub(r"mlp.(gate|up)_proj", "mlp.up_proj", name),
+            ]
+
+            missing_weights = [w for w in unfused_weights if w not in hf_sd.keys()]
+            if len(missing_weights) != 0:
+                raise serialization.FusableWeightsMissingError(missing_weights)
+
+            new_sd[
+                re.sub(r"ff_sub_layer.(w1|wg)", "ff_sub_layer.wg_fused", new_name)
+            ] = torch.cat([hf_sd[w] for w in unfused_weights], dim=0)
+
     return new_sd
 
 
 serialization.register_adapter("llama", "meta", _rename_weights_to_fms)
 serialization.register_adapter("llama", "hf", _hf_sd_to_fms_sd)
+serialization._register_legacy_weight_preprocessor(
+    "llama", serialization._legacy_attn_unfused_to_fused_weight_conversion
+)
+serialization._register_legacy_weight_preprocessor(
+    "llama", serialization._legacy_mlp_glu_unfused_to_fused_weight_conversion
+)
 
 
 def convert_hf_llama(hf_model: "LlamaForCausalLM") -> LLaMA:  # type: ignore
