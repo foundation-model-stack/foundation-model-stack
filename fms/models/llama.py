@@ -228,10 +228,10 @@ class LLaMA(nn.Module):
     def reset_parameters(self):
         # Call reset_parameters for relevant sub-layers
         for m in self.modules():
-            if (isinstance(m, MultiHeadAttention) or 
-                isinstance(m, WordEmbedding) or
-                isinstance(m, GatedLinearUnit) or
-                isinstance(m, LayerNormParameterized)
+            if (isinstance(m, MultiHeadAttention) 
+                or isinstance(m, WordEmbedding)
+                or isinstance(m, GatedLinearUnit)
+                or isinstance(m, LayerNormParameterized)
             ):
                 m.reset_parameters()
 
