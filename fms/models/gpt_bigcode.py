@@ -77,8 +77,6 @@ class GPTBigCodeBlock(nn.Module):
         # self attention
         x = self.attn(
             q=x,
-            k=x,
-            v=x,
             mask=mask,
             position_ids=position_ids,
             attn_algorithm=attn_algorithm,
