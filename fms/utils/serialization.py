@@ -199,6 +199,7 @@ def __fms_weights_preprocessing(orig_sd: Mapping, architecture: str) -> Mapping:
             if preprocessor_out is not None:
                 name, param = preprocessor_out
                 break
+
         new_sd[name] = param
 
     return new_sd

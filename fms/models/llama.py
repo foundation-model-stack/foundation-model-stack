@@ -411,6 +411,7 @@ def _rename_weights_to_fms(orig_sd):
                 re.sub(r"attn.(query|key|value)", "attn.qkv_fused", new_name)
             ] = torch.cat([orig_sd[w] for w in unfused_weights], dim=0)
 
+        # llama in meta has unfused mlp weights, so these weights must be converted to fused weights in fms
         if "ff_sub_layer.wg" in new_name or "ff_sub_layer.wg" in new_name:
             unfused_weights = [
                 re.sub(r"w[13]", "w1", name),
@@ -489,6 +490,7 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
                 re.sub(r"attn.(query|key|value)", "attn.qkv_fused", new_name)
             ] = torch.cat([raw_mapping[w] for w in unfused_weights], dim=0)
 
+        # llama in hf has unfused mlp weights, so these weights must be converted to fused weights in fms
         if "ff_sub_layer.wg" in new_name or "ff_sub_layer.w1" in new_name:
             unfused_weights = [
                 re.sub(r"mlp.(gate|up)_proj", "mlp.gate_proj", name),
