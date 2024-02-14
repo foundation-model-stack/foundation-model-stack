@@ -74,6 +74,8 @@ class RoBERTaBlock(nn.Module):
         # self attention
         x = self.attn(
             q=x,
+            k=x,
+            v=x,
             mask=mask,
             attn_algorithm=attn_algorithm,
             is_self=True,
@@ -322,31 +324,6 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping[Any, Any]) -> Mapping[Any, Any]:
         # hf always has the first 2 spots set, we need to remove them as they are not used
         if name == "roberta.embeddings.position_embeddings.weight":
             new_sd[new_name] = new_sd[new_name][2:]
-
-        # roberta in hf has unfused qkv attn weights, so these weights must be converted to fused weights in fms
-        if (
-            "attn.query" in new_name
-            or "attn.key" in new_name
-            or "attn.value" in new_name
-        ):
-            unfused_weights = [
-                re.sub(
-                    r"attention\.self\.(key|query|value)", "attention.self.query", name
-                ),
-                re.sub(
-                    r"attention\.self\.(key|query|value)", "attention.self.key", name
-                ),
-                re.sub(
-                    r"attention\.self\.(key|query|value)", "attention.self.value", name
-                ),
-            ]
-            missing_weights = [w for w in unfused_weights if w not in hf_sd.keys()]
-            if len(missing_weights) != 0:
-                raise serialization.FusableWeightsMissingError(missing_weights)
-
-            new_sd[
-                re.sub(r"attn.(query|key|value)", "attn.qkv_fused", new_name)
-            ] = torch.cat([hf_sd[w] for w in unfused_weights], dim=0)
 
     return new_sd
 

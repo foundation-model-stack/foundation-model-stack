@@ -3,6 +3,7 @@ import torch
 
 from fms.models import get_model
 from fms.models.hf.utils import to_hf_api
+from fms.models.llama import convert_hf_llama
 from fms.testing.comparison import (
     HFModelSignatureParams,
     ModelSignatureParams,
@@ -22,9 +23,7 @@ def test_llama_7b_equivalence():
     hf_model = AutoModelForCausalLM.from_pretrained(llama_model_path)
 
     # convert the hf model to fms
-    model = get_model(
-        "llama", "7b", f"{llama_model_path}/*.safetensors", "hf", norm_eps=1e-6
-    )
+    model = get_model("llama", "7b", llama_model_path, "hf")
 
     hf_model_fms = to_hf_api(
         model,
