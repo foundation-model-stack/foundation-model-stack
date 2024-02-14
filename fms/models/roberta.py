@@ -323,6 +323,7 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping[Any, Any]) -> Mapping[Any, Any]:
         if name == "roberta.embeddings.position_embeddings.weight":
             new_sd[new_name] = new_sd[new_name][2:]
 
+        # roberta in hf has unfused qkv attn weights, so these weights must be converted to fused weights in fms
         if (
             "attn.query" in new_name
             or "attn.key" in new_name
@@ -351,3 +352,6 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping[Any, Any]) -> Mapping[Any, Any]:
 
 
 serialization.register_adapter("roberta", "hf", _hf_sd_to_fms_sd)
+serialization._register_legacy_weight_preprocessor(
+    "roberta", serialization._legacy_attn_unfused_to_fused_weight_conversion
+)
