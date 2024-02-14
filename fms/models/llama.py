@@ -392,6 +392,7 @@ def _rename_weights_to_fms(orig_sd):
             new_name = re.sub(pattern, repl, new_name)
         new_sd[new_name] = param
 
+        # llama in meta has unfused qkv attn weights, so these weights must be converted to fused weights in fms
         if (
             "attn.query" in new_name
             or "attn.key" in new_name
@@ -431,13 +432,13 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
     ]
     new_sd = {}
 
-    trans_required_pattern = re.compile("layers.[0-9]+.attn.(query|key).weight")
     for name, param in hf_sd.items():
         new_name = name
         for pattern, repl in replacements:
             new_name = re.sub(pattern, repl, new_name)
         new_sd[new_name] = param
 
+        # llama in hf has unfused qkv attn weights, so these weights must be converted to fused weights in fms
         if (
             "attn.query" in new_name
             or "attn.key" in new_name

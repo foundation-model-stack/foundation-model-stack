@@ -323,6 +323,7 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping[Any, Any]) -> Mapping[Any, Any]:
         if name == "roberta.embeddings.position_embeddings.weight":
             new_sd[new_name] = new_sd[new_name][2:]
 
+        # roberta in hf has unfused qkv attn weights, so these weights must be converted to fused weights in fms
         if (
             "attn.query" in new_name
             or "attn.key" in new_name
