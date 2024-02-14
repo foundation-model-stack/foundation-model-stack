@@ -57,7 +57,7 @@ class FeedForwardBlock(nn.Module):
         self.w2 = nn.Linear(self.hidden_dim, emb_dim, bias=use_bias)
         self.use_bias = use_bias
 
-    def reset_params(self):
+    def reset_parameters(self):
         for layer in ["w1", "w2"]:
             nn.init.trunc_normal_(
                 getattr(self, layer).weight,
@@ -193,7 +193,7 @@ class GatedLinearUnit(nn.Module):
         self.width = emb_dim
         self.grow_factor = hidden_grow_factor
 
-    def reset_params(self):
+    def reset_parameters(self):
         for layer in ["w1", "w2", "wg"]:
             nn.init.trunc_normal_(
                 getattr(self, layer).weight,

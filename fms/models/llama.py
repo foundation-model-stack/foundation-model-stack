@@ -225,11 +225,15 @@ class LLaMA(nn.Module):
     def from_config(cls, config: LLaMAConfig) -> "LLaMA":
         return cls(config)
 
-    def reset_params(self):
-        # Call reset_params for relevant sub-layers
+    def reset_parameters(self):
+        # Call reset_parameters for relevant sub-layers
         for m in self.modules():
-            if hasattr(m, "reset_params"):
-                m.reset_params()
+            if (isinstance(m, MultiHeadAttention) or 
+                isinstance(m, WordEmbedding) or
+                isinstance(m, GatedLinearUnit) or
+                isinstance(m, LayerNormParameterized)
+            ):
+                m.reset_parameters()
 
         if isinstance(self.distributed_strategy, UniformModelParallelStrategy):
             for dev_idx in set(self.distributed_strategy.layer_to_device):

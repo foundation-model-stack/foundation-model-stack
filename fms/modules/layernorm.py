@@ -50,7 +50,7 @@ class LayerNormParameterized(nn.Module):
         # else:
         #     self.register_parameter("bias", None)
 
-    def reset_params(self):
+    def reset_parameters(self):
         if self.elementwise_scale:
             self.weight.data.fill_(1)
         if self.elementwise_shift:

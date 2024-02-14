@@ -83,9 +83,8 @@ class WordEmbedding(nn.Module):
             self.head = nn.Linear(self.emb_dim, self.vocab_size, bias=bias)
             if tie_weights:
                 self.head.weight = self.emb.weight
-        self.reset_params()
 
-    def reset_params(self):
+    def reset_parameters(self):
         # Defaults to norm-preserving in reverse op, unit vector in forward op
         layers = ["emb"]
         if self.abs_pos:

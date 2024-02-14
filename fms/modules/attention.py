@@ -79,7 +79,7 @@ class MultiHeadAttention(nn.Module):
         )
         self.previous_math: bool = torch.backends.cuda.math_sdp_enabled()
 
-    def reset_params(self):
+    def reset_parameters(self):
         for m in self.modules():
             if isinstance(m, nn.Linear):
                 nn.init.trunc_normal_(m.weight, mean=0.0, std=0.02)
