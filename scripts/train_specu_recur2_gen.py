@@ -79,8 +79,11 @@ class Speculator(nn.Module):
         # inds: b n+3 (pred token, n+2, n+3)
         out = []
         for i in range(self.nheads):
+            sync_report(f"    Entering round {i}")
             z = self.emb[i](inds[:, i : i + state.size(1)]).mul(self.emb_weight*(self.inner_dim/2)**.5)  # b n d
+            sync_report(f"    Got embeds")
             state = self.a(self.ln[i](self.proj[i](state)*self.state_weight+z))  # b n d
+            sync_report(f"    Got state")
             out.append(self.head[i](state))  # b n v
         return torch.stack(out, dim=0)  # h b n v
 
