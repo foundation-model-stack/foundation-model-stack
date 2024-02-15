@@ -79,12 +79,8 @@ class Speculator(nn.Module):
         # inds: b n+3 (pred token, n+2, n+3)
         out = []
         for i in range(self.nheads):
-            sync_report(f"    Entering round {i}")
-            print("    ",inds.max().item(),inds.min().item())
             z = self.emb[i](inds[:, i : i + state.size(1)]).mul(self.emb_weight*(self.inner_dim/2)**.5)  # b n d
-            sync_report(f"    Got embeds")
             state = self.a(self.ln[i](self.proj[i](state)*self.state_weight+z))  # b n d
-            sync_report(f"    Got state")
             out.append(self.head[i](state))  # b n v
         return torch.stack(out, dim=0)  # h b n v
 
@@ -485,7 +481,6 @@ def train_func(args):
                     sync_report("Collected data")
                 inp = inp.to(local_rank)
                 dist.barrier()
-                sync_report("Generating...")
                 with torch.no_grad():
                     targs, embeds = generate(model, inp, 4096, args.seq_len, do_sample=True)
                 targs = targs[:, -args.seq_len :]
@@ -493,19 +488,16 @@ def train_func(args):
                 if rank==0 and step==0:
                     torch.save(targs, "/lustre/dwertheimer/codellama_out.pth")
                 # sync_report("Entering specu", embeds.size(), targs.size())
-                sync_report("Speculating...", targs.max(), targs.min())
                 preds = speculator(embeds.detach(), targs[:, :-1].detach())
                 # sync_report("Exiting specu", preds.size())
                 losses = []
                 for i in range(args.n_specu_heads):
-                    sync_report(f'Calc loss for head {i}')
                     pred = preds[i]
                     targ = targs[:, i + 1 : pred.size(1) + i + 1]  # b n
                     # sync_report(i, pred.size(), targ.size())
                     loss = loss_fn(pred.reshape(-1, pred.size(2)), targ.long().reshape(-1))
                     loss = loss.div(emu_factor)
                     losses.append(loss)
-                    sync_report(f'Head {i} loss: {loss.item()}')
                     losstracker[i] += loss.item()
                 dist.barrier()
 
