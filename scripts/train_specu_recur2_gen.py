@@ -489,7 +489,7 @@ def train_func(args):
                 if rank==0 and step==0:
                     torch.save(targs, "/lustre/dwertheimer/codellama_out.pth")
                 # sync_report("Entering specu", embeds.size(), targs.size())
-                sync_report("Speculating...")
+                sync_report("Speculating...", targs.max(), targs.min())
                 preds = speculator(embeds.detach(), targs[:, :-1].detach())
                 # sync_report("Exiting specu", preds.size())
                 losses = []
