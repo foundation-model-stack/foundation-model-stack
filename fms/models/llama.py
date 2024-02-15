@@ -116,9 +116,14 @@ class LLaMABlock(nn.Module):
         attn_algorithm=None,
         residual=None,
     ):
+        # USE KERNEL
+        x, residual = self.ln(x, residual)
+
+        # USE OLD IMPLEMENTATION
         # first we do MHA and Add&Norm
-        residual = x
-        x, _ = self.ln(x, None)
+        # residual = x
+        # x, _ = self.ln(x, None)
+
         x = self.attn(
             qkv=x,
             mask=mask,
@@ -135,16 +140,20 @@ class LLaMABlock(nn.Module):
         if self.config.p_dropout != 0:
             x = self.dropout(x)
 
-        x = x + residual
-
-        # then we do FF and Add&Norm
-        residual = x
-        x, _ = self.ff_ln(x, None)
+        # USE KERNEL
+        x, residual = self.ff_ln(x, residual)
         x = self.ff_sub_layer(x)
+
+        # USE OLD IMPLEMENTATION
+        # x = x + residual
+        # # then we do FF and Add&Norm
+        # residual = x
+        # x, _ = self.ff_ln(x, None)
+        # x = self.ff_sub_layer(x)
         # if self.config.p_dropout != 0:
         #     x = self.dropout(x)
         # # another residual
-        x = x + residual
+        # x = x + residual
 
         if use_cache:
             return (x, cache, residual)
@@ -183,17 +192,17 @@ class LLaMA(nn.Module):
         self.shared = self.distributed_strategy.distribute_module(shared)
 
         # USE THIS FOR KERNEL ROTARY EMBEDDING
-        self.rot_emb = RotaryEmbedding(
-            dim=self.config.emb_dim // self.config.nheads,
-            ntk_scaling=self.config.ntk_scaling,
-            max_seq_len=self.config.max_expected_seq_len,
-        )
-        # USE THIS FOR COMPLEX NUMBERS ROTARY EMBEDDING
-        # self.rot_emb = ComplexRotaryEmbedding(
+        # self.rot_emb = RotaryEmbedding(
         #     dim=self.config.emb_dim // self.config.nheads,
-        #     max_position_embeddings=self.config.max_expected_seq_len,
-        #     device="cuda",
+        #     ntk_scaling=self.config.ntk_scaling,
+        #     max_seq_len=self.config.max_expected_seq_len,
         # )
+        # USE THIS FOR COMPLEX NUMBERS ROTARY EMBEDDING
+        self.rot_emb = ComplexRotaryEmbedding(
+            dim=self.config.emb_dim // self.config.nheads,
+            max_position_embeddings=self.config.max_expected_seq_len,
+            device="cuda",
+        )
         # uncomment this to just compile the rotary embedding
         # self.rot_emb.adjusted_qk = torch.compile(self.rot_emb.adjusted_qk, fullgraph=True)
 
@@ -240,10 +249,10 @@ class LLaMA(nn.Module):
                 self.rot_emb.compute_freqs_cis(
                     torch.device("cuda", dev_idx), self.config.max_expected_seq_len
                 )
-        else:
-            self.rot_emb.compute_freqs_cis(
-                self.shared.emb.weight.device, self.config.max_expected_seq_len
-            )
+        # else:
+        #     self.rot_emb.compute_freqs_cis(
+        #         self.shared.emb.weight.device, self.config.max_expected_seq_len
+        #     )
 
     def _helper(
         self,
