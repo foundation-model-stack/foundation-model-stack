@@ -5,8 +5,9 @@ from typing import List, Optional, Tuple
 import torch
 import torch.nn as nn
 
-from fms.modules.attention import MultiHeadAttention
+from fms.modules.attention import FusedMultiHeadAttention, MultiHeadAttention
 from fms.modules.feedforward import FeedForwardBlock
+from fms.utils import serialization
 from fms.utils.activation import str_to_activation
 from fms.utils.config import ModelConfig
 
@@ -37,7 +38,7 @@ class GPTBigCodeBlock(nn.Module):
         self.ln = nn.LayerNorm(self.config.emb_dim, self.config.ln_eps)
         self.ff_ln = nn.LayerNorm(self.config.emb_dim, self.config.ln_eps)
 
-        self.attn = MultiHeadAttention(
+        self.attn = FusedMultiHeadAttention(
             self.config.emb_dim,
             self.config.emb_dim // self.config.nheads,
             self.config.emb_dim // self.config.nheads,
@@ -314,3 +315,8 @@ class GPTBigCode(nn.Module):
             return preds, cache
         else:
             return preds
+
+
+serialization._register_legacy_weight_preprocessor(
+    "gpt_bigcode", serialization._legacy_attn_unfused_to_fused_weight_conversion
+)

@@ -12,6 +12,9 @@ from fms.modules.tp import TPModule
 
 
 __adapters: MutableMapping[str, MutableMapping[str, Callable[[Mapping], Mapping]]] = {}
+__legacy_weight_preprocessors: MutableMapping[
+    str, List[Callable[[str, Mapping], Optional[Tuple[str, torch.Tensor]]]]
+] = {}
 
 
 def register_adapter(
@@ -56,7 +59,19 @@ def list_sources(architecture: str):
     return list(__adapters[architecture].keys())
 
 
-def __legacy_attn_unfused_to_fused_weight_conversion(
+def _register_legacy_weight_preprocessor(
+    architecture: str,
+    legacy_weight_preprocessor: Callable[
+        [str, Mapping], Optional[Tuple[str, torch.Tensor]]
+    ],
+):
+    if architecture not in __legacy_weight_preprocessors:
+        __legacy_weight_preprocessors[architecture] = []
+
+    __legacy_weight_preprocessors[architecture].append(legacy_weight_preprocessor)
+
+
+def _legacy_attn_unfused_to_fused_weight_conversion(
     name: str, orig_sd: Mapping
 ) -> Optional[Tuple[str, torch.Tensor]]:
     """
@@ -115,9 +130,10 @@ def __legacy_attn_unfused_to_fused_weight_conversion(
     return None
 
 
-def __fms_weights_preprocessing(orig_sd: Mapping) -> Mapping:
+def __fms_weights_preprocessing(orig_sd: Mapping, architecture: str) -> Mapping:
     # list of preprocessors to handle conversion of legacy weights
-    preprocessors = [__legacy_attn_unfused_to_fused_weight_conversion]
+    # each fms model will have its own set of preprocessors, as some models were created at different times
+    preprocessors = __legacy_weight_preprocessors.get(architecture, [])
 
     new_sd = {}
     for name, param in orig_sd.items():
@@ -144,7 +160,7 @@ def _get_adapter(
         # if no adapter is registered, assume the attributes are already in
         # fms format.
         # handle any necessary weight conversions here to solve weight backwards compatibility issues
-        return __fms_weights_preprocessing
+        return lambda mapping: __fms_weights_preprocessing(mapping, architecture)
     else:
         return __adapters[architecture][source]
 

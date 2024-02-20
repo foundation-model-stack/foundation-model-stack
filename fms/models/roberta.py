@@ -8,7 +8,7 @@ import torch.nn as nn
 
 from fms import models
 from fms.distributed.strategy import DistributedStrategy, NoOpStrategy
-from fms.modules.attention import MultiHeadAttention
+from fms.modules.attention import FusedMultiHeadAttention, MultiHeadAttention
 from fms.modules.feedforward import FeedForwardBlock
 from fms.modules.head import ClassificationHead
 from fms.utils import serialization
@@ -41,7 +41,7 @@ class RoBERTaBlock(nn.Module):
         self.ln = nn.LayerNorm(self.config.emb_dim, self.config.norm_eps)
         self.ff_ln = nn.LayerNorm(self.config.emb_dim, self.config.norm_eps)
 
-        self.attn = MultiHeadAttention(
+        self.attn = FusedMultiHeadAttention(
             self.config.emb_dim,
             self.config.emb_dim // self.config.nheads,
             self.config.emb_dim // self.config.nheads,
@@ -352,3 +352,6 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping[Any, Any]) -> Mapping[Any, Any]:
 
 
 serialization.register_adapter("roberta", "hf", _hf_sd_to_fms_sd)
+serialization._register_legacy_weight_preprocessor(
+    "roberta", serialization._legacy_attn_unfused_to_fused_weight_conversion
+)

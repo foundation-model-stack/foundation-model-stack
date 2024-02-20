@@ -17,7 +17,7 @@ from fms.distributed.strategy import (
     TensorParallelStrategy,
     UniformModelParallelStrategy,
 )
-from fms.modules.attention import MultiHeadAttention
+from fms.modules.attention import FusedMultiHeadAttention, MultiHeadAttention
 from fms.modules.embedding import WordEmbedding
 from fms.modules.feedforward import GatedLinearUnit
 from fms.modules.layernorm import LayerNormParameterized
@@ -82,7 +82,7 @@ class LLaMABlock(nn.Module):
             kvheads = self.config.kvheads
             assert self.config.nheads % self.config.kvheads == 0
 
-        self.attn = MultiHeadAttention(
+        self.attn = FusedMultiHeadAttention(
             self.config.emb_dim,
             emb_kq,
             emb_v,
@@ -480,6 +480,9 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
 
 serialization.register_adapter("llama", "meta", _rename_weights_to_fms)
 serialization.register_adapter("llama", "hf", _hf_sd_to_fms_sd)
+serialization._register_legacy_weight_preprocessor(
+    "llama", serialization._legacy_attn_unfused_to_fused_weight_conversion
+)
 
 
 def convert_hf_llama(hf_model: "LlamaForCausalLM") -> LLaMA:  # type: ignore
