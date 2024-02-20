@@ -1,7 +1,10 @@
+import tempfile
+
 import pytest
 
+from fms.models import get_model
 from fms.models.gpt_bigcode import GPTBigCode
-from fms.models.hf.gpt_bigcode import get_model
+from fms.models.hf import to_hf_api
 from fms.models.hf.gpt_bigcode.modeling_gpt_bigcode_hf import (
     HFAdaptedGPTBigCodeForCausalLM,
 )
@@ -22,7 +25,24 @@ def test_gptbigcode_equivalence():
     hf_model = AutoModelForCausalLM.from_pretrained("bigcode/gpt_bigcode-santacoder")
     hf_model.config.scale_attention_softmax_in_fp32 = False
 
-    hf_model_fms = get_model(hf_model)
+    with tempfile.TemporaryDirectory() as workdir:
+        hf_model.save_pretrained(
+            f"{workdir}/gpt_bigcode-santacoder", safe_serialization=True
+        )
+
+        fms_model = get_model(
+            "gpt_bigcode",
+            "santacoder",
+            f"{workdir}/gpt_bigcode-santacoder",
+            "hf",
+        )
+
+    hf_model_fms = to_hf_api(
+        fms_model,
+        bos_token_id=hf_model.config.bos_token_id,
+        eos_token_id=hf_model.config.eos_token_id,
+        pad_token_id=hf_model.config.pad_token_id,
+    )
     count_parameters = lambda m: sum(p.numel() for p in m.parameters())
     assert count_parameters(hf_model_fms) == count_parameters(hf_model)
 
