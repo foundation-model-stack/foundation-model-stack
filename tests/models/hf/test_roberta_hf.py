@@ -94,10 +94,14 @@ class HFAdaptedRoBERTaFixtures(
 
                 # attn
                 q_weight, k_weight, v_weight = torch.split(
-                    fms_layer.attn.qkv_fused.weight, fms_layer.attn.splits, dim=0
+                    fms_layer.attn.in_proj.qkv_fused.weight,
+                    fms_layer.attn.in_proj.splits,
+                    dim=0,
                 )
                 q_bias, k_bias, v_bias = torch.split(
-                    fms_layer.attn.qkv_fused.bias, fms_layer.attn.splits, dim=0
+                    fms_layer.attn.in_proj.qkv_fused.bias,
+                    fms_layer.attn.in_proj.splits,
+                    dim=0,
                 )
                 oss_hf_layer.attention.self.query.weight.copy_(q_weight)
                 oss_hf_layer.attention.self.query.bias.copy_(q_bias)

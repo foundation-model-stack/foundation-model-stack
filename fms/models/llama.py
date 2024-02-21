@@ -17,7 +17,7 @@ from fms.distributed.strategy import (
     TensorParallelStrategy,
     UniformModelParallelStrategy,
 )
-from fms.modules.attention import FusedMultiHeadAttention, MultiHeadAttention
+from fms.modules.attention import MultiHeadAttention
 from fms.modules.embedding import WordEmbedding
 from fms.modules.feedforward import GatedLinearUnit
 from fms.modules.layernorm import LayerNormParameterized
@@ -82,7 +82,7 @@ class LLaMABlock(nn.Module):
             kvheads = self.config.kvheads
             assert self.config.nheads % self.config.kvheads == 0
 
-        self.attn = FusedMultiHeadAttention(
+        self.attn = MultiHeadAttention(
             self.config.emb_dim,
             emb_kq,
             emb_v,
@@ -408,7 +408,7 @@ def _rename_weights_to_fms(orig_sd):
                 raise serialization.FusableWeightsMissingError(missing_weights)
 
             new_sd[
-                re.sub(r"attn.(query|key|value)", "attn.qkv_fused", new_name)
+                re.sub(r"attn.(query|key|value)", "attn.in_proj.qkv_fused", new_name)
             ] = torch.cat([orig_sd[w] for w in unfused_weights], dim=0)
 
     return new_sd
@@ -472,7 +472,7 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
                 raw_mapping[unfused_weight_key] = temp
 
             new_sd[
-                re.sub(r"attn.(query|key|value)", "attn.qkv_fused", new_name)
+                re.sub(r"attn.(query|key|value)", "attn.in_proj.qkv_fused", new_name)
             ] = torch.cat([raw_mapping[w] for w in unfused_weights], dim=0)
 
     return new_sd

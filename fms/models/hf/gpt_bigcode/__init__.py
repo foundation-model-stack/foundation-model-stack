@@ -56,10 +56,12 @@ def get_model(
     model.load_state_dict(new_hf_sd, strict=False)
     with torch.no_grad():
         for i, layer in enumerate(hf_model.transformer.h):
-            model.base_model.layers[i].attn.qkv_fused.weight.copy_(
+            model.base_model.layers[i].attn.in_proj.qkv_fused.weight.copy_(
                 layer.attn.c_attn.weight
             )
-            model.base_model.layers[i].attn.qkv_fused.bias.copy_(layer.attn.c_attn.bias)
+            model.base_model.layers[i].attn.in_proj.qkv_fused.bias.copy_(
+                layer.attn.c_attn.bias
+            )
             # if the model was not provided to us, we can assume we don't want
             # the layers to persist in memory
             if not hf_model_in_memory:
@@ -143,8 +145,12 @@ def convert_to_hf(
             fms_hf_layer = fms_hf_model.decoder.model.layers[i]
 
             # self attn
-            oss_hf_layer.attn.c_attn.weight.copy_(fms_hf_layer.attn.qkv_fused.weight)
-            oss_hf_layer.attn.c_attn.bias.copy_(fms_hf_layer.attn.qkv_fused.bias)
+            oss_hf_layer.attn.c_attn.weight.copy_(
+                fms_hf_layer.attn.in_proj.qkv_fused.weight
+            )
+            oss_hf_layer.attn.c_attn.bias.copy_(
+                fms_hf_layer.attn.in_proj.qkv_fused.bias
+            )
             oss_hf_layer.attn.c_proj.weight.copy_(fms_hf_layer.attn.dense.weight)
             oss_hf_layer.attn.c_proj.bias.copy_(fms_hf_layer.attn.dense.bias)
 

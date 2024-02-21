@@ -120,7 +120,7 @@ def _legacy_attn_unfused_to_fused_weight_conversion(
         result = (
             re.sub(
                 rf"attn.(query|key|value).{weight_type}",
-                f"attn.qkv_fused.{weight_type}",
+                f"attn.in_proj.qkv_fused.{weight_type}",
                 name,
             ),
             torch.cat([orig_sd[w] for w in unfused_weights], dim=0),

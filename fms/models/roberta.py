@@ -8,7 +8,7 @@ import torch.nn as nn
 
 from fms import models
 from fms.distributed.strategy import DistributedStrategy, NoOpStrategy
-from fms.modules.attention import FusedMultiHeadAttention, MultiHeadAttention
+from fms.modules.attention import MultiHeadAttention
 from fms.modules.feedforward import FeedForwardBlock
 from fms.modules.head import ClassificationHead
 from fms.utils import serialization
@@ -41,7 +41,7 @@ class RoBERTaBlock(nn.Module):
         self.ln = nn.LayerNorm(self.config.emb_dim, self.config.norm_eps)
         self.ff_ln = nn.LayerNorm(self.config.emb_dim, self.config.norm_eps)
 
-        self.attn = FusedMultiHeadAttention(
+        self.attn = MultiHeadAttention(
             self.config.emb_dim,
             self.config.emb_dim // self.config.nheads,
             self.config.emb_dim // self.config.nheads,
@@ -345,7 +345,7 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping[Any, Any]) -> Mapping[Any, Any]:
                 raise serialization.FusableWeightsMissingError(missing_weights)
 
             new_sd[
-                re.sub(r"attn.(query|key|value)", "attn.qkv_fused", new_name)
+                re.sub(r"attn.(query|key|value)", "attn.in_proj.qkv_fused", new_name)
             ] = torch.cat([hf_sd[w] for w in unfused_weights], dim=0)
 
     return new_sd

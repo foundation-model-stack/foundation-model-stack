@@ -16,7 +16,170 @@ from fms.modules.positions import PositionEncoder
 from fms.modules.tp import TPModule
 
 
-class MultiHeadAttention(nn.Module, metaclass=abc.ABCMeta):
+class QKV(nn.Module, metaclass=abc.ABCMeta):
+    def __init__(
+        self,
+        emb_dim: int,
+        nheads: int,
+        kvheads: int,
+        emb_kq_per_head: int,
+        emb_v_per_head: int,
+        use_bias: bool,
+        *args,
+        **kwargs
+    ):
+        super().__init__(*args, **kwargs)
+        self.emb_dim = emb_dim
+        self.nheads = nheads
+        self.kvheads = kvheads
+        self.emb_kq_per_head = emb_kq_per_head
+        self.emb_v_per_head = emb_v_per_head
+        self.use_bias = use_bias
+
+    @abc.abstractmethod
+    def forward(
+        self, q: torch.Tensor, k: Optional[torch.Tensor], v: Optional[torch.Tensor]
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        pass
+
+    @abc.abstractmethod
+    def reset_params(self, gain: int = 1):
+        pass
+
+
+class UnfusedQKV(QKV):
+    def __init__(
+        self,
+        emb_dim: int,
+        nheads: int,
+        kvheads: int,
+        emb_kq_per_head: int,
+        emb_v_per_head: int,
+        use_bias: bool,
+        *args,
+        **kwargs
+    ):
+        super().__init__(
+            emb_dim,
+            nheads,
+            kvheads,
+            emb_kq_per_head,
+            emb_v_per_head,
+            use_bias,
+            *args,
+            **kwargs
+        )
+        self.query = nn.Linear(
+            self.emb_dim, self.nheads * self.emb_kq_per_head, bias=use_bias
+        )
+        self.key = nn.Linear(
+            self.emb_dim, self.kvheads * self.emb_kq_per_head, bias=use_bias
+        )
+        self.value = nn.Linear(
+            self.emb_dim, self.kvheads * self.emb_v_per_head, bias=use_bias
+        )
+
+    def reset_params(self, gain: int = 1):
+        # Ensure softmax inputs are standard normal
+        for layer in ["query", "key"]:
+            nn.init.trunc_normal_(
+                getattr(self, layer).weight, mean=0.0, std=self.emb_dim**-0.5
+            )
+        # Ensure projection layers have same scale (for normalized-step dataloaders like
+        # AdamW / Sophia), and maintain input norm up to attention remix, in expectation
+        nn.init.trunc_normal_(
+            self.value.weight,
+            mean=0.0,
+            std=(gain / (self.emb_dim * self.nheads * self.emb_v_per_head) ** 0.5)
+            ** 0.5,
+        )  # Using explicit terms instead of numel to account for eventual MQA addition
+        if self.use_bias:
+            for layer in ["query", "key", "value"]:
+                getattr(self, layer).bias.data.zero_()
+
+    def forward(
+        self, q: torch.Tensor, k: Optional[torch.Tensor], v: Optional[torch.Tensor]
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        if (k is None and v is None) or (k is q and v is q):
+            k = q
+            v = q
+        elif k is None or v is None:
+            raise ValueError(
+                "both k and v must either be given as tensors or both None"
+            )
+
+        # q, k, v: batch_size x seq_len x emb_dim
+        # mask: batch_size x seq_len x seq_len
+        batch_size, q_len, _ = q.size()
+
+        # split emb_dim as nheads*emb_dim_per_head
+        # b x h x qlen x ds
+        queries = self.query(q)
+        keys = self.key(k)
+        values = self.value(v)
+        return queries, keys, values
+
+
+class FusedQKV(QKV):
+    def __init__(
+        self,
+        emb_dim: int,
+        nheads: int,
+        kvheads: int,
+        emb_kq_per_head: int,
+        emb_v_per_head: int,
+        use_bias: bool,
+        *args,
+        **kwargs
+    ):
+        super().__init__(
+            emb_dim,
+            nheads,
+            kvheads,
+            emb_kq_per_head,
+            emb_v_per_head,
+            use_bias,
+            *args,
+            **kwargs
+        )
+        self.splits = [
+            self.nheads * self.emb_kq_per_head,
+            self.kvheads * self.emb_kq_per_head,
+            self.kvheads * self.emb_v_per_head,
+        ]
+
+        self.qkv_fused = nn.Linear(
+            self.emb_dim,
+            sum(self.splits),
+            bias=self.use_bias,
+        )
+
+    def reset_params(self, gain: int = 1):
+        # Ensure softmax inputs are standard normal
+        self.qkv_fused.weight.data[
+            : self.emb_kq_per_head * (self.nheads + self.kvheads)
+        ].normal_(0, self.emb_dim**-0.5)
+        # Ensure projection layers have same scale (for normalized-step dataloaders like
+        # AdamW / Sophia), and maintain input norm up to attention remix, in expectation
+        self.qkv_fused.weight.data[
+            self.emb_kq_per_head * (self.nheads + self.kvheads) :
+        ].normal_(
+            0, (gain / (self.emb_dim * self.nheads * self.emb_v_per_head) ** 0.5) ** 0.5
+        )
+        if self.use_bias:
+            self.qkv_fused.bias.data.zero_()
+
+    def forward(
+        self, q: torch.Tensor, k: Optional[torch.Tensor], v: Optional[torch.Tensor]
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        if (k is None and v is None) or (k is q and v is q):
+            qkv = q
+        else:
+            raise ValueError("q, k, and v must be the same or k and v must be None")
+        return self.qkv_fused(qkv).split(self.splits, dim=-1)
+
+
+class MultiHeadAttention(nn.Module):
     """
     Performs multi-headed self- or cross-attention, with optional attention masking.
     ...
@@ -34,11 +197,11 @@ class MultiHeadAttention(nn.Module, metaclass=abc.ABCMeta):
         Dropout probability. Must be in range [0,1]. If 0 or None, dropout will not be used.
     use_bias : bool
         Include bias terms in fully-connected sublayers?
-    factorable_emb: Optional[Callable]
-        Function that computes factorable embeddings (like RoPE). It is mutually exclusive with
-        additive biases on forward() passed as rel_pos_bias
+    fused: bool
+        if True, qkv weights will be fused, otherwise qkv weights will be unfused
     """
 
+    # TODO: fused bool which decides implementation of in_proj (fused or unfused as its own module)
     def __init__(
         self,
         emb_dim,
@@ -50,6 +213,7 @@ class MultiHeadAttention(nn.Module, metaclass=abc.ABCMeta):
         use_bias=False,
         position_encoder: Optional[PositionEncoder] = None,
         gain=1,
+        fused: bool = True,
     ):
         super(MultiHeadAttention, self).__init__()
         self.nheads = nheads
@@ -59,6 +223,16 @@ class MultiHeadAttention(nn.Module, metaclass=abc.ABCMeta):
         self.emb_v_per_head = emb_v
         self.p_dropout = p_dropout if p_dropout is not None else 0.0
         self.use_bias = use_bias
+        self.fused = fused
+
+        self.in_proj: QKV = (FusedQKV if self.fused else UnfusedQKV)(
+            self.emb_dim,
+            self.nheads,
+            self.kvheads,
+            self.emb_kq_per_head,
+            self.emb_v_per_head,
+            self.use_bias,
+        )
 
         self.dense = nn.Linear(
             self.nheads * self.emb_v_per_head, self.emb_dim, bias=use_bias
@@ -72,17 +246,10 @@ class MultiHeadAttention(nn.Module, metaclass=abc.ABCMeta):
             torch.backends.cuda.mem_efficient_sdp_enabled()
         )
         self.previous_math: bool = torch.backends.cuda.math_sdp_enabled()
-
-    def _apply_qkv(
-        self, q: torch.Tensor, k: Optional[torch.Tensor], v: Optional[torch.Tensor]
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        pass
-
-    def _reset_qkv(self, gain: int):
-        pass
+        self.reset_params(gain)
 
     def reset_params(self, gain=1):
-        self._reset_qkv(gain)
+        self.in_proj.reset_params(gain)
         self.dense.weight.data.normal_(
             0, (gain / (self.emb_dim * self.nheads * self.emb_v_per_head) ** 0.5) ** 0.5
         )
@@ -125,7 +292,7 @@ class MultiHeadAttention(nn.Module, metaclass=abc.ABCMeta):
         batch_size, q_len, _ = q.size()
 
         if is_self or past_key_value_state is None:
-            q_out, k_out, v_out = self._apply_qkv(q, k, v)
+            q_out, k_out, v_out = self.in_proj(q, k, v)
 
             # note: transposes will be moved in a later PR to fix dis-contiguous tensor issues
             queries = q_out.view(
@@ -221,152 +388,6 @@ class MultiHeadAttention(nn.Module, metaclass=abc.ABCMeta):
             return out
 
 
-class FusedMultiHeadAttention(MultiHeadAttention):
-    def __init__(
-        self,
-        emb_dim,
-        emb_kq,
-        emb_v,
-        nheads,
-        kvheads,
-        p_dropout=None,
-        use_bias=False,
-        position_encoder: Optional[PositionEncoder] = None,
-        gain=1,
-    ):
-        super().__init__(
-            emb_dim,
-            emb_kq,
-            emb_v,
-            nheads,
-            kvheads,
-            p_dropout,
-            use_bias,
-            position_encoder,
-            gain,
-        )
-        self.splits = [
-            self.nheads * self.emb_kq_per_head,
-            self.kvheads * self.emb_kq_per_head,
-            self.kvheads * self.emb_v_per_head,
-        ]
-
-        self.qkv_fused = nn.Linear(
-            self.emb_dim,
-            sum(self.splits),
-            bias=use_bias,
-        )
-        self.reset_params(gain)
-
-    def _reset_qkv(self, gain: int):
-        # Ensure softmax inputs are standard normal
-        self.qkv_fused.weight.data[
-            : self.emb_kq_per_head * (self.nheads + self.kvheads)
-        ].normal_(0, self.emb_dim**-0.5)
-        # Ensure projection layers have same scale (for normalized-step dataloaders like
-        # AdamW / Sophia), and maintain input norm up to attention remix, in expectation
-        self.qkv_fused.weight.data[
-            self.emb_kq_per_head * (self.nheads + self.kvheads) :
-        ].normal_(
-            0, (gain / (self.emb_dim * self.nheads * self.emb_v_per_head) ** 0.5) ** 0.5
-        )
-        if self.use_bias:
-            self.qkv_fused.bias.data.zero_()
-
-    def _apply_qkv(
-        self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        if (k is None and v is None) or (k is q and v is q):
-            qkv = q
-        elif k is not None and v is not None:
-            # Note: for encoder/decoder models with cross attn, this line may need to be changed as kv will be fused and
-            # q will be kept separate. For now, we are not running any encoder/decoder models through this layer and
-            # this line will not get executed.
-            qkv = torch.cat((q, k, v), dim=0)
-        else:
-            raise ValueError(
-                "both k and v must either be given as tensors or both None"
-            )
-        return self.qkv_fused(qkv).split(self.splits, dim=-1)
-
-
-class UnfusedMultiHeadAttention(MultiHeadAttention):
-    def __init__(
-        self,
-        emb_dim,
-        emb_kq,
-        emb_v,
-        nheads,
-        kvheads,
-        p_dropout=None,
-        use_bias=False,
-        position_encoder: Optional[PositionEncoder] = None,
-        gain=1,
-    ):
-        super().__init__(
-            emb_dim,
-            emb_kq,
-            emb_v,
-            nheads,
-            kvheads,
-            p_dropout,
-            use_bias,
-            position_encoder,
-            gain,
-        )
-        self.query = nn.Linear(
-            self.emb_dim, self.nheads * self.emb_kq_per_head, bias=use_bias
-        )
-        self.key = nn.Linear(
-            self.emb_dim, self.kvheads * self.emb_kq_per_head, bias=use_bias
-        )
-        self.value = nn.Linear(
-            self.emb_dim, self.kvheads * self.emb_v_per_head, bias=use_bias
-        )
-        self.reset_params(gain)
-
-    def _apply_qkv(
-        self, q: torch.Tensor, k: Optional[torch.Tensor], v: Optional[torch.Tensor]
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        # q, k, v: batch_size x seq_len x emb_dim
-        # mask: batch_size x seq_len x seq_len
-        batch_size, q_len, _ = q.size()
-        kv_len = k.size(1)
-
-        # split emb_dim as nheads*emb_dim_per_head
-        # b x h x qlen x ds
-        queries = self.query(q).view(
-            batch_size, q_len, self.nheads, self.emb_kq_per_head
-        )
-        queries = queries.transpose(2, 1)  # / (self.emb_kq_per_head**(1/4))
-        keys = self.key(k).view(batch_size, kv_len, self.kvheads, self.emb_kq_per_head)
-        keys = keys.transpose(2, 1)  # / (self.emb_kq_per_head**(1/4))
-
-        values = self.value(v).view(
-            batch_size, kv_len, self.kvheads, self.emb_v_per_head
-        )
-        values = values.transpose(2, 1)  # compatible with QK.T
-        return queries, keys, values
-
-    def _reset_qkv(self, gain: int):
-        # Ensure softmax inputs are standard normal
-        for layer in ["query", "key"]:
-            nn.init.trunc_normal_(
-                getattr(self, layer).weight, mean=0.0, std=self.emb_dim**-0.5
-            )
-        # Ensure projection layers have same scale (for normalized-step dataloaders like
-        # AdamW / Sophia), and maintain input norm up to attention remix, in expectation
-        nn.init.trunc_normal_(
-            self.value.weight,
-            mean=0.0,
-            std=(gain / (self.emb_dim * self.nheads * self.emb_v_per_head) ** 0.5)
-            ** 0.5,
-        )  # Using explicit terms instead of numel to account for eventual MQA addition
-        if self.use_bias:
-            for layer in ["query", "key", "value"]:
-                getattr(self, layer).bias.data.zero_()
-
-
 class TPMultiHeadAttention(MultiHeadAttention, TPModule):
     """
     Performs multi-headed self- or cross-attention, with optional attention masking.
@@ -393,6 +414,7 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
         use_bias=False,
         position_encoder: Optional[PositionEncoder] = None,
         gain=1,
+        fused: bool = True,
         group: Optional[ProcessGroup] = None,
     ):
         assert torch.distributed.is_initialized()
@@ -412,14 +434,18 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
             use_bias,
             position_encoder,
             gain,
+            fused,
         )
         self.setup_tp(rank, world_size)
 
     def colwise_param_names(self) -> List[str]:
-        colwise_weights = ["query"]
-        if self.kvheads != 1:
-            colwise_weights.append("key")
-            colwise_weights.append("value")
+        if self.fused:
+            colwise_weights = ["qkv_fused"]
+        else:
+            colwise_weights = ["query"]
+            if self.kvheads != 1:
+                colwise_weights.append("key")
+                colwise_weights.append("value")
         return colwise_weights
 
     def rowwise_param_names(self) -> List[str]:
@@ -439,8 +465,30 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
             use_bias=mha.use_bias,
             position_encoder=mha.position_encoder,
             group=group,
+            fused=mha.fused,
         )
         return tp_mha
+
+    def _copy_to_tp_region(
+        self,
+        q: torch.Tensor,
+        k: Optional[torch.Tensor] = None,
+        v: Optional[torch.Tensor] = None,
+    ):
+        if (k is None and v is None) or (k is q and v is q):
+            q_par = copy_to_tensor_model_parallel_region(q)
+            if self.fused:
+                k_par = None
+                v_par = None
+            else:
+                k_par = copy_to_tensor_model_parallel_region(k)
+                v_par = copy_to_tensor_model_parallel_region(v)
+        else:
+            raise ValueError(
+                "both k and v must either be given as tensors or both None"
+            )
+
+        return q_par, k_par, v_par
 
     def forward(
         self,
@@ -458,18 +506,8 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
         """
         Check MultiHeadAttention for up-to-date arguments and docs
         """
-        if k is None and v is None:
-            q_par = copy_to_tensor_model_parallel_region(q)
-            k_par = None
-            v_par = None
-        elif k is not None and v is not None:
-            q_par = copy_to_tensor_model_parallel_region(q)
-            k_par = copy_to_tensor_model_parallel_region(k)
-            v_par = copy_to_tensor_model_parallel_region(v)
-        else:
-            raise ValueError(
-                "both k and v must either be given as tensors or both None"
-            )
+
+        q_par, k_par, v_par = self._copy_to_tp_region(q, k, v)
 
         out_par = MultiHeadAttention.forward(
             self,

@@ -88,7 +88,9 @@ class LLaMA2HFFixtures(ModelFixtureMixin, HFConfigFixtureMixin, HFModelFixtureMi
 
                 # self attn
                 q, k, v = torch.split(
-                    fms_hf_layer.attn.qkv_fused.weight, fms_hf_layer.attn.splits, dim=0
+                    fms_hf_layer.attn.in_proj.qkv_fused.weight,
+                    fms_hf_layer.attn.in_proj.splits,
+                    dim=0,
                 )
                 oss_hf_layer.self_attn.q_proj.weight.copy_(q)
                 oss_hf_layer.self_attn.k_proj.weight.copy_(k)
