@@ -108,11 +108,6 @@ class UnfusedQKV(QKV):
                 "both k and v must either be given as tensors or both None"
             )
 
-        # q, k, v: batch_size x seq_len x emb_dim
-        # mask: batch_size x seq_len x seq_len
-        batch_size, q_len, _ = q.size()
-
-        # split emb_dim as nheads*emb_dim_per_head
         # b x h x qlen x ds
         queries = self.query(q)
         keys = self.key(k)
