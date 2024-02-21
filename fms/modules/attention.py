@@ -17,6 +17,8 @@ from fms.modules.tp import TPModule
 
 
 class QKV(nn.Module, metaclass=abc.ABCMeta):
+    """Simple module for applying qkv in attention"""
+
     def __init__(
         self,
         emb_dim: int,
@@ -40,14 +42,38 @@ class QKV(nn.Module, metaclass=abc.ABCMeta):
     def forward(
         self, q: torch.Tensor, k: Optional[torch.Tensor], v: Optional[torch.Tensor]
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """applies query/key/value transformations on q, k, v inputs respectively and returns the resulting values
+
+        Args:
+            q: torch.Tensor
+                the query tensor
+            k: Optional[torch.Tensor]
+                the optional key tensor
+            v: Optional[torch.Tensor]
+                the optional value tensor
+
+        Returns:
+        Tuple[torch.Tensor, torch.Tensor, torch.Tensor]
+            the query, key, and value computed
+        """
         pass
 
     @abc.abstractmethod
     def reset_params(self, gain: int = 1):
+        """resets the query, key, and value weights for training
+
+        Args:
+            gain: int
+                gain for std in norm (default is 1)
+        """
         pass
 
 
 class UnfusedQKV(QKV):
+    """
+    Unfused Weights implementation of QKV
+    """
+
     def __init__(
         self,
         emb_dim: int,
@@ -116,6 +142,10 @@ class UnfusedQKV(QKV):
 
 
 class FusedQKV(QKV):
+    """
+    Fused Weights implementation of QKV
+    """
+
     def __init__(
         self,
         emb_dim: int,
