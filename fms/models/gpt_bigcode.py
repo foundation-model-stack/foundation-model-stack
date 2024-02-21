@@ -1,15 +1,17 @@
 import math
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from typing import List, Mapping, Optional, Tuple
 
 import torch
 import torch.nn as nn
 
+from fms import models
 from fms.modules.attention import MultiHeadAttention
 from fms.modules.feedforward import FeedForwardBlock
 from fms.utils import serialization
 from fms.utils.activation import str_to_activation
 from fms.utils.config import ModelConfig
+from fms.utils.serialization import FusableWeightsMissingError
 
 
 @dataclass
@@ -317,6 +319,61 @@ class GPTBigCode(nn.Module):
             return preds
 
 
+_santacoder_config = GPTBigCodeConfig(
+    src_vocab_size=49280,
+    emb_dim=2048,
+    nheads=16,
+    nlayers=24,
+    pad_id=-1,
+    max_pos=2048,
+    p_dropout=0.1,
+    emb_dropout=0.1,
+)
+
+_architecture_name = "gpt_bigcode"
+
+
+def _gpt_bigcode_factory_factory(config):
+    def factory(**kwargs):
+        return GPTBigCode(config, **kwargs)
+
+    return factory
+
+
+models.register_model(
+    _architecture_name, "santacoder", _gpt_bigcode_factory_factory(_santacoder_config)
+)
+
+
+def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
+    import re
+
+    replacements = [
+        ("lm_head.weight", "head.weight"),
+        (r"^transformer.wte.weight", "base_model.embedding.weight"),
+        (r"^transformer.wpe.weight", "base_model.position_embedding.weight"),
+        (r"^transformer.ln_f", "base_model.dec_norm"),
+        (r"^transformer.h", "base_model.layers"),
+        (r"attn\.c_attn", "attn.in_proj.qkv_fused"),
+        (r"attn\.c_proj", "attn.dense"),
+        (r"mlp\.c_fc", "ff_sub_layer.w1"),
+        (r"mlp\.c_proj", "ff_sub_layer.w2"),
+        (r"ln_1", "ln"),
+        (r"ln_2", "ff_ln"),
+    ]
+
+    new_sd = {}
+    for name, param in hf_sd.items():
+        new_name = name
+        for pattern, repl in replacements:
+            new_name = re.sub(pattern, repl, new_name)
+
+        new_sd[new_name] = param
+
+    return new_sd
+
+
+serialization.register_adapter(_architecture_name, "hf", _hf_sd_to_fms_sd)
 serialization._register_legacy_weight_preprocessor(
     "gpt_bigcode", serialization._legacy_attn_unfused_to_fused_weight_conversion
 )
