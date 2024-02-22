@@ -93,13 +93,23 @@ class HFAdaptedRoBERTaFixtures(
                 _copy_weight_bias(oss_hf_layer.output.LayerNorm, fms_layer.ff_ln)
 
                 # attn
-                _copy_weight_bias(
-                    oss_hf_layer.attention.self.query, fms_layer.attn.query
+                q_weight, k_weight, v_weight = torch.split(
+                    fms_layer.attn.in_proj.qkv_fused.weight,
+                    fms_layer.attn.in_proj.splits,
+                    dim=0,
                 )
-                _copy_weight_bias(oss_hf_layer.attention.self.key, fms_layer.attn.key)
-                _copy_weight_bias(
-                    oss_hf_layer.attention.self.value, fms_layer.attn.value
+                q_bias, k_bias, v_bias = torch.split(
+                    fms_layer.attn.in_proj.qkv_fused.bias,
+                    fms_layer.attn.in_proj.splits,
+                    dim=0,
                 )
+                oss_hf_layer.attention.self.query.weight.copy_(q_weight)
+                oss_hf_layer.attention.self.query.bias.copy_(q_bias)
+                oss_hf_layer.attention.self.key.weight.copy_(k_weight)
+                oss_hf_layer.attention.self.key.bias.copy_(k_bias)
+                oss_hf_layer.attention.self.value.weight.copy_(v_weight)
+                oss_hf_layer.attention.self.value.bias.copy_(v_bias)
+
                 _copy_weight_bias(
                     oss_hf_layer.attention.output.dense, fms_layer.attn.dense
                 )

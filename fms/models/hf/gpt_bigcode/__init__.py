@@ -54,24 +54,10 @@ def convert_to_hf(
 
             # self attn
             oss_hf_layer.attn.c_attn.weight.copy_(
-                torch.cat(
-                    [
-                        fms_hf_layer.attn.query.weight.data,
-                        fms_hf_layer.attn.key.weight.data,
-                        fms_hf_layer.attn.value.weight.data,
-                    ],
-                    dim=0,
-                )
+                fms_hf_layer.attn.in_proj.qkv_fused.weight
             )
             oss_hf_layer.attn.c_attn.bias.copy_(
-                torch.cat(
-                    [
-                        fms_hf_layer.attn.query.bias.data,
-                        fms_hf_layer.attn.key.bias.data,
-                        fms_hf_layer.attn.value.bias.data,
-                    ],
-                    dim=0,
-                )
+                fms_hf_layer.attn.in_proj.qkv_fused.bias
             )
             oss_hf_layer.attn.c_proj.weight.copy_(fms_hf_layer.attn.dense.weight)
             oss_hf_layer.attn.c_proj.bias.copy_(fms_hf_layer.attn.dense.bias)

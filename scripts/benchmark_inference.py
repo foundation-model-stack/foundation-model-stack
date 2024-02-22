@@ -7,8 +7,8 @@ import timeit
 import torch
 from torch import distributed as dist
 from torch._dynamo import OptimizedModule
-from fms import models
 
+from fms import models
 from fms.utils import generation, print0, tokenizers
 
 
@@ -132,7 +132,6 @@ local_rank = int(os.getenv("LOCAL_RANK", 0))
 world_size = int(os.getenv("WORLD_SIZE", 1))
 device = torch.device(args.device_type, local_rank)
 
-torch.set_default_device(device)
 torch.set_default_dtype(torch.half)
 
 if world_size > 1:
