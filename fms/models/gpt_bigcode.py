@@ -372,8 +372,6 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
         for pattern, repl in replacements:
             new_name = re.sub(pattern, repl, new_name)
 
-        if "lm_head" in name:
-            print("hey")
         new_sd[new_name] = param
 
         # qkv fused

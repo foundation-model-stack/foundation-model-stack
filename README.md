@@ -94,6 +94,14 @@ torchrun --nproc_per_node=2 \
 ```
 See options in the script for other ways to train and tune.
 
+## Extensions and Use Cases
+
+This library is used by [three](https://github.com/foundation-model-stack/foundation-model-stack/network/dependents) dependent projects at IBM.
+
+* [fms-fsdp](https://github.com/foundation-model-stack/fms-fsdp) - This repo shares training code that has been used to pretrain an fms implementation of LLaMA on IBM internal data.
+* [fms-extras](https://github.com/foundation-model-stack/fms-extras) - This repo shares code for additional fms-based models trained by IBM. This repo will also be a home for other extensions, and may also include research or in-developent work intended for eventual upstreaming to fms.
+* [TGIS](https://github.com/IBM/text-generation-inference) - This inference server includes support for serving fms models.
+
 ## Open Issues
 
 * https://github.com/pytorch/pytorch/issues/107824 prevents training/finetuning from working with `torch.compile`.
