@@ -234,7 +234,7 @@ class RotaryEmbedding(PositionEncoder):
         assert len(q.size()) == 4
         assert len(k.size()) == 4
 
-        seq_len = max(k.size(2), q.size(2))
+        seq_len = max(k.size(1), q.size(1))
         if position_ids is None:
             # Compute position_ids based on cache config
             position_ids = torch.arange(
@@ -243,20 +243,26 @@ class RotaryEmbedding(PositionEncoder):
             if use_cache and past_kv_state is not None:
                 position_ids += past_kv_state[0].size(2)
 
-        q_ = q.float().reshape(*q.size()[:-1], -1, 2)  # B H L D/2 2
-        k_ = k.float().reshape(*k.size()[:-1], -1, 2)  # B H L D/2 2
+        q_ = q.float().view(*q.size()[:-1], -1, 2)  # B H L D/2 2
+        k_ = k.float().view(*k.size()[:-1], -1, 2)  # B H L D/2 2
 
         # the max start position should be based on the max first position of each sequence
         max_start_pos = torch.max(position_ids[:, 0])
         alpha = self.compute_freqs_cis(q.device, max_start_pos + seq_len)
-        freqs = self.cached_freqs[q.device.index][alpha][position_ids].unsqueeze(1)
+        freqs = self.cached_freqs[q.device.index][alpha][position_ids]
 
         freqs = freqs.float()  # 1 1 L D/2 2 2
         q_out = (
-            freqs[:, :, -q.size(2) :, :, :, :].mul(q_.unsqueeze(-2)).sum(5).flatten(3)
-        )
+            freqs[:, -q.size(1) :, None, :, :, :]
+            .mul(q_.unsqueeze(-2))
+            .sum(5)
+            .flatten(3)
+        ).type_as(q)
         k_out = (
-            freqs[:, :, -k.size(2) :, :, :, :].mul(k_.unsqueeze(-2)).sum(5).flatten(3)
-        )
+            freqs[:, -k.size(1) :, None, :, :, :]
+            .mul(k_.unsqueeze(-2))
+            .sum(5)
+            .flatten(3)
+        ).type_as(k)
 
-        return q_out.type_as(q).contiguous(), k_out.type_as(k).contiguous()
+        return q_out.view_as(q), k_out.view_as(k)
