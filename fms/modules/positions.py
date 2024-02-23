@@ -222,9 +222,9 @@ class RotaryEmbedding(PositionEncoder):
         Args
         ----
         q : torch.Tensor
-            Embedded query tensor, expected size is B x H x S x Eh
+            Embedded query tensor, expected size is B x S x H x Eh
         k : torch.Tensor
-            Embedded query tensor, expected size is B x H x S x Eh
+            Embedded query tensor, expected size is B x S x H x Eh
         position_ids : Optional[torch.LongTensor]
             The position of each of the tokens encoded in q and k. This is important in
             kv-caching and left-padding situations, for which the rotation to be applied might
@@ -243,15 +243,15 @@ class RotaryEmbedding(PositionEncoder):
             if use_cache and past_kv_state is not None:
                 position_ids += past_kv_state[0].size(2)
 
-        q_ = q.float().view(*q.size()[:-1], -1, 2)  # B H L D/2 2
-        k_ = k.float().view(*k.size()[:-1], -1, 2)  # B H L D/2 2
+        q_ = q.float().view(*q.size()[:-1], -1, 2)  # B L H D/2 2
+        k_ = k.float().view(*k.size()[:-1], -1, 2)  # B L H D/2 2
 
         # the max start position should be based on the max first position of each sequence
         max_start_pos = torch.max(position_ids[:, 0])
         alpha = self.compute_freqs_cis(q.device, max_start_pos + seq_len)
         freqs = self.cached_freqs[q.device.index][alpha][position_ids]
 
-        freqs = freqs.float()  # 1 1 L D/2 2 2
+        freqs = freqs.float()  # 1 L D/2 2 2
         q_out = (
             freqs[:, -q.size(1) :, None, :, :, :]
             .mul(q_.unsqueeze(-2))
