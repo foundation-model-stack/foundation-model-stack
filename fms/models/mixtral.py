@@ -414,9 +414,21 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
             new_sd[new_name] = temp.reshape(
                 num_experts, temp.size(0) // num_experts, temp.size(1)
             ).contiguous()
-
-    if "gate" in new_name:
-        new_sd[new_name] = new_sd[new_name].contiguous()
+    
+    for key in list(new_sd.keys()):
+        if key not in new_sd:
+            continue
+        if "gate" in key:
+            new_sd[key] = new_sd[key].contiguous()
+        if "w1" in key:
+            w3_weight = key.replace("w1", "w3")
+            fused_name = key.replace("w1", "w13")
+            new_sd[fused_name] = torch.cat([new_sd[key], new_sd[w3_weight]], dim=1)
+            del new_sd[key]
+            del new_sd[w3_weight]
+        if "w2" in key:
+            new_sd[key] = new_sd[key].transpose(1, 2).contiguous()
+        
     return new_sd
 
 

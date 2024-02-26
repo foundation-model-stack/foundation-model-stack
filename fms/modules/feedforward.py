@@ -1,10 +1,12 @@
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 import torch
 import torch.distributed
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributed.distributed_c10d import ProcessGroup
+import triton
+import triton.language as tl
 
 from fms import distributed
 from fms.distributed.tensorparallel import (
@@ -297,6 +299,260 @@ class TPGatedLinearUnit(GatedLinearUnit, TPModule):
         x_par = copy_to_tensor_model_parallel_region(x)
         out_par = GatedLinearUnit.forward(self, x_par)
         return reduce_from_tensor_model_parallel_region(out_par)
+    
+
+"""Fused MoE kernel."""
+@triton.jit
+def fused_moe_kernel(
+    # Pointers to matrices
+    a_ptr,
+    b_ptr,
+    c_ptr,
+    topk_weights_ptr,
+    sorted_token_ids_ptr,
+    expert_ids_ptr,
+    num_tokens_post_padded_ptr,
+    # Matrix dimensions
+    N,
+    K,
+    EM,
+    num_valid_tokens,
+    # The stride variables represent how much to increase the ptr by when moving by 1
+    # element in a particular dimension. E.g. `stride_am` is how much to increase `a_ptr`
+    # by to get the element one row down (A has M rows).
+    stride_am,
+    stride_ak,
+    stride_be,
+    stride_bk,
+    stride_bn,
+    stride_cm,
+    stride_cn,
+    stride_weight,
+    stride_token_id,
+    # Meta-parameters
+    BLOCK_SIZE_M: tl.constexpr,
+    BLOCK_SIZE_N: tl.constexpr,
+    BLOCK_SIZE_K: tl.constexpr,
+    GROUP_SIZE_M: tl.constexpr,
+    SPLIT_K: tl.constexpr,
+    MUL_ROUTED_WEIGHT: tl.constexpr,
+    top_k: tl.constexpr,
+    #compute_type: tl.constexpr,
+):
+    """
+    Implements the fused computation for a Mixture of Experts (MOE) using token and expert matrices.
+
+    Key Parameters:
+    - A: The input tensor representing tokens with shape (*, K), where '*' can be any shape representing batches and K is the feature dimension of each token.
+    - B: The stacked MOE weight tensor with shape (E, N, K), where E is the number of experts, K is the input feature dimension, and N is the output feature dimension.
+    - C: The output cache tensor with shape (M, topk, N), where M is the total number of tokens post padding, topk is the number of times each token is repeated,
+        and N is the output feature dimension.
+    - sorted_token_ids: A tensor containing the sorted indices of tokens, repeated topk times and arranged by the expert index they are assigned to.
+    - expert_ids: A tensor containing the indices of the expert for each block. It determines which expert matrix from B should be used for each block in A.
+    This kernel performs the multiplication of a token by its corresponding expert matrix as determined by `expert_ids`. The sorting of `sorted_token_ids`
+    by expert index and padding ensures divisibility by BLOCK_SIZE_M, which is necessary to maintain consistency in block matrix multiplication across different blocks processed by the same expert.
+    """
+    # -----------------------------------------------------------
+    # Map program ids `pid` to the block of C it should compute.
+    # This is done in a grouped ordering to promote L2 data reuse.
+    pid = tl.program_id(axis=0)
+    pid_k = tl.program_id(axis=1)
+    num_pid_m = tl.cdiv(EM, BLOCK_SIZE_M)
+    num_pid_n = tl.cdiv(N, BLOCK_SIZE_N)
+    num_pid_in_group = GROUP_SIZE_M * num_pid_n
+    group_id = pid // num_pid_in_group
+    first_pid_m = group_id * GROUP_SIZE_M
+    group_size_m = min(num_pid_m - first_pid_m, GROUP_SIZE_M)
+    pid_m = first_pid_m + ((pid % num_pid_in_group) % group_size_m)
+    pid_n = (pid % num_pid_in_group) // group_size_m
+    total_blocks_k = tl.cdiv(K, BLOCK_SIZE_K*SPLIT_K)
+
+    # ----------------------------------------------------------
+    # Create pointers for the first blocks of A and B.
+    # We will advance this pointer as we move in the K direction
+    # and accumulate
+    # `a_ptrs` is a block of [BLOCK_SIZE_M, BLOCK_SIZE_K] pointers
+    # `b_ptrs` is a block of [BLOCK_SIZE_K, BLOCK_SIZE_N] pointers
+    num_tokens_post_padded = tl.load(num_tokens_post_padded_ptr)
+    if pid_m * BLOCK_SIZE_M >= num_tokens_post_padded:
+        return
+    offs_token_id = pid_m * BLOCK_SIZE_M + tl.arange(0, BLOCK_SIZE_M)
+    offs_token = tl.load(sorted_token_ids_ptr + offs_token_id)
+    token_mask = offs_token < num_valid_tokens
+
+    offs_bn = (pid_n * BLOCK_SIZE_N + tl.arange(0, BLOCK_SIZE_N)) % N
+    offs_k = pid_k*BLOCK_SIZE_K + tl.arange(0, BLOCK_SIZE_K)
+
+    a_ptrs = a_ptr + (offs_token[:, None] // top_k * stride_am + offs_k[None, :] * stride_ak)
+    off_experts = tl.load(expert_ids_ptr + pid_m)
+    b_ptrs = b_ptr + off_experts * stride_be + (offs_k[:, None] * stride_bk + offs_bn[None, :] * stride_bn)
+
+    # -----------------------------------------------------------
+    # Iterate to compute a block of the C matrix.
+    # We accumulate into a `[BLOCK_SIZE_M, BLOCK_SIZE_N]` block
+    # of fp32 values for higher accuracy.
+    # `accumulator` will be converted back to fp16 after the loop.
+    accumulator = tl.zeros((BLOCK_SIZE_M, BLOCK_SIZE_N), dtype=tl.float32)
+    for k in range(0, total_blocks_k):
+        # Load the next block of A and B, generate a mask by checking the K dimension.
+        a = tl.load(a_ptrs,
+                    mask=token_mask[:, None] & (offs_k[None, :] < K - k * (BLOCK_SIZE_K * SPLIT_K)),
+                    other=0.0)
+        b = tl.load(b_ptrs,
+                    mask=offs_k[:, None] < K - k * (BLOCK_SIZE_K * SPLIT_K),
+                    other=0.0)
+        # We accumulate along the K dimension.
+        accumulator += tl.dot(a, b)
+        # Advance the ptrs to the next K block.
+        a_ptrs += BLOCK_SIZE_K * stride_ak * SPLIT_K
+        b_ptrs += BLOCK_SIZE_K * stride_bk * SPLIT_K
+
+    if MUL_ROUTED_WEIGHT:
+        moe_weight = tl.load(topk_weights_ptr + offs_token * stride_weight,
+                             mask=token_mask,
+                             other=0)
+        accumulator = accumulator * moe_weight[:, None]
+
+    #accumulator = accumulator.to(compute_type)
+    # -----------------------------------------------------------
+    # Write back the block of the output
+    offs_cn = pid_n * BLOCK_SIZE_N + tl.arange(0, BLOCK_SIZE_N)
+    c_ptrs = c_ptr + stride_cm * offs_token[:, None] + stride_cn * offs_cn[None, :]
+    c_mask = token_mask[:, None] & (offs_cn[None, :] < N)
+    tl.atomic_add(c_ptrs, accumulator, mask=c_mask)
+
+
+def moe_align_block_size(
+        topk_ids: torch.Tensor, block_size: int,
+        num_experts: int) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """
+    Aligns the token distribution across experts to be compatible with block size for matrix multiplication.
+
+    Parameters:
+    - topk_ids: A tensor of shape [total_tokens, top_k] representing the top-k expert indices for each token.
+    - block_size: The block size used in block matrix multiplication.
+    - num_experts: The total number of experts.
+
+    Returns:
+    - sorted_token_ids: A tensor containing the sorted token indices according to their allocated expert.
+    - expert_ids: A tensor indicating the assigned expert index for each block.
+    - num_tokens_post_padded: The total number of tokens after padding, ensuring divisibility by block_size.
+
+    This function pads the number of tokens that each expert needs to process so that it is divisible by block_size. 
+    Padding ensures that during block matrix multiplication, the dimensions align correctly.
+
+    Example:
+    Given topk_ids = [[2, 3, 4], [1, 2, 4], [1, 3, 4], [1, 2, 3]], block_size = 4, and num_experts = 4:
+    - We initially have 12 tokens (after repeating 'top_k' times) and 4 experts, with each expert needing to process 3 tokens.
+    - As block_size is 4, we pad 1 token for each expert.
+    - First, flatten topk_ids to [2, 3, 4, 1, 2, 4, 1, 3, 4, 1, 2, 3].
+    - Then append padding tokens [12, 12, 12, 12] for each block.
+    - After sorting by expert index, we obtain token_ids [3, 6, 9, 12, 0, 4, 10, 12, 1, 7, 11, 12, 2, 5, 8, 12]. 
+        Tokens 12 are non-existent (padding) and are ignored in the subsequent matrix multiplication.
+    - The padding ensures that the total number of tokens is now divisible by block_size for proper block matrix operations.
+    """
+
+    # First count how many tokens go to each expert
+    cnts = torch.zeros(topk_ids.shape[0],
+                       num_experts,
+                       dtype=topk_ids.dtype,
+                       device=topk_ids.device)
+    cnts.scatter_(1, topk_ids, 1)
+    tokens_per_expert = cnts.sum(dim=0)
+
+    # Then pad the amount to the block size of work
+    tokens_per_expert_block_padded = torch.floor_divide(
+        tokens_per_expert + block_size - 1, block_size) * block_size
+
+    # Count how many tokens in total are we computing in the GPU
+    cumsum = tokens_per_expert_block_padded.cumsum(0)
+    total_padded_tokens = cumsum[-1].clone()
+
+    # For allocation purposes, compute the worst case scenario for how
+    # many tokens we could be doing work for if the RNG gods are bad
+    max_total_padded_tokens = (
+        topk_ids.numel() + num_experts *
+        (block_size - 1)) if topk_ids.numel() > num_experts else (
+            topk_ids.numel() + 1) * block_size
+
+    # Compute what MoE expert corresponds to each block of work
+    # A block of work consists of tokens that all go to the same expert
+    # There are total_padded_tokens // block_size blocks of work, but to 
+    # simplify kernel launches, we allocate based on worst case and use 
+    # max_total_padded_tokens instead.
+    expert_block_mapping = torch.zeros(max(
+        (max_total_padded_tokens + block_size - 1) // block_size + 1,
+        num_experts),
+                             dtype=topk_ids.dtype,
+                             device=topk_ids.device)
+
+    num_blocks_per_expert = cumsum.div_(block_size, rounding_mode="floor")
+    ones = torch.ones_like(expert_block_mapping)
+    expert_block_mapping.scatter_add_(0, num_blocks_per_expert, ones)
+    expert_block_mapping = expert_block_mapping.cumsum(0)
+
+    # Create the mapping between token idxs in the input tensor and 
+    # the tokens that will go in each work block
+
+    # Count how many pad tokens need adding to the list of tokens in 
+    # topk_ids, then create a tensor that will fill in the right spots
+    # when doing an argsort later to compute padded_token_ids_per_block
+    cum_pad_tokens = (tokens_per_expert_block_padded - tokens_per_expert).cumsum(0)
+    padded_tokens = torch.zeros(max_total_padded_tokens - topk_ids.numel(),
+                                dtype=topk_ids.dtype,
+                                device=topk_ids.device)
+    ones = torch.ones_like(padded_tokens)
+    padded_tokens.scatter_add_(0, cum_pad_tokens[:-1], ones)
+    padded_tokens = padded_tokens.cumsum(0)
+    padded_token_ids_per_block = torch.cat([topk_ids.view(-1), padded_tokens]).argsort()
+
+    return padded_token_ids_per_block, expert_block_mapping, total_padded_tokens
+
+# @torch.compile
+def invoke_fused_moe_kernel(A: torch.Tensor, B: torch.Tensor, C: torch.Tensor,
+                            topk_weights: torch.Tensor, topk_ids: torch.Tensor,
+                            sorted_token_ids: torch.Tensor,
+                            expert_ids: torch.Tensor,
+                            num_tokens_post_padded: torch.Tensor,
+                            mul_routed_weight: bool, top_k: int, config: dict):
+    assert topk_weights.stride(1) == 1
+    assert sorted_token_ids.stride(0) == 1
+    assert A.is_contiguous()
+    assert C.is_contiguous()
+    assert sorted_token_ids.is_contiguous()
+    assert expert_ids.is_contiguous()
+    assert num_tokens_post_padded.is_contiguous()
+
+    grid = lambda META: (triton.cdiv(sorted_token_ids.shape[0], META['BLOCK_SIZE_M']) * triton.cdiv(B.shape[1], META['BLOCK_SIZE_N']), META['SPLIT_K'])
+    # print(sorted_token_ids.shape[0], B.shape[1], config)
+    # print("Stride: ", B.stride())
+
+    fused_moe_kernel[grid](
+        A,
+        B,
+        C,
+        topk_weights,
+        sorted_token_ids,
+        expert_ids,
+        num_tokens_post_padded,
+        B.shape[1],
+        B.shape[2],
+        sorted_token_ids.shape[0],
+        topk_ids.numel(),
+        A.stride(0),
+        A.stride(1),
+        B.stride(0),
+        B.stride(2),
+        B.stride(1),
+        C.stride(1),
+        C.stride(2),
+        topk_weights.stride(1),
+        sorted_token_ids.stride(0),
+        MUL_ROUTED_WEIGHT=mul_routed_weight,
+        top_k=top_k,
+        #compute_type=tl.bfloat16 if A.dtype == torch.bfloat16 else tl.float16,
+        **config,
+    )
 
 
 class ConditionalFeedForward(nn.Module):
@@ -320,19 +576,101 @@ class ConditionalFeedForward(nn.Module):
         self.num_experts = num_experts
         self.dim = dim
         self.intermediate_size = intermediate_size
-        self.w1 = nn.Parameter(torch.empty(num_experts, intermediate_size, dim))
-        self.w2 = nn.Parameter(torch.empty(num_experts, intermediate_size, dim))
-        self.w3 = nn.Parameter(torch.empty(num_experts, intermediate_size, dim))
+        self.w13 = nn.Parameter(torch.empty(num_experts, 2*intermediate_size, dim))
+        self.w2 = nn.Parameter(torch.empty(num_experts, dim, intermediate_size))
 
     def forward(self, x: torch.Tensor, expert_indices: torch.Tensor) -> torch.Tensor:
-        # T = num_tokens, E = num_experts, D = hidden dim, A = activated experts
-        w1_weights = self.w1[expert_indices].transpose(-1, -2)  # [T, A, D, D]
-        w3_weights = self.w3[expert_indices].transpose(-1, -2)  # [T, A, D, D]
-        w2_weights = self.w2[expert_indices]  # [T, A, D, D]
-        x1 = F.silu(torch.einsum("ti,taio -> tao", x, w1_weights))
-        x3 = torch.einsum("ti, taio -> tao", x, w3_weights)
-        expert_outs = torch.einsum("tao, taoi -> tai", (x1 * x3), w2_weights)
-        return expert_outs
+        #if x.shape[0] > 4:
+        if True:
+            ## Triton path
+            # Check constraints.
+            assert x.shape[1] == self.w13.shape[2], "Hidden size mismatch"
+            assert x.is_contiguous(), "Hidden_states must be contiguous"
+            assert self.w13.is_contiguous(), "Expert weights1 must be contiguous"
+            assert self.w2.is_contiguous(), "Expert weights2 must be contiguous"
+
+            # print(x.shape, expert_indices.shape)
+            M, _ = x.shape
+            E, N, _ = self.w13.shape
+            # print(f"Shapes: {M} {E} {N}")
+
+            config_w1 = {
+                'BLOCK_SIZE_M': 32,
+                'BLOCK_SIZE_N': 64,
+                'BLOCK_SIZE_K': 64,
+                'GROUP_SIZE_M': 8,
+                'SPLIT_K': 2
+            }
+            config_w2 = {
+                'BLOCK_SIZE_M': 32,
+                'BLOCK_SIZE_N': 64,
+                'BLOCK_SIZE_K': 128,
+                'GROUP_SIZE_M': 8,
+                'SPLIT_K': 4
+            }
+
+            if expert_indices.numel() <= self.w13.shape[0]:
+                config_w1 = {
+                    'BLOCK_SIZE_M': 16,
+                    'BLOCK_SIZE_N': 64,
+                    'BLOCK_SIZE_K': 128,
+                    'GROUP_SIZE_M': 8,
+                    'SPLIT_K' : 2
+                }
+                config_w2 = {
+                    'BLOCK_SIZE_M': 16,
+                    'BLOCK_SIZE_N': 128,
+                    'BLOCK_SIZE_K': 64,
+                    'GROUP_SIZE_M': 8,
+                    'SPLIT_K' : 2
+                }
+
+            padded_token_ids_per_block, expert_block_mapping, total_padded_tokens = moe_align_block_size(
+                expert_indices, config_w1['BLOCK_SIZE_M'], E) 
+
+
+            intermediate_cache1 = torch.zeros((M, expert_indices.shape[1], N),
+                                            device=x.device,
+                                            dtype=x.dtype)
+            intermediate_cache2 = torch.empty((M * expert_indices.shape[1], N // 2),
+                                            device=x.device,
+                                            dtype=x.dtype)
+            intermediate_cache3 = torch.zeros((M, expert_indices.shape[1], self.w2.shape[1]),
+                                            device=x.device,
+                                            dtype=x.dtype)
+
+            
+
+            # print(f"{padded_token_ids_per_block}\n {expert_block_mapping}\n {total_padded_tokens}")
+            # time_in = time.time()
+            invoke_fused_moe_kernel(x, self.w13, intermediate_cache1,
+                                    torch.empty_like(expert_indices), expert_indices, padded_token_ids_per_block,
+                                    expert_block_mapping, total_padded_tokens, False,
+                                    expert_indices.shape[1], config_w1)
+
+            x1, x3 = intermediate_cache1.view(-1, N).chunk(2, dim=1)
+            intermediate_cache2 = F.silu(x1) * x3
+            # print(f"Cache sizes: {intermediate_cache1.shape}, {intermediate_cache2.shape}, {intermediate_cache3.shape}")
+            # ops.silu_and_mul(intermediate_cache2, intermediate_cache1.view(-1, N))
+
+            invoke_fused_moe_kernel(intermediate_cache2, self.w2, intermediate_cache3,
+                                    torch.empty_like(expert_indices), expert_indices, padded_token_ids_per_block,
+                                    expert_block_mapping, total_padded_tokens, False, 1,
+                                    config_w2)
+            # time_out = time.time()
+            # print(time_out - time_in)
+            
+            return intermediate_cache3
+        else:
+            ## Pure Pytorch path
+            # T = num_tokens, E = num_experts, D = hidden dim, A = activated experts
+            w13_weights = self.w13[expert_indices].transpose(-1, -2)  # [T, A, D, D]
+            # w3_weights = self.w13[:, self.intermediate_size:][expert_indices].transpose(-1, -2)  # [T, A, D, D]
+            w2_weights = self.w2[expert_indices]  # [T, A, D, D]
+            x1, x3 = torch.einsum("ti, taio -> tao", x, w13_weights).chunk(2, dim=2)
+            # x3 = torch.einsum("ti, taio -> tao", x, w3_weights)
+            expert_outs = torch.einsum("tao, taio -> tai", (F.silu(x1) * x3), w2_weights)
+            return expert_outs
 
 
 class TPConditionalFeedForward(ConditionalFeedForward, TPModule):
@@ -372,7 +710,7 @@ class TPConditionalFeedForward(ConditionalFeedForward, TPModule):
         self.setup_tp(rank, world_size)
 
     def moe_param_names(self) -> List[str]:
-        return ["w1", "w2", "w3"]
+        return ["w13", "w2"]
 
     @staticmethod
     def import_module(
@@ -439,12 +777,15 @@ class MOEFeedForward(nn.Module):
         )  # [T, A], [T, A]
         expert_weights /= expert_weights.sum(dim=-1, keepdim=True)  # [T, A]
         # Given the balloning memory requirements, only process at most 10 tokens at a time
-        if x.shape[0] > 10:
-            split_x = x.chunk(x.shape[0] // 10 + 1)
-            split_ei = expert_indices.chunk(expert_indices.shape[0] // 10 + 1)
-            expert_outs = torch.cat([self.cond_ffn(x_i, ei_i) for x_i, ei_i in zip(split_x, split_ei)], dim=0)
-        else:
-            expert_outs = self.cond_ffn(x, expert_indices)
-        return torch.einsum("tai,ta -> ti", expert_outs, expert_weights).view(
+        # if x.shape[0] > 10:
+        #     split_x = x.chunk(x.shape[0] // 10 + 1)
+        #     split_ei = expert_indices.chunk(expert_indices.shape[0] // 10 + 1)
+        #     expert_outs = torch.cat([self.cond_ffn(x_i, ei_i) for x_i, ei_i in zip(split_x, split_ei)], dim=0)
+        # else:
+        expert_outs = self.cond_ffn(x, expert_indices)
+        # print(expert_outs.shape)
+        int_v1 = torch.einsum("tai,ta -> ti", expert_outs, expert_weights)
+        int_v2 = int_v1.view(
             B, S, self.dim
         )
+        return int_v2

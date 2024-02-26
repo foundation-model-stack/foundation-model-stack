@@ -43,11 +43,12 @@ def apply_embedding_tp(par_mod: nn.Embedding, mod: nn.Embedding, world_size, ran
 
 
 def apply_moe_tp(par_mod: nn.Module, mod: nn.Module, param_names, world_size, rank):
-    output_size_per_partition = mod.intermediate_size // world_size
     with torch.no_grad():
         for param in param_names:
-            getattr(par_mod, param).copy_(
-                torch.split(getattr(par_mod, param), output_size_per_partition, dim=1)[
+            par_param = getattr(par_mod, param)
+            print(param, par_param.shape[1] // world_size)
+            par_param.copy_(
+                torch.split(getattr(mod, param), par_param.shape[1] // world_size, dim=1)[
                     rank
                 ]
             )
