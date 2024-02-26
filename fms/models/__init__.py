@@ -237,7 +237,8 @@ def get_model(
                 See `serialization.list_sources(architecture)`
     group: ProcessGroup The PG to use for any model distribution
     """
-    local_rank, world_size = distributed.rank_and_world(group)
+    rank, world_size = distributed.rank_and_world(group)
+    local_rank = distributed.local_rank()
 
     if distributed_strategy is None or distributed_strategy == "":
         if world_size > 1:
@@ -250,7 +251,7 @@ def get_model(
 
     if (
         _is_dp(distributed_strategy)
-        and local_rank != 0
+        and rank != 0
         and checkpoint_sharding != "fsdp"
     ):
         initial_device = torch.device("meta")
@@ -267,7 +268,7 @@ def get_model(
             distributed_strategy=distributed_strategy,
             checkpoint_sharding=checkpoint_sharding,
             initial_device=initial_device,
-            rank=local_rank,
+            rank=rank,
             world_size=world_size,
         )
 
@@ -296,7 +297,7 @@ def get_model(
 
     def model_wrap(model):
         if _is_dp(distributed_strategy):
-            return _fsdp_wrap(model, distributed_strategy, device, local_rank == 0)
+            return _fsdp_wrap(model, distributed_strategy, device, rank == 0)
         return model
 
     if not pre_load:
@@ -311,7 +312,7 @@ def get_model(
             distributed_strategy,
             checkpoint_sharding,
             initial_device,
-            local_rank,
+            rank,
             world_size,
         )
     elif hasattr(fms_model, "reset_parameters"):

@@ -1,3 +1,4 @@
+import os
 import torch
 
 
@@ -17,3 +18,9 @@ def rank_and_world(group=None):
         rank = group.rank()
 
     return rank, world_size
+
+
+_LOCAL_RANK = int(os.getenv("LOCAL_RANK", 0))
+
+def local_rank():
+    return _LOCAL_RANK
