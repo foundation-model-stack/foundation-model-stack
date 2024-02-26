@@ -249,11 +249,7 @@ def get_model(
     else:
         device = torch.device(device_type)
 
-    if (
-        _is_dp(distributed_strategy)
-        and rank != 0
-        and checkpoint_sharding != "fsdp"
-    ):
+    if _is_dp(distributed_strategy) and rank != 0 and checkpoint_sharding != "fsdp":
         initial_device = torch.device("meta")
     elif distributed_strategy == "mp":
         initial_device = torch.device("cpu")
