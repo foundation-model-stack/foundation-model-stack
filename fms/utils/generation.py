@@ -31,6 +31,7 @@ def generate(
     num_beams: int = 1,
     use_cache: bool = False,
     contiguous_cache: bool = False,
+    include_embeds: bool = False,
 ):
     """
     A trivial generate function that can be used for validation/testing in
@@ -64,27 +65,33 @@ def generate(
     if not batched:
         input_ids = input_ids.unsqueeze(0)
 
+    embeds = None
     result = input_ids
     next_input = input_ids
     kwargs: MutableMapping[str, Any] = dict()
     kwargs["past_key_value_states"] = None
     kwargs["use_cache"] = use_cache
+    kwargs["include_embeds"] = include_embeds
 
     for _ in range(max_new_tokens):
         input_ids = next_input[:, -max_seq_len:]
         output = model(input_ids, **kwargs)
-        if use_cache:
-            logits, past_key_value_states = output
-            # TODO: this should go away when reduce-overhead issues are fixed, or
-            # maybe could be moved into model code to be more portable.
-            if contiguous_cache:
-                kwargs["past_key_value_states"] = _make_cache_contiguous(
-                    past_key_value_states
-                )
-            else:
-                kwargs["past_key_value_states"] = past_key_value_states
-        else:
+        if not use_cache and not include_embeds:
             logits = output
+        else:
+            logits = output[0]
+            if include_embeds:
+                z = output[-1]
+            if use_cache:
+                past_key_value_states = output[1]
+                # TODO: this should go away when reduce-overhead issues are fixed, or
+                # maybe could be moved into model code to be more portable.
+                if contiguous_cache:
+                    kwargs["past_key_value_states"] = _make_cache_contiguous(
+                        past_key_value_states
+                    )
+                else:
+                    kwargs["past_key_value_states"] = past_key_value_states
         logits = logits[:, -1, :]
 
         if do_sample:
@@ -106,8 +113,18 @@ def generate(
         else:
             next_input = result
 
+        if include_embeds:
+            if embeds is None:
+                embeds = z
+            else:
+                embeds = torch.cat((embeds, z), dim=-2)
+
     if not batched:
         result = result[0]
+        
+    if include_embeds:
+        return result, embeds
+    
     return result
 
 
