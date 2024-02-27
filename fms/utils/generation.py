@@ -52,6 +52,8 @@ def generate(
         num_beams: TODO: support beam search
         use_cache: requires that the model accept use_cache and
             past_key_value_states args in forward method.
+        include_embeds: track and return embedding vectors for 
+            each generated token. Used for speculator training.
     """
     batched = False
     if num_beams != 1:
