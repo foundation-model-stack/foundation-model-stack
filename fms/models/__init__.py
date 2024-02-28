@@ -151,9 +151,6 @@ def _activation_checkpoint_check_fn(layer):
     return False
 
 
-from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
-import functools
-from fms.models.llama import LLaMABlock
 def _fsdp_wrap(
     model: nn.Module,
     distributed_strategy: Optional[str],
@@ -190,8 +187,7 @@ def _fsdp_wrap(
         device_id=device.index,
         limit_all_gathers=True,
         use_orig_params=True,
-        # auto_wrap_policy=_fsdp_autowrap_policy,
-        auto_wrap_policy=functools.partial(transformer_auto_wrap_policy, transformer_layer_cls={LLaMABlock}),
+        auto_wrap_policy=_fsdp_autowrap_policy,
         mixed_precision=mp_policy,
         sharding_strategy=dp_strategy,
     )
