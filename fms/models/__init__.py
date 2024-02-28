@@ -153,7 +153,7 @@ def _activation_checkpoint_check_fn(layer):
 
 from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
 import functools
-from llama import LLaMABlock
+from fms.models.llama import LLaMABlock
 def _fsdp_wrap(
     model: nn.Module,
     distributed_strategy: Optional[str],
