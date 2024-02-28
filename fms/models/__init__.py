@@ -151,7 +151,7 @@ def _activation_checkpoint_check_fn(layer):
     return False
 
 
-from torch.disctributed.fsdp.wrap import transformer_auto_wrap_policy
+from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
 import functools
 from llama import LLaMABlock
 def _fsdp_wrap(
