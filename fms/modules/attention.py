@@ -145,7 +145,6 @@ class MultiHeadAttention(nn.Module):
         queries = self.query(q).view(
             batch_size, q_len, self.nheads, self.emb_kq_per_head
         )
-        queries = queries.transpose(2, 1)  # / (self.emb_kq_per_head**(1/4))
 
         # if this is self attention, we always recompute
         # cross attention only gets computed when a cache does not exist
@@ -158,12 +157,10 @@ class MultiHeadAttention(nn.Module):
             keys = self.key(k).view(
                 batch_size, kv_len, self.kvheads, self.emb_kq_per_head
             )
-            keys = keys.transpose(2, 1)  # / (self.emb_kq_per_head**(1/4))
 
             values = self.value(v).view(
                 batch_size, kv_len, self.kvheads, self.emb_v_per_head
             )
-            values = values.transpose(2, 1)  # compatible with QK.T
 
             # You want to apply rotary embeddings pre-cache
             if self.position_encoder is not None:
@@ -176,8 +173,8 @@ class MultiHeadAttention(nn.Module):
             # we already have a cache so add to it or get it
             if past_key_value_state is not None:
                 if is_self:
-                    keys = torch.cat((past_key_value_state[0], keys), dim=2)
-                    values = torch.cat((past_key_value_state[1], values), dim=2)
+                    keys = torch.cat((past_key_value_state[0], keys), dim=1)
+                    values = torch.cat((past_key_value_state[1], values), dim=1)
                 else:
                     keys = past_key_value_state[0]
                     values = past_key_value_state[1]
@@ -186,9 +183,9 @@ class MultiHeadAttention(nn.Module):
             # -- currently there is no support for subclass tensors in pytorch with compile
             # -- see https://github.com/pytorch/pytorch/issues/93723
             else:
-                preallocate_length = smallest_power_greater_than(keys.size(2))
-                keys = create_expandable_tensor(keys.contiguous(), dim=2, preallocate_length=preallocate_length)
-                values = create_expandable_tensor(values.contiguous(), dim=2, preallocate_length=preallocate_length)
+                preallocate_length = smallest_power_greater_than(keys.size(1))
+                keys = create_expandable_tensor(keys.contiguous(), dim=1, preallocate_length=preallocate_length)
+                values = create_expandable_tensor(values.contiguous(), dim=1, preallocate_length=preallocate_length)
 
         # Merge rel pos bias and mask into single float mask
         if mask is not None:
@@ -204,17 +201,18 @@ class MultiHeadAttention(nn.Module):
         else:
             attn_mask = mask
 
+        queries = queries.transpose(2, 1)  # / (self.emb_kq_per_head**(1/4))
+        keys_sdpa = keys._tensor().transpose(2, 1)  # / (self.emb_kq_per_head**(1/4))
+        values_sdpa = values._tensor().transpose(2, 1)  # compatible with QK.T
+
         # Expand kv so black-box attn will work
         expansion = self.nheads // self.kvheads
         # k/v: b h l d
         if expansion != 1:
-            keys_e = keys.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
-            values_e = (
-                values.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
+            keys_sdpa = keys_sdpa.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
+            values_sdpa = (
+                values_sdpa.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
             )
-        else:
-            keys_e = keys
-            values_e = values
 
         if attn_algorithm:
             # Pick which fused attn kernels will run.
@@ -228,8 +226,8 @@ class MultiHeadAttention(nn.Module):
 
         attn = F.scaled_dot_product_attention(
             queries,
-            keys_e,
-            values_e,
+            keys_sdpa,
+            values_sdpa,
             attn_mask=attn_mask,
             dropout_p=self.p_dropout if self.training else 0.0,
             is_causal=is_causal_mask,
@@ -253,7 +251,7 @@ class MultiHeadAttention(nn.Module):
 
         # if use_cache=True, we return the hidden_state as well as the kv cache
         if use_cache:
-            return out, (keys, values)
+            return out, (keys._underlying_tensor, values._underlying_tensor)
         else:
             return out
 
