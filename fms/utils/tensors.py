@@ -1,7 +1,10 @@
+import copy
+from typing import Dict
 import functools
 
 import torch
-
+from torch._dynamo import allow_in_graph
+from torch.utils._python_dispatch import return_and_correct_aliasing
 
 _HANDLED_FUNCTIONS = {}
 
@@ -40,30 +43,54 @@ class ExpandableTensor(torch.Tensor):
             dimension `dim`
     """
 
-    def __init__(self, tensor, dim=0, preallocate_length=None):
-        super().__init__()
+    _underlying_tensor: torch.Tensor
+    _dim: int
+    _dim_length: int
+
+    @staticmethod
+    def __new__(cls, tensor: torch.Tensor, *, dim: int = 0, preallocate_length: int = None, dim_length: int = None):
+        sizes = list(tensor.size())
+        if dim_length is not None:
+            sizes[dim] = dim_length
+
+        dim_length = tensor.size(dim) if dim_length is None else dim_length
+        underlying_tensor = tensor
+        if preallocate_length is not None and preallocate_length > underlying_tensor.size(dim):
+            preallocate_sizes = sizes.copy()
+            preallocate_sizes[dim] = preallocate_length
+            underlying_tensor = torch.empty(preallocate_sizes, dtype=tensor.dtype, device=tensor.device)
+            underlying_tensor.narrow(dim, 0, dim_length).copy_(tensor)
+
+        r = torch.Tensor._make_wrapper_subclass(  # type: ignore[attr-defined]
+            cls,
+            sizes,
+            underlying_tensor.stride(),
+            underlying_tensor.storage_offset(),
+            None,
+            tensor.dtype,
+            tensor.layout,
+            tensor.device,
+            False,
+            False,
+            None,
+            False,
+            False,
+        )
+        r._underlying_tensor = underlying_tensor
+        return r
+
+    def __init__(self, tensor: torch.Tensor, *, dim:int = 0, preallocate_length: int = None, dim_length: int = None, stride=None):
         self._dim = dim
-        self._dim_length = tensor.shape[dim]
-        self._underlying_tensor = tensor
-        if preallocate_length is not None and preallocate_length > self._dim_length:
-            sizes = list(tensor.size())
-            sizes[dim] = preallocate_length
-            self._underlying_tensor = torch.empty(
-                size=sizes, dtype=tensor.dtype, device=tensor.device
-            )
-            self._tensor().copy_(tensor)
+        self._dim_length = tensor.size(dim) if dim_length is None else dim_length
+        # torch._dynamo.mark_dynamic(self, self._dim)
 
-    def __new__(cls, tensor, dim=0, preallocate_length=None):
-        return super().__new__(cls)
-
-    def size(self, dim=None):
-        # https://github.com/pytorch/pytorch/issues/111944
-        if dim is None:
-            return self._tensor().size()
-        else:
-            return self._tensor().size(dim=dim)
-
-    def _append(self, tensor):
+    @_implements(torch.ops.aten.is_contiguous.default)
+    def is_contiguous(self, memory_format=torch.contiguous_format):
+        if self._dim_length != self._underlying_tensor.size(self._dim):
+            return False
+        return self._underlying_tensor.is_contiguous(memory_format=memory_format)
+    
+    def _append(self, tensor: torch.Tensor):
         """
         Returns a tensor equivalent to the result of
         `torch.cat( (self, tensor), dim=self._dim)`, possibly modifying `self`
@@ -75,22 +102,16 @@ class ExpandableTensor(torch.Tensor):
         for i in range(len(expected)):
             if i != dim:
                 assert expected[i] == tensor_sizes[i]
-        if self.size()[dim] + tensor.size()[dim] <= self._underlying_tensor.size()[dim]:
+        if self.size(dim) + tensor.size(dim) <= self._underlying_tensor.size(dim):
             # copy into tail of _tensor
-            view = self._underlying_tensor
-            sizes = list(view.size())
-            sizes[self._dim] = tensor.size()[dim]
-            strides = self._underlying_tensor.stride()
-            offset = self._dim_length * strides[self._dim]
-            view = view.as_strided(size=sizes, stride=strides, storage_offset=offset)
+            view = self._underlying_tensor.narrow(dim, self._dim_length, tensor.size(dim))
             view.copy_(tensor)
-            result = ExpandableTensor(self._underlying_tensor, dim=self._dim)
-            result._dim_length = self._dim_length + tensor.shape[dim]
+            result = ExpandableTensor(self._underlying_tensor, dim=self._dim, dim_length=self.size(dim) + tensor.size(dim))
             return result
         else:
             # create new expandable tensor
             expanded = ExpandableTensor(
-                self._tensor(), self._dim, self._underlying_tensor.shape[dim] * 2
+                self._tensor(), dim=self._dim, preallocate_length=self._underlying_tensor.size(dim) * 2
             )
             return expanded._append(tensor)
 
@@ -98,16 +119,38 @@ class ExpandableTensor(torch.Tensor):
         """
         Returns a view of the tensor excluding preallocated space
         """
-        view = self._underlying_tensor
-        sizes = list(view.size())
-        sizes[self._dim] = self._dim_length
-        view = view.as_strided(size=sizes, stride=view.stride())
-        return view
+        # print("Calling _tensor()", self.size(), self._underlying_tensor.size(), self.stride(), self._underlying_tensor.stride())
+        return self._underlying_tensor.narrow(self._dim, 0, self._dim_length)
 
     def __repr__(self):
-        return self._tensor().__repr__()
+        return f"ExpandableTensor(dim: {self._dim}, allocated_length: {self._underlying_tensor.size(self._dim)}, used_length: {self._dim_length}): " + self._tensor().__repr__()
 
-    @_implements(torch.cat)
+    def __tensor_flatten__(self):
+        ctx = {
+            "_dim": self._dim,
+            "_dim_length": self._dim_length,
+        }
+        inner_tensors = ["_underlying_tensor"]
+        return inner_tensors, ctx
+
+    @staticmethod
+    def __tensor_unflatten__(inner_tensors: Dict, meta, outer_size, outer_stride):
+        assert len(inner_tensors) == 1
+        _underlying_tensor = inner_tensors["_underlying_tensor"]
+        _dim = meta["_dim"]
+        _dim_length = meta["_dim_length"]
+        print("Rebuilding Expandable:", outer_size, outer_stride)
+
+        # Note that we cannot simply check if is_fake(values) because
+        # during aot autograd, FunctionalTensors are not fake but hold
+        # symbolic sizes.
+        return ExpandableTensor(
+            _underlying_tensor,
+            dim=_dim,
+            dim_length=outer_size[_dim],
+        )
+
+    @_implements(torch.ops.aten.cat.default)
     def cat(tensors, dim=0, *, out=None):
         if (
             len(tensors)
@@ -125,13 +168,70 @@ class ExpandableTensor(torch.Tensor):
             ]
             return torch.cat(tensors, dim, out=out)
 
+    # @_implements(torch.ops.aten.copy_.default)
+    # def copy_(self, src: torch.Tensor, non_blocking: bool = False) -> "ExpandableTensor":
+    #     if type(src) == ExpandableTensor:
+    #         self._underlying_tensor.copy_(src._underlying_tensor, non_blocking=non_blocking)
+    #     else:
+    #         self._tensor().copy_(src, non_blocking=non_blocking)
+    #     return self
+
     @classmethod
-    def __torch_function__(cls, func, types, args=(), kwargs=None):
+    def __torch_dispatch__(cls, func, types, args=(), kwargs=None):
+        print("Running custom dispatch for: ", func)
         if kwargs is None:
             kwargs = {}
         if func not in _HANDLED_FUNCTIONS or not all(
             issubclass(t, (torch.Tensor, ExpandableTensor)) for t in types
         ):
-            args = [a._tensor() if type(a) == ExpandableTensor else a for a in args]
+            parsed_args = tuple([a._tensor() if type(a) == ExpandableTensor else a for a in args])
+            out = func(*parsed_args, **kwargs)
+        else:
+            out = _HANDLED_FUNCTIONS[func](*args, **kwargs)
+        return return_and_correct_aliasing(func, args, kwargs, out)
+    
+    @classmethod
+    def __torch_function__(cls, func, types, args=(), kwargs=None):
+        if kwargs is None:
+            kwargs = {}
+        try:
+            return expandable_torch_function(func, *args, **kwargs)
+        except NotImplementedError:
+            pass
+        with torch._C.DisableTorchFunctionSubclass():
             return func(*args, **kwargs)
-        return _HANDLED_FUNCTIONS[func](*args, **kwargs)
+    
+
+def expandable_torch_function(func, *args, **kwargs):
+    # SDPA is weird, therefore we need to do this before dispatch.
+    # Dispatch to the correct implementation here
+    if func is torch._C._nn.scaled_dot_product_attention:
+        args = [a._tensor() if type(a) == ExpandableTensor else a for a in args]
+        return torch._C._nn.scaled_dot_product_attention(*args, **kwargs)
+
+    raise NotImplementedError(func)
+
+class _ExpandableFromTorchTensor(torch.autograd.Function):
+    @staticmethod
+    def forward(
+        ctx,
+        input: torch.Tensor,
+        dim: int,
+        preallocate_length: int,
+    ) -> "ExpandableTensor":
+        return ExpandableTensor(
+            input,
+            dim=dim,
+            preallocate_length=preallocate_length,
+        )
+
+    @staticmethod
+    def backward(ctx, g0: ExpandableTensor):  # type: ignore[override]
+        return g0._underlying_tensor, None, None
+    
+
+def create_expandable_tensor(tensor: torch.Tensor, dim, preallocate_length):
+    return _ExpandableFromTorchTensor.apply(tensor, dim, preallocate_length)
+
+allow_in_graph(ExpandableTensor)
+allow_in_graph(create_expandable_tensor)
