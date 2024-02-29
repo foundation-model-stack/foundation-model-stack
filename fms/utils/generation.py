@@ -3,6 +3,8 @@ from typing import Any, Callable, List, MutableMapping, Union
 import torch
 import torch.nn.functional as F
 
+from fms.utils.tensors import ExpandableTensor
+
 
 def _make_cache_contiguous(past_key_value_states):
     # kv updates are required for torch.compile with
@@ -17,6 +19,22 @@ def _make_cache_contiguous(past_key_value_states):
                 .detach()
             )
             # torch._dynamo.mark_dynamic(n_kv_s[layer_idx][tensor_idx], 2)
+    return n_kv_s
+
+
+# This fixes an issue in torch.compile that won't get fixed in the near future
+def _rebuild_expandable(past_key_value_states, dim_length):
+    n_kv_s: List[List[torch.Tensor]] = []
+    for layer_idx in range(len(past_key_value_states)):
+        n_kv_s.append([])
+        for tensor_idx in range(len(past_key_value_states[layer_idx])):
+            n_kv_s[layer_idx].append(
+                ExpandableTensor(
+                    past_key_value_states[layer_idx][tensor_idx],
+                    dim=1,
+                    dim_length=dim_length
+                )
+            )
     return n_kv_s
 
 
@@ -66,25 +84,29 @@ def generate(
 
     result = input_ids
     next_input = input_ids
+    seq_len = input_ids.size(1)
     kwargs: MutableMapping[str, Any] = dict()
     kwargs["past_key_value_states"] = None
     kwargs["use_cache"] = use_cache
 
     for _ in range(max_new_tokens):
         input_ids = next_input[:, -max_seq_len:]
+        print("Running forward")
         output = model(input_ids, **kwargs)
         if use_cache:
             logits, past_key_value_states = output
             # TODO: this should go away when reduce-overhead issues are fixed, or
             # maybe could be moved into model code to be more portable.
-            if contiguous_cache:
-                kwargs["past_key_value_states"] = _make_cache_contiguous(
-                    past_key_value_states
-                )
-            else:
-                kwargs["past_key_value_states"] = past_key_value_states
+            kwargs["past_key_value_states"] = _rebuild_expandable(past_key_value_states, dim_length=seq_len)
+            # if contiguous_cache:
+            #     kwargs["past_key_value_states"] = _make_cache_contiguous(
+            #         past_key_value_states
+            #     )
+            # else:
+            #     kwargs["past_key_value_states"] = past_key_value_states
         else:
             logits = output
+        seq_len += 1
         logits = logits[:, -1, :]
 
         if do_sample:
@@ -105,6 +127,7 @@ def generate(
             next_input = next_val
         else:
             next_input = result
+        print("Not being compiled:", kwargs["past_key_value_states"][0][0])
 
     if not batched:
         result = result[0]
