@@ -414,7 +414,7 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
             new_sd[new_name] = temp.reshape(
                 num_experts, temp.size(0) // num_experts, temp.size(1)
             ).contiguous()
-    
+
     for key in list(new_sd.keys()):
         if key not in new_sd:
             continue
@@ -428,7 +428,7 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
             del new_sd[w3_weight]
         if "w2" in key:
             new_sd[key] = new_sd[key].transpose(1, 2).contiguous()
-        
+
     return new_sd
 
 

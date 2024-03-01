@@ -409,16 +409,32 @@ def _copy_moe(param: torch.nn.Parameter, tensor_value, rank, world_size, fused=F
     # Divide the weight matrix along the TP'd dimension.
     if fused:
         output_size_per_partition = param.shape[1]
-        tensor = torch.cat([
-            tensor_value[
-                :,
-                ((rank + w*world_size) * output_size_per_partition // world_size) : ((rank + 1 + w*world_size) * output_size_per_partition // world_size)
-        ] for w in range(2)], dim=1)
+        tensor = torch.cat(
+            [
+                tensor_value[
+                    :,
+                    (
+                        (rank + w * world_size)
+                        * output_size_per_partition
+                        // world_size
+                    ) : (
+                        (rank + 1 + w * world_size)
+                        * output_size_per_partition
+                        // world_size
+                    ),
+                ]
+                for w in range(2)
+            ],
+            dim=1,
+        )
     else:
         output_size_per_partition = param.shape[2]
         tensor = tensor_value[
-            :, :,
-            (rank * output_size_per_partition) : ((rank + 1) * output_size_per_partition),
+            :,
+            :,
+            (rank * output_size_per_partition) : (
+                (rank + 1) * output_size_per_partition
+            ),
         ]
     param.copy_(tensor, non_blocking=True)
 
@@ -505,6 +521,8 @@ def _load_partial_state_dict(
                         world_size,
                     )
                 if key_steps[-1] in tp_module.moe_param_names():
-                    _copy_moe(param, tensor_value, rank, world_size, "w13" == key_steps[-1])
+                    _copy_moe(
+                        param, tensor_value, rank, world_size, "w13" == key_steps[-1]
+                    )
         except AttributeError:
             unused_params.append(key)

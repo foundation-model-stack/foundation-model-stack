@@ -2,6 +2,7 @@ import argparse
 import itertools
 import logging
 import os
+from re import M
 
 import torch
 import torch._inductor.config
@@ -91,7 +92,7 @@ else:
 
 # torch.set_default_device(device)
 torch.set_default_dtype(torch.half)
-torch.cuda.set_device(device)
+# torch.cuda.set_device(device)
 
 # requires setting environment variable: `CUBLAS_WORKSPACE_CONFIG=:4096:8`
 if args.deterministic:
@@ -99,7 +100,6 @@ if args.deterministic:
 
 if args.distributed:
     dist.init_process_group()
-    torch._C._distributed_c10d._register_process_group("default", dist.group.WORLD)
 
 print("loading model")
 if args.distributed:
@@ -113,7 +113,7 @@ else:
 model = get_model(
     args.architecture,
     args.variant,
-    model_path=args.model_path,
+    # model_path=args.model_path,
     device_type=args.device_type,
     source=args.model_source,
     distributed_strategy=distr_param,
@@ -124,12 +124,17 @@ model.eval()
 torch.set_grad_enabled(False)
 print("loading complete on rank", local_rank)
 
+prefill_model = model
+decode_model = model
+
 if args.compile:
     print("compiling model")
     # Bug with kv-cache in PT2.1
     # torch._inductor.config.joint_graph_constant_folding = False
     # compiling can make first inference pass slow
-    model = torch.compile(model, mode=args.compile_mode)
+    # torch._inductor.config.allow_buffer_reuse = False
+    prefill_model = torch.compile(model, fullgraph=True)
+    decode_model = torch.compile(model, mode=args.compile_mode, fullgraph=True)
 
 def ids_for_prompt(prompt):
     tokens = tokenizer.tokenize(prompt)
@@ -208,7 +213,8 @@ def infer(use_cache, do_sample):
         max_seq_len = model.config.max_expected_seq_len
 
     result = generate(
-        model,
+        prefill_model,
+        decode_model,
         ids,
         max_new_tokens=100,
         use_cache=use_cache,

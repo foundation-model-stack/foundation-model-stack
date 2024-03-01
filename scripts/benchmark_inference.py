@@ -8,8 +8,8 @@ import torch
 import torch.distributed
 from torch import distributed as dist
 from torch._dynamo import OptimizedModule
-from fms import models
 
+from fms import models
 from fms.utils import generation, print0, tokenizers
 
 

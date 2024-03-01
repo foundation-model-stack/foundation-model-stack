@@ -1,17 +1,20 @@
 import argparse
-from contextlib import nullcontext
 import os
+from contextlib import nullcontext
 from pathlib import Path
+
 import torch
 from torch import distributed as dist
 from torch import nn
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
-from fms import models
-from fms import datasets
+
+from fms import datasets, models
 from fms.models.hf.utils import to_hf_api
+from fms.training import plugins as trainplugins
+from fms.training import trainer
 from fms.utils import print0, tokenizers
-from fms.training import trainer, plugins as trainplugins
+
 
 #
 # This is a fairly minimal training/tuning script for causal language models.
@@ -190,7 +193,7 @@ def peft_model(model):
     from fms.models.hf.llama.modeling_llama_hf import HFAdaptedLLaMAForCausalLM
 
     model = to_hf_api(model)
-    from peft import get_peft_config, get_peft_model, LoraConfig
+    from peft import LoraConfig, get_peft_config, get_peft_model
     from peft.mapping import PeftModelForCausalLM
 
     lora_config = LoraConfig(

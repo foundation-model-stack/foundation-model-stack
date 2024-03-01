@@ -1,8 +1,10 @@
 # mypy: disable-error-code="method-assign,misc"
 
 import torch
-from torch import nn
+import torch._inductor.ir as ir
+import torch.distributed as dist
 import torch.distributed._functional_collectives as funcol
+from torch import nn
 
 
 def apply_colwise_tp(par_mod: nn.Linear, mod: nn.Linear, world_size, rank):
@@ -48,33 +50,36 @@ def apply_moe_tp(par_mod: nn.Module, mod: nn.Module, param_names, world_size, ra
             par_param = getattr(par_mod, param)
             print(param, par_param.shape[1] // world_size)
             par_param.copy_(
-                torch.split(getattr(mod, param), par_param.shape[1] // world_size, dim=1)[
-                    rank
-                ]
+                torch.split(
+                    getattr(mod, param), par_param.shape[1] // world_size, dim=1
+                )[rank]
             )
 
 
-# Fix #1: Use the new native functional collectives
-def _all_gather_into_tensor(
-    input: torch.Tensor,
-    gather_dim: int,
-    world_size: int
-) -> torch.Tensor:
-    res = torch.ops._c10d_functional.all_gather_into_tensor(input.contiguous(), world_size, "default")
-    res = torch.ops._c10d_functional.wait_tensor(res)
-    # TODO this should be done inside AsyncCollectiveTensor to delay the wait() call
-    if gather_dim != 0:
-        res = torch.cat(torch.chunk(res, world_size, dim=0), dim=gather_dim)
-    return res
+def get_volatile_reads_fixed(self):
+    inp = self.inputs[0]
+    if isinstance(inp, ir._CollectiveKernel):
+        # Out-of-place single-output
+        return [inp.inputs[0]]
+    elif isinstance(inp, ir.MultiOutput):
+        # Out-of-place multi-output
+        coll = inp.inputs[0]
+        if isinstance(coll, ir._CollectiveKernel):
+            _, idx = inp.indices[0]
+            return [coll.inputs[idx]]
+        return []  # e.g. regular FallbackKernel
+    else:
+        # In-place requires no additional deps handling for volatile
+        # reads since the inputs are mutated.
+        return []
 
-def _all_reduce_single(input: torch.Tensor, op: str):
-    res = torch.ops._c10d_functional.all_reduce(input.contiguous(), op, "default")
-    return torch.ops._c10d_functional.wait_tensor(res)
+
+ir._WaitKernel.get_volatile_reads = get_volatile_reads_fixed
 
 
 def _all_gather(input_: torch.Tensor) -> torch.Tensor:
     """Gather the input tensor across model parallel group."""
-    world_size = torch.distributed.get_world_size()
+    world_size = dist.get_world_size()
 
     if world_size == 1:
         return input_
@@ -83,23 +88,22 @@ def _all_gather(input_: torch.Tensor) -> torch.Tensor:
     # specializing the dimension where the all_gather is happening
     last_dim = input_.dim() - 1
     return (
-        _all_gather_into_tensor(
-            input_.transpose(0, last_dim).contiguous(),
-            0,
-            world_size,
+        funcol.all_gather_tensor(
+            input_.transpose(0, last_dim).contiguous(), 0, list(range(world_size))
         )
         .transpose(0, last_dim)
         .contiguous()
     )
 
+
 def _all_reduce(input_: torch.Tensor) -> torch.Tensor:
     """All-reduce the input tensor across model parallel group."""
-    world_size = torch.distributed.get_world_size()
+    world_size = dist.get_world_size()
 
     if world_size == 1:
         return input_
 
-    return _all_reduce_single(input_, "sum")
+    return funcol.all_reduce(input_, "sum", list(range(world_size)))
 
 
 def _split(input_: torch.Tensor, rank, world_size) -> torch.Tensor:
