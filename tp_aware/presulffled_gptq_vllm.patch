@@ -1,0 +1,74 @@
+diff --git a/vllm/model_executor/layers/quantization/gptq.py b/vllm/model_executor/layers/quantization/gptq.py
+index 8fe96e7..9ac0864 100644
+--- a/vllm/model_executor/layers/quantization/gptq.py
++++ b/vllm/model_executor/layers/quantization/gptq.py
+@@ -84,8 +84,9 @@ class GPTQLinearMethod(LinearMethodBase):
+         quant_config: The GPTQ quantization config.
+     """
+ 
+-    def __init__(self, quant_config: GPTQConfig):
++    def __init__(self, quant_config: GPTQConfig, preshuffled=False):
+         self.quant_config = quant_config
++        self.preshuffled = preshuffled
+ 
+     def create_weights(
+         self,
+@@ -114,9 +115,9 @@ class GPTQLinearMethod(LinearMethodBase):
+         exllama_state = ExllamaState.UNINITIALIZED
+         scale_and_zero_size = input_size // group_size
+         scale_and_zero_input_dim = None
+-        if input_size != input_size_per_partition and self.quant_config.group_size != -1:
++        if input_size != input_size_per_partition and self.quant_config.group_size != -1: # row parallel
+             # For act-order models, we cannot use Exllama for row parallel layer
+-            if self.quant_config.desc_act:
++            if self.quant_config.desc_act and not self.preshuffled:
+                 exllama_state = ExllamaState.UNUSED
+             else:
+                 # we need to partition qzeros and scales for exllama kernel
+diff --git a/vllm/model_executor/models/llama.py b/vllm/model_executor/models/llama.py
+index 3791aa8..91a9d42 100644
+--- a/vllm/model_executor/models/llama.py
++++ b/vllm/model_executor/models/llama.py
+@@ -35,6 +35,7 @@ from vllm.model_executor.layers.linear import (LinearMethodBase,
+                                                MergedColumnParallelLinear,
+                                                QKVParallelLinear,
+                                                RowParallelLinear)
++from vllm.model_executor.layers.quantization.gptq import GPTQLinearMethod
+ from vllm.model_executor.layers.rotary_embedding import get_rope
+ from vllm.model_executor.layers.sampler import Sampler
+ from vllm.model_executor.layers.vocab_parallel_embedding import (
+@@ -59,14 +60,16 @@ class LlamaMLP(nn.Module):
+         linear_method: Optional[LinearMethodBase] = None,
+     ) -> None:
+         super().__init__()
++        preshuffled_linear_method = GPTQLinearMethod(linear_method.quant_config, preshuffled=True)
+         self.gate_up_proj = MergedColumnParallelLinear(
+             hidden_size, [intermediate_size] * 2,
+             bias=False,
+             linear_method=linear_method)
++        
+         self.down_proj = RowParallelLinear(intermediate_size,
+                                            hidden_size,
+                                            bias=False,
+-                                           linear_method=linear_method)
++                                           linear_method=preshuffled_linear_method)
+         if hidden_act != "silu":
+             raise ValueError(f"Unsupported activation: {hidden_act}. "
+                              "Only silu is supported for now.")
+@@ -329,6 +332,8 @@ class LlamaForCausalLM(nn.Module):
+                 param = params_dict[name]
+                 weight_loader = param.weight_loader
+                 weight_loader(param, loaded_weight, shard_id)
++                # print(name)
++                # print(param.data.shape)
+                 break
+             else:
+                 # Skip loading extra bias for GPTQ models.
+@@ -338,3 +343,7 @@ class LlamaForCausalLM(nn.Module):
+                 weight_loader = getattr(param, "weight_loader",
+                                         default_weight_loader)
+                 weight_loader(param, loaded_weight)
++                # print(name)
++                # print(param.data.shape)
++                # if 'g_idx' in name:
++                #     print(param.data)
