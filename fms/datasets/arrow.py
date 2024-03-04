@@ -3,11 +3,12 @@ import warnings
 from collections import UserDict
 
 import pyarrow as pa
+import torch
 import urllib3
 from pyarrow.fs import FileSystem, FileType, LocalFileSystem, S3FileSystem
 from torch.utils.data import Dataset, IterableDataset
 
-from fms.datasets import SavableDataset
+from fms.datasets.util import SavableDataset
 
 
 class _ArrowFileData(UserDict):
@@ -56,6 +57,7 @@ class ArrowFilesDataset(IterableDataset, SavableDataset):
         world_size: int = 1,
         column_name: str = "tokens",
         max_seq_len: int = 4096,
+        device="cpu",
     ):
         self.uri = uri
         self._rank = rank
@@ -64,6 +66,7 @@ class ArrowFilesDataset(IterableDataset, SavableDataset):
         self.column_name = column_name
         self.max_seq_len = max_seq_len
         self.record_batch_offset = 0
+        self.device = device
         self._initialize()
 
     def load_state_dict(self, state_dict):
@@ -124,7 +127,8 @@ class ArrowFilesDataset(IterableDataset, SavableDataset):
                     self.record_batch_offset = (
                         self.record_batch_offset + self.max_seq_len
                     )
-                    yield current
+                    t = torch.tensor(current, device=self.device)
+                    yield t[:-1], t[1:]
                 self.start_idx += self._step
                 self.record_batch_offset = 0
 

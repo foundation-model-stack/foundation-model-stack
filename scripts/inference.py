@@ -89,7 +89,7 @@ else:
     device = torch.device(args.device_type)
 
 torch.set_default_device(device)
-torch.set_default_dtype(torch.half)
+torch.set_default_dtype(torch.bfloat16)
 
 # requires setting environment variable: `CUBLAS_WORKSPACE_CONFIG=:4096:8`
 if args.deterministic:
