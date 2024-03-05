@@ -4,6 +4,7 @@ import time
 from typing import Any, Callable, List, MutableMapping, Union
 
 import torch
+import torch.distributed
 import torch.nn.functional as F
 
 from fms import distributed
@@ -147,9 +148,10 @@ def generate(
             else:
                 next_input = result
             kwargs["position_ids"] = kwargs["position_ids"][:, -1:] + 1
-            if i == 0:
+            # if i == 0:
                 # torch._dynamo.mark_static_address(kwargs["position_ids"])
-                torch.cuda.synchronize()
+            torch.cuda.synchronize()
+            torch.distributed.barrier()
             itl_end = time.time()
             token_times.append((itl_end - itl_start) * 1000)
             prof.step()
