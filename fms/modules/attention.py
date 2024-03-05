@@ -142,7 +142,6 @@ class MultiHeadAttention(nn.Module):
         queries = self.query(q).view(
             batch_size, q_len, self.nheads, self.emb_kq_per_head
         )
-        queries = queries.transpose(2, 1)  # / (self.emb_kq_per_head**(1/4))
 
         # if this is self attention, we always recompute
         # cross attention only gets computed when a cache does not exist
@@ -155,18 +154,20 @@ class MultiHeadAttention(nn.Module):
             keys = self.key(k).view(
                 batch_size, kv_len, self.kvheads, self.emb_kq_per_head
             )
-            keys = keys.transpose(2, 1)  # / (self.emb_kq_per_head**(1/4))
 
             values = self.value(v).view(
                 batch_size, kv_len, self.kvheads, self.emb_v_per_head
             )
-            values = values.transpose(2, 1)  # compatible with QK.T
 
             # You want to apply rotary embeddings pre-cache
             if self.position_encoder is not None:
                 queries, keys = self.position_encoder.adjusted_qk(
                     queries, keys, position_ids, past_key_value_state, use_cache
                 )
+
+        queries = queries.transpose(2, 1)  # / (self.emb_kq_per_head**(1/4))
+        keys = keys.transpose(2, 1)  # / (self.emb_kq_per_head**(1/4))
+        values = values.transpose(2, 1)  # compatible with QK.T
 
         # if you want to use caching and past_key_value_state is not None meaning you have values in your cache
         if (

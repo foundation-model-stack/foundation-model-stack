@@ -48,6 +48,9 @@ jobs:
     - name: Check Rebase Preconditions
       run: |
         pip install requests ghstack
+
+        # Check prerequisites and set environment variables
+        # IS_GHSTACK, REPO, PR_NUMBER, PR_REF, PR_URL, PR_FROM_FORK
         .github/workflows/scripts/ghstack-perm-check.py rebase <<'EOF'
         ${{ toJson(github) }}
         EOF
@@ -61,27 +64,45 @@ jobs:
         git config --global user.email "foundation-model-stack@googlegroups.com"
         git config --global user.name "Foundation Model Stack CI Bot"
 
-        cat <<EOF > ~/.ghstackrc
-        [ghstack]
-        github_url = github.com
-        github_oauth = $GITHUB_TOKEN
-        github_username = afrittoli
-        remote_name = origin
+        if [[ "${IS_GHSTACK}" == "True" ]]; then
+          # Configure ghstack
+          cat <<EOF > ~/.ghstackrc
+          [ghstack]
+          github_url = github.com
+          github_oauth = $GITHUB_TOKEN
+          github_username = afrittoli
+          remote_name = origin
         EOF
 
-        # Checkout the */orig committer branch for rebase 
-        # See https://github.com/ezyang/ghstack?tab=readme-ov-file#structure-of-submitted-pull-requests
-        # This is equivalent to "ghstack checkout <pr>", but it doesn't require
-        # extra API calls to GitHub
-        HEAD_REF=$(echo '${{ toJson(github) }}' | jq -r .event.client_payload.pull_request.head.ref)
-        ORIG_REF=$(printf "$HEAD_REF" | sed 's,/head$,/orig,g')
-        git checkout -b rebase-branch "origin/${ORIG_REF}"
+          # Checkout the */orig committer branch for rebase
+          # See https://github.com/ezyang/ghstack?tab=readme-ov-file#structure-of-submitted-pull-requests
+          # This is equivalent to "ghstack checkout <pr>", but it doesn't require
+          # extra API calls to GitHub
+          git checkout -b rebase-branch "origin/${PR_REF}"
+        else
+          gh pr checkout --repo "${REPO}" "${PR_NUMBER}"
+        fi
 
         # Do the actual rebase. Git rebase will exit with 1 in case or merge conflicts
+        # The rebase command is the same for GHStack and GitHub PRs
         git rebase origin/main
 
-        # Submit the rebased stack to updated the PRs
-        ghstack submit
+        if [[ "${IS_GHSTACK}" == "True" ]]; then
+          # Submit the rebased stack to updated the PRs
+          ghstack submit
+        else
+          # Force-push is the only way to have a rebased branch upstream
+          # In case of failure, check if the PR is from a fork. Depending
+          # on how the PR is configured, push might not be possible for the bot
+          # See https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/working-with-forks/allowing-changes-to-a-pull-request-branch-created-from-a-fork
+          if ! git push --force; then
+            if [[ "${PR_FROM_FORK}" == "true" ]]; then
+              echo "The PR has been created from a fork."
+              echo "Please rebase your PR manually and push the updates to the branch on your fork."
+              exit 1
+            fi
+          fi
+        fi
       env:
         GITHUB_TOKEN: ${{ secrets.LAND_TOKEN }}
 
