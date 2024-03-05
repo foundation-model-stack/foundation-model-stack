@@ -1,7 +1,7 @@
 import sys
-from typing import Optional
 import warnings
 from collections import UserDict
+from typing import Optional
 
 import pyarrow as pa
 import torch
@@ -125,9 +125,7 @@ class ArrowFilesDataset(IterableDataset, SavableDataset):
                     current = rb.slice(
                         offset=self.record_batch_offset, length=self.max_seq_len
                     ).to_pylist()
-                    self.record_batch_offset = (
-                        self.record_batch_offset + len(current)
-                    )
+                    self.record_batch_offset = self.record_batch_offset + len(current)
                     t = torch.tensor(current, device=self.device)
                     yield t[:-1], t[1:]
                 self.start_idx += self._step
