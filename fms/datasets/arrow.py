@@ -1,4 +1,5 @@
 import sys
+from typing import Optional
 import warnings
 from collections import UserDict
 
@@ -56,7 +57,7 @@ class ArrowFilesDataset(IterableDataset, SavableDataset):
         rank: int = 0,
         world_size: int = 1,
         column_name: str = "tokens",
-        max_seq_len: int = 4096,
+        max_seq_len: Optional[int] = None,
         device="cpu",
     ):
         self.uri = uri
@@ -125,7 +126,7 @@ class ArrowFilesDataset(IterableDataset, SavableDataset):
                         offset=self.record_batch_offset, length=self.max_seq_len
                     ).to_pylist()
                     self.record_batch_offset = (
-                        self.record_batch_offset + self.max_seq_len
+                        self.record_batch_offset + len(current)
                     )
                     t = torch.tensor(current, device=self.device)
                     yield t[:-1], t[1:]
