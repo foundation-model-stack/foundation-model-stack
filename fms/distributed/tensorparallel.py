@@ -44,6 +44,18 @@ def apply_embedding_tp(par_mod: nn.Embedding, mod: nn.Embedding, world_size, ran
     # print(f"For rank {rank}, we have the following weights: Base weight {mod.weight} bias {mod.bias}; Par weight {par_mod.weight}, bias {par_mod.bias}")
 
 
+def apply_moe_tp(par_mod: nn.Module, mod: nn.Module, param_names, world_size, rank):
+    with torch.no_grad():
+        for param in param_names:
+            par_param = getattr(par_mod, param)
+            print(param, par_param.shape[1] // world_size)
+            par_param.copy_(
+                torch.split(
+                    getattr(mod, param), par_param.shape[1] // world_size, dim=1
+                )[rank]
+            )
+
+
 def get_volatile_reads_fixed(self):
     inp = self.inputs[0]
     if isinstance(inp, ir._CollectiveKernel):
