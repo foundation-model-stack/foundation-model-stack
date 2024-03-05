@@ -320,4 +320,4 @@ def get_model(
     return fms_model
 
 
-from fms.models import llama, roberta
+from fms.models import llama, mixtral, roberta
