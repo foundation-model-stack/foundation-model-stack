@@ -15,7 +15,9 @@ from fms.modules.positions import Alibi
 # this probably belongs somewhere else but can't go in fms.distribtued b/c
 # circular dependency.
 def _tp_wrapped(module: nn.Module, group: ProcessGroup):
-    if isinstance(module, FeedForwardBlock):
+    if hasattr(module, "to_tp"):
+        return module.to_tp(group)
+    elif isinstance(module, FeedForwardBlock):
         return TPFeedForwardBlock.import_module(module, group)
     elif isinstance(module, GatedLinearUnit):
         return TPGatedLinearUnit.import_module(module, group)
