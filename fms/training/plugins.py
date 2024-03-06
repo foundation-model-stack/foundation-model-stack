@@ -119,7 +119,11 @@ class MetricReporter(TrainerPlugin):
     # TODO: add `writer` functions that handles logging metrics to experiment
     # tracking tools such as aimstack/wandb/neptune (or add alternate plugin?)
     def __init__(
-        self, seconds=10, group: dist.ProcessGroup = None, device="cpu", writer=print0
+        self,
+        seconds=10,
+        group: Optional[dist.ProcessGroup] = None,
+        device="cpu",
+        writer=print0,
     ):
         super().__init__(1)
         self.seconds = seconds
