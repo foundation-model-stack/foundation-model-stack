@@ -24,6 +24,8 @@ def _tp_wrapped(module: nn.Module, group: ProcessGroup):
         return TPFeedForwardBlock.import_module(module, group)
     elif isinstance(module, GatedLinearUnit):
         return TPGatedLinearUnit.import_module(module, group)
+    elif isinstance(module, ConditionalFeedForward):
+        return TPConditionalFeedForward.import_module(module, group)
     elif isinstance(module, MultiHeadAttention):
         return TPMultiHeadAttention.import_module(module, group)
     elif isinstance(module, Alibi):

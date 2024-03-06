@@ -405,6 +405,40 @@ def _copy_embedding(param: torch.nn.Parameter, tensor_value, rank, world_size):
     param.copy_(tensor, non_blocking=True)
 
 
+def _copy_moe(param: torch.nn.Parameter, tensor_value, rank, world_size, fused=False):
+    # Divide the weight matrix along the TP'd dimension.
+    if fused:
+        output_size_per_partition = param.shape[1]
+        tensor = torch.cat(
+            [
+                tensor_value[
+                    :,
+                    (
+                        (rank + w * world_size)
+                        * output_size_per_partition
+                        // world_size
+                    ) : (
+                        (rank + 1 + w * world_size)
+                        * output_size_per_partition
+                        // world_size
+                    ),
+                ]
+                for w in range(2)
+            ],
+            dim=1,
+        )
+    else:
+        output_size_per_partition = param.shape[2]
+        tensor = tensor_value[
+            :,
+            :,
+            (rank * output_size_per_partition) : (
+                (rank + 1) * output_size_per_partition
+            ),
+        ]
+    param.copy_(tensor, non_blocking=True)
+
+
 def _copy_if_present(parameter, tensor_value):
     parameter.copy_(tensor_value, non_blocking=True)
 
@@ -454,7 +488,10 @@ def _load_partial_state_dict(
                 _copy_if_present(param, tensor_value)
             elif tp_module is not None:
                 # Handle TP sharding
-                if key_steps[-2] in tp_module.colwise_param_names():
+                if (
+                    key_steps[-2] in tp_module.colwise_param_names()
+                    or "self" in tp_module.colwise_param_names()
+                ):
                     _copy_colwise(
                         param,
                         tensor_value,
@@ -462,7 +499,10 @@ def _load_partial_state_dict(
                         rank,
                         world_size,
                     )
-                if key_steps[-2] in tp_module.rowwise_param_names():
+                if (
+                    key_steps[-2] in tp_module.rowwise_param_names()
+                    or "self" in tp_module.rowwise_param_names()
+                ):
                     _copy_rowwise(
                         param,
                         tensor_value,
@@ -470,12 +510,19 @@ def _load_partial_state_dict(
                         rank,
                         world_size,
                     )
-                if key_steps[-2] in tp_module.embedding_param_names():
+                if (
+                    key_steps[-2] in tp_module.embedding_param_names()
+                    or "self" in tp_module.embedding_param_names()
+                ):
                     _copy_embedding(
                         param,
                         tensor_value,
                         rank,
                         world_size,
+                    )
+                if key_steps[-1] in tp_module.moe_param_names():
+                    _copy_moe(
+                        param, tensor_value, rank, world_size, "w13" == key_steps[-1]
                     )
         except AttributeError:
             unused_params.append(key)
