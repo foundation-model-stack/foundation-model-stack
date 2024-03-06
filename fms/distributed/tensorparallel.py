@@ -45,8 +45,19 @@ def apply_embedding_tp(par_mod: nn.Embedding, mod: nn.Embedding, world_size, ran
     # print(f"For rank {rank}, we have the following weights: Base weight {mod.weight} bias {mod.bias}; Par weight {par_mod.weight}, bias {par_mod.bias}")
 
 
-## Fixes for PT 2.2 collectives until PT 2.3 is released
+def apply_moe_tp(par_mod: nn.Module, mod: nn.Module, param_names, world_size, rank):
+    with torch.no_grad():
+        for param in param_names:
+            par_param = getattr(par_mod, param)
+            print(param, par_param.shape[1] // world_size)
+            par_param.copy_(
+                torch.split(
+                    getattr(mod, param), par_param.shape[1] // world_size, dim=1
+                )[rank]
+            )
 
+
+## Fixes for PT 2.2 collectives until PT 2.3 is released
 
 # Fix 1: https://github.com/pytorch/pytorch/issues/121311
 def get_volatile_reads_fixed(self):
