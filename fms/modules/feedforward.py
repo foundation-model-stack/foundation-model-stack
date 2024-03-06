@@ -1,6 +1,5 @@
 import pathlib
 from typing import Any, Dict, List, Optional, Tuple
-from sympy import xfield
 
 import torch
 import torch.distributed
@@ -8,6 +7,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import triton
 import triton.language as tl
+from sympy import xfield
 from torch.distributed.distributed_c10d import ProcessGroup
 
 from fms import distributed
@@ -671,7 +671,7 @@ def moe_mm(
                 "GROUP_SIZE_M": 8,
                 "SPLIT_K": 2,
                 "num_warps": 8,
-                #"num_stages": 4,
+                # "num_stages": 4,
             },
             {
                 "BLOCK_SIZE_M": 32,
@@ -680,7 +680,7 @@ def moe_mm(
                 "GROUP_SIZE_M": 8,
                 "SPLIT_K": 2,
                 "num_warps": 8,
-                #"num_stages": 4,
+                # "num_stages": 4,
             },
             {
                 "BLOCK_SIZE_M": 16,
@@ -689,7 +689,7 @@ def moe_mm(
                 "GROUP_SIZE_M": 8,
                 "SPLIT_K": 2,
                 "num_warps": 8,
-                #"num_stages": 4,
+                # "num_stages": 4,
             },
             {
                 "BLOCK_SIZE_M": 16,
@@ -698,7 +698,7 @@ def moe_mm(
                 "GROUP_SIZE_M": 8,
                 "SPLIT_K": 4,
                 "num_warps": 8,
-                #"num_stages": 4,
+                # "num_stages": 4,
             },
         ]
         configs = [
@@ -817,12 +817,16 @@ def fused_moe_kernel_vllm(
 
     offs_bn = (pid_n * BLOCK_SIZE_N + tl.arange(0, BLOCK_SIZE_N)) % N
     offs_k = tl.arange(0, BLOCK_SIZE_K)
-    a_ptrs = a_ptr + (offs_token[:, None] // top_k * stride_am +
-                      offs_k[None, :] * stride_ak)
+    a_ptrs = a_ptr + (
+        offs_token[:, None] // top_k * stride_am + offs_k[None, :] * stride_ak
+    )
 
     off_experts = tl.load(expert_ids_ptr + pid_m)
-    b_ptrs = b_ptr + off_experts * stride_be + (offs_k[:, None] * stride_bk +
-                                                offs_bn[None, :] * stride_bn)
+    b_ptrs = (
+        b_ptr
+        + off_experts * stride_be
+        + (offs_k[:, None] * stride_bk + offs_bn[None, :] * stride_bn)
+    )
 
     # -----------------------------------------------------------
     # Iterate to compute a block of the C matrix.
@@ -833,13 +837,12 @@ def fused_moe_kernel_vllm(
 
     for k in range(0, tl.cdiv(K, BLOCK_SIZE_K)):
         # Load the next block of A and B, generate a mask by checking the K dimension.
-        a = tl.load(a_ptrs,
-                    mask=token_mask[:, None] &
-                    (offs_k[None, :] < K - k * BLOCK_SIZE_K),
-                    other=0.0)
-        b = tl.load(b_ptrs,
-                    mask=offs_k[:, None] < K - k * BLOCK_SIZE_K,
-                    other=0.0)
+        a = tl.load(
+            a_ptrs,
+            mask=token_mask[:, None] & (offs_k[None, :] < K - k * BLOCK_SIZE_K),
+            other=0.0,
+        )
+        b = tl.load(b_ptrs, mask=offs_k[:, None] < K - k * BLOCK_SIZE_K, other=0.0)
         # We accumulate along the K dimension.
         accumulator += tl.dot(a, b)
         # Advance the ptrs to the next K block.
@@ -847,33 +850,38 @@ def fused_moe_kernel_vllm(
         b_ptrs += BLOCK_SIZE_K * stride_bk
 
     if MUL_ROUTED_WEIGHT:
-        moe_weight = tl.load(topk_weights_ptr + offs_token,
-                             mask=token_mask,
-                             other=0)
+        moe_weight = tl.load(topk_weights_ptr + offs_token, mask=token_mask, other=0)
         accumulator = accumulator * moe_weight[:, None]
 
     accumulator = accumulator.to(compute_type)
     # -----------------------------------------------------------
     # Write back the block of the output
     offs_cn = pid_n * BLOCK_SIZE_N + tl.arange(0, BLOCK_SIZE_N)
-    c_ptrs = c_ptr + stride_cm * offs_token[:, None] + stride_cn * offs_cn[
-        None, :]
+    c_ptrs = c_ptr + stride_cm * offs_token[:, None] + stride_cn * offs_cn[None, :]
     c_mask = token_mask[:, None] & (offs_cn[None, :] < N)
     tl.store(c_ptrs, accumulator, mask=c_mask)
 
 
-def invoke_fused_moe_kernel_vllm(A: torch.Tensor, B: torch.Tensor, C: torch.Tensor,
-                            topk_weights: torch.Tensor, topk_ids: torch.Tensor,
-                            sorted_token_ids: torch.Tensor,
-                            expert_ids: torch.Tensor,
-                            num_tokens_post_padded: torch.Tensor,
-                            mul_routed_weight: bool, top_k: int,
-                            config: Dict[str, Any]) -> None:
+def invoke_fused_moe_kernel_vllm(
+    A: torch.Tensor,
+    B: torch.Tensor,
+    C: torch.Tensor,
+    topk_weights: torch.Tensor,
+    topk_ids: torch.Tensor,
+    sorted_token_ids: torch.Tensor,
+    expert_ids: torch.Tensor,
+    num_tokens_post_padded: torch.Tensor,
+    mul_routed_weight: bool,
+    top_k: int,
+    config: Dict[str, Any],
+) -> None:
     assert topk_weights.stride(1) == 1
     assert sorted_token_ids.stride(0) == 1
 
-    grid = lambda META: (triton.cdiv(sorted_token_ids.shape[0], META[
-        'BLOCK_SIZE_M']) * triton.cdiv(B.shape[1], META['BLOCK_SIZE_N']), )
+    grid = lambda META: (
+        triton.cdiv(sorted_token_ids.shape[0], META["BLOCK_SIZE_M"])
+        * triton.cdiv(B.shape[1], META["BLOCK_SIZE_N"]),
+    )
 
     fused_moe_kernel_vllm[grid](
         A,
@@ -937,26 +945,36 @@ def moe_mm_vllm(
     output = torch.zeros((M, A, N), device=input.device, dtype=input.dtype)
 
     config = {
-        'BLOCK_SIZE_M': 64,
-        'BLOCK_SIZE_N': 64,
-        'BLOCK_SIZE_K': 32,
-        'GROUP_SIZE_M': 8
+        "BLOCK_SIZE_M": 64,
+        "BLOCK_SIZE_N": 64,
+        "BLOCK_SIZE_K": 32,
+        "GROUP_SIZE_M": 8,
     }
 
     if M <= E:
         config = {
-            'BLOCK_SIZE_M': 16,
-            'BLOCK_SIZE_N': 32,
-            'BLOCK_SIZE_K': 64,
-            'GROUP_SIZE_M': 1
+            "BLOCK_SIZE_M": 16,
+            "BLOCK_SIZE_N": 32,
+            "BLOCK_SIZE_K": 64,
+            "GROUP_SIZE_M": 1,
         }
 
-    invoke_fused_moe_kernel_vllm(input, moe_matrix, output,
-        torch.empty_like(token_expert_mapping), token_expert_mapping, padded_token_ids_per_block,
-        expert_block_mapping, total_padded_tokens, False,
-        topk, config)
+    invoke_fused_moe_kernel_vllm(
+        input,
+        moe_matrix,
+        output,
+        torch.empty_like(token_expert_mapping),
+        token_expert_mapping,
+        padded_token_ids_per_block,
+        expert_block_mapping,
+        total_padded_tokens,
+        False,
+        topk,
+        config,
+    )
 
     return output
+
 
 lib.define(
     "align_vllm(Tensor topk_ids, int block_size, int num_experts) -> (Tensor, Tensor, Tensor)"
@@ -971,22 +989,21 @@ def align_vllm_meta(
     num_experts,
 ):
     sorted_ids = torch.empty(
-        (topk_ids.numel() + num_experts * (block_size - 1), ),
+        (topk_ids.numel() + num_experts * (block_size - 1),),
         dtype=torch.int32,
-        device=topk_ids.device)
-    expert_ids = torch.empty((topk_ids.numel() + num_experts, ),
-                             dtype=torch.int32,
-                             device=topk_ids.device)
-    num_tokens_post_pad = torch.empty((1),
-                                      dtype=torch.int32,
-                                      device=topk_ids.device)
+        device=topk_ids.device,
+    )
+    expert_ids = torch.empty(
+        (topk_ids.numel() + num_experts,), dtype=torch.int32, device=topk_ids.device
+    )
+    num_tokens_post_pad = torch.empty((1), dtype=torch.int32, device=topk_ids.device)
     return sorted_ids, expert_ids, num_tokens_post_pad
 
 
 @torch.library.impl(lib, "align_vllm", "CUDA")
 def moe_align_block_size_vllm(
-        topk_ids: torch.Tensor, block_size: int,
-        num_experts: int) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    topk_ids: torch.Tensor, block_size: int, num_experts: int
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """
     Aligns the token distribution across experts to be compatible with block size for matrix multiplication.
 
@@ -1000,7 +1017,7 @@ def moe_align_block_size_vllm(
     - expert_ids: A tensor indicating the assigned expert index for each block.
     - num_tokens_post_padded: The total number of tokens after padding, ensuring divisibility by block_size.
 
-    This function pads the number of tokens that each expert needs to process so that it is divisible by block_size. 
+    This function pads the number of tokens that each expert needs to process so that it is divisible by block_size.
     Padding ensures that during block matrix multiplication, the dimensions align correctly.
 
     Example:
@@ -1009,24 +1026,25 @@ def moe_align_block_size_vllm(
     - As block_size is 4, we pad 1 token for each expert.
     - First, flatten topk_ids to [2, 3, 4, 1, 2, 4, 1, 3, 4, 1, 2, 3].
     - Then append padding tokens [12, 12, 12, 12] for each block.
-    - After sorting by expert index, we obtain token_ids [3, 6, 9, 12, 0, 4, 10, 12, 1, 7, 11, 12, 2, 5, 8, 12]. 
+    - After sorting by expert index, we obtain token_ids [3, 6, 9, 12, 0, 4, 10, 12, 1, 7, 11, 12, 2, 5, 8, 12].
         Tokens 12 are non-existent (padding) and are ignored in the subsequent matrix multiplication.
     - The padding ensures that the total number of tokens is now divisible by block_size for proper block matrix operations.
     """
     from vllm._C import ops
+
     sorted_ids = torch.empty(
-        (topk_ids.numel() + num_experts * (block_size - 1), ),
+        (topk_ids.numel() + num_experts * (block_size - 1),),
         dtype=torch.int32,
-        device=topk_ids.device)
-    expert_ids = torch.empty((topk_ids.numel() + num_experts, ),
-                             dtype=torch.int32,
-                             device=topk_ids.device)
+        device=topk_ids.device,
+    )
+    expert_ids = torch.empty(
+        (topk_ids.numel() + num_experts,), dtype=torch.int32, device=topk_ids.device
+    )
     sorted_ids.fill_(topk_ids.numel())
-    num_tokens_post_pad = torch.empty((1),
-                                      dtype=torch.int32,
-                                      device=topk_ids.device)
-    ops.moe_align_block_size(topk_ids, num_experts, block_size, sorted_ids,
-                             expert_ids, num_tokens_post_pad)
+    num_tokens_post_pad = torch.empty((1), dtype=torch.int32, device=topk_ids.device)
+    ops.moe_align_block_size(
+        topk_ids, num_experts, block_size, sorted_ids, expert_ids, num_tokens_post_pad
+    )
     return sorted_ids, expert_ids, num_tokens_post_pad
 
 
@@ -1112,40 +1130,52 @@ class ConditionalFeedForward(nn.Module):
 
             M, _ = x.shape
             E, N, _ = self.w13.shape
-        
+
             config = {
-                'BLOCK_SIZE_M': 64,
-                'BLOCK_SIZE_N': 64,
-                'BLOCK_SIZE_K': 32,
-                'GROUP_SIZE_M': 8
+                "BLOCK_SIZE_M": 64,
+                "BLOCK_SIZE_N": 64,
+                "BLOCK_SIZE_K": 32,
+                "GROUP_SIZE_M": 8,
             }
 
             if M <= E:
                 config = {
-                    'BLOCK_SIZE_M': 16,
-                    'BLOCK_SIZE_N': 32,
-                    'BLOCK_SIZE_K': 64,
-                    'GROUP_SIZE_M': 1
+                    "BLOCK_SIZE_M": 16,
+                    "BLOCK_SIZE_N": 32,
+                    "BLOCK_SIZE_K": 64,
+                    "GROUP_SIZE_M": 1,
                 }
 
             (
                 padded_token_ids_per_block,
                 expert_block_mapping,
                 total_padded_tokens,
-            ) = torch.ops.moe.align_vllm(
-                expert_indices, config['BLOCK_SIZE_M'], E)
-            
-            x1, x3 = torch.ops.moe.moe_mm_vllm(x, self.w13, expert_indices,
+            ) = torch.ops.moe.align_vllm(expert_indices, config["BLOCK_SIZE_M"], E)
+
+            x1, x3 = (
+                torch.ops.moe.moe_mm_vllm(
+                    x,
+                    self.w13,
+                    expert_indices,
                     padded_token_ids_per_block,
                     expert_block_mapping,
                     total_padded_tokens,
-                    expert_indices.shape[1]).view(-1, N).chunk(2, dim=1)
+                    expert_indices.shape[1],
+                )
+                .view(-1, N)
+                .chunk(2, dim=1)
+            )
 
-            return torch.ops.moe.moe_mm_vllm(F.silu(x1) * x3, self.w2, expert_indices,
-                    padded_token_ids_per_block,
-                    expert_block_mapping,
-                    total_padded_tokens, 1)
-        
+            return torch.ops.moe.moe_mm_vllm(
+                F.silu(x1) * x3,
+                self.w2,
+                expert_indices,
+                padded_token_ids_per_block,
+                expert_block_mapping,
+                total_padded_tokens,
+                1,
+            )
+
         elif self.moe_impl == "gpt-fast":
             ## Pure Pytorch path
             # T = num_tokens, E = num_experts, D = hidden dim, A = activated experts
