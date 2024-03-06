@@ -1,0 +1,68 @@
+# The assigntome-command workflow assigns an issue to an user
+#
+# This workflow is triggered by leaving a "/assigntome" comment on
+# an issue. This command can be used by maintainers, collaborators
+# and external collaborators alike.
+#
+# The action is permformed by a bot account "fms-cibot".
+#
+# When a assigntome is executed successfully, the horray emoji is added
+# When a assigntome execution fails, a comment is added with a link to the logs
+
+name: Assign issue to the commenter
+on:
+  repository_dispatch:
+    types: [assigntome-command]
+
+jobs:
+  assign_issue:
+    name: Assign Issue
+    runs-on: ubuntu-latest
+    steps:
+    - name: Show Environment Variables
+      run: env
+    - name: Show Github Object
+      run: |
+        cat <<'EOF'
+        ${{ toJson(github) }}
+        EOF
+    - name: Assign Issue
+      run: |
+        git config --global user.email "foundation-model-stack@googlegroups.com"
+        git config --global user.name "Foundation Model Stack CI Bot"
+        gh api \
+          --method POST \
+          -H "Accept: application/vnd.github+json" \
+          -H "X-GitHub-Api-Version: 2022-11-28" \
+          "/repos/${{ github.repository }}/issues/${ISSUE_NUMBER}/assignees" \
+          -f "assignees[]=${ASSIGNEE}"
+      env:
+        GITHUB_TOKEN: ${{ secrets.LAND_TOKEN }}
+        ISSUE_NUMBER: ${{ github.event.client_payload.github.payload.issue.numberabc }}
+        ASSIGNEE: ${{ github.event.client_payload.github.actor }}
+
+    - name: Create URL to the run output
+      if: ${{ failure() }}
+      id: vars
+      run: echo "run-url=https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >> $GITHUB_OUTPUT
+
+    - name: Create comment
+      if: ${{ failure() }}
+      uses: peter-evans/create-or-update-comment@v2
+      with:
+        token: ${{ secrets.LAND_TOKEN }}
+        repository: ${{ github.event.client_payload.github.payload.repository.full_name }}
+        issue-number: ${{ github.event.client_payload.github.payload.issue.number }}
+        body: |
+          Something went wrong with your `/${{ github.event.client_payload.slash_command.command }}` command: [please check the logs][1].
+
+          [1]: ${{ steps.vars.outputs.run-url }}
+
+    - name: Add reaction
+      if: ${{ success() }}
+      uses: peter-evans/create-or-update-comment@v2
+      with:
+        token: ${{ secrets.LAND_TOKEN }}
+        repository: ${{ github.event.client_payload.github.payload.repository.full_name }}
+        comment-id: ${{ github.event.client_payload.github.payload.comment.id }}
+        reaction-type: hooray
