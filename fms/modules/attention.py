@@ -292,12 +292,12 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
             position_encoder,
             gain,
         )
-        self.pretp_kvheads = kvheads
+        self.pre_tp_kvheads = kvheads
         self.setup_tp(rank, world_size)
 
     def colwise_param_names(self) -> List[str]:
         colwise_weights = ["query"]
-        if self.pretp_kvheads != 1:
+        if self.pre_tp_kvheads != 1:
             colwise_weights.append("key")
             colwise_weights.append("value")
         return colwise_weights
