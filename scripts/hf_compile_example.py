@@ -1,13 +1,16 @@
 import argparse
-import transformers
-from fms.models import llama
 import os
 import time
+
 import torch
+import transformers
 from torch import nn
-from fms.models.hf.llama import modeling_llama_hf
 from transformers import pipeline
+
+from fms.models import llama
+from fms.models.hf.llama import modeling_llama_hf
 from fms.models.hf.utils import register_fms_models
+
 
 # This script demonstrates how to use FMS model implementations with HF formatted
 # weights.
