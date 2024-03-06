@@ -2,6 +2,7 @@
 
 import torch
 import torch._inductor.ir as ir
+import torch._inductor.lowering as lowering
 import torch.distributed as dist
 import torch.distributed._functional_collectives as funcol
 from torch import nn
@@ -56,6 +57,9 @@ def apply_moe_tp(par_mod: nn.Module, mod: nn.Module, param_names, world_size, ra
             )
 
 
+## Fixes for PT 2.2 collectives until PT 2.3 is released
+
+# Fix 1: https://github.com/pytorch/pytorch/issues/121311
 def get_volatile_reads_fixed(self):
     inp = self.inputs[0]
     if isinstance(inp, ir._CollectiveKernel):
@@ -76,6 +80,42 @@ def get_volatile_reads_fixed(self):
 
 ir._WaitKernel.get_volatile_reads = get_volatile_reads_fixed
 
+# Fix 2: These are fixed already in nightlies and will be in 2.3
+for overload in torch.ops._c10d_functional.all_reduce.overloads():
+    other_fn = getattr(torch.ops._c10d_functional.all_reduce, overload)
+    if other_fn in lowering.lowerings:
+        del lowering.lowerings[other_fn]
+
+
+@lowering.register_lowering(torch.ops._c10d_functional.all_reduce)
+def _all_reduce_fixed(inp, reduce_op, group_name):
+    inp = torch.clone(inp)
+    ir._CollectiveKernel.create_inplace(
+        torch.ops._c10d_functional.all_reduce_.default,
+        ir.ExternKernel.require_contiguous(inp),
+        reduce_op,
+        group_name,
+    )
+    return inp
+
+
+for overload in torch.ops._c10d_functional.all_gather_into_tensor.overloads():
+    other_fn = getattr(torch.ops._c10d_functional.all_gather_into_tensor, overload)
+    if other_fn in lowering.lowerings:
+        del lowering.lowerings[other_fn]
+
+
+@lowering.register_lowering(torch.ops._c10d_functional.all_gather_into_tensor)
+def _all_gather_into_tensor(inp, group_size, group_name):
+    return ir.TensorBox.create(
+        ir._CollectiveKernel.create_out_of_place(
+            torch.ops._c10d_functional.all_gather_into_tensor.default,
+            ir.ExternKernel.require_contiguous(inp),
+            group_size,
+            group_name,
+        )
+    )
+
 
 def _all_gather(input_: torch.Tensor) -> torch.Tensor:
     """Gather the input tensor across model parallel group."""
@@ -87,9 +127,12 @@ def _all_gather(input_: torch.Tensor) -> torch.Tensor:
     # The transposes here are to avoid excessive recompilation due to split()
     # specializing the dimension where the all_gather is happening
     last_dim = input_.dim() - 1
+    # Starting PT 2.3, we can go back to funcol.all_gather_tensor
     return (
-        funcol.all_gather_tensor(
-            input_.transpose(0, last_dim).contiguous(), 0, list(range(world_size))
+        torch.ops._c10d_functional.wait_tensor(
+            torch.ops._c10d_functional.all_gather_into_tensor(
+                input_.transpose(0, last_dim).contiguous(), world_size, "default"
+            )
         )
         .transpose(0, last_dim)
         .contiguous()
@@ -103,7 +146,10 @@ def _all_reduce(input_: torch.Tensor) -> torch.Tensor:
     if world_size == 1:
         return input_
 
-    return funcol.all_reduce(input_, "sum", list(range(world_size)))
+    # Starting PT 2.3, we can go back to funcol.all_reduce
+    return torch.ops._c10d_functional.wait_tensor(
+        torch.ops._c10d_functional.all_reduce(input_, "sum", "default")
+    )
 
 
 def _split(input_: torch.Tensor, rank, world_size) -> torch.Tensor:
