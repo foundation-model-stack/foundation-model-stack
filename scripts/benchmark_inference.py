@@ -131,14 +131,17 @@ args = parser.parse_args()
 
 local_rank = int(os.getenv("LOCAL_RANK", 0))
 world_size = int(os.getenv("WORLD_SIZE", 1))
-device = torch.device(args.device_type, local_rank)
+if args.device_type == "cuda":
+    device = torch.device(args.device_type, local_rank)
+    torch.cuda.set_device(device)
+else:
+    device = torch.device(args.device_type)
 
-# torch.set_default_device(device)
 torch.set_default_dtype(torch.half)
-torch.cuda.set_device(device)
 
 if world_size > 1:
     dist.init_process_group()
+    # Fix until PT 2.3
     torch._C._distributed_c10d._register_process_group("default", dist.group.WORLD)
 
 print("loading model")

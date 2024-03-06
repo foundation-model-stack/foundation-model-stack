@@ -140,13 +140,19 @@ if device_type is None:
     else:
         device_type = "cpu"
 
-device = torch.device(device_type, local_rank)
+if device_type == "cuda":
+    device = torch.device(device_type, local_rank)
+    torch.cuda.set_device(device)
+else:
+    device = torch.device(device_type)
 
 group = None
 
 if args.distributed is not None:
     dist.init_process_group(backend="nccl", rank=local_rank, world_size=world_size)
     group = dist.GroupMember.WORLD
+    # Fix until PT 2.3
+    torch._C._distributed_c10d._register_process_group("default", dist.group.WORLD)
 
 
 def get_loss_fn():
