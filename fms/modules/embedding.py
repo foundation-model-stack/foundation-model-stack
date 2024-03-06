@@ -240,7 +240,9 @@ class TPWordEmbedding(WordEmbedding, TPModule):
 
 class TPEmbedding(nn.Embedding, TPModule):
     """
-    Input embedding layer for sequence models.
+    Input embedding layer for sequence models. Not to be confused with TPWordEmbedding.
+    (TP)WordEmbedding supports fusing together the LM Head and the input Embedding, while
+    this is a class for when you want them separate, like in headless models.
 
     Args
     ----
