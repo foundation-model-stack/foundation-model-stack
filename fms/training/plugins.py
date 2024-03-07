@@ -118,14 +118,21 @@ class MetricReporter(TrainerPlugin):
     # TODO: add optional validation dataloader and validation loss.
     # TODO: add `writer` functions that handles logging metrics to experiment
     # tracking tools such as aimstack/wandb/neptune (or add alternate plugin?)
-    def __init__(self, seconds=10, writer=print0):
+    def __init__(
+        self,
+        seconds=10,
+        group: Optional[dist.ProcessGroup] = None,
+        device="cpu",
+        writer=print0,
+    ):
         super().__init__(1)
         self.seconds = seconds
         self.last_reported_time = datetime.now()
-        self.tokens_seen = 0
+        self.tokens_seen = torch.tensor(0.0, device=device)
         self.last_reported_step = -1
-        self.cum_loss = 0
+        self.cum_loss = torch.tensor(0.0, device=device)
         self.last_step = -1
+        self.group = group
         self.writer = writer
 
     def step(
@@ -156,17 +163,19 @@ class MetricReporter(TrainerPlugin):
             steps = step - self.last_reported_step
             self.last_reported_step = step
 
-        # TODO: aggregate these per-rank statistics when training with
-        # distributed. e.g.: dist.all_reduce(loss, op=dist.ReduceOp.SUM)
-        # for loss, tokens_seen, etc.
+        world = 1 if self.group is None else self.group.size()
+        if world > 1 and self.tokens_seen.device.type == "cuda":
+            dist.all_reduce(self.tokens_seen, op=dist.ReduceOp.SUM)
+            dist.all_reduce(self.cum_loss, op=dist.ReduceOp.SUM)
+
         to_report = {}
         if "loss" in metrics:
             to_report["loss"] = f"{metrics['loss']:.4f}"
-        to_report["avg_loss"] = f"{self.cum_loss / steps:.4f}"
+        to_report["avg_loss"] = f"{self.cum_loss.item() / steps / world:.4f}"
 
         more_metrics = {
-            "tok/stp": f"{self.tokens_seen / steps:,.1f}",
-            "tok/s": f"{self.tokens_seen / elapsed:,.1f}",
+            "tok/stp": f"{self.tokens_seen.item() / steps:,.1f}",
+            "tok/gpu/s": f"{self.tokens_seen.item() / elapsed / world:,.1f}",
         }
         if torch.cuda.is_available() and utils.has_package("pynvml"):
             nvidia_metrics = {
@@ -176,8 +185,10 @@ class MetricReporter(TrainerPlugin):
             more_metrics.update(nvidia_metrics)
 
         self.last_reported_time = current_time
-        self.tokens_seen = 0
-        self.cum_loss = 0
+
+        self.tokens_seen.fill_(0)
+        self.cum_loss.fill_(0)
+
         to_report.update(more_metrics)
         self.writer(epoch, step, current_time, to_report)
 
