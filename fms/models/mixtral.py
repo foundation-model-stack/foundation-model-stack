@@ -242,7 +242,7 @@ class MixtralHeadless(nn.Module):
 
         # if we are using the cache, the key length needs to be extended with the past keys length
         if use_cache and past_key_value_states[0][0].numel() > 0:
-            klen += past_key_value_states[0][0].size(-2)
+            klen += past_key_value_states[0][0].size(1)
 
         # if mask is none, we need to specify causal mask
         if mask is None:
