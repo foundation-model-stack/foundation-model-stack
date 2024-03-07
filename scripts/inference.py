@@ -1,6 +1,8 @@
 import argparse
 import itertools
+import logging
 import os
+from re import M
 
 import torch
 import torch._inductor.config
@@ -112,7 +114,7 @@ else:
 model = get_model(
     args.architecture,
     args.variant,
-    model_path=args.model_path,
+    # model_path=args.model_path,
     device_type=args.device_type,
     source=args.model_source,
     distributed_strategy=distr_param,
@@ -123,13 +125,17 @@ model.eval()
 torch.set_grad_enabled(False)
 print("loading complete on rank", local_rank)
 
+prefill_model = model
+decode_model = model
+
 if args.compile:
     print("compiling model")
     # Bug with kv-cache in PT2.1
-    torch._inductor.config.joint_graph_constant_folding = False
+    # torch._inductor.config.joint_graph_constant_folding = False
     # compiling can make first inference pass slow
-    model = torch.compile(model, mode=args.compile_mode)
-
+    # torch._inductor.config.allow_buffer_reuse = False
+    prefill_model = torch.compile(model, fullgraph=True)
+    decode_model = torch.compile(model, mode=args.compile_mode, fullgraph=True)
 
 def ids_for_prompt(prompt):
     tokens = tokenizer.tokenize(prompt)
@@ -208,7 +214,8 @@ def infer(use_cache, do_sample):
         max_seq_len = model.config.max_expected_seq_len
 
     result = generate(
-        model,
+        prefill_model,
+        decode_model,
         ids,
         max_new_tokens=100,
         use_cache=use_cache,
@@ -225,4 +232,5 @@ use_cache = [
     args.no_use_cache
 ]  # True/False are identical with greedy iff `torch.use_deterministic_algorithms(True)`
 for sample, cache in itertools.product(do_sample, use_cache):
+    infer(cache, sample)
     infer(cache, sample)
