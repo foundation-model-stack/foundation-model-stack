@@ -4,8 +4,10 @@ from torch.distributed.distributed_c10d import ProcessGroup
 from fms.modules.attention import MultiHeadAttention, TPMultiHeadAttention
 from fms.modules.embedding import TPEmbedding, TPWordEmbedding, WordEmbedding
 from fms.modules.feedforward import (
+    ConditionalFeedForward,
     FeedForwardBlock,
     GatedLinearUnit,
+    TPConditionalFeedForward,
     TPFeedForwardBlock,
     TPGatedLinearUnit,
 )
