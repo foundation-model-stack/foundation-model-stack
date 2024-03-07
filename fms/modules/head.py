@@ -1,7 +1,16 @@
-from typing import Optional
+from typing import List, Optional
 
 import torch
+import torch.distributed
 import torch.nn as nn
+from torch.distributed.distributed_c10d import ProcessGroup
+
+from fms import distributed
+from fms.distributed.tensorparallel import (
+    all_gather_from_tensor_model_parallel_region,
+    copy_to_tensor_model_parallel_region,
+)
+from fms.modules.tp import TPModule
 
 
 class ClassificationHead(nn.Module):
@@ -75,3 +84,72 @@ class ClassificationHead(nn.Module):
             x = self.ln(x)
         x = self.head(x)
         return x
+
+
+class LMHead(nn.Linear):
+    # To differentiate for TP
+    def forward(self, x):
+        return super().forward(x)
+
+
+class TPLMHead(LMHead, TPModule):
+    """
+    Output embedding layer for sequence models.
+
+    Args
+    ----
+    Check nn.Linear for up-to-date docs
+
+    world_size: int
+        the number of processes running this model in TP
+    rank: int
+        the index of this process wrt to the rest running the model in TP
+    """
+
+    def __init__(
+        self,
+        vocab_size,
+        emb_dim,
+        bias=False,
+        device=None,
+        dtype=None,
+        group: Optional[ProcessGroup] = None,
+    ):
+        assert torch.distributed.is_initialized()
+        rank, world_size = distributed.rank_and_world(group)
+        assert (
+            vocab_size % world_size == 0
+        ), "The number of tokens must be divisible by world size"
+        LMHead.__init__(
+            self,
+            emb_dim,
+            vocab_size // world_size,
+            bias=bias,
+            device=device,
+            dtype=dtype,
+        )
+        self.setup_tp(rank, world_size)
+
+    @staticmethod
+    def import_module(head: LMHead, group: ProcessGroup) -> "TPLMHead":
+        tp_lmh = TPLMHead(
+            vocab_size=head.out_features,
+            emb_dim=head.in_features,
+            bias=head.bias,
+            device=head.weight.device,
+            dtype=head.weight.dtype,
+            group=group,
+        )
+        return tp_lmh
+
+    def colwise_param_names(self) -> List[str]:
+        return ["self"]
+
+    def forward(self, inp):
+        # vocab_idx: b n d if reverse, else b n
+        inp_par = copy_to_tensor_model_parallel_region(inp)
+        out_par = LMHead.forward(self, inp_par)
+        # with ints this wasn't `torch.compile`ing
+        rank = torch.tensor(self.rank)
+        world_size = torch.tensor(self.world_size)
+        return all_gather_from_tensor_model_parallel_region(out_par, rank, world_size)
