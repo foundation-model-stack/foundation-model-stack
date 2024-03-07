@@ -3,6 +3,7 @@ from typing import Dict, Optional, Union, Tuple, List
 
 import torch
 import torch.nn.functional as f
+import fms.utils.cache.paged
 
 _HANDLED_FUNCTIONS = {}
 
@@ -155,10 +156,10 @@ class ExpandableTensor(torch.Tensor):
 
 class PagedTensor(torch.Tensor):
 
-    def __init__(self, kv_heads: int, head_size: int, num_blocks: int, is_key: bool, block_size: int = 16,
-                 device: Optional[Union[str, torch.device]] = "cuda", dtype: torch.dtype = torch.float32, *args,
+    def __init__(self, kv_heads: int, head_size: int, num_blocks: int, is_key: bool, block_size: int = 16, dtype: torch.dtype = torch.float32, *args,
                  **kwargs):
         super().__init__(*args, **kwargs)
+        device = "cuda"
         # TODO: is_key name change
         # TODO: flexible sizing
 
@@ -231,9 +232,9 @@ class PagedTensor(torch.Tensor):
                 paged_tensor: PagedTensor = tensors[0]
 
                 # TODO: This needs to be right padded
-                paged_tensor.block_mapping = torch.cat((paged_tensor.block_mapping, torch.empty(l_tensors.size(0), 0)), dim=0)
+                paged_tensor.block_mapping = torch.cat((paged_tensor.block_mapping, torch.empty(l_tensors.size(0), 0, device=paged_tensor._device)), dim=0)
 
-                paged_tensor.context_lengths = torch.cat((paged_tensor.context_lengths,torch.zeros(l_tensors.size(0))))
+                paged_tensor.context_lengths = torch.cat((paged_tensor.context_lengths,torch.zeros(l_tensors.size(0), device=paged_tensor._device)))
             else:
                 pass
         # decode step
@@ -300,15 +301,21 @@ class PagedTensor(torch.Tensor):
             block_offset = (roll_inds % paged_tensor.block_size) * (1 - slot_mask)
             block_base = block_slots.gather(1, roll_inds) * (1 - slot_mask)
             slot_map = block_base * paged_tensor.block_size + block_offset + slot_mask.neg()
-            print(f"slot_mapping: {slot_map}")
-            print(slot_map[:, -tensors[1].size(2):])
 
             if paged_tensor.is_key:
                 # call reshape_and_cache_key
-                ...
+                data_layer = torch.ops.paged_attention.reshape_and_cache_key(
+                    tensors[1],
+                    paged_tensor.blob,
+                    slot_map[slot_map != -1],
+                )
             else:
                 # call reshape_and_cache_value
-                ...
+                data_layer = torch.ops.paged_attention.reshape_and_cache_value(
+                    tensors[1],
+                    paged_tensor.blob,
+                    slot_map,
+                )
 
         else:
             raise ValueError("PagedTensor only supports dimensions 0 and 1 for dim parameter")
@@ -316,24 +323,26 @@ class PagedTensor(torch.Tensor):
         return paged_tensor
 
 if __name__ == "__main__":
-    pt = PagedTensor(8, 64, 1000, True, device="cpu")
+    pt = PagedTensor(8, 64, 1000, True)
 
     # warm up sequences
-    pt = torch.cat((pt, torch.empty(4, 0)), dim=0)
+    pt = torch.cat((pt, torch.empty(4, 0, device="cuda")), dim=0)
     print(pt.block_mapping)
     print(pt.context_lengths)
 
     l = [
-        [i for i in range(100)],
-        [i for i in range(40)],
-        [i for i in range(8)],
-        [i for i in range(24)],
+        torch.randn(100,64,1024, device="cuda"),
+        torch.randn(40,64,1024, device="cuda"),
+        torch.randn(8,64,1024, device="cuda"),
+        torch.randn(24,64,1024, device="cuda"),
     ]
-    l = torch.nested.nested_tensor(l)
+    l = torch.nested.nested_tensor(l, device="cuda")
 
+    print(pt.blob)
     pt2 = torch.cat((pt, l), dim=1)
     print(f"block_mapping pt2: {pt.block_mapping}")
     print(pt.context_lengths)
+    print(pt2.blob)
 
     # block_positions = (torch.ones_like(block_mapping_repeated).cumsum(dim=1) - 1)# % pt2.block_size
     # print(block_positions)

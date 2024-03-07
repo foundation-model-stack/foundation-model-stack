@@ -227,10 +227,10 @@ void reshape_and_cache_value(
 
   dim3 grid(num_tokens);
   dim3 block(std::min(num_heads * head_size, 512));
-  const at::cuda::OptionalCUDAGuard device_guard(device_of(key));
+  const at::cuda::OptionalCUDAGuard device_guard(device_of(value));
   const cudaStream_t stream = at::cuda::getCurrentCUDAStream();
   VLLM_DISPATCH_FLOATING_TYPES(
-    key.scalar_type(),
+    value.scalar_type(),
     "reshape_and_cache_value_kernel",
     [&] {
       vllm::reshape_and_cache_value_kernel<scalar_t><<<grid, block, 0, stream>>>(

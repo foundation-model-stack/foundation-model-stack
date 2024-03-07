@@ -79,6 +79,15 @@ def _reshape_and_cache_key(key, key_cache, slot_mapping):
     cache_ops.reshape_and_cache_key(key, key_cache, slot_mapping)
     return key_cache
 
+@torch.library.impl(lib, "reshape_and_cache_key", "AutogradNestedTensor")
+def _reshape_and_cache_key_autograd(key, key_cache, slot_mapping):
+    key = key.contiguous()
+    key_cache = key_cache.contiguous()
+    slot_mapping = slot_mapping.contiguous()
+    reshape = [-1, key_cache.size(3) * key_cache.size(4), key_cache.size(1) * key_cache.size(2)]
+    cache_ops.reshape_and_cache_key(key.values().view(*reshape), key_cache, slot_mapping)
+    return key_cache
+
 
 lowering.fallbacks.add(torch.ops.paged_attention.reshape_and_cache_key)
 
@@ -103,12 +112,13 @@ lib.define(
 
 # needed for compile
 @torch.library.impl(lib, "reshape_and_cache_value", "Meta")
-def _reshape_and_cache_key_meta(value, value_cache, slot_mapping):
+def _reshape_and_cache_value_meta(value, value_cache, slot_mapping):
     return value_cache.contiguous()
 
 
 @torch.library.impl(lib, "reshape_and_cache_value", "CUDA")
-def _reshape_and_cache_key(value, value_cache, slot_mapping):
+@torch.library.impl(lib, "reshape_and_cache_value", "AutogradNestedTensor")
+def _reshape_and_value(value, value_cache, slot_mapping):
     value = value.contiguous()
     value_cache = value_cache.contiguous()
     slot_mapping = slot_mapping.contiguous()
