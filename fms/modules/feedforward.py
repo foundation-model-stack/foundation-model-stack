@@ -347,7 +347,7 @@ class ConditionalFeedForward(nn.Module):
                 padded_token_ids_per_block,
                 expert_block_mapping,
                 total_padded_tokens,
-            ) = torch.ops.moe.align_vllm(expert_indices, padding_size, E)
+            ) = moe_kernel.moe_align_block_size(expert_indices, padding_size, E)
 
             x1, x3 = (
                 torch.ops.moe.moe_mm(
@@ -402,7 +402,9 @@ class ConditionalFeedForward(nn.Module):
                 padded_token_ids_per_block,
                 expert_block_mapping,
                 total_padded_tokens,
-            ) = torch.ops.moe.align_vllm(expert_indices, config["BLOCK_SIZE_M"], E)
+            ) = moe_kernel.moe_align_block_size(
+                expert_indices, config["BLOCK_SIZE_M"], E
+            )
 
             x1, x3 = (
                 torch.ops.moe.moe_mm_vllm(

@@ -165,10 +165,6 @@ class MultiHeadAttention(nn.Module):
                     queries, keys, position_ids, past_key_value_state, use_cache
                 )
 
-        queries = queries.transpose(2, 1)  # / (self.emb_kq_per_head**(1/4))
-        keys = keys.transpose(2, 1)  # / (self.emb_kq_per_head**(1/4))
-        values = values.transpose(2, 1)  # compatible with QK.T
-
         # if you want to use caching and past_key_value_state is not None meaning you have values in your cache
         if (
             use_cache
@@ -206,6 +202,10 @@ class MultiHeadAttention(nn.Module):
         else:
             attn_mask = mask
 
+        queries_sdpa = queries.transpose(2, 1)  # / (self.emb_kq_per_head**(1/4))
+        keys_sdpa = keys.transpose(2, 1)  # / (self.emb_kq_per_head**(1/4))
+        values_sdpa = values.transpose(2, 1)  # compatible with QK.T
+
         # Expand kv so black-box attn will work
         expansion = self.nheads // self.kvheads
         # k/v: b h l d
@@ -229,9 +229,9 @@ class MultiHeadAttention(nn.Module):
             torch.backends.cuda.enable_math_sdp(use_math)
 
         attn = F.scaled_dot_product_attention(
-            queries,
-            keys_e,
-            values_e,
+            queries_sdpa,
+            keys_sdpa,
+            values_sdpa,
             attn_mask=attn_mask,
             dropout_p=self.p_dropout if self.training else 0.0,
             is_causal=is_causal_mask,
