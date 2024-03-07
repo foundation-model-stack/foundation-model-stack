@@ -128,6 +128,7 @@ parser.add_argument(
 args = parser.parse_args()
 
 local_rank = int(os.getenv("LOCAL_RANK", 0))
+rank = int(os.getenv("RANK", 0))
 world_size = int(os.getenv("WORLD_SIZE", 1))
 
 # default search for what's available
@@ -149,7 +150,7 @@ else:
 group = None
 
 if args.distributed is not None:
-    dist.init_process_group(backend="nccl", rank=local_rank, world_size=world_size)
+    dist.init_process_group(backend="nccl", rank=rank, world_size=world_size)
     group = dist.GroupMember.WORLD
     # Fix until PT 2.3
     torch._C._distributed_c10d._register_process_group("default", dist.group.WORLD)
@@ -260,9 +261,9 @@ def main():
         group=group,
     )
     # model.to(torch.half)
-    optimizer, epoch = training_state(args.model_path, model, local_rank)
+    optimizer, epoch = training_state(args.model_path, model, rank)
 
-    print("model loaded", local_rank)
+    print("model loaded", rank)
 
     tokenizer = tokenizers.get_tokenizer(args.tokenizer)
 
@@ -280,10 +281,13 @@ def main():
     )
 
     sampler = None
-    shuffle = True
-    if args.distributed == "fsdp":
+    # if the dataset is iterable, we can't shuffle it, and it should handle
+    # sharding internally
+    shuffle = not isinstance(dataset, datasets.IterableDataset)
+
+    if args.distributed == "fsdp" and not isinstance(dataset, datasets.IterableDataset):
         sampler = DistributedSampler(
-            dataset, rank=local_rank, num_replicas=world_size, shuffle=True
+            dataset, rank=rank, num_replicas=world_size, shuffle=True
         )
         # if we shuffle the sampler then we don't shuffle the dataloader
         shuffle = False
@@ -314,7 +318,7 @@ def main():
     checkpointing = trainplugins.Checkpointer(
         steps=args.checkpoint_steps, group=group, save_dir=args.output_path
     )
-    reporting = trainplugins.MetricReporter()
+    reporting = trainplugins.MetricReporter(seconds=20, group=group, device=device)
 
     plugins = [reporting, validator, validator2, checkpointing]
     print0("training...")
