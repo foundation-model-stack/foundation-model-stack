@@ -241,7 +241,7 @@ class RotaryEmbedding(PositionEncoder):
                 0, seq_len, dtype=torch.long, device=q.device
             ).repeat(k.size(0), 1)
             if use_cache and past_kv_state is not None and past_kv_state[0].numel() > 0:
-                position_ids += past_kv_state[0].size(2)
+                position_ids += past_kv_state[0].size(1)
 
         q_ = q.float().view(*q.size()[:-1], -1, 2)  # B L H D/2 2
         k_ = k.float().view(*k.size()[:-1], -1, 2)  # B L H D/2 2
