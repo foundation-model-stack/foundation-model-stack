@@ -60,30 +60,30 @@ class TPModule(nn.Module, metaclass=ABCMeta):
             apply_colwise_tp(
                 _get_tpd_module(self, weight),
                 _get_tpd_module(module, weight),
-                self.world_size,
                 self.rank,
+                self.world_size,
             )
         for weight in self.rowwise_param_names():
             apply_rowwise_tp(
                 _get_tpd_module(self, weight),
                 _get_tpd_module(module, weight),
-                self.world_size,
                 self.rank,
+                self.world_size,
             )
         for weight in self.embedding_param_names():
             apply_embedding_tp(
                 _get_tpd_module(self, weight),
                 _get_tpd_module(module, weight),
-                self.world_size,
                 self.rank,
+                self.world_size,
             )
         if len(self.moe_param_names()) > 0:
             apply_moe_tp(
                 self,
                 module,
                 self.moe_param_names(),
-                self.world_size,
                 self.rank,
+                self.world_size,
             )
         tp_sharded_modules = list(
             itertools.chain(
