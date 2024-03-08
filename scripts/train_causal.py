@@ -1,17 +1,20 @@
 import argparse
-from contextlib import nullcontext
 import os
+from contextlib import nullcontext
 from pathlib import Path
+
 import torch
 from torch import distributed as dist
 from torch import nn
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
-from fms import models
-from fms import datasets
+
+from fms import datasets, models
 from fms.models.hf.utils import to_hf_api
+from fms.training import plugins as trainplugins
+from fms.training import trainer
 from fms.utils import print0, tokenizers
-from fms.training import trainer, plugins as trainplugins
+
 
 #
 # This is a fairly minimal training/tuning script for causal language models.
@@ -125,6 +128,7 @@ parser.add_argument(
 args = parser.parse_args()
 
 local_rank = int(os.getenv("LOCAL_RANK", 0))
+rank = int(os.getenv("RANK", 0))
 world_size = int(os.getenv("WORLD_SIZE", 1))
 
 # default search for what's available
@@ -137,13 +141,19 @@ if device_type is None:
     else:
         device_type = "cpu"
 
-device = torch.device(device_type, local_rank)
+if device_type == "cuda":
+    device = torch.device(device_type, local_rank)
+    torch.cuda.set_device(device)
+else:
+    device = torch.device(device_type)
 
 group = None
 
 if args.distributed is not None:
-    dist.init_process_group(backend="nccl", rank=local_rank, world_size=world_size)
+    dist.init_process_group(backend="nccl", rank=rank, world_size=world_size)
     group = dist.GroupMember.WORLD
+    # Fix until PT 2.3
+    torch._C._distributed_c10d._register_process_group("default", dist.group.WORLD)
 
 
 def get_loss_fn():
@@ -190,7 +200,7 @@ def peft_model(model):
     from fms.models.hf.llama.modeling_llama_hf import HFAdaptedLLaMAForCausalLM
 
     model = to_hf_api(model)
-    from peft import get_peft_config, get_peft_model, LoraConfig
+    from peft import LoraConfig, get_peft_config, get_peft_model
     from peft.mapping import PeftModelForCausalLM
 
     lora_config = LoraConfig(
@@ -251,9 +261,9 @@ def main():
         group=group,
     )
     # model.to(torch.half)
-    optimizer, epoch = training_state(args.model_path, model, local_rank)
+    optimizer, epoch = training_state(args.model_path, model, rank)
 
-    print("model loaded", local_rank)
+    print("model loaded", rank)
 
     tokenizer = tokenizers.get_tokenizer(args.tokenizer)
 
@@ -271,10 +281,13 @@ def main():
     )
 
     sampler = None
-    shuffle = True
-    if args.distributed == "fsdp":
+    # if the dataset is iterable, we can't shuffle it, and it should handle
+    # sharding internally
+    shuffle = not isinstance(dataset, datasets.IterableDataset)
+
+    if args.distributed == "fsdp" and not isinstance(dataset, datasets.IterableDataset):
         sampler = DistributedSampler(
-            dataset, rank=local_rank, num_replicas=world_size, shuffle=True
+            dataset, rank=rank, num_replicas=world_size, shuffle=True
         )
         # if we shuffle the sampler then we don't shuffle the dataloader
         shuffle = False
@@ -305,7 +318,7 @@ def main():
     checkpointing = trainplugins.Checkpointer(
         steps=args.checkpoint_steps, group=group, save_dir=args.output_path
     )
-    reporting = trainplugins.MetricReporter()
+    reporting = trainplugins.MetricReporter(seconds=20, group=group, device=device)
 
     plugins = [reporting, validator, validator2, checkpointing]
     print0("training...")

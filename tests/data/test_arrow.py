@@ -4,6 +4,7 @@ import tempfile
 
 import pyarrow as pa
 import pytest
+import torch
 
 from fms.datasets.arrow import ArrowFilesDataset
 
@@ -49,7 +50,7 @@ def test_arrow_dataset_reload():
         ds = ArrowFilesDataset(data_path)
         it = iter(ds)
         for i, batch in enumerate(it):
-            assert batch[0] == i
+            assert batch[0][0] == i
             if i > 100:
                 break
 
@@ -60,7 +61,7 @@ def test_arrow_dataset_reload():
         saved = []
         for i, batch in enumerate(it):
             # print(i, batch)
-            saved.append(batch)
+            saved.append(batch[0])
             if i > 5:
                 break
 
@@ -69,8 +70,7 @@ def test_arrow_dataset_reload():
         ds.load_state_dict(sd)
         # print("loaded state dict", ds.state_dict())
         for i, batch in enumerate(ds):
-            # print(i, batch, saved[i])
-            assert saved[i] == batch
+            torch.testing.assert_allclose(saved[i], batch[0])
             if i > 5:
                 break
 
@@ -95,7 +95,7 @@ def test_ranked():
         iter0 = iter(ds0)
         for i, batch in enumerate(it):
             next(iter0)
-            v = batch[0]
+            v = batch[0][0]
             assert v % world == rank
             if v > 250:
                 break
@@ -104,7 +104,7 @@ def test_ranked():
         print(sd)
         saved = []
         for i, batch in enumerate(it):
-            saved.append(batch)
+            saved.append(batch[0])
             if i > 5:
                 break
 
@@ -112,7 +112,7 @@ def test_ranked():
         ds.load_state_dict(sd)
         for i, batch in enumerate(ds):
             # print(i, batch, saved[i])
-            assert saved[i] == batch
+            torch.testing.assert_allclose(saved[i], batch[0])
             if i > 5:
                 break
 
@@ -149,7 +149,7 @@ def test_split():
         ds.load_state_dict(sd)
         # print("loaded state dict", ds.state_dict())
         for i, batch in enumerate(ds):
-            # print(i, batch, saved[i])
-            assert saved[i] == batch
+            torch.testing.assert_allclose(saved[i][0], batch[0])
+            torch.testing.assert_allclose(saved[i][1], batch[1])
             if i > 5:
                 break
