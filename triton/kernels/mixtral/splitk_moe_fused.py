@@ -3,12 +3,59 @@ import torch
 import triton
 import triton.language as tl
 from vllm._C import ops
+from typing import Any, Dict, Optional
+import functools
+import json
+import os
+
+@triton.jit()
+def swizzle_tile(pid,
+                m, n,
+                block_m: tl.constexpr, block_n: tl.constexpr, group_m: tl.constexpr):
+    
+    grid_m = tl.cdiv(m, block_m)
+    grid_n = tl.cdiv(n, block_n)
+
+    width = group_m * grid_n
+    group_id = pid // width
+    group_size = tl.minimum(grid_m - group_id * group_m, group_m)
+
+    pid_m = group_id * group_m + (pid % group_size)
+    pid_n = (pid % width) // group_size
+
+    return pid_m, pid_n
 
 
+@triton.jit()
+def row_major(pid,
+                m, n, num_tokens_post_padded,
+                block_m: tl.constexpr, block_n: tl.constexpr):
+    
+    grid_n = tl.cdiv(n, block_n)
+    
+    pid_m_max = (num_tokens_post_padded // block_m) * 2
 
+    pid_m = (pid // grid_n) % pid_m_max
+    pid_n = pid % grid_n
 
+    return pid_m, pid_n
 
-@triton.jit
+@triton.jit()
+def col_major(pid,
+              m, n, num_tokens_post_padded,
+              block_m: tl.constexpr, block_n: tl.constexpr):
+    
+    grid_m = tl.cdiv(m, block_m)    
+    grid_n = tl.cdiv(n, block_n)
+
+    pid_m_max = (num_tokens_post_padded // block_m) * 2
+
+    pid_m = (pid % grid_n) % pid_m_max
+    pid_n = pid // grid_m
+
+    return pid_m, pid_n
+
+@triton.jit()
 def fused_moe_kernel_splitk(
     # Pointers to matrices
     a_ptr,
@@ -36,11 +83,11 @@ def fused_moe_kernel_splitk(
     stride_weight,
     stride_token_id,
     # Meta-parameters
-    BLOCK_SIZE_M: tl.constexpr,
-    BLOCK_SIZE_N: tl.constexpr,
-    BLOCK_SIZE_K: tl.constexpr,
-    GROUP_SIZE_M: tl.constexpr,
-    SPLIT_K: tl.constexpr,
+    block_m: tl.constexpr,
+    block_n: tl.constexpr,
+    block_k: tl.constexpr,
+    group_m: tl.constexpr,
+    split_k: tl.constexpr,
     MUL_ROUTED_WEIGHT: tl.constexpr,
     top_k: tl.constexpr,
     compute_type: tl.constexpr,
@@ -56,68 +103,60 @@ def fused_moe_kernel_splitk(
     - sorted_token_ids: A tensor containing the sorted indices of tokens, repeated topk times and arranged by the expert index they are assigned to.
     - expert_ids: A tensor containing the indices of the expert for each block. It determines which expert matrix from B should be used for each block in A.
     This kernel performs the multiplication of a token by its corresponding expert matrix as determined by `expert_ids`. The sorting of `sorted_token_ids`
-    by expert index and padding ensures divisibility by BLOCK_SIZE_M, which is necessary to maintain consistency in block matrix multiplication across different blocks processed by the same expert.
+    by expert index and padding ensures divisibility by block_m, which is necessary to maintain consistency in block matrix multiplication across different blocks processed by the same expert.
     """
     # -----------------------------------------------------------
     # Map program ids `pid` to the block of C it should compute.
     # This is done in a grouped ordering to promote L2 data reuse.
+    
+    # Scheduling Problem
+
     pid = tl.program_id(axis=0)
     pid_k = tl.program_id(axis=1)
 
-    num_pid_m = tl.cdiv(EM, BLOCK_SIZE_M)
-    num_pid_n = tl.cdiv(N, BLOCK_SIZE_N)
-
-    num_pid_in_group = GROUP_SIZE_M * num_pid_n
-    group_id = pid // num_pid_in_group
-    first_pid_m = group_id * GROUP_SIZE_M
-    group_size_m = min(num_pid_m - first_pid_m, GROUP_SIZE_M)
-    pid_m = first_pid_m + ((pid % num_pid_in_group) % group_size_m)
-
-    pid_n = (pid % num_pid_in_group) // group_size_m
-    total_blocks_k = tl.cdiv(K, BLOCK_SIZE_K*SPLIT_K)
-    # ----------------------------------------------------------
-    # Create pointers for the first blocks of A and B.
-    # We will advance this pointer as we move in the K direction
-    # and accumulate
-    # `a_ptrs` is a block of [BLOCK_SIZE_M, BLOCK_SIZE_K] pointers
-    # `b_ptrs` is a block of [BLOCK_SIZE_K, BLOCK_SIZE_N] pointers
     num_tokens_post_padded = tl.load(num_tokens_post_padded_ptr)
 
-    if pid_m * BLOCK_SIZE_M >= num_tokens_post_padded:
+    # print("num_tokens_post_padded: ", num_tokens_post_padded)
+
+    pid_m, pid_n = col_major(pid,
+                             EM, N, num_tokens_post_padded,
+                             block_m, block_n)
+
+    # pid_m, pid_n = swizzle_tile(pid,
+    #                             EM, N,
+    #                             block_m, block_n, group_m)
+    
+    total_blocks_k = tl.cdiv(K, block_k*split_k)
+    
+    # num_tokens_post_padded = tl.load(num_tokens_post_padded_ptr)
+
+    if pid_m * block_m >= num_tokens_post_padded:
         return
     
-    offs_token_id = pid_m * BLOCK_SIZE_M + tl.arange(0, BLOCK_SIZE_M)
+    offs_token_id = pid_m * block_m + tl.arange(0, block_m)
     offs_token = tl.load(sorted_token_ids_ptr + offs_token_id)
     token_mask = offs_token < num_valid_tokens
-
-    offs_bn = (pid_n * BLOCK_SIZE_N + tl.arange(0, BLOCK_SIZE_N)) % N
-
-    offs_k = pid_k*BLOCK_SIZE_K + tl.arange(0, BLOCK_SIZE_K)
-
+   
+    offs_bn = (pid_n * block_n + tl.arange(0, block_n)) % N
+    offs_k = pid_k*block_k + tl.arange(0, block_k)
     a_ptrs = a_ptr + (offs_token[:, None] // top_k * stride_am + offs_k[None, :] * stride_ak)
 
     off_experts = tl.load(expert_ids_ptr + pid_m)
     b_ptrs = b_ptr + off_experts * stride_be + (offs_k[:, None] * stride_bk + offs_bn[None, :] * stride_bn)
 
-    # -----------------------------------------------------------
-    # Iterate to compute a block of the C matrix.
-    # We accumulate into a `[BLOCK_SIZE_M, BLOCK_SIZE_N]` block
-    # of fp32 values for higher accuracy.
-    # `accumulator` will be converted back to fp16 after the loop.
-    accumulator = tl.zeros((BLOCK_SIZE_M, BLOCK_SIZE_N), dtype=tl.float32)
+    accumulator = tl.zeros((block_m, block_n), dtype=tl.float32)
     for k in range(0, total_blocks_k):
-        # Load the next block of A and B, generate a mask by checking the K dimension.
         a = tl.load(a_ptrs,
-                    mask=token_mask[:, None] & (offs_k[None, :] < K - k * (BLOCK_SIZE_K * SPLIT_K)),
+                    mask=token_mask[:, None] & (offs_k[None, :] < K - k * (block_k * split_k)),
                     other=0.0)
         b = tl.load(b_ptrs,
-                    mask=offs_k[:, None] < K - k * (BLOCK_SIZE_K * SPLIT_K),
+                    mask=offs_k[:, None] < K - k * (block_k * split_k),
                     other=0.0)
         # We accumulate along the K dimension.
         accumulator += tl.dot(a, b)
         # Advance the ptrs to the next K block.
-        a_ptrs += BLOCK_SIZE_K * stride_ak * SPLIT_K
-        b_ptrs += BLOCK_SIZE_K * stride_bk * SPLIT_K
+        a_ptrs += block_k * stride_ak * split_k
+        b_ptrs += block_k * stride_bk * split_k
 
     if MUL_ROUTED_WEIGHT:
         moe_weight = tl.load(topk_weights_ptr + offs_token * stride_weight,
@@ -128,7 +167,7 @@ def fused_moe_kernel_splitk(
     accumulator = accumulator.to(compute_type)
     # -----------------------------------------------------------
     # Write back the block of the output
-    offs_cn = pid_n * BLOCK_SIZE_N + tl.arange(0, BLOCK_SIZE_N)
+    offs_cn = pid_n * block_n + tl.arange(0, block_n)
     c_ptrs = c_ptr + stride_cm * offs_token[:, None] + stride_cn * offs_cn[None, :]
     c_mask = token_mask[:, None] & (offs_cn[None, :] < N)
     tl.atomic_add(c_ptrs, accumulator, mask=c_mask)
@@ -154,7 +193,7 @@ def moe_align_block_size(
     Padding ensures that during block matrix multiplication, the dimensions align correctly.
 
     Example:
-    Given topk_ids = [[2, 3, 4], [1, 2, 4], [1, 3, 4], [1, 2, 3]], block_size = 4, and num_experts = 4:
+    Given topk_ids = [[2, 3, ], [1, 2], [1, 3, 4], [1, 2, 3]], block_size = 4, and num_experts = 4:
     - We initially have 12 tokens (after repeating 'top_k' times) and 4 experts, with each expert needing to process 3 tokens.
     - As block_size is 4, we pad 1 token for each expert.
     - First, flatten topk_ids to [2, 3, 4, 1, 2, 4, 1, 3, 4, 1, 2, 3].
@@ -185,21 +224,25 @@ def invoke_fused_moe_kernel(A: torch.Tensor, B: torch.Tensor, C: torch.Tensor,
                             expert_ids: torch.Tensor,
                             num_tokens_post_padded: torch.Tensor,
                             mul_routed_weight: bool, top_k: int, config: dict):
-    
-    grid = lambda META: (triton.cdiv(sorted_token_ids.shape[0], META['BLOCK_SIZE_M']) * triton.cdiv(B.shape[1], META['BLOCK_SIZE_N']), META['SPLIT_K'])
 
-    print(f"SplitK {config}\n")
-    fused_moe_kernel_splitk[grid](
+    N = B.shape[1] # 14336
+    K = B.shape[2] # 4096
+    EM = sorted_token_ids.shape[0] # 124 
+
+    grid = lambda META: (triton.cdiv(EM, META['block_m']) * triton.cdiv(N, META['block_n']), META['split_k'])
+
+    # print(f"SplitK {config}\n")
+    k = fused_moe_kernel_splitk[grid](
         A,
         B,
         C,
         topk_weights,
         sorted_token_ids,
         expert_ids,
-        num_tokens_post_padded,
-        B.shape[1],
-        B.shape[2],
-        sorted_token_ids.shape[0],
+        num_tokens_post_padded, # 64
+        N,
+        K,
+        EM,
         topk_ids.numel(),
         A.stride(0),
         A.stride(1),
@@ -216,6 +259,17 @@ def invoke_fused_moe_kernel(A: torch.Tensor, B: torch.Tensor, C: torch.Tensor,
         **config,
         num_warps=8,
     )
+
+    # print(f"{k.n_regs} registers used, {k.n_spills} spills, {k.shared/1000} kB shared memory\n")
+
+    # with open('split_k_moe_ttir.txt', 'w') as f:
+
+    #     print(f"{k.n_regs} registers used, {k.n_spills} spills, {k.shared/1000} kB shared memory\n", file=f)
+    #     print("IR", k.asm['ttir'], file=f)
+    #     print("TTGIR", k.asm['ttgir'], file=f)
+    #     print("PTX", k.asm['ptx'], file=f)
+    #     print(f"{k.n_regs} registers used, {k.n_spills} spills, {k.shared/1000} kB shared memory\n", file=f)
+
 
 
 def fused_moe(hidden_states: torch.Tensor,
@@ -247,39 +301,40 @@ def fused_moe(hidden_states: torch.Tensor,
     M, _ = hidden_states.shape
     E, N, _ = w1.shape
 
+
     # Prefill
     config_w1 = {
-        'BLOCK_SIZE_M': 32,
-        'BLOCK_SIZE_N': 64,
-        'BLOCK_SIZE_K': 64,
-        'GROUP_SIZE_M': 8,
-        'SPLIT_K': 2,
+        'block_m': 32,
+        'block_n': 64,
+        'block_k': 64,
+        'group_m': 8,
+        'split_k': 2,
     }
-
+    
     config_w2 = {
-        'BLOCK_SIZE_M': 32,
-        'BLOCK_SIZE_N': 64,
-        'BLOCK_SIZE_K': 64,
-        'GROUP_SIZE_M': 8,
-        'SPLIT_K': 2,
+        'block_m': 32,
+        'block_n': 64,
+        'block_k': 64,
+        'group_m': 8,
+        'split_k': 2,
     }
 
     # Decoding
     if topk_ids.numel() <= w1.shape[0]:
         config_w1 = {
-            'BLOCK_SIZE_M': 16,
-            'BLOCK_SIZE_N': 64,
-            'BLOCK_SIZE_K': 128,
-            'GROUP_SIZE_M': 8,
-            'SPLIT_K' : 2,
+            'block_m': 16,
+            'block_n': 64,
+            'block_k': 128,
+            'group_m': 8,
+            'split_k' : 2,
         }
-
+        
         config_w2 = {
-            'BLOCK_SIZE_M': 16,
-            'BLOCK_SIZE_N': 128,
-            'BLOCK_SIZE_K': 64,
-            'GROUP_SIZE_M': 8,
-            'SPLIT_K' : 4,
+            'block_m': 16,
+            'block_n': 128,
+            'block_k': 64,
+            'group_m': 8,
+            'split_k': 4,
         }
     
     intermediate_cache1 = torch.zeros((M, topk_ids.shape[1], N),
@@ -293,12 +348,13 @@ def fused_moe(hidden_states: torch.Tensor,
                                       dtype=hidden_states.dtype)
     
     sorted_token_ids, expert_ids, num_tokens_post_padded = moe_align_block_size(
-        topk_ids, config_w1['BLOCK_SIZE_M'], E)
+        topk_ids, config_w1['block_m'], E)
     
     invoke_fused_moe_kernel(hidden_states, w1, intermediate_cache1,
                             topk_weights, topk_ids, sorted_token_ids,
                             expert_ids, num_tokens_post_padded, False,
                             topk_ids.shape[1], config_w1)
+    
     
     ops.silu_and_mul(intermediate_cache2, intermediate_cache1.view(-1, N))
 
@@ -314,3 +370,6 @@ def fused_moe(hidden_states: torch.Tensor,
     
     return torch.sum(intermediate_cache3.view(*intermediate_cache3.shape),
                      dim=1)
+
+
+
