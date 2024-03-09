@@ -298,7 +298,7 @@ class GPTBigCode(nn.Module):
                 nn.init.normal_(
                     m.weight,
                     mean=0.0,
-                    std=self.config.emb_dim**-.5,
+                    std=self.config.emb_dim**-0.5,
                 )
 
     def forward(
