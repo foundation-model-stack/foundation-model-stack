@@ -278,8 +278,6 @@ class GPTBigCode(nn.Module):
         # this model ties weights, so we tie here
         self.head.weight = self.base_model.embedding.weight
 
-        self.reset_params()
-
     @classmethod
     def from_config(cls, config: GPTBigCodeConfig) -> "GPTBigCode":
         return cls(config)
@@ -287,13 +285,21 @@ class GPTBigCode(nn.Module):
     def get_config(self) -> GPTBigCodeConfig:
         return self.config
 
-    def reset_params(self):
-        # Modules are self-initializing, we're just going to down-scale the final prediction head to be
-        # mixed-fan (inputs and gradients scale to the same inverse factors) if it isn't tied
-        self.head.weight.data.normal_(
-            0,
-            1 / math.sqrt(math.sqrt(self.config.emb_dim * self.config.src_vocab_size)),
-        )
+    def reset_parameters(self):
+        # Do not re-initialize head, as weights are tied
+        for m in self.modules():
+            if (
+                isinstance(m, MultiHeadAttention)
+                or isinstance(m, FeedForwardBlock)
+                or isinstance(m, nn.LayerNorm)
+            ):
+                m.reset_parameters()
+            elif isinstance(m, nn.Embedding):
+                nn.init.normal_(
+                    m.weight,
+                    mean=0.0,
+                    std=self.config.emb_dim**-.5,
+                )
 
     def forward(
         self,
