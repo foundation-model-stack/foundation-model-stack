@@ -83,9 +83,8 @@ class WordEmbedding(nn.Module):
             self.head = nn.Linear(self.emb_dim, self.vocab_size, bias=bias)
             if tie_weights:
                 self.head.weight = self.emb.weight
-        self.reset_params()
 
-    def reset_params(self):
+    def reset_parameters(self):
         # Defaults to norm-preserving in reverse op, unit vector in forward op
         layers = ["emb"]
         if self.abs_pos:
@@ -93,9 +92,7 @@ class WordEmbedding(nn.Module):
         if self.reversible and not self.tie_weights:
             layers.append("head")
         for layer in layers:
-            nn.init.trunc_normal_(
-                getattr(self, layer).weight, mean=0.0, std=self.emb_dim**-0.5
-            )
+            nn.init.trunc_normal_(getattr(self, layer).weight, mean=0.0, std=0.02)
         if self.reversible and self.bias:
             self.head.bias.data.zero_()
         # Preserve pad index dummy-hood
