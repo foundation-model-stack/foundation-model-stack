@@ -3,8 +3,8 @@ import torch
 import triton
 from vllm.model_executor.layers.fused_moe import fused_moe
 from vllm.model_executor.layers.activation import SiluAndMul
-from v0_moe_fused import fused_moe as fused_moe_base
-from triton.kernels.mixtral.v1_moe_fused import fused_moe as fused_moe_splitk_col_major
+from v0_moe_fused import fused_moe as fused_moe_grouped
+from v2_moe_fused import fused_moe as fused_moe_col
 import time
 
 def torch_moe(a, w1, w2, topk_weight, topk_ids):
@@ -40,23 +40,36 @@ def test_fused_moe(
     
     score = torch.randn((m, e), device='cuda', dtype=dtype)
     score = torch.softmax(score, dim=-1)
+
     topk_weight, topk_ids = torch.topk(score, topk)
     
-    
-    triton_output_splitk_col_major = fused_moe_splitk_col_major(a, w1, w2, topk_weight, topk_ids, False)
-    # triton_output_splitk_linear = fused_moe_splitk_linear(a, w1, w2, topk_weight, topk_ids, False)
-    triton_output_base = fused_moe_base(a, w1, w2, topk_weight, topk_ids, False)
+    start = time.time()
+    triton_output_gl = fused_moe_grouped(a, w1, w2, topk_weight, topk_ids, False)
+    end = time.time()
+    gl_time = end - start
+    gl_time = gl_time * 1000
+    print("Grouped Launch Time (us): ", gl_time)
 
-    # breakpoint()
+    start = time.time()
+    triton_output_cm = fused_moe_col(a, w1, w2, topk_weight, topk_ids, False)
+    end = time.time()
+    cm_major_time = end - start
+    cm_major_time = cm_major_time * 1000
+    print("Columm Major Time (us): ", cm_major_time)
 
-    # torch_base = torch_moe(a, w1, w2, topk_weight, topk_ids)
-    # torch.testing.assert_close(triton_output_base, torch_base, atol=0.0, rtol=1e-1)
+    torch_base = torch_moe(a, w1, w2, topk_weight, topk_ids)
+    torch.testing.assert_close(triton_output_cm, torch_base, atol=1e-2, rtol=0)
+
+    # print(f"{triton_output_cm=}\n")
+    # print(f"{triton_output_gl=}\n")
+
+    print(f"Col Major Speedup {((gl_time - cm_major_time)/(gl_time))*100}")
 
 
 if __name__ == '__main__':
 
-    # test_fused_moe(2, 14336//2, 4096, 8, 2, torch.float16)
 
+#    test_fused_moe(512, 14336//2, 4096, 8, 2, torch.float16)
 
     @triton.testing.perf_report(
     triton.testing.Benchmark(
@@ -66,9 +79,9 @@ if __name__ == '__main__':
         ],  # Different possible values for `x_name`
         line_arg='provider',  # Argument name whose value corresponds to a different line in the plot
         # Possible values for `line_arg`
-        line_vals=['spk', 'dp'],
+        line_vals=['cm', 'gl'],
         # Label name for the lines
-        line_names=["SplitK Fused MoE GEMM Kernel", "Data Parallel Fused MoE GEMM Kernel"],
+        line_names=["Fused MoE GEMM Kernel - Column Major", "Fused MoE GEMM Kernel - Grouped Launch"],
 
         # Line styles
         styles=[('blue', '-'), ('green', '-')],
@@ -97,11 +110,11 @@ if __name__ == '__main__':
         topk_weight, topk_ids = torch.topk(score, topk)
 
         quantiles = [0.5, 0.2, 0.8]
-        if provider == 'spk':
-            ms, min_ms, max_ms = triton.testing.do_bench(lambda: fused_moe_splitk_col_major(a, w1, w2, topk_weight, topk_ids, False), quantiles=quantiles)
-        if provider == 'dp':
-            ms, min_ms, max_ms = triton.testing.do_bench(lambda: fused_moe_base(a, w1, w2, topk_weight, topk_ids, False), quantiles=quantiles)
+        if provider == 'cm':
+            ms, min_ms, max_ms = triton.testing.do_bench(lambda: fused_moe_col(a, w1, w2, topk_weight, topk_ids, False), quantiles=quantiles)
+        if provider == 'gl':
+            ms, min_ms, max_ms = triton.testing.do_bench(lambda: fused_moe_grouped(a, w1, w2, topk_weight, topk_ids, False), quantiles=quantiles)
         perf = lambda ms: 2 * m * n * k * 1e-12 / (ms * 1e-3)
         return perf(ms), perf(max_ms), perf(min_ms)
 
-benchmark.run(show_plots=True, print_data=True, save_path='/nvme2/adhoq26/foundation-model-stack/triton/quantization/mixtral')
+benchmark.run(show_plots=True, print_data=True, save_path='./')

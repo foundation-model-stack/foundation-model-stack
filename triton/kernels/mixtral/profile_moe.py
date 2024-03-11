@@ -3,7 +3,7 @@ import torch
 from vllm.model_executor.layers.fused_moe import fused_moe
 from vllm.model_executor.layers.activation import SiluAndMul
 from v0_moe_fused import fused_moe as fused_moe_base
-from splitk_moe_fused import fused_moe
+from triton.kernels.mixtral.v1_moe_fused import fused_moe
 import time
 
 def torch_moe(a, w1, w2, topk_weight, topk_ids):
