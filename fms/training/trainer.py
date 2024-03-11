@@ -27,7 +27,7 @@ def __one_step(
         grad_scaler.scale(loss).backward()
     else:
         loss.backward()
-    return loss.item()
+    return loss
 
 
 def __optimize(model, optimizer, grad_scaler):
@@ -46,6 +46,7 @@ def __one_epoch(
     model: nn.Module,
     optimizer: Optimizer,
     data: DataLoader,
+    device,
     loss_fn,
     epoch: int,
     plugins: List[TrainerPlugin],
@@ -62,7 +63,15 @@ def __one_epoch(
 
     optimized = False
     optimizer.zero_grad()
+
+    start = datetime.now()
     for step, (input, label) in enumerate(data):
+        batch_size = input.shape[0]
+        input_length = input.shape[1]
+
+        input = input.to(device)
+        label = label.to(device)
+
         loss = __one_step(model, input, label, loss_fn, grad_scaler)
         if (step + 1) % accum_iters == 0:
             __optimize(model, optimizer, grad_scaler)
@@ -72,8 +81,8 @@ def __one_epoch(
 
         metrics = {
             "loss": loss,
-            "batch_size": input.shape[0],
-            "input_length": input.shape[1],
+            "batch_size": batch_size,
+            "input_length": input_length,
         }
         for plugin in plugins:
             plugin.step(model, optimizer, epoch, metrics, step)
@@ -87,6 +96,7 @@ def train(
     model,
     optimizer,
     dataloader: DataLoader,
+    device,
     loss_fn: nn.Module,
     start_epoch=0,
     epochs: int = 1,
@@ -98,6 +108,7 @@ def train(
             model,
             optimizer,
             dataloader,
+            device,
             loss_fn,
             epoch,
             trainer_plugins,
