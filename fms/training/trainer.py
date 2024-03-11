@@ -64,7 +64,6 @@ def __one_epoch(
     optimized = False
     optimizer.zero_grad()
 
-    start = datetime.now()
     for step, (input, label) in enumerate(data):
         batch_size = input.shape[0]
         input_length = input.shape[1]
