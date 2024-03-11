@@ -25,6 +25,7 @@ from fms.modules.positions import RotaryEmbedding
 from fms.utils import serialization
 from fms.utils.activation import str_to_activation
 from fms.utils.config import ModelConfig
+from fms.utils.tensors import PagedTensor
 from fms.utils.tokenizers import _has_hf, get_tokenizer
 
 
@@ -258,14 +259,31 @@ class LLaMA(nn.Module):
         # mask: batch_size x seq_len x seq_len
         # bias: nheads x seq_len x seq_len
         if past_key_value_states is None or len(past_key_value_states) == 0:
-            past_key_value_states = [None for _ in range(len(self.layers))]
+            if attn_algorithm == "paged":
+                past_key_value_states = []
+                for _ in range(len(self.layers)):
+
+                    key_cache = PagedTensor(slot_shape=(self.config.nheads, self.config.emb_dim // self.config.nheads),
+                                            block_size=16, num_blocks=32 * (self.config.max_expected_seq_len // 16), is_key=True, dtype=torch.float16)
+                    value_cache = PagedTensor(slot_shape=(self.config.nheads, self.config.emb_dim // self.config.nheads),
+                                            block_size=16, num_blocks=32 * (self.config.max_expected_seq_len // 16), is_key=False, dtype=torch.float16)
+                    key_cache = torch.cat(
+                        (key_cache, torch.empty(x_in.size(0), 0, dtype=torch.float16, device=x_in.device)))
+                    value_cache = torch.cat(
+                        (value_cache, torch.empty(x_in.size(0), 0, dtype=torch.float16, device=x_in.device)))
+                    past_key_value_states.append((key_cache, value_cache))
+            else:
+                past_key_value_states = [None for _ in range(len(self.layers))]
 
         qlen = x_in.size(1)
         klen = x_in.size(1)
 
         # if we are using the cache, the key length needs to be extended with the past keys length
         if use_cache and past_key_value_states[0] is not None:
-            klen += past_key_value_states[0][0].size(-2)
+            if attn_algorithm == "paged":
+                klen = 1
+            else:
+                klen += past_key_value_states[0][0].size(-2)
 
         # if mask is none, we need to specify causal mask
         if mask is None:

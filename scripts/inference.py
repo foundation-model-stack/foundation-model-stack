@@ -9,7 +9,7 @@ from torch import distributed as dist
 from fms.models import get_model
 from fms.utils import generation, tokenizers
 from fms.utils.generation import generate
-
+from fms.utils.tensors import PagedNameSpace
 
 # This example script validates the LLaMA implementation by running inference on a couple of prompts.
 #
@@ -117,6 +117,7 @@ model = get_model(
     source=args.model_source,
     distributed_strategy=distr_param,
     group=dist.group.WORLD,
+    norm_eps=1e-6,
 )
 tokenizer = tokenizers.get_tokenizer(args.tokenizer)
 model.eval()
@@ -176,7 +177,7 @@ max_len = max([len(prompt) for prompt in [prompt1, prompt2]])
 # LLaMA 7B did better on the spanish prompt vs 13B.
 # TODO: add a better english prompt to demonstrate padding/batching.
 # prompt2 = pad_prompt(prompt2, max_len)
-# ids = torch.stack((prompt2, prompt1), dim=0)
+# ids = torch.stack((prompt1, prompt2), dim=0)
 
 ids = prompt1.unsqueeze(0)
 
@@ -225,4 +226,5 @@ use_cache = [
     args.no_use_cache
 ]  # True/False are identical with greedy iff `torch.use_deterministic_algorithms(True)`
 for sample, cache in itertools.product(do_sample, use_cache):
+    infer(cache, sample)
     infer(cache, sample)

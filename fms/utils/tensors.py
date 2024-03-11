@@ -1,4 +1,5 @@
 import functools
+import uuid
 from typing import Dict, Optional, Union, Tuple, List
 
 import torch
@@ -7,6 +8,54 @@ import torch._inductor.ir as ir
 import torch._inductor.lowering as lowering
 from torch._inductor.virtualized import V
 from fms.paged_c import attn_ops, cache_ops  # type: ignore
+from torch.nested._internal.nested_tensor import NestedTensor
+
+_paged_namespaces = {}
+
+class PagedNameSpace:
+    def __init__(self, slot_shape: Tuple[int, ...], block_size: int = 16, num_blocks: int = 100, is_key: bool = True, dtype: Union[str, torch.dtype] = torch.float32):
+        self.device = "cuda"
+        self.slot_shape = slot_shape
+        self.block_size = block_size
+
+        # todo: more general purpose for something like this? updates to kernels?
+        self.is_key = is_key
+        element_size = torch.tensor([], dtype=dtype, device=self.device).element_size()
+        x = block_size // element_size
+        if is_key:
+            block_shape = (
+                *slot_shape[:-1],
+                slot_shape[-1] // x,
+                block_size,
+                x
+            )
+            self.store_fn = torch.ops.paged_attention.reshape_and_cache_key
+        else:
+            block_shape = (
+                *slot_shape,
+                block_size
+            )
+            self.store_fn = torch.ops.paged_attention.reshape_and_cache_value
+
+        self.blob = torch.empty(
+            size=(num_blocks, *block_shape),
+            dtype=dtype,
+            device=self.device
+        )
+        self.ref_counts = torch.zeros(num_blocks, dtype=torch.int32, device=self.device)
+
+    def __str__(self):
+        return f"PagedNameSpace(slot_shape={self.slot_shape}, block_size={self.block_size}, dtype={self.blob.dtype})"
+    def __repr__(self):
+        return self.__str__()
+
+
+# todo: general purpose storage where is_key, is_value is not needed, just general purpose size
+def register_paged_namespace(name: str, paged_namespace: PagedNameSpace):
+    if name in _paged_namespaces:
+        raise KeyError(f"paged namespace with name {name} already exists")
+
+    _paged_namespaces[name] = paged_namespace
 
 lib = torch.library.Library("paged_attention", "FRAGMENT")
 
@@ -34,7 +83,7 @@ def _reshape_and_cache_key_autograd(key, key_cache, slot_mapping):
     key = key.contiguous()
     key_cache = key_cache.contiguous()
     slot_mapping = slot_mapping.contiguous()
-    reshape = [-1, key_cache.size(3) * key_cache.size(4), key_cache.size(1) * key_cache.size(2)]
+    reshape = [-1, key_cache.size(1), key_cache.size(3) * key_cache.size(4)]
     cache_ops.reshape_and_cache_key(key.values().view(*reshape), key_cache, slot_mapping)
     return key_cache
 
@@ -269,6 +318,40 @@ def _paged_attention_v1(
 lib.define(
     "paged_attention_v1_minimal(Tensor query, Tensor paged_key, Tensor paged_value, float scale) -> Tensor"
 )
+
+@torch.library.impl(lib, "paged_attention_v1_minimal", "Meta")
+def _paged_attention_v1_minimal_meta(
+    query,
+    paged_key,
+    paged_value,
+    scale,
+):
+    return query.contiguous()
+
+@torch.library.impl(lib, "paged_attention_v1_minimal", "CUDA")
+def _paged_attention_v1_minimal_cuda(
+    query,
+    paged_key,
+    paged_value,
+    scale,
+):
+    out = torch.empty_like(query)
+
+    attn_ops.paged_attention_v1(
+        out,
+        query,
+        paged_key.blob,
+        paged_value.blob,
+        paged_key.kv_heads,
+        scale,
+        paged_key.block_mapping,
+        paged_key.context_lengths,
+        paged_key.block_size,
+        torch.max(paged_key.context_lengths).item(),
+        None,
+    )
+    return out
+
 @torch.library.impl(lib, "paged_attention_v1_minimal", "AutogradNestedTensor")
 def _paged_attention_v1_minimal_autograd(
     query,
@@ -550,43 +633,20 @@ class ExpandableTensor(torch.Tensor):
 
 class PagedTensor(torch.Tensor):
 
-    def __init__(self, kv_heads: int, head_size: int, num_blocks: int, is_key: bool, block_size: int = 16, dtype: torch.dtype = torch.float32, *args,
-                 **kwargs):
-        super().__init__(*args, **kwargs)
-        device = "cuda"
-        # TODO: is_key name change
-        # TODO: flexible sizing
-
-        element_size = torch.tensor([], dtype=dtype).element_size()
-        x = block_size // element_size
-        if is_key:
-            block_shape = (
-                kv_heads,
-                head_size // x,
-                block_size,
-                x
-            )
+    def __init__(self, slot_shape: Tuple[int, ...], block_size: int = 16, num_blocks: int = 100, is_key: bool = True, dtype: Union[str, torch.dtype] = torch.float32):
+        super().__init__()
+        namespace = str((slot_shape, block_size, dtype, is_key)) # todo: remove is_key
+        if namespace in _paged_namespaces:
+            self.paged_namespace = _paged_namespaces[namespace]
         else:
-            block_shape = (
-                kv_heads,
-                head_size,
-                block_size
-            )
-        self.kv_heads = kv_heads
-        self.head_size = head_size
-        self.num_blocks = num_blocks
-        self.is_key = is_key
-        self.block_size = block_size
-        self._device = device
-        self.blob = torch.empty(
-            size=(num_blocks, *block_shape),
-            dtype=dtype,
-            device=device
-        )
+            self.paged_namespace = PagedNameSpace(slot_shape, block_size, num_blocks, is_key, dtype)
+            register_paged_namespace(namespace, self.paged_namespace)
 
-        self.ref_counts = torch.zeros(num_blocks, dtype=torch.int32, device=device)
-        self.context_lengths = torch.empty(0, dtype=torch.int32, device=device)
-        self.block_mapping = torch.empty(0, 0, dtype=torch.int32, device=device)
+        self.context_lengths = torch.empty(0, dtype=torch.int32, device=self.paged_namespace.device)
+        self.block_mapping = torch.empty(0, 0, dtype=torch.int32, device=self.paged_namespace.device)
+
+    def __new__(cls, slot_shape: Tuple[int, ...], block_size: int = 16, num_blocks: int = 100, is_key: bool = True, dtype: Union[str, torch.dtype] = torch.float32):
+        return super().__new__(cls)
 
     @classmethod
     def __torch_function__(cls, func, types, args=(), kwargs=None):
@@ -600,17 +660,18 @@ class PagedTensor(torch.Tensor):
 
     def _allocate_blocks(self, num_blocks) -> torch.Tensor:
         # TODO: keep num_blocks on gpu
-        first_available_blocks = (self.ref_counts == 0).nonzero()[0:int(num_blocks.item())] + 1
-        self.ref_counts[first_available_blocks - 1] = 1
-        return first_available_blocks.squeeze(1).int()
+        first_available_blocks = (self.paged_namespace.ref_counts == 0).nonzero()[:int(num_blocks.item())]
+        self.paged_namespace.ref_counts[first_available_blocks] = 1
+        return first_available_blocks.squeeze(1).int() + 1
 
     def __repr__(self):
-        return f"PagedTensor(context_lengths={self.context_lengths}, block_mapping={self.block_mapping.tolist()})"
+        return f"PagedTensor(context_lengths={self.context_lengths.tolist()}, block_mapping={self.block_mapping.tolist()}, namespace={self.paged_namespace})"
 
     @_implements(torch.cat)
     def cat(tensors, *, dim=0, out=None):
 
         # if we are calling with dim=0, a new sequence is being added to the batch
+        # todo: should this just be torch.stack behavior for dim==0? Then switch dim==1 to dim==0
         if dim == 0:
 
 
@@ -626,9 +687,9 @@ class PagedTensor(torch.Tensor):
                 paged_tensor: PagedTensor = tensors[0]
 
                 # TODO: This needs to be right padded
-                paged_tensor.block_mapping = torch.cat((paged_tensor.block_mapping, torch.empty(l_tensors.size(0), 0, device=paged_tensor._device)), dim=0)
+                paged_tensor.block_mapping = torch.cat((paged_tensor.block_mapping, torch.empty(l_tensors.size(0), 0, device=paged_tensor.paged_namespace.device)), dim=0)
 
-                paged_tensor.context_lengths = torch.cat((paged_tensor.context_lengths,torch.zeros(l_tensors.size(0), device=paged_tensor._device)))
+                paged_tensor.context_lengths = torch.cat((paged_tensor.context_lengths,torch.zeros(l_tensors.size(0), device=paged_tensor.paged_namespace.device)))
             else:
                 pass
         # decode step
@@ -637,10 +698,11 @@ class PagedTensor(torch.Tensor):
 
             # TODO: will we even support tensor[0] being non paged_tensor, is that possible???
             paged_tensor: PagedTensor = tensors[0]
+            block_size = paged_tensor.paged_namespace.block_size
 
             # for now it's a list
             # TODO: this is a list just to get things working
-            context_lengths = torch.tensor([l.size(0) for l in l_tensors], dtype=torch.int32, device=paged_tensor._device)
+            context_lengths = torch.tensor([l.size(0) for l in l_tensors], dtype=torch.int32, device=paged_tensor.paged_namespace.device)
 
             # batch should match
             assert len(l_tensors) == paged_tensor.block_mapping.size(0)
@@ -649,10 +711,10 @@ class PagedTensor(torch.Tensor):
             total_context_lengths = prev_context_lengths + context_lengths
 
             # get the total old number of blocks in the block mapping (not including pads)
-            prev_num_blocks = torch.ceil(prev_context_lengths / paged_tensor.block_size)
+            prev_num_blocks = torch.ceil(prev_context_lengths / block_size)
 
             # get the total new number of blocks in the block mapping (not including pads)
-            total_num_blocks = torch.ceil(total_context_lengths / paged_tensor.block_size)
+            total_num_blocks = torch.ceil(total_context_lengths / block_size)
 
             # pre-pad block_mapping to max
             pad = (0, (torch.max(total_num_blocks) - paged_tensor.block_mapping.size(1)).int().tolist())
@@ -677,6 +739,9 @@ class PagedTensor(torch.Tensor):
 
             # Does each new value belong to the same row as the prior one?
             row_match = row_inds.roll(1) == row_inds
+            # ensure that when batch size = 1, first entry does not register as match
+            if row_match.size(0) != 0:
+                row_match[0] = False
             # Count the total number of row agreements
             col_increments = row_match.int().cumsum(0)
             # Subtract the number of agreements from prior rows to get within-row increments
@@ -687,29 +752,30 @@ class PagedTensor(torch.Tensor):
             paged_tensor.block_mapping[row_inds, col_inds] = blocks_to_add
             paged_tensor.context_lengths = total_context_lengths.int()
 
-            block_slots = paged_tensor.block_mapping.repeat_interleave(paged_tensor.block_size, dim=1)
+            block_slots = paged_tensor.block_mapping.repeat_interleave(block_size, dim=1)
             roll_inds = torch.ones_like(block_slots).cumsum(1).sub(1)
             roll_inds = roll_inds.add(paged_tensor.context_lengths.unsqueeze(1)) % roll_inds.size(1)
             slot_mask = roll_inds.sign().cumprod(1)
 
-            block_offset = (roll_inds % paged_tensor.block_size) * (1 - slot_mask)
+            block_offset = (roll_inds % block_size) * (1 - slot_mask)
             block_base = block_slots.gather(1, roll_inds) * (1 - slot_mask)
-            slot_map = block_base * paged_tensor.block_size + block_offset + slot_mask.neg()
+            slot_map = block_base * block_size + block_offset + slot_mask.neg()
 
-            if paged_tensor.is_key:
-                # call reshape_and_cache_key
-                data_layer = torch.ops.paged_attention.reshape_and_cache_key(
-                    tensors[1],
-                    paged_tensor.blob,
-                    slot_map[slot_map != -1],
-                )
+            # s x kv_heads x head_size
+            # view nested as a single logical sequence of block groupings
+            if tensors[1].is_nested:
+                reshape_nested = tensors[1].values().view(-1, paged_tensor.paged_namespace.slot_shape[0], paged_tensor.paged_namespace.slot_shape[1])
             else:
-                # call reshape_and_cache_value
-                data_layer = torch.ops.paged_attention.reshape_and_cache_value(
-                    tensors[1],
-                    paged_tensor.blob,
-                    slot_map[slot_map != -1],
-                )
+                reshape_nested = tensors[1].view(-1, paged_tensor.paged_namespace.slot_shape[0], paged_tensor.paged_namespace.slot_shape[1])
+
+            slot_map = slot_map[slot_map != -1][-reshape_nested.size(0):]
+
+            # todo: general purpose storage not implemented yet so reusing paged-attn kernel storage
+            data_layer = paged_tensor.paged_namespace.store_fn(
+                reshape_nested,
+                paged_tensor.paged_namespace.blob,
+                slot_map,
+            )
 
         else:
             raise ValueError("PagedTensor only supports dimensions 0 and 1 for dim parameter")
@@ -717,90 +783,58 @@ class PagedTensor(torch.Tensor):
         return paged_tensor
 
 if __name__ == "__main__":
-    pt = PagedTensor(8, 64, 1000, False)
+    pt = PagedTensor(slot_shape=(8, 64), block_size=16, num_blocks=1000, is_key=True, dtype=torch.float16)
 
+    pt = torch.cat((pt, torch.empty(4, 0, device="cuda", dtype=torch.float16)), dim=0)
     # warm up sequences
-    pt = torch.cat((pt, torch.empty(4, 0, device="cuda")), dim=0)
-    print(pt.block_mapping)
-    print(pt.context_lengths)
+    print(pt)
+    # print(pt.block_mapping)
+    # print(pt.context_lengths)
 
     l = [
-        torch.randn(100,64,1024, device="cuda"),
-        torch.randn(40,64,1024, device="cuda"),
-        torch.randn(8,64,1024, device="cuda"),
-        torch.randn(24,64,1024, device="cuda"),
+        torch.randn(100,8,64, device="cuda", dtype=torch.half),
+        torch.randn(40,8,64, device="cuda", dtype=torch.half),
+        torch.randn(8,8,64, device="cuda", dtype=torch.half),
+        torch.randn(24,8,64, device="cuda", dtype=torch.half),
     ]
     l = torch.nested.nested_tensor(l, device="cuda")
 
     pt2 = torch.cat((pt, l), dim=1)
-    print(f"block_mapping pt2: {pt.block_mapping}")
-    print(pt.context_lengths)
-
-    l2 = [
-        torch.randn(1, 64, 1024, device="cuda"),
-        torch.randn(1, 64, 1024, device="cuda"),
-        torch.randn(1, 64, 1024, device="cuda"),
-        torch.randn(1, 64, 1024, device="cuda"),
-    ]
-    l2 = torch.nested.nested_tensor(l2, device="cuda")
-    pt3 = torch.cat((pt2, l2), dim=1)
-    print(f"block_mapping pt3: {pt.block_mapping}")
-    print(pt.context_lengths)
-
-    
-    # block_positions = (torch.ones_like(block_mapping_repeated).cumsum(dim=1) - 1)# % pt2.block_size
-    # print(block_positions)
-    #
-    # block_slots = bmap.repeat_interleave(16, dim=1)
-    # roll_inds = torch.ones_like(block_slots).cumsum(1).sub(1)
-    # roll_inds = roll_inds.add(clen.unsqueeze(1)) % roll_inds.size(1)
-    # slot_mask = roll_inds.sign().cumprod(1)
-    #
-    # slot_map = block_base * 16 + block_offset + slot_mask.neg()
-
-    # print(pt2.block_mapping.repeat_interleave(pt2.block_size, dim=1))
-    # print(block_positions)
-
-    # def get_slot_mapping(self, position: Optional[int] = None) -> List[int]:
-    #     slot_mapping = []
-    #     start = position if position else 0
-    #     for position_i in range(start, self.get_sequence_length()):
-    #         block_number = self.get_cache_block(position_i).block_number
-    #         block_offset = position_i % self.block_size
-    #         slot = block_number * self.block_size + block_offset
-    #         slot_mapping.append(slot)
-    #     return slot_mapping
-
-    # pt3 = torch.cat((pt2, torch.rand(4, 200)), dim=1)
-    # print(f"block_mapping pt3: {pt3.block_mapping}")
-    # print(pt3.context_lengths)
-
-    #
-
-
-    #
-    # position_ids = torch.tensor([
-    #     [0 for _ in range(5)] + [i for i in range(15)],
-    #     [0 for _ in range(8)] + [i for i in range(12)],
-    #     [0 for _ in range(10)] + [i for i in range(10)],
-    #     [i for i in range(20)],
-    #     [0 for _ in range(5)] + [i for i in range(15)],
-    #     [0 for _ in range(5)] + [i for i in range(15)],
-    #     [0 for _ in range(5)] + [i for i in range(15)],
-    #     [i for i in range(20)],
-    # ], dtype=torch.long, device="cpu")
-    # pt = torch.cat((pt, key), dim=1, position_ids=position_ids)
-    # print(pt.block_mapping)
+    print(pt2)
+    # print(f"block_mapping pt2: {pt.block_mapping}")
     # print(pt.context_lengths)
-    # print(pt.ref_counts)
+
+    for _ in range(16):
+        l2 = [
+            torch.randn(1, 8, 64, device="cuda", dtype=torch.half),
+            torch.randn(1, 8, 64, device="cuda", dtype=torch.half),
+            torch.randn(1, 8, 64, device="cuda", dtype=torch.half),
+            torch.randn(1, 8, 64, device="cuda", dtype=torch.half),
+        ]
+        l2 = torch.nested.nested_tensor(l2, device="cuda")
+        pt3 = torch.cat((pt2, l2), dim=1)
+        print(pt3)
+
+    # key_cache_after = torch.load("/net/storage149/mnt/md0/jmrosenk/paged_attn_test/prompt.key_cache_after.store").to("cuda")
+    # value_cache_after = torch.load("/net/storage149/mnt/md0/jmrosenk/paged_attn_test/prompt.value_cache_after.store").to("cuda")
+    # key_prompt = torch.load("/net/storage149/mnt/md0/jmrosenk/paged_attn_test/prompt.key.store").to("cuda")
+    # value_prompt = torch.load("/net/storage149/mnt/md0/jmrosenk/paged_attn_test/prompt.value.store").to("cuda")
+    # # create initial tensors
+    # key_cache = PagedTensor(slot_shape=(32, 128), block_size=16, num_blocks=6461, is_key=True, dtype=torch.float16)
+    # value_cache = PagedTensor(slot_shape=(32, 128), block_size=16, num_blocks=6461, is_key=False, dtype=torch.float16)
+    # # warm up sequence
+    # key_cache = torch.cat((key_cache, torch.empty(1, 0, device="cuda", dtype=torch.float16)), dim=0)
+    # value_cache = torch.cat((value_cache, torch.empty(1, 0, device="cuda", dtype=torch.float16)), dim=0)
     #
-    # # warmup
-    # # warm up sequences
-    # pt = torch.cat((pt, torch.empty(8, 0)), dim=0)
+    # # concatenate tokens
+    # key_prompt = torch.nested.nested_tensor([key_prompt], device="cuda")
+    # value_prompt = torch.nested.nested_tensor([value_prompt], device="cuda")
+    # key_cache = torch.cat((key_cache, key_prompt), dim=1)
+    # value_cache = torch.cat((value_cache, value_prompt), dim=1)
+    # print(key_cache)
+    # print(value_cache)
     #
-    # # MHA
-    #
-    # # key_computed is a nested tensor that is jagged
-    # # if not a nested tensor, then assume largest length
-    # # calls paged attention store kernel with key_computed
-    # key_cache = torch.cat((key_cache, key_computed), dim=1)
+    # print("done")
+
+
+

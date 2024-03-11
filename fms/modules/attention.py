@@ -1,5 +1,5 @@
 from typing import List, Optional, Tuple
-
+from fms.paged_c import attn_ops  # type: ignore
 import torch
 import torch.distributed
 from torch import Tensor, nn
@@ -13,6 +13,7 @@ from fms.distributed.tensorparallel import (
 )
 from fms.modules.positions import PositionEncoder
 from fms.modules.tp import TPModule
+from fms.utils.tensors import PagedTensor
 
 
 class MultiHeadAttention(nn.Module):
@@ -165,83 +166,111 @@ class MultiHeadAttention(nn.Module):
                     queries, keys, position_ids, past_key_value_state, use_cache
                 )
 
-        queries = queries.transpose(2, 1)  # / (self.emb_kq_per_head**(1/4))
-        keys = keys.transpose(2, 1)  # / (self.emb_kq_per_head**(1/4))
-        values = values.transpose(2, 1)  # compatible with QK.T
+        prefill = past_key_value_state is None or (attn_algorithm == "paged" and past_key_value_state[0].block_mapping.size(1) == 0)
 
         # if you want to use caching and past_key_value_state is not None meaning you have values in your cache
         if use_cache and past_key_value_state is not None:
             if is_self:
-                keys = torch.cat((past_key_value_state[0], keys), dim=2)
-                values = torch.cat((past_key_value_state[1], values), dim=2)
+                if prefill and attn_algorithm == "paged":
+                    prefill_keys = torch.cat((past_key_value_state[0], keys), dim=1)
+                    prefill_values = torch.cat((past_key_value_state[1], values), dim=1)
+                else:
+                    keys = torch.cat((past_key_value_state[0], keys), dim=1)
+                    values = torch.cat((past_key_value_state[1], values), dim=1)
             else:
                 keys = past_key_value_state[0]
                 values = past_key_value_state[1]
 
-        # Merge rel pos bias and mask into single float mask
-        if mask is not None:
-            # Our expected mask format is bs x q_len x k_len, so to make it broadcastable
-            # we need to create the nheads dimension
-            while len(mask.size()) != 4:  # expects bs (x nheads) x q_len x kv_len
-                mask = mask.unsqueeze(1)
+        if prefill or attn_algorithm != "paged":
+            _queries = queries.transpose(2, 1)  # / (self.emb_kq_per_head**(1/4))
+            _keys = keys.transpose(2, 1)  # / (self.emb_kq_per_head**(1/4))
+            _values = values.transpose(2, 1)  # compatible with QK.T
 
-        if self.position_encoder is not None:
-            attn_mask: Optional[Tensor] = self.position_encoder.adjusted_mask(
-                mask, queries, keys, past_key_value_state, use_cache
+            # Merge rel pos bias and mask into single float mask
+            if mask is not None:
+                # Our expected mask format is bs x q_len x k_len, so to make it broadcastable
+                # we need to create the nheads dimension
+                while len(mask.size()) != 4:  # expects bs (x nheads) x q_len x kv_len
+                    mask = mask.unsqueeze(1)
+
+            if self.position_encoder is not None:
+                attn_mask: Optional[Tensor] = self.position_encoder.adjusted_mask(
+                    mask, _queries, _keys, past_key_value_state, use_cache
+                )
+            else:
+                attn_mask = mask
+
+            # Expand kv so black-box attn will work
+            expansion = self.nheads // self.kvheads
+            # k/v: b h l d
+            if expansion != 1:
+                keys_e = _keys.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
+                values_e = (
+                    _values.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
+                )
+            else:
+                keys_e = _keys
+                values_e = _values
+
+            if attn_algorithm and attn_algorithm != "paged":
+                # Pick which fused attn kernels will run.
+                use_flash = attn_algorithm == "flash"
+                use_mem_efficient = attn_algorithm == "mem"
+                use_math = attn_algorithm == "math"
+
+                torch.backends.cuda.enable_flash_sdp(use_flash)
+                torch.backends.cuda.enable_mem_efficient_sdp(use_mem_efficient)
+                torch.backends.cuda.enable_math_sdp(use_math)
+
+            attn = F.scaled_dot_product_attention(
+                _queries,
+                keys_e,
+                values_e,
+                attn_mask=attn_mask,
+                dropout_p=self.p_dropout if self.training else 0.0,
+                is_causal=is_causal_mask,
+            )
+            attn = attn.transpose(2, 1).contiguous()
+
+            if attn_algorithm and attn_algorithm != "paged":
+                torch.backends.cuda.enable_flash_sdp(self.previous_flash)
+                torch.backends.cuda.enable_mem_efficient_sdp(self.previous_mem_efficient)
+                torch.backends.cuda.enable_math_sdp(self.previous_math)
+
+        elif attn_algorithm == "paged":
+            queries = queries.view(-1, self.kvheads, self.emb_kq_per_head)
+            attn = torch.empty_like(queries)
+
+            attn_ops.paged_attention_v1(
+                attn,
+                queries,
+                keys.paged_namespace.blob,
+                values.paged_namespace.blob,
+                self.kvheads,
+                self.emb_kq_per_head ** -0.5,
+                keys.block_mapping,
+                keys.context_lengths,
+                keys.paged_namespace.block_size,
+                torch.max(keys.context_lengths).item(),
+                None,
             )
         else:
-            attn_mask = mask
+            raise NotImplementedError("not implemented for other attn algorithms when not prefill")
 
-        # Expand kv so black-box attn will work
-        expansion = self.nheads // self.kvheads
-        # k/v: b h l d
-        if expansion != 1:
-            keys_e = keys.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
-            values_e = (
-                values.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
-            )
-        else:
-            keys_e = keys
-            values_e = values
-
-        if attn_algorithm:
-            # Pick which fused attn kernels will run.
-            use_flash = attn_algorithm == "flash"
-            use_mem_efficient = attn_algorithm == "mem"
-            use_math = attn_algorithm == "math"
-
-            torch.backends.cuda.enable_flash_sdp(use_flash)
-            torch.backends.cuda.enable_mem_efficient_sdp(use_mem_efficient)
-            torch.backends.cuda.enable_math_sdp(use_math)
-
-        attn = F.scaled_dot_product_attention(
-            queries,
-            keys_e,
-            values_e,
-            attn_mask=attn_mask,
-            dropout_p=self.p_dropout if self.training else 0.0,
-            is_causal=is_causal_mask,
-        )
-
-        if attn_algorithm:
-            torch.backends.cuda.enable_flash_sdp(self.previous_flash)
-            torch.backends.cuda.enable_mem_efficient_sdp(self.previous_mem_efficient)
-            torch.backends.cuda.enable_math_sdp(self.previous_math)
 
         # attn: bs x seq_len x nheads*emb_v_per_head
         # attn: b x h x qlen x ds
         # attn after permute: b x qlen x h x ds
         # b x qlen x (d)
-        attn = (
-            attn.transpose(2, 1)
-            .contiguous()
-            .view(batch_size, q_len, self.nheads * self.emb_v_per_head)
-        )
+        attn = attn.view(batch_size, q_len, self.nheads * self.emb_v_per_head)
         out = self.dense(attn)
 
         # if use_cache=True, we return the hidden_state as well as the kv cache
         if use_cache:
-            return out, (keys, values)
+            if prefill and attn_algorithm == "paged":
+                return out, (prefill_keys, prefill_values)
+            else:
+                return out, (keys, values)
         else:
             return out
 

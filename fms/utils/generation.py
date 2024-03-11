@@ -3,6 +3,8 @@ from typing import Any, Callable, List, MutableMapping, Union
 import torch
 import torch.nn.functional as F
 
+from fms.modules.positions import compute_position_ids
+
 
 def _make_cache_contiguous(past_key_value_states):
     # kv updates are required for torch.compile with
@@ -69,10 +71,33 @@ def generate(
     kwargs: MutableMapping[str, Any] = dict()
     kwargs["past_key_value_states"] = None
     kwargs["use_cache"] = use_cache
+    kwargs["attn_algorithm"] = "paged"
 
-    for _ in range(max_new_tokens):
+    import time
+    start = time.time()
+
+    for i in range(max_new_tokens):
         input_ids = next_input[:, -max_seq_len:]
-        output = model(input_ids, **kwargs)
+
+        if not use_cache or i == 0:
+            is_pad = input_ids == 0
+            mask = is_pad.unsqueeze(-1) == is_pad.unsqueeze(-2)
+            kwargs["mask"] = mask.tril(diagonal=0)
+        else:
+            is_not_pad = result != 0
+            mask = is_not_pad.unsqueeze(-2)
+            kwargs["mask"] = mask
+
+        if i == 0:
+            num_tokens_per_sequence = torch.count_nonzero(
+                input_ids.T, dim=0
+            ).tolist()
+            position_ids = compute_position_ids(num_tokens_per_sequence)
+            position_ids = torch.tensor(position_ids, device=input_ids.device, dtype=torch.long)
+        else:
+            position_ids = position_ids[:, -1:] + 1
+
+        output = model(input_ids, position_ids=position_ids, **kwargs)
         if use_cache:
             logits, past_key_value_states = output
             # TODO: this should go away when reduce-overhead issues are fixed, or
@@ -105,6 +130,9 @@ def generate(
             next_input = next_val
         else:
             next_input = result
+    end = time.time()
+
+    print((end - start) / max_new_tokens)
 
     if not batched:
         result = result[0]
