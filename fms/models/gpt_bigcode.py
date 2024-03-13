@@ -193,7 +193,7 @@ class GPTBigCodeHeadless(nn.Module):
             # we are caching and can assume all 1s in the mask
             if use_cache and klen != 1 and qlen == 1:
                 # b x h x qlen x kvlen
-                mask = torch.ones(qlen, klen, device=x.device)
+                mask = torch.ones(qlen, klen, device=x.device).bool()
             else:
                 pad_id: int = self.config.pad_id
                 is_pad: torch.Tensor = x == pad_id
