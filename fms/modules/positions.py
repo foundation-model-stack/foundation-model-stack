@@ -187,7 +187,7 @@ class RotaryEmbedding(PositionEncoder):
 
         t = torch.arange(max_seq_len, device=device, dtype=freqs.dtype)
         freqs = torch.outer(t, freqs).float()
-        self.max_seq_len_cached[dev_idx] = max_seq_len.item()
+        self.max_seq_len_cached[dev_idx] = max_seq_len if type(max_seq_len) == int else max_seq_len.item()
         self.cached_freqs[dev_idx][alpha] = torch.stack(
             [
                 torch.cos(freqs),
