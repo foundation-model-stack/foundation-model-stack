@@ -1,6 +1,6 @@
 from contextlib import nullcontext
 from functools import partial
-from typing import Callable, MutableMapping, Optional
+from typing import Any, Callable, MutableMapping, Optional
 
 import torch
 from torch import nn
@@ -237,7 +237,8 @@ def get_model(
                 See `serialization.list_sources(architecture)`
     group: ProcessGroup The PG to use for any model distribution
     """
-    local_rank, world_size = distributed.rank_and_world(group)
+    rank, world_size = distributed.rank_and_world(group)
+    local_rank = distributed.local_rank()
 
     if distributed_strategy is None or distributed_strategy == "":
         if world_size > 1:
@@ -248,17 +249,14 @@ def get_model(
     else:
         device = torch.device(device_type)
 
-    if (
-        _is_dp(distributed_strategy)
-        and local_rank != 0
-        and checkpoint_sharding != "fsdp"
-    ):
+    if _is_dp(distributed_strategy) and rank != 0 and checkpoint_sharding != "fsdp":
         initial_device = torch.device("meta")
     elif distributed_strategy == "mp":
         initial_device = torch.device("cpu")
     else:
         initial_device = device
 
+    lazy_sd: MutableMapping[str, Any] = {}
     if model_path is not None:
         lazy_sd = serialization.load_state_dict(
             model_path,
@@ -266,7 +264,7 @@ def get_model(
             distributed_strategy=distributed_strategy,
             checkpoint_sharding=checkpoint_sharding,
             initial_device=initial_device,
-            rank=local_rank,
+            rank=rank,
             world_size=world_size,
         )
 
@@ -295,7 +293,7 @@ def get_model(
 
     def model_wrap(model):
         if _is_dp(distributed_strategy):
-            return _fsdp_wrap(model, distributed_strategy, device, local_rank == 0)
+            return _fsdp_wrap(model, distributed_strategy, device, rank == 0)
         return model
 
     if not pre_load:
@@ -310,9 +308,11 @@ def get_model(
             distributed_strategy,
             checkpoint_sharding,
             initial_device,
-            local_rank,
+            rank,
             world_size,
         )
+    elif hasattr(fms_model, "reset_parameters"):
+        fms_model.reset_parameters()
 
     if pre_load:
         fms_model = model_wrap(fms_model)

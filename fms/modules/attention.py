@@ -48,7 +48,6 @@ class MultiHeadAttention(nn.Module):
         p_dropout=None,
         use_bias=False,
         position_encoder: Optional[PositionEncoder] = None,
-        gain=1,
     ):
         super(MultiHeadAttention, self).__init__()
         self.nheads = nheads
@@ -79,26 +78,13 @@ class MultiHeadAttention(nn.Module):
             torch.backends.cuda.mem_efficient_sdp_enabled()
         )
         self.previous_math: bool = torch.backends.cuda.math_sdp_enabled()
-        self.reset_params(gain)
 
-    def reset_params(self, gain=1):
-        # Ensure softmax inputs are standard normal
-        for layer in ["query", "key"]:
-            nn.init.trunc_normal_(
-                getattr(self, layer).weight, mean=0.0, std=self.emb_dim**-0.5
-            )
-        # Ensure projection layers have same scale (for normalized-step dataloaders like
-        # AdamW / Sophia), and maintain input norm up to attention remix, in expectation
-        for layer in ["value", "dense"]:
-            nn.init.trunc_normal_(
-                getattr(self, layer).weight,
-                mean=0.0,
-                std=(gain / (self.emb_dim * self.nheads * self.emb_v_per_head) ** 0.5)
-                ** 0.5,
-            )  # Using explicit terms instead of numel to account for eventual MQA addition
-        if self.use_bias:
-            for layer in ["query", "key", "value", "dense"]:
-                getattr(self, layer).bias.data.zero_()
+    def reset_parameters(self):
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.trunc_normal_(m.weight, mean=0.0, std=0.02)
+                if self.use_bias:
+                    m.bias.data.zero_()
 
     def forward(
         self,
@@ -142,7 +128,6 @@ class MultiHeadAttention(nn.Module):
         queries = self.query(q).view(
             batch_size, q_len, self.nheads, self.emb_kq_per_head
         )
-        queries = queries.transpose(2, 1)  # / (self.emb_kq_per_head**(1/4))
 
         # if this is self attention, we always recompute
         # cross attention only gets computed when a cache does not exist
@@ -155,18 +140,20 @@ class MultiHeadAttention(nn.Module):
             keys = self.key(k).view(
                 batch_size, kv_len, self.kvheads, self.emb_kq_per_head
             )
-            keys = keys.transpose(2, 1)  # / (self.emb_kq_per_head**(1/4))
 
             values = self.value(v).view(
                 batch_size, kv_len, self.kvheads, self.emb_v_per_head
             )
-            values = values.transpose(2, 1)  # compatible with QK.T
 
             # You want to apply rotary embeddings pre-cache
             if self.position_encoder is not None:
                 queries, keys = self.position_encoder.adjusted_qk(
                     queries, keys, position_ids, past_key_value_state, use_cache
                 )
+
+        queries = queries.transpose(2, 1)  # / (self.emb_kq_per_head**(1/4))
+        keys = keys.transpose(2, 1)  # / (self.emb_kq_per_head**(1/4))
+        values = values.transpose(2, 1)  # compatible with QK.T
 
         # if you want to use caching and past_key_value_state is not None meaning you have values in your cache
         if use_cache and past_key_value_state is not None:
@@ -270,7 +257,6 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
         p_dropout=None,
         use_bias=False,
         position_encoder: Optional[PositionEncoder] = None,
-        gain=1,
         group: Optional[ProcessGroup] = None,
     ):
         assert torch.distributed.is_initialized()
@@ -289,13 +275,13 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
             p_dropout,
             use_bias,
             position_encoder,
-            gain,
         )
+        self.pre_tp_kvheads = kvheads
         self.setup_tp(rank, world_size)
 
     def colwise_param_names(self) -> List[str]:
         colwise_weights = ["query"]
-        if self.kvheads != 1:
+        if self.pre_tp_kvheads != 1:
             colwise_weights.append("key")
             colwise_weights.append("value")
         return colwise_weights

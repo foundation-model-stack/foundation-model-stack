@@ -42,7 +42,6 @@ class FeedForwardBlock(nn.Module):
         activation_fn=nn.ReLU(),
         p_dropout=0.1,
         use_bias=True,
-        gain=1,
     ):
         super(FeedForwardBlock, self).__init__()
         self.hidden_dim = int(hidden_grow_factor * emb_dim)
@@ -57,18 +56,13 @@ class FeedForwardBlock(nn.Module):
             self.d = nn.Dropout(p_dropout)
         self.w2 = nn.Linear(self.hidden_dim, emb_dim, bias=use_bias)
         self.use_bias = use_bias
-        self.reset_params(gain=gain)
 
-    def reset_params(self, gain=1):
-        # Fulfills following constraints in expectation:
-        #  - Norm of w1 and w2 are equal (for step-normalizing optimizers like AdamW / Sophia)
-        #  - Norm of output equals norm of input times gamma
-        # when activation is relu-like
+    def reset_parameters(self):
         for layer in ["w1", "w2"]:
             nn.init.trunc_normal_(
                 getattr(self, layer).weight,
                 mean=0.0,
-                std=(2**0.5 * gain / self.w1.weight.numel() ** 0.5) ** 0.5,
+                std=0.02,
             )
             if self.use_bias:
                 getattr(self, layer).bias.data.zero_()
@@ -103,7 +97,6 @@ class TPFeedForwardBlock(FeedForwardBlock, TPModule):
         activation_fn=nn.ReLU(),
         p_dropout=0.1,
         use_bias=True,
-        gain=1,
         group: Optional[ProcessGroup] = None,
     ):
         assert torch.distributed.is_initialized()
@@ -122,7 +115,6 @@ class TPFeedForwardBlock(FeedForwardBlock, TPModule):
             activation_fn,
             p_dropout,
             use_bias,
-            gain,
         )
         self.setup_tp(rank, world_size)
 
@@ -183,7 +175,6 @@ class GatedLinearUnit(nn.Module):
         activation_fn=nn.ReLU(),
         p_dropout=0.1,
         use_bias=True,
-        gain=1,
     ):
         super(GatedLinearUnit, self).__init__()
         self.hidden_dim = int(hidden_grow_factor * emb_dim)
@@ -201,18 +192,13 @@ class GatedLinearUnit(nn.Module):
         self.use_bias = use_bias
         self.width = emb_dim
         self.grow_factor = hidden_grow_factor
-        self.reset_params(gain=gain)
 
-    def reset_params(self, gain=1):
-        # Fulfills following constraints in expectation:
-        #  - Norm of w1, wg and w2 are equal (for step-normalizing optimizers like AdamW / Sophia)
-        #  - Norm of output equals norm of input times gamma
-        # when activation is relu-like and input is standard normal
+    def reset_parameters(self):
         for layer in ["w1", "w2", "wg"]:
             nn.init.trunc_normal_(
                 getattr(self, layer).weight,
                 mean=0.0,
-                std=(2 * gain**2 / self.grow_factor) ** (1 / 6) / self.width**0.5,
+                std=0.02,
             )
             if self.use_bias:
                 getattr(self, layer).bias.data.zero_()
@@ -248,7 +234,6 @@ class TPGatedLinearUnit(GatedLinearUnit, TPModule):
         activation_fn=nn.ReLU(),
         p_dropout=0.1,
         use_bias=True,
-        gain=1,
         group: Optional[ProcessGroup] = None,
     ):
         assert torch.distributed.is_initialized()
@@ -268,7 +253,6 @@ class TPGatedLinearUnit(GatedLinearUnit, TPModule):
             activation_fn,
             p_dropout,
             use_bias,
-            gain,
         )
         self.setup_tp(rank, world_size)
 

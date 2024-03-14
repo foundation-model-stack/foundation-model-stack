@@ -1,17 +1,20 @@
 import argparse
-from contextlib import nullcontext
 import os
+from contextlib import nullcontext
 from pathlib import Path
+
 import torch
 from torch import distributed as dist
 from torch import nn
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
-from fms import models
-from fms import datasets
+
+from fms import datasets, models
 from fms.models.hf.utils import to_hf_api
+from fms.training import plugins as trainplugins
+from fms.training import trainer
 from fms.utils import print0, tokenizers
-from fms.training import trainer, plugins as trainplugins
+
 
 #
 # This is a fairly minimal training/tuning script for causal language models.
@@ -22,7 +25,24 @@ from fms.training import trainer, plugins as trainplugins
 #       --tokenizer=~/models/tokenizer.model --model_path=~/models/7B/ --output_path=./tuned/ \
 #       --report_steps=10 --checkpoint_format=meta --distributed=fsdp
 #
-
+# Simple example of pre-training on tokens stored in arrow files (pre-processed to length 4096):
+#
+# export LD_LIBRARY_PATH=/opt/amazon/efa/lib:/opt/amazon/openmpi/lib:/opt/aws-ofi-nccl/lib:/usr/local/cuda/lib:/usr/local/cuda/lib64:/usr/local/cuda:/usr/local/cuda/targets/x86_64-linux/lib/:/usr/local/cuda/extras/CUPTI/lib64:/usr/local/lib:$LD_LIBRARY_PATH
+# export FI_EFA_SET_CUDA_SYNC_MEMOPS=0
+# srun --gres=gpu:8 --cpus-per-task=96 -N 8 --mem=1T --unbuffered --gres-flags=enforce-binding \
+#       --exclusive bash -c 'torchrun --nnodes=$SLURM_NTASKS --nproc_per_node=8 --node_rank=$SLURM_NODEID \
+#       --master_addr=`scontrol show hostnames $SLURM_JOB_NODELIST | head -n 1` \
+#       scripts/train_causal.py --variant=7b --tokenizer=~/models/tokenizer.model \
+#       --device_type=cuda --distributed=hsdp  --dataset_style=arrow \
+#       --dataset_path=file:///lustre/users/bvaughan/data/'
+#
+# Logs output like:
+# 0 19 2024-03-11 19:58:35.773642 {'loss': '7.6250', 'avg_loss': '8.3703', 'tok/stp': '524,288.0', 's/stp': '2.227', 'tok/gpu/s': '3,679.1', 'gpu_mem_use': '0%', 'gpu_utzn': '0%'}
+# 0 28 2024-03-11 19:58:57.736138 {'loss': '7.6250', 'avg_loss': '7.6424', 'tok/stp': '524,288.0', 's/stp': '2.439', 'tok/gpu/s': '3,357.0', 'gpu_mem_use': '46%', 'gpu_utzn': '100%'}
+# 0 37 2024-03-11 19:59:17.431584 {'loss': '7.4688', 'avg_loss': '7.5139', 'tok/stp': '524,288.0', 's/stp': '2.189', 'tok/gpu/s': '3,743.4', 'gpu_mem_use': '37%', 'gpu_utzn': '100%'}
+#
+# use sbatch for longer running training jobs.
+#
 
 parser = argparse.ArgumentParser(description="Script to train or tune a model")
 
@@ -36,7 +56,7 @@ parser.add_argument(
 parser.add_argument(
     "--variant",
     type=str,
-    default="7b",
+    default="micro",
     help="The model variant (configuration) to benchmark. E.g. 7b, 13b, 70b.",
 )
 parser.add_argument(
@@ -114,6 +134,7 @@ parser.add_argument(
 parser.add_argument(
     "--epochs", type=int, default=2, help="Number of epochs to train/tune"
 )
+parser.add_argument("--batch_size", type=int, default=2, help="Batch size")
 parser.add_argument(
     "--grad_accum_steps",
     type=int,
@@ -125,6 +146,7 @@ parser.add_argument(
 args = parser.parse_args()
 
 local_rank = int(os.getenv("LOCAL_RANK", 0))
+rank = int(os.getenv("RANK", 0))
 world_size = int(os.getenv("WORLD_SIZE", 1))
 
 # default search for what's available
@@ -137,13 +159,19 @@ if device_type is None:
     else:
         device_type = "cpu"
 
-device = torch.device(device_type, local_rank)
+if device_type == "cuda":
+    device = torch.device(device_type, local_rank)
+    torch.cuda.set_device(device)
+else:
+    device = torch.device(device_type)
 
 group = None
 
 if args.distributed is not None:
-    dist.init_process_group(backend="nccl", rank=local_rank, world_size=world_size)
+    dist.init_process_group(backend="nccl", rank=rank, world_size=world_size)
     group = dist.GroupMember.WORLD
+    # Fix until PT 2.3
+    torch._C._distributed_c10d._register_process_group("default", dist.group.WORLD)
 
 
 def get_loss_fn():
@@ -190,7 +218,7 @@ def peft_model(model):
     from fms.models.hf.llama.modeling_llama_hf import HFAdaptedLLaMAForCausalLM
 
     model = to_hf_api(model)
-    from peft import get_peft_config, get_peft_model, LoraConfig
+    from peft import LoraConfig, get_peft_config, get_peft_model
     from peft.mapping import PeftModelForCausalLM
 
     lora_config = LoraConfig(
@@ -251,9 +279,9 @@ def main():
         group=group,
     )
     # model.to(torch.half)
-    optimizer, epoch = training_state(args.model_path, model, local_rank)
+    optimizer, epoch = training_state(args.model_path, model, rank)
 
-    print("model loaded", local_rank)
+    print("model loaded", rank)
 
     tokenizer = tokenizers.get_tokenizer(args.tokenizer)
 
@@ -266,20 +294,23 @@ def main():
     eos_token = tokenizer.convert_ids_to_tokens([eos_token_id])[0]
 
     # TODO: split a validation dataset
-    dataset = datasets.get_dataset(
-        args.dataset_style, tokenizer, args.dataset_path, device=device
-    )
+    dataset = datasets.get_dataset(args.dataset_style, tokenizer, args.dataset_path)
 
     sampler = None
-    shuffle = True
-    if args.distributed == "fsdp":
+    # if the dataset is iterable, we can't shuffle it, and it should handle
+    # sharding internally
+    shuffle = not isinstance(dataset, datasets.IterableDataset)
+
+    if args.distributed == "fsdp" and not isinstance(dataset, datasets.IterableDataset):
         sampler = DistributedSampler(
-            dataset, rank=local_rank, num_replicas=world_size, shuffle=True
+            dataset, rank=rank, num_replicas=world_size, shuffle=True
         )
         # if we shuffle the sampler then we don't shuffle the dataloader
         shuffle = False
 
-    dataloader = DataLoader(dataset, sampler=sampler, shuffle=shuffle)
+    dataloader = DataLoader(
+        dataset, batch_size=args.batch_size, sampler=sampler, shuffle=shuffle
+    )
 
     loss_fn = get_loss_fn()
 
@@ -305,7 +336,7 @@ def main():
     checkpointing = trainplugins.Checkpointer(
         steps=args.checkpoint_steps, group=group, save_dir=args.output_path
     )
-    reporting = trainplugins.MetricReporter()
+    reporting = trainplugins.MetricReporter(seconds=20, group=group, device=device)
 
     plugins = [reporting, validator, validator2, checkpointing]
     print0("training...")
@@ -314,6 +345,7 @@ def main():
             model,
             optimizer,
             dataloader,
+            device,
             loss_fn,
             start_epoch=epoch,
             epochs=args.epochs,

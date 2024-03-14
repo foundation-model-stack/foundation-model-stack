@@ -1,13 +1,15 @@
 import sys
 import warnings
 from collections import UserDict
+from typing import Optional
 
 import pyarrow as pa
+import torch
 import urllib3
 from pyarrow.fs import FileSystem, FileType, LocalFileSystem, S3FileSystem
 from torch.utils.data import Dataset, IterableDataset
 
-from fms.datasets import SavableDataset
+from fms.datasets.util import SavableDataset
 
 
 class _ArrowFileData(UserDict):
@@ -55,7 +57,7 @@ class ArrowFilesDataset(IterableDataset, SavableDataset):
         rank: int = 0,
         world_size: int = 1,
         column_name: str = "tokens",
-        max_seq_len: int = 4096,
+        max_seq_len: Optional[int] = None,
     ):
         self.uri = uri
         self._rank = rank
@@ -121,10 +123,9 @@ class ArrowFilesDataset(IterableDataset, SavableDataset):
                     current = rb.slice(
                         offset=self.record_batch_offset, length=self.max_seq_len
                     ).to_pylist()
-                    self.record_batch_offset = (
-                        self.record_batch_offset + self.max_seq_len
-                    )
-                    yield current
+                    self.record_batch_offset = self.record_batch_offset + len(current)
+                    t = torch.tensor(current)
+                    yield t[:-1], t[1:]
                 self.start_idx += self._step
                 self.record_batch_offset = 0
 

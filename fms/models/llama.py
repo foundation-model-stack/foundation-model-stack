@@ -195,6 +195,16 @@ class LLaMA(nn.Module):
             ntk_scaling=self.config.ntk_scaling,
             max_seq_len=self.config.max_expected_seq_len,
         )
+        # RoPE init
+        if isinstance(self.distributed_strategy, UniformModelParallelStrategy):
+            for dev_idx in set(self.distributed_strategy.layer_to_device):
+                self.rot_emb.compute_freqs_cis(
+                    torch.device("cuda", dev_idx), self.config.max_expected_seq_len
+                )
+        else:
+            self.rot_emb.compute_freqs_cis(
+                self.shared.emb.weight.device, self.config.max_expected_seq_len
+            )
 
         if isinstance(self.distributed_strategy, UniformModelParallelStrategy):
             for dev_idx in set(self.distributed_strategy.layer_to_device):
@@ -228,8 +238,6 @@ class LLaMA(nn.Module):
         if self.config.p_dropout:
             self.dropout = nn.Dropout(self.config.p_dropout)
 
-        self.reset_params()
-
     def get_config(self) -> LLaMAConfig:
         return self.config
 
@@ -237,12 +245,16 @@ class LLaMA(nn.Module):
     def from_config(cls, config: LLaMAConfig) -> "LLaMA":
         return cls(config)
 
-    def reset_params(self):
-        # Modules are self-initializing, we're just going to down-scale the final prediction head to be
-        # mixed-fan (inputs and gradients scale to the same inverse factors) if it isn't tied
-        self.shared.head.weight.data.normal_(
-            0, 1 / math.sqrt(math.sqrt(self.width * self.shared.vocab_size))
-        )
+    def reset_parameters(self):
+        # Call reset_parameters for relevant sub-layers
+        for m in self.modules():
+            if (
+                isinstance(m, MultiHeadAttention)
+                or isinstance(m, WordEmbedding)
+                or isinstance(m, GatedLinearUnit)
+                or isinstance(m, LayerNormParameterized)
+            ):
+                m.reset_parameters()
 
     def _helper(
         self,
