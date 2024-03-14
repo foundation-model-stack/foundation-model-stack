@@ -267,6 +267,8 @@ def get_model(
             rank=rank,
             world_size=world_size,
         )
+    else:
+        lazy_sd = {}
 
     extra_args = kwargs
     if "distributed_strategy" not in extra_args:
@@ -320,4 +322,4 @@ def get_model(
     return fms_model
 
 
-from fms.models import llama, roberta
+from fms.models import llama, roberta, gpt_bigcode

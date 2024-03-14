@@ -23,13 +23,14 @@ class GPTBigCodeConfig(ModelConfig):
     nheads: int = 12
     nlayers: int = 12
     pad_id: int = 0
-    max_pos: int = 512
+    max_expected_seq_len: int = 512
     hidden_grow_factor: float = 4.0
     activation_fn: str = "gelu-tanh"
     p_dropout: float = 0.0
     emb_dropout: float = 0.0
     multiquery_attn: bool = True
     ln_eps: float = 1e-5
+    ntk_scaling: bool = False
 
 
 class GPTBigCodeBlock(nn.Module):
@@ -124,7 +125,7 @@ class GPTBigCodeHeadless(nn.Module):
         )
 
         self.embedding = nn.Embedding(self.config.src_vocab_size, self.config.emb_dim)
-        self.position_embedding = nn.Embedding(self.config.max_pos, self.config.emb_dim)
+        self.position_embedding = nn.Embedding(self.config.max_expected_seq_len, self.config.emb_dim)
 
         self.dec_norm = nn.LayerNorm(self.config.emb_dim, eps=self.config.ln_eps)
 
@@ -327,6 +328,7 @@ class GPTBigCode(nn.Module):
             return preds
 
 
+# Register common GPT Bigcode variants with the model registration API
 _santacoder_config = GPTBigCodeConfig(
     src_vocab_size=49280,
     emb_dim=2048,
@@ -337,6 +339,8 @@ _santacoder_config = GPTBigCodeConfig(
     p_dropout=0.1,
     emb_dropout=0.1,
 )
+_13b_config = GPTBigCodeConfig(src_vocab_size=50304, emb_dim=5632, nheads=44, nlayers=40, pad_id=50280, max_expected_seq_len=8192, hidden_grow_factor=4., p_dropout=0.1, emb_dropout=0.1, ln_eps=1e-5)
+_20b_config = GPTBigCodeConfig(src_vocab_size=49152, emb_dim=6144, nheads=52, nlayers=48, pad_id=0, max_expected_seq_len=32768, hidden_grow_factor=4., p_dropout=0.1, emb_dropout=0.1, ln_eps=1e-5)
 
 _architecture_name = "gpt_bigcode"
 
@@ -351,6 +355,8 @@ def _gpt_bigcode_factory_factory(config):
 models.register_model(
     _architecture_name, "santacoder", _gpt_bigcode_factory_factory(_santacoder_config)
 )
+models.register_model(_architecture_name, "ibm.13b", _gpt_bigcode_factory_factory(_13b_config))
+models.register_model(_architecture_name, "ibm.20b", _gpt_bigcode_factory_factory(_20b_config))
 
 
 def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
