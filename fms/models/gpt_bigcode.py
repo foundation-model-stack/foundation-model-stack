@@ -30,7 +30,6 @@ class GPTBigCodeConfig(ModelConfig):
     emb_dropout: float = 0.0
     multiquery_attn: bool = True
     ln_eps: float = 1e-5
-    ntk_scaling: bool = False
 
 
 class GPTBigCodeBlock(nn.Module):
