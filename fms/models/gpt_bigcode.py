@@ -336,7 +336,7 @@ _santacoder_config = GPTBigCodeConfig(
     nheads=16,
     nlayers=24,
     pad_id=-1,
-    max_pos=2048,
+    max_expected_seq_len=2048,
     p_dropout=0.1,
     emb_dropout=0.1,
 )

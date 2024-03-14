@@ -26,7 +26,7 @@ class HFAdaptedGPTBigCodeConfig(PretrainedConfig):
         nheads: int = 12,
         nlayers: int = 12,
         pad_token_id: int = 0,
-        max_pos: int = 512,
+        max_expected_seq_len: int = 512,
         hidden_grow_factor: float = 4.0,
         activation_fn: str = "gelu-tanh",
         p_dropout: float = 0.0,
@@ -44,7 +44,7 @@ class HFAdaptedGPTBigCodeConfig(PretrainedConfig):
         self.nheads = nheads
         self.multiquery_attn = multiquery_attn
         self.nlayers = nlayers
-        self.max_pos = max_pos
+        self.max_expected_seq_len = max_expected_seq_len
         self.hidden_grow_factor = hidden_grow_factor
         self.activation_fn = activation_fn
         self.p_dropout = p_dropout
