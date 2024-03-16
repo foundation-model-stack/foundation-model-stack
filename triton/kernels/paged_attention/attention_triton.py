@@ -25,8 +25,6 @@ def print_line(str_line):
     if tl.program_id(0) == 0 and tl.program_id(1) == 0:
         print(str_line)
 
-
-
 #Paged Attention V1: basic version, has a memory limitation error
 @triton.jit
 def paged_attention_v1(

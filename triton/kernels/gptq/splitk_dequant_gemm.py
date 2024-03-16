@@ -112,9 +112,8 @@ def matmul_split_k(a, b, scales, zeros):
     print(f"problem m size: {m}, tile size m: {block_m}, total blocks m: {total_blocks_m}")
     print(f"problem n size: {n}, tile size n: {block_n}, total blocks n: {total_blocks_n}")
     print(f"problem k size: {k}, tile size k: {block_k}, total thread blocks k: {split_k}")
+
     print(f"total thread blocks k: {k}, total thread blocks m and total thread blocks n = {total_blocks_m=} x {total_blocks_n} = {total_programs_mn}")
-
-
     print(f"{total_programs_mn=}, {total_programs_k=}")
     
     c = torch.zeros((m, n), device=a.device, dtype=torch.float16)
@@ -150,6 +149,7 @@ def make_tensor(M, N, dtype):
         res = torch.empty((M, N), dtype=dtype, device="cuda")
         res.normal_(mean=0.0, std=0.5)
     return res
+
 
 if __name__ == '__main__':
 
