@@ -45,6 +45,12 @@ parser.add_argument(
     help="Source of the checkpoint. E.g. 'meta', 'hf', None",
 )
 parser.add_argument(
+    "--checkpoint_sharding",
+    type=str,
+    default=None,
+    help="type of weight sharding. E.g. tensor-parallel (tp), None",
+)
+parser.add_argument(
     "--tokenizer",
     type=str,
     required=True,
@@ -116,19 +122,14 @@ model = get_model(
     device_type=args.device_type,
     source=args.model_source,
     distributed_strategy=distr_param,
+    checkpoint_sharding=args.checkpoint_sharding,
     group=dist.group.WORLD,
+    norm_eps=1e-6,
 )
 tokenizer = tokenizers.get_tokenizer(args.tokenizer)
 model.eval()
 torch.set_grad_enabled(False)
 print("loading complete on rank", local_rank)
-
-if args.compile:
-    print("compiling model")
-    # Bug with kv-cache in PT2.1
-    torch._inductor.config.joint_graph_constant_folding = False
-    # compiling can make first inference pass slow
-    model = torch.compile(model, mode=args.compile_mode)
 
 
 def ids_for_prompt(prompt):
@@ -137,16 +138,6 @@ def ids_for_prompt(prompt):
     ids = tokenizer.convert_tokens_to_ids(tokens)
     ids = torch.tensor(ids, dtype=torch.long, device=device)
     return ids
-
-
-def pad_prompt(prompt, pad_len, pad_token="<unk>"):
-    to_pad = pad_len - len(prompt)
-    if to_pad == 0:
-        return prompt
-
-    pad_id = tokenizer.convert_tokens_to_ids(pad_token)
-    pad_ids = [pad_id] * to_pad
-    return torch.cat((torch.tensor(pad_ids, device=device), prompt))
 
 
 if args.context_file is not None:
@@ -160,6 +151,8 @@ if args.context_file is not None:
         )
         # prompt1 = long_prompt + "\nDescribe work that was done concurrently with the research in this paper."
         prompt2 = long_prompt + "\nPlease write me the abstract for this paper."
+
+        ids = [ids_for_prompt(prompt1), ids_for_prompt(prompt2)]
 else:
     template = "Below is an instruction that describes a task. Write a response that appropriately completes the request.\n\n### Instruction:\n{}\n\n### Response:"
 
@@ -167,18 +160,19 @@ else:
         "Provide a list of instructions for preparing chicken soup."
     )
     prompt2 = template.format("Explain some popular greetings in Spanish.")
+    prompt3 = template.format("Explain to me why ignorance is bliss.")
+    prompt4 = template.format(
+        "I have just come into a very large sum of money. I received the money from my parents who told me I could do whatever I want with it. My first thought was to go to a financial advisor. Provide me a list of things that I can do with my new found wealth."
+    )
 
-prompt1 = ids_for_prompt(prompt1)
-prompt2 = ids_for_prompt(prompt2)
+    prompt1 = ids_for_prompt(prompt1)
+    prompt2 = ids_for_prompt(prompt2)
+    prompt3 = ids_for_prompt(prompt3)
+    prompt4 = ids_for_prompt(prompt4)
 
-max_len = max([len(prompt) for prompt in [prompt1, prompt2]])
-# prompt1 = pad_prompt(prompt1, max_len)
-# LLaMA 7B did better on the spanish prompt vs 13B.
-# TODO: add a better english prompt to demonstrate padding/batching.
-# prompt2 = pad_prompt(prompt2, max_len)
-# ids = torch.stack((prompt2, prompt1), dim=0)
+    ids = [prompt1, prompt2, prompt3, prompt4]
 
-ids = prompt1.unsqueeze(0)
+max_len = max(prompt.size(0) for prompt in ids)
 
 
 def print_result(result):
@@ -219,10 +213,22 @@ def infer(use_cache, do_sample):
         print_result(result[i])
 
 
-print("generating output", local_rank)
 do_sample = [False]
 use_cache = [
     args.no_use_cache
 ]  # True/False are identical with greedy iff `torch.use_deterministic_algorithms(True)`
+
+if args.compile:
+    print("compiling model")
+    # Bug with kv-cache in PT2.1
+    torch._inductor.config.joint_graph_constant_folding = False
+    # compiling can make first inference pass slow
+    model = torch.compile(model, mode=args.compile_mode)
+
+    for sample, cache in itertools.product(do_sample, use_cache):
+        infer(cache, sample)
+
+
+print("generating output", local_rank)
 for sample, cache in itertools.product(do_sample, use_cache):
     infer(cache, sample)
