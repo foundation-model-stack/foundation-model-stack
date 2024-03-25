@@ -196,7 +196,9 @@ class MultiHeadAttention(nn.Module):
         expansion = self.nheads // self.kvheads
         # k/v: b h l d
         if expansion != 1:
-            keys_sdpa = keys_sdpa.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
+            keys_sdpa = (
+                keys_sdpa.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
+            )
             values_sdpa = (
                 values_sdpa.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
             )

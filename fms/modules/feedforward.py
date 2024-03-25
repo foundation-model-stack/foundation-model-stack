@@ -366,7 +366,7 @@ class ConditionalFeedForward(nn.Module):
 
             # torch.testing.assert_close(x1, x1_vllm)
             # torch.testing.assert_close(x3, x3_vllm)
-        
+
             y = torch.ops.moe.moe_mm(
                 F.silu(x1) * x3,
                 self.w2,

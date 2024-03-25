@@ -9,6 +9,7 @@ import torch.nn.functional as F
 
 from fms import distributed
 
+
 past_key_value_states_g = None
 
 
@@ -93,80 +94,80 @@ def generate(
 
     token_times = []
     rank, _ = distributed.rank_and_world()
-    with torch.profiler.profile(
-        activities=[
-            torch.profiler.ProfilerActivity.CPU,
-            torch.profiler.ProfilerActivity.CUDA,
-        ],
-        schedule=torch.profiler.schedule(wait=10, warmup=2, active=2, repeat=1),
-        on_trace_ready=functools.partial(
-            trace_handler,
-            output_path="/lustre/aviros/mixtral_traces",
-            extra_name=str(rank),
-        ),
-        with_stack=True,
-        profile_memory=True,
-        record_shapes=True,
-    ) as prof:
-        for i in range(max_new_tokens):
-            itl_start = time.time()
-            input_ids = next_input[:, -max_seq_len:]
+    # with torch.profiler.profile(
+    #     activities=[
+    #         torch.profiler.ProfilerActivity.CPU,
+    #         torch.profiler.ProfilerActivity.CUDA,
+    #     ],
+    #     schedule=torch.profiler.schedule(wait=10, warmup=2, active=2, repeat=1),
+    #     on_trace_ready=functools.partial(
+    #         trace_handler,
+    #         output_path="/lustre/aviros/mixtral_traces",
+    #         extra_name=str(rank),
+    #     ),
+    #     with_stack=True,
+    #     profile_memory=True,
+    #     record_shapes=True,
+    # ) as prof:
+    for i in range(max_new_tokens):
+        itl_start = time.time()
+        input_ids = next_input[:, -max_seq_len:]
+        if i == 0:
+            output = prefill_model(input_ids, **kwargs)
+        else:
+            output = decode_model(input_ids, **kwargs)
+        if use_cache:
+            logits, past_key_value_states = output
             if i == 0:
-                output = prefill_model(input_ids, **kwargs)
-            else:
-                output = decode_model(input_ids, **kwargs)
-            if use_cache:
-                logits, past_key_value_states = output
-                if i == 0:
-                    if past_key_value_states_g is None:
-                        past_key_value_states_g = past_key_value_states
-                        for cache_layer in past_key_value_states_g:
-                            for kv_tensor in cache_layer:
-                                torch._dynamo.mark_static_address(kv_tensor)
-                    else:
-                        for layer_idx, cache_layer in enumerate(past_key_value_states_g):
-                            for tensor_idx, kv_tensor in enumerate(cache_layer):
-                                kv_tensor.copy_(past_key_value_states[layer_idx][tensor_idx])
-                        past_key_value_states = past_key_value_states_g
-                    
-                # TODO: this should go away when reduce-overhead issues are fixed, or
-                # maybe could be moved into model code to be more portable.
-                # if contiguous_cache:
-                #     kwargs["past_key_value_states"] = _make_cache_contiguous(
-                #         past_key_value_states
-                #     )
-                # else:
-                kwargs["past_key_value_states"] = past_key_value_states
-            else:
-                logits = output
-            logits = logits[:, -1, :]
+                if past_key_value_states_g is None:
+                    past_key_value_states_g = past_key_value_states
+                    for cache_layer in past_key_value_states_g:
+                        for kv_tensor in cache_layer:
+                            torch._dynamo.mark_static_address(kv_tensor)
+                else:
+                    for layer_idx, cache_layer in enumerate(past_key_value_states_g):
+                        for tensor_idx, kv_tensor in enumerate(cache_layer):
+                            kv_tensor.copy_(past_key_value_states[layer_idx][tensor_idx])
+                    past_key_value_states = past_key_value_states_g
+                
+            # TODO: this should go away when reduce-overhead issues are fixed, or
+            # maybe could be moved into model code to be more portable.
+            # if contiguous_cache:
+            #     kwargs["past_key_value_states"] = _make_cache_contiguous(
+            #         past_key_value_states
+            #     )
+            # else:
+            kwargs["past_key_value_states"] = past_key_value_states
+        else:
+            logits = output
+        logits = logits[:, -1, :]
 
-            if do_sample:
-                # get logits from last value in sequence nad scale
-                logits = logits / temperature
-                if top_k:
-                    v, _ = torch.topk(logits, top_k)
-                    logits[logits < v[:, [-1]]] = -float("inf")
+        if do_sample:
+            # get logits from last value in sequence nad scale
+            logits = logits / temperature
+            if top_k:
+                v, _ = torch.topk(logits, top_k)
+                logits[logits < v[:, [-1]]] = -float("inf")
 
-                probs = F.softmax(logits, dim=-1)
-                next_val = torch.multinomial(probs, num_samples=1)
-            else:
-                next_val = torch.argmax(logits, dim=-1).unsqueeze(0).t()
+            probs = F.softmax(logits, dim=-1)
+            next_val = torch.multinomial(probs, num_samples=1)
+        else:
+            next_val = torch.argmax(logits, dim=-1).unsqueeze(0).t()
 
-            result = torch.cat((result, next_val), dim=-1)
+        result = torch.cat((result, next_val), dim=-1)
 
-            if use_cache:
-                next_input = next_val
-            else:
-                next_input = result
-            kwargs["position_ids"] = kwargs["position_ids"][:, -1:] + 1
-            # if i == 0:
-                # torch._dynamo.mark_static_address(kwargs["position_ids"])
-            torch.cuda.synchronize()
-            torch.distributed.barrier()
-            itl_end = time.time()
-            token_times.append((itl_end - itl_start) * 1000)
-            prof.step()
+        if use_cache:
+            next_input = next_val
+        else:
+            next_input = result
+        kwargs["position_ids"] = kwargs["position_ids"][:, -1:] + 1
+        # if i == 0:
+            # torch._dynamo.mark_static_address(kwargs["position_ids"])
+        torch.cuda.synchronize()
+        torch.distributed.barrier()
+        itl_end = time.time()
+        token_times.append((itl_end - itl_start) * 1000)
+        # prof.step()
 
     print(
         f"First token latency: {token_times[0]}, average after: {statistics.fmean(token_times[1:])} {token_times}"
