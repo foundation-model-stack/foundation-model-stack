@@ -4,8 +4,9 @@ import time
 from typing import Any, Callable, List, MutableMapping, Union
 
 import torch
-import fms.distributed as distributed
 import torch.nn.functional as F
+
+import fms.distributed as distributed
 
 
 def _make_cache_contiguous(past_key_value_states):
@@ -141,7 +142,7 @@ def generate(
     print(
         f"First token latency: {token_times[0]}, average after: {statistics.fmean(token_times[1:])} {token_times}"
     )
-    
+
     if not batched:
         result = result[0]
     return result
