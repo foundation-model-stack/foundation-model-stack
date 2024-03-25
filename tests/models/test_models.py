@@ -32,7 +32,7 @@ def test_list():
 
 
 def test_load():
-    m = models._get_model_instance("llama", "micro")
+    m = models.get_model("llama", "micro")
     sd = m.state_dict()
 
     with tempfile.NamedTemporaryFile(suffix=".pth") as f:
