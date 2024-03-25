@@ -58,7 +58,6 @@ class ArrowFilesDataset(IterableDataset, SavableDataset):
         world_size: int = 1,
         column_name: str = "tokens",
         max_seq_len: Optional[int] = None,
-        device="cpu",
     ):
         self.uri = uri
         self._rank = rank
@@ -67,7 +66,6 @@ class ArrowFilesDataset(IterableDataset, SavableDataset):
         self.column_name = column_name
         self.max_seq_len = max_seq_len
         self.record_batch_offset = 0
-        self.device = device
         self._initialize()
 
     def load_state_dict(self, state_dict):
@@ -126,7 +124,7 @@ class ArrowFilesDataset(IterableDataset, SavableDataset):
                         offset=self.record_batch_offset, length=self.max_seq_len
                     ).to_pylist()
                     self.record_batch_offset = self.record_batch_offset + len(current)
-                    t = torch.tensor(current, device=self.device)
+                    t = torch.tensor(current)
                     yield t[:-1], t[1:]
                 self.start_idx += self._step
                 self.record_batch_offset = 0
