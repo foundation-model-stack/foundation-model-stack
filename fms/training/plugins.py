@@ -131,6 +131,7 @@ class MetricReporter(TrainerPlugin):
         self.tokens_seen = torch.tensor(0.0, device=device)
         self.last_reported_step = -1
         self.cum_loss = torch.tensor(0.0, device=device)
+        self.time_per_step = torch.tensor(1.0, device=device)
         self.last_step = -1
         self.group = group
         self.writer = writer
@@ -158,8 +159,13 @@ class MetricReporter(TrainerPlugin):
             self.last_reported_step = 0
         else:
             self.last_step = step
-            if elapsed < self.seconds or step == self.last_reported_step:
+            if step == self.last_reported_step:
                 return
+            steps_taken = step - self.last_reported_step
+            if steps_taken * self.time_per_step < self.seconds:
+                return
+            time_per_step = elapsed / (step - self.last_reported_step)
+            self.time_per_step.fill_(time_per_step)
             steps = step - self.last_reported_step
             self.last_reported_step = step
 
@@ -167,6 +173,8 @@ class MetricReporter(TrainerPlugin):
         if world > 1 and self.tokens_seen.device.type == "cuda":
             dist.all_reduce(self.tokens_seen, op=dist.ReduceOp.SUM)
             dist.all_reduce(self.cum_loss, op=dist.ReduceOp.SUM)
+            dist.all_reduce(self.time_per_step, op=dist.ReduceOp.SUM)
+            self.time_per_step /= world
 
         to_report = {}
         if "loss" in metrics:
@@ -175,6 +183,7 @@ class MetricReporter(TrainerPlugin):
 
         more_metrics = {
             "tok/stp": f"{self.tokens_seen.item() / steps:,.1f}",
+            "s/stp": f"{self.time_per_step.item():,.3f}",
             "tok/gpu/s": f"{self.tokens_seen.item() / elapsed / world:,.1f}",
         }
         if torch.cuda.is_available() and utils.has_package("pynvml"):
