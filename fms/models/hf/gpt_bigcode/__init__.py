@@ -37,7 +37,7 @@ def convert_to_hf(
             pad_token_id=hf_config.pad_token_id,
             bos_token_id=hf_config.bos_token_id,
             eos_token_id=hf_config.eos_token_id,
-            n_positions=hf_config.max_pos,
+            n_positions=hf_config.max_expected_seq_len,
             scale_attention_softmax_in_fp32=False,
         )
     )
