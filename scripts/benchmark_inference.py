@@ -1,9 +1,11 @@
 import argparse
 import logging
 import os
+import random
 import statistics
 import timeit
 
+import numpy as np
 import torch
 from torch import distributed as dist
 from torch._dynamo import OptimizedModule
@@ -41,6 +43,14 @@ from fms.utils import generation, print0, tokenizers
 # - with use_cache=False
 #         71.45 ms per token
 
+
+# Basic process setup for making results deterministic
+SEED = 42
+random.seed(SEED)
+torch.manual_seed(SEED)  # pytorch random seed
+np.random.seed(SEED)  # numpy random seed
+torch.backends.cudnn.benchmark = False
+torch.backends.cudnn.deterministic = True
 
 parser = argparse.ArgumentParser(
     description="Script to benchmark inference time per token on a LLaMA model"
