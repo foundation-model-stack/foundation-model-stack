@@ -5,6 +5,7 @@ import statistics
 import timeit
 
 import torch
+import torch.distributed
 from torch import distributed as dist
 from torch._dynamo import OptimizedModule
 
@@ -146,7 +147,7 @@ if world_size > 1:
 print("loading model")
 model = models.get_model(args.architecture, args.variant, device_type=args.device_type)
 tokenizer = tokenizers.get_tokenizer(args.tokenizer)
-
+print(torch.cuda.memory_allocated(device) /1024 /1024/1024)
 model.eval()
 torch.set_grad_enabled(False)
 print(f"loading complete on rank {local_rank}")
@@ -207,10 +208,12 @@ def one_token(model, use_cache):
     else:
         actual = model.forward(next_input, only_last_token=True)
     actual = torch.argmax(actual, dim=-1)
+    if world_size > 1:
+        torch.distributed.barrier()
     if local_rank == 0 and not args.skip_correctness_check:
         torch.testing.assert_close(actual, expected)
     else:
-        torch.cuda.synchronize()
+        torch.cuda.synchronize(device)
 
 
 def end_to_end(model, use_cache, expected=None):
@@ -229,10 +232,12 @@ def end_to_end(model, use_cache, expected=None):
         assert (
             result.size()[-1] == SEQ_LEN + MAX_NEW_TOKENS
         ), f"{result.size()}, {SEQ_LEN}, {MAX_NEW_TOKENS}"
+    if world_size > 1:
+        torch.distributed.barrier()
     if expected is not None and not args.skip_correctness_check:
         torch.testing.assert_close(result, expected)
     else:
-        torch.cuda.synchronize()
+        torch.cuda.synchronize(device)
     return result
 
 
@@ -289,12 +294,12 @@ if not args.skip_compile_runs:
     print0("Compiling model...")
 
     # This is to prevent a bug in PT 2.1 that has been fixed in PT 2.2 nightlies
-    torch._inductor.config.joint_graph_constant_folding = False
+    # torch._inductor.config.joint_graph_constant_folding = False
     # with mode='reduce-overhead' we see better performance but on multi-GPU models
     # hit an error on the end-to-end test below when run after other tests (if it's
     # run first it works, confirming a memory leak):
     # `RuntimeError: Expected curr_block->ptr == block_state.ptr to be true, but got false.`
-    model = torch.compile(model, dynamic=True, mode=args.compile_mode)
+    model = torch.compile(model, mode=args.compile_mode)
 
     print0()
     print0("Compiled results:")
