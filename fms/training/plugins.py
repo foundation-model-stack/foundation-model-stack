@@ -258,13 +258,13 @@ class Checkpointer(TrainerPlugin):
         # For FSDP, consolidate checkpointable data to rank0.
         # TODO: may also want to support distcp checkpoints which should be faster
         # to save and load but are harder to use for inference.
-        
+
         is_fsdp = isinstance(model, FSDP)
         # For HSDP, self.group is only set for the first shard group. We only
         # need to save checkpoints for one shard group.
         if is_fsdp and self.group is None:
             return
-        
+
         if is_fsdp:
             dict_type = StateDictType.FULL_STATE_DICT
             cfg = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)
