@@ -13,12 +13,11 @@ def _arrow_ds_generator(data, tokenizer, **kwargs):
 
 
 class MockDataset(IterableDataset):
-    def __init__(self, data, tokenizer: BaseTokenizer, device, max_seq_len=4096):
+    def __init__(self, data, tokenizer: BaseTokenizer, max_seq_len=4096):
         self.tokenizer = tokenizer
         self.data = data
         self.max_seq_len = max_seq_len
         self.last_val = 0
-        self.device = device
 
     def nextval(self):
         self.last_val += 1
@@ -27,9 +26,7 @@ class MockDataset(IterableDataset):
 
     def __iter__(self):
         while True:
-            t = torch.tensor(
-                [self.nextval() for _ in range(self.max_seq_len)], device=self.device
-            )
+            t = torch.tensor([self.nextval() for _ in range(self.max_seq_len)])
             yield t, t
 
 
