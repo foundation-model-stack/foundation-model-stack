@@ -1,11 +1,14 @@
 import argparse
 import os
 from contextlib import nullcontext
+from datetime import timedelta
 from pathlib import Path
 
 import torch
 from torch import distributed as dist
 from torch import nn
+from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+from torch.distributed.fsdp import ShardingStrategy
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
 
@@ -168,7 +171,8 @@ else:
 group = None
 
 if args.distributed is not None:
-    dist.init_process_group(backend="nccl", rank=rank, world_size=world_size)
+    # gathering optimizer state takes more than 10 minutes, so need a longer timeout.
+    dist.init_process_group(backend="nccl")
     group = dist.GroupMember.WORLD
     # Fix until PT 2.3
     torch._C._distributed_c10d._register_process_group("default", dist.group.WORLD)
@@ -243,31 +247,54 @@ def peft_model(model):
 
 def training_state(model_path, model, rank):
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4)
+    is_fsdp = isinstance(model, FSDP)
+    dataset_sd = {}
     epoch = 0
+    prev_step = -1
 
     if model_path is not None:
         path = Path(args.model_path).expanduser()
         if path.exists():
             if path.is_dir():
                 files = sorted(path.glob("*.train"))
-                if len(files):
+                if len(files) == 1:
+                    training = files[0]
+                elif (
+                    len(files) > 1
+                    and is_fsdp
+                    and model.sharding_strategy == ShardingStrategy.FULL_SHARD
+                ):
                     training = files[rank]
+                elif (
+                    len(files) > 1
+                    and is_fsdp
+                    and model.sharding_strategy == ShardingStrategy.HYBRID_SHARD
+                ):
+                    training = files[local_rank]
                 else:
                     training = None
             else:
                 training = path.parent / (path.stem + ".train")
             if training is not None and training.exists():
                 sd = torch.load(training)
-                optim = sd["optimizer"]
+                optim_sd = sd["optimizer"]
                 epoch = sd["epoch"]
-                optimizer.load_state_dict(optim)
-                epoch = epoch + 1
+                prev_step = sd["step"]
+                if "dataset" in sd:
+                    dataset_sd = sd["dataset"]
+                if isinstance(model, FSDP):
+                    optim_sd = model.optim_state_dict_to_load(
+                        model, optimizer, optim_sd
+                    )
+                optimizer.load_state_dict(optim_sd)
 
-                return (optimizer, epoch)
-    return (optimizer, epoch)
+                return (optimizer, dataset_sd, epoch, prev_step)
+    return (optimizer, dataset_sd, epoch, prev_step)
 
 
 def main():
+    torch.set_default_dtype(torch.bfloat16)
+
     print0("Loading model...")
     model = models.get_model(
         args.architecture,
@@ -279,9 +306,11 @@ def main():
         group=group,
     )
     # model.to(torch.half)
-    optimizer, epoch = training_state(args.model_path, model, rank)
-
-    print("model loaded", rank)
+    optimizer, dataset_sd, epoch, prev_step = training_state(
+        args.model_path, model, rank
+    )
+    print("model loaded on worker", rank)
+    print0("starting from epoch", epoch, "prior step", prev_step)
 
     tokenizer = tokenizers.get_tokenizer(args.tokenizer)
 
@@ -295,6 +324,8 @@ def main():
 
     # TODO: split a validation dataset
     dataset = datasets.get_dataset(args.dataset_style, tokenizer, args.dataset_path)
+    if len(dataset_sd):
+        dataset.load_state_dict(dataset_sd)
 
     sampler = None
     # if the dataset is iterable, we can't shuffle it, and it should handle
@@ -333,10 +364,22 @@ def main():
     validator2 = trainplugins.InferenceValidator(
         sample_prompt2, tokenizer, device, steps=args.report_steps, eos_token=eos_token
     )
+    if args.distributed == "hsdp":
+        ckp_group = dist.new_group(list(range(torch.cuda.device_count())))
+        # if current shard group isn't part of the new group, `new_group` returns an int (-100)
+        if not isinstance(ckp_group, dist.ProcessGroup):
+            ckp_group = None
+    else:
+        ckp_group = group
     checkpointing = trainplugins.Checkpointer(
-        steps=args.checkpoint_steps, group=group, save_dir=args.output_path
+        steps=args.checkpoint_steps,
+        group=ckp_group,
+        save_dir=args.output_path,
+        dataset=dataset,
     )
-    reporting = trainplugins.MetricReporter(seconds=20, group=group, device=device)
+    reporting = trainplugins.MetricReporter(
+        seconds=20, prev_step=prev_step, group=group, device=device
+    )
 
     plugins = [reporting, validator, validator2, checkpointing]
     print0("training...")
@@ -349,6 +392,7 @@ def main():
             loss_fn,
             start_epoch=epoch,
             epochs=args.epochs,
+            prev_step=prev_step,
             trainer_plugins=plugins,
             grad_accum_iters=args.grad_accum_steps,
         )

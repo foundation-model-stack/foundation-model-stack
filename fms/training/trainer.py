@@ -49,6 +49,7 @@ def __one_epoch(
     device,
     loss_fn,
     epoch: int,
+    prev_step: int,
     plugins: List[TrainerPlugin],
     accum_iters: int = 1,
 ):
@@ -65,6 +66,8 @@ def __one_epoch(
     optimizer.zero_grad()
 
     for step, (input, label) in enumerate(data):
+        step = prev_step + step + 1
+
         batch_size = input.shape[0]
         input_length = input.shape[1]
 
@@ -99,6 +102,7 @@ def train(
     loss_fn: nn.Module,
     start_epoch=0,
     epochs: int = 1,
+    prev_step: int = -1,
     trainer_plugins: List[TrainerPlugin] = [],
     grad_accum_iters: int = 1,
 ):
@@ -110,6 +114,7 @@ def train(
             device,
             loss_fn,
             epoch,
+            prev_step,
             trainer_plugins,
             accum_iters=grad_accum_iters,
         )

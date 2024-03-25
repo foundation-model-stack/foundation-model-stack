@@ -7,8 +7,12 @@ from typing import Dict, List, Optional
 import torch
 from torch import distributed as dist
 from torch import nn
+from torch.distributed.fsdp import FullStateDictConfig
+from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+from torch.distributed.fsdp import StateDictType
 
 from fms import utils
+from fms.datasets.util import SavableDataset
 from fms.utils import generation, print0
 
 
@@ -33,8 +37,8 @@ class TrainerPlugin:
         # If self.steps is None, we're only recording epoch ends and this isn't one.
         if self.steps is None:
             return False
-        # record every `step` steps
-        if (step + 1) % self.steps == 0:
+        # record every `step` steps, starting from step `step`
+        if step != 0 and (step + 1) % self.steps == 0:
             return True
         return False
 
@@ -122,6 +126,7 @@ class MetricReporter(TrainerPlugin):
         self,
         seconds=10,
         group: Optional[dist.ProcessGroup] = None,
+        prev_step: int = -1,
         device="cpu",
         writer=print0,
     ):
@@ -129,7 +134,7 @@ class MetricReporter(TrainerPlugin):
         self.seconds = seconds
         self.last_reported_time = datetime.now()
         self.tokens_seen = torch.tensor(0.0, device=device)
-        self.last_reported_step = -1
+        self.last_reported_step = prev_step
         self.cum_loss = torch.tensor(0.0, device=device)
         self.time_per_step = torch.tensor(1.0, device=device)
         self.last_step = -1
@@ -206,11 +211,21 @@ class Checkpointer(TrainerPlugin):
     """
     A training plugin to write checkpoints.
     TODO: This will require changes to handle distributed checkpoints.
+
+    Args:
+
+    group: The group to checkpoint. i.e. if using hsdp, you would want to pass
+            a subgroup for a single hsdp shard group.
+    name: included in the file path to differentiate this particular checkpoint.
+    save_dir: the base directory into which to save checkpoints.
+    dataset: if set, save the state_dict of this dataset.
+    steps: save a checkpoint every `steps` steps.
     """
 
     def __init__(
         self,
         save_dir: str | Path = Path("./checkpoints"),
+        dataset: Optional[SavableDataset] = None,
         steps: Optional[int] = None,
         name: Optional[str] = None,
         group: Optional[dist.ProcessGroup] = None,
@@ -218,14 +233,13 @@ class Checkpointer(TrainerPlugin):
         super().__init__(steps)
         os.makedirs(save_dir, exist_ok=True)
         save_dir = os.path.expanduser(save_dir)
+        self.dataset = dataset
         self.save_dir = Path(save_dir)
         self.group = group
         self.name = name
 
     # TODO: this probably also needs to accept a dataset since we want to
     # support checkpointable datasets.
-    # TODO: end of epoch checkpoints should probably consolidate to one
-    # rank when using FSDP.
     def step(
         self,
         model: nn.Module,
@@ -240,7 +254,31 @@ class Checkpointer(TrainerPlugin):
         model_name = (
             model.__class__.__name__.lower() if self.name is None else self.name
         )
-        model_dict = model.state_dict()
+
+        # For FSDP, consolidate checkpointable data to rank0.
+        # TODO: may also want to support distcp checkpoints which should be faster
+        # to save and load but are harder to use for inference.
+
+        is_fsdp = isinstance(model, FSDP)
+        # For HSDP, self.group is only set for the first shard group. We only
+        # need to save checkpoints for one shard group.
+        if is_fsdp and self.group is None:
+            return
+
+        if is_fsdp:
+            dict_type = StateDictType.FULL_STATE_DICT
+            cfg = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)
+            with dist.fsdp.FullyShardedDataParallel.state_dict_type(
+                model, dict_type, cfg
+            ):
+                print0("Aggregating FSDP model statedict")
+                model_dict = model.state_dict()
+                print0("Aggregating optim statedict")
+                optim_dict = FSDP.optim_state_dict(model, optimizer, group=self.group)
+        else:
+            model_dict = model.state_dict()
+            optim_dict = optimizer.state_dict()
+
         if step is not None:
             file = f"{model_name}_{epoch:03d}_{step+1:05d}"
         else:
@@ -249,15 +287,25 @@ class Checkpointer(TrainerPlugin):
 
         if self.group is None:
             path = save_dir / f"{file}.pth"
-            train_file = f"{file}.train"
+            train_file = save_dir / f"{file}.train"
         else:
             path = save_dir / file
             os.makedirs(path, exist_ok=True)
-            train_file = f"rank_{self.group.rank():02d}.train"
+            train_file = path / f"rank_{self.group.rank():02d}.train"
             path = path / f"rank_{self.group.rank():02d}.pth"
-        print0("Writing checkpoint", path)
-        torch.save(model_dict, path)
 
-        optim_dict = optimizer.state_dict()
-        train_dict = {"optimizer": optim_dict, "epoch": epoch}
-        torch.save(train_dict, train_file)
+        print0("Writing model checkpoint", path)
+        if is_fsdp:
+            if self.group is not None and self.group.rank() == 0:
+                torch.save(model_dict, path)
+        else:
+            torch.save(model_dict, path)
+
+        print0("Writing training state", train_file)
+        train_dict = {"optimizer": optim_dict, "epoch": epoch, "step": step}
+        if self.dataset is not None:
+            dataset_sd = self.dataset.state_dict()
+            train_dict |= {"dataset": dataset_sd}
+
+        if self.group is None or self.group.rank() == 0:
+            torch.save(train_dict, train_file)

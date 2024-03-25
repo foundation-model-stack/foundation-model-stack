@@ -186,7 +186,6 @@ def _fsdp_wrap(
         sync_module_states=True,
         device_id=device.index,
         limit_all_gathers=True,
-        use_orig_params=True,
         auto_wrap_policy=_fsdp_autowrap_policy,
         mixed_precision=mp_policy,
         sharding_strategy=dp_strategy,
@@ -249,7 +248,10 @@ def get_model(
     else:
         device = torch.device(device_type)
 
-    if _is_dp(distributed_strategy) and rank != 0 and checkpoint_sharding != "fsdp":
+    hsdp = distributed_strategy == "hsdp"
+    fsdp = distributed_strategy == "fsdp"
+    ddp = distributed_strategy == "ddp"
+    if (hsdp and local_rank != 0) or ((fsdp or ddp) and rank != 0):
         initial_device = torch.device("meta")
     elif distributed_strategy == "mp":
         initial_device = torch.device("cpu")
@@ -308,7 +310,7 @@ def get_model(
             distributed_strategy,
             checkpoint_sharding,
             initial_device,
-            rank,
+            local_rank if distributed_strategy == "hsdp" else rank,
             world_size,
         )
     elif hasattr(fms_model, "reset_parameters"):
