@@ -2,13 +2,14 @@ from torch import nn
 from torch.distributed.distributed_c10d import ProcessGroup
 
 from fms.modules.attention import MultiHeadAttention, TPMultiHeadAttention
-from fms.modules.embedding import TPWordEmbedding, WordEmbedding
+from fms.modules.embedding import TPEmbedding, TPWordEmbedding, WordEmbedding
 from fms.modules.feedforward import (
     FeedForwardBlock,
     GatedLinearUnit,
     TPFeedForwardBlock,
     TPGatedLinearUnit,
 )
+from fms.modules.head import LMHead, TPLMHead
 from fms.modules.positions import Alibi
 
 
@@ -29,6 +30,10 @@ def _tp_wrapped(module: nn.Module, group: ProcessGroup):
         # setattr(model, name, tp_layer)
     elif isinstance(module, WordEmbedding):
         return TPWordEmbedding.import_module(module, group)
+    elif isinstance(module, nn.Embedding):
+        return TPEmbedding.import_module(module, group)
+    elif isinstance(module, LMHead):
+        return TPLMHead.import_module(module, group)
     else:
         return module
 
