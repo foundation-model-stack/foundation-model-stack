@@ -29,7 +29,7 @@ class GPTBigCodeFixtures(ConfigFixtureMixin, ModelFixtureMixin):
             emb_dim=16,
             nheads=8,
             nlayers=2,
-            max_pos=512,
+            max_expected_seq_len=512,
             hidden_grow_factor=2.0,
             pad_id=0,
         )
