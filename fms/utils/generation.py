@@ -9,6 +9,8 @@ import torch.nn.functional as F
 
 from fms import distributed
 
+past_key_value_states_g = None
+
 
 def _make_cache_contiguous(past_key_value_states):
     # kv updates are required for torch.compile with
@@ -87,6 +89,8 @@ def generate(
             f"{output_path}/trace_step{str(p.step_num)}_{extra_name}.json"
         )
 
+    global past_key_value_states_g
+
     token_times = []
     rank, _ = distributed.rank_and_world()
     with torch.profiler.profile(
@@ -114,9 +118,17 @@ def generate(
             if use_cache:
                 logits, past_key_value_states = output
                 if i == 0:
-                    for cache_layer in past_key_value_states:
-                        for kv_tensor in cache_layer:
-                            torch._dynamo.mark_static_address(kv_tensor)
+                    if past_key_value_states_g is None:
+                        past_key_value_states_g = past_key_value_states
+                        for cache_layer in past_key_value_states_g:
+                            for kv_tensor in cache_layer:
+                                torch._dynamo.mark_static_address(kv_tensor)
+                    else:
+                        for layer_idx, cache_layer in enumerate(past_key_value_states_g):
+                            for tensor_idx, kv_tensor in enumerate(cache_layer):
+                                kv_tensor.copy_(past_key_value_states[layer_idx][tensor_idx])
+                        past_key_value_states = past_key_value_states_g
+                    
                 # TODO: this should go away when reduce-overhead issues are fixed, or
                 # maybe could be moved into model code to be more portable.
                 # if contiguous_cache:
