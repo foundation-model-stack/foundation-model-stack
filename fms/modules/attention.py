@@ -158,11 +158,21 @@ class MultiHeadAttention(nn.Module):
             and past_key_value_state[0].numel() > 0
         ):
             if is_self:
-                keys = torch.cat((past_key_value_state[0], keys), dim=1)
-                values = torch.cat((past_key_value_state[1], values), dim=1)
+                past_key_value_state[0][:, position_ids[0]] = keys
+                past_key_value_state[1][:, position_ids[0]] = values
+                keys_c = past_key_value_state[0]
+                values_c = past_key_value_state[1]
             else:
-                keys = past_key_value_state[0]
-                values = past_key_value_state[1]
+                keys_c = past_key_value_state[0]
+                values_c = past_key_value_state[1]
+        else:
+            B, _, H, E = keys.shape
+            keys_c = torch.zeros((B, 4096, H, E), device=keys.device, dtype=keys.dtype)
+            values_c = torch.zeros(
+                (B, 4096, H, E), device=keys.device, dtype=keys.dtype
+            )
+            keys_c[:, position_ids[0]] = keys
+            values_c[:, position_ids[0]] = values
 
         # Merge rel pos bias and mask into single float mask
         if mask is not None:
@@ -173,7 +183,7 @@ class MultiHeadAttention(nn.Module):
 
         if self.position_encoder is not None:
             attn_mask: Optional[Tensor] = self.position_encoder.adjusted_mask(
-                mask, queries, keys, past_key_value_state, use_cache
+                mask, queries, keys_c, past_key_value_state, use_cache
             )
         else:
             attn_mask = mask
@@ -230,7 +240,7 @@ class MultiHeadAttention(nn.Module):
 
         # if use_cache=True, we return the hidden_state as well as the kv cache
         if use_cache:
-            return out, (keys, values)
+            return out, (keys_c, values_c)
         else:
             return out
 
