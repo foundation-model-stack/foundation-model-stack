@@ -43,14 +43,12 @@ class JsonInstructions(Dataset):
         self,
         path: str,
         tokenizer: tokenizers.BaseTokenizer,
-        device="cpu",
         max_len: int = 1024,
         ignore_index=-100,
     ):
         self.tokenizer = tokenizer
         self.ignore_index = ignore_index
         self.max_len = max_len
-        self.device = device
         self.bos_token_id = tokenizer.bos_token_id
         self.eos_token_id = tokenizer.eos_token_id
         if urllib.parse.urlparse(path).scheme == "":
@@ -90,7 +88,7 @@ class JsonInstructions(Dataset):
         if self.eos_token_id is not None:
             example = example + [self.eos_token_id]
 
-        example = torch.tensor(example, dtype=torch.long, device=self.device)
+        example = torch.tensor(example, dtype=torch.long)
 
         input = example[:-1]
 
