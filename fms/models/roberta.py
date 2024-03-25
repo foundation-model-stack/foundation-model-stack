@@ -138,13 +138,17 @@ class RoBERTaHeadless(nn.Module):
         if self.config.p_dropout:
             self.dropout = nn.Dropout(self.config.p_dropout)
 
-    def reset_params(self):
+    def reset_parameters(self):
         for layer in ["embedding", "position_embedding"]:
             nn.init.normal_(
                 getattr(self, layer).weight,
                 mean=0.0,
                 std=self.config.emb_dim**-0.5,
             )
+        for layer in self.layers:
+            for sublayer in ["ln", "ff_ln", "attn", "ff_sub_layer"]:
+                getattr(layer, sublayer).reset_parameters()
+        self.enc_norm.reset_parameters()
 
     def forward(
         self,
@@ -254,8 +258,8 @@ class RoBERTa(nn.Module):
     def get_config(self) -> RoBERTaConfig:
         return self.config
 
-    def reset_params(self):
-        self.base_model.reset_params()
+    def reset_parameters(self):
+        self.base_model.reset_parameters()
         if self.config.tie_heads:
             self.classification_head.head.bias.data.zero_()
         else:

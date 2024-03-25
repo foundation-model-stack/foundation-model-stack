@@ -91,7 +91,7 @@ if args.device_type == "cuda":
 else:
     device = torch.device(args.device_type)
 
-torch.set_default_dtype(torch.half)
+torch.set_default_dtype(torch.bfloat16)
 
 # requires setting environment variable: `CUBLAS_WORKSPACE_CONFIG=:4096:8`
 if args.deterministic:
@@ -130,8 +130,6 @@ decode_model = model
 
 if args.compile:
     print("compiling model")
-    # Bug with kv-cache in PT2.1
-    # torch._inductor.config.joint_graph_constant_folding = False
     # compiling can make first inference pass slow
     # torch._inductor.config.allow_buffer_reuse = False
     prefill_model = torch.compile(model, fullgraph=True)

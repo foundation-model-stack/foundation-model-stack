@@ -49,9 +49,8 @@ class LayerNormParameterized(nn.Module):
             self.bias = nn.Parameter(torch.empty(self.normalized_shape))
         # else:
         #     self.register_parameter("bias", None)
-        self.reset_params()
 
-    def reset_params(self):
+    def reset_parameters(self):
         if self.elementwise_scale:
             self.weight.data.fill_(1)
         if self.elementwise_shift:
