@@ -158,21 +158,21 @@ class MultiHeadAttention(nn.Module):
             and past_key_value_state[0].numel() > 0
         ):
             if is_self:
-                past_key_value_state[0][:, :, position_ids[0], :] = keys
-                past_key_value_state[1][:, :, position_ids[0], :] = values
+                past_key_value_state[0][:, position_ids[0]] = keys
+                past_key_value_state[1][:, position_ids[0]] = values
                 keys_c = past_key_value_state[0]
                 values_c = past_key_value_state[1]
             else:
                 keys_c = past_key_value_state[0]
                 values_c = past_key_value_state[1]
         else:
-            B, H, _, E = keys.shape
-            keys_c = torch.zeros((B, H, 4096, E), device=keys.device, dtype=keys.dtype)
+            B, _, H, E = keys.shape
+            keys_c = torch.zeros((B, 4096, H, E), device=keys.device, dtype=keys.dtype)
             values_c = torch.zeros(
-                (B, H, 4096, E), device=keys.device, dtype=keys.dtype
+                (B, 4096, H, E), device=keys.device, dtype=keys.dtype
             )
-            keys_c[:, :, position_ids[0], :] = keys
-            values_c[:, :, position_ids[0], :] = values
+            keys_c[:, position_ids[0]] = keys
+            values_c[:, position_ids[0]] = values
 
         # Merge rel pos bias and mask into single float mask
         if mask is not None:
