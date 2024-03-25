@@ -9,8 +9,15 @@ from torch.distributed.distributed_c10d import ProcessGroup
 from fms.distributed.tensorparallel import (
     apply_colwise_tp,
     apply_embedding_tp,
+    apply_moe_tp,
     apply_rowwise_tp,
 )
+
+
+def _get_tpd_module(module: nn.Module, attr_name: str):
+    if attr_name == "self":
+        return module
+    return getattr(module, attr_name)
 
 
 class TPModule(nn.Module, metaclass=ABCMeta):
@@ -40,6 +47,9 @@ class TPModule(nn.Module, metaclass=ABCMeta):
     def embedding_param_names(self) -> List[str]:
         return []
 
+    def moe_param_names(self) -> List[str]:
+        return []
+
     @staticmethod
     @abstractmethod
     def import_module(module, group: ProcessGroup):
@@ -48,30 +58,39 @@ class TPModule(nn.Module, metaclass=ABCMeta):
     def import_weights(self, module: nn.Module):
         for weight in self.colwise_param_names():
             apply_colwise_tp(
-                getattr(self, weight),
-                getattr(module, weight),
-                self.world_size,
+                _get_tpd_module(self, weight),
+                _get_tpd_module(module, weight),
                 self.rank,
+                self.world_size,
             )
         for weight in self.rowwise_param_names():
             apply_rowwise_tp(
-                getattr(self, weight),
-                getattr(module, weight),
-                self.world_size,
+                _get_tpd_module(self, weight),
+                _get_tpd_module(module, weight),
                 self.rank,
+                self.world_size,
             )
         for weight in self.embedding_param_names():
             apply_embedding_tp(
-                getattr(self, weight),
-                getattr(module, weight),
-                self.world_size,
+                _get_tpd_module(self, weight),
+                _get_tpd_module(module, weight),
                 self.rank,
+                self.world_size,
+            )
+        if len(self.moe_param_names()) > 0:
+            apply_moe_tp(
+                self,
+                module,
+                self.moe_param_names(),
+                self.rank,
+                self.world_size,
             )
         tp_sharded_modules = list(
             itertools.chain(
                 self.colwise_param_names(),
                 self.rowwise_param_names(),
                 self.embedding_param_names(),
+                self.moe_param_names(),
             )
         )
         with torch.no_grad():
