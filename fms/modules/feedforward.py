@@ -325,13 +325,13 @@ class ConditionalFeedForward(nn.Module):
             if expert_indices.numel() <= E:
                 padding_size = 16
             else:
-                padding_size = 32
+                padding_size = 64
 
             (
                 padded_token_ids_per_block,
                 expert_block_mapping,
                 total_padded_tokens,
-            ) = torch.ops.moe.align_vllm(expert_indices, padding_size, E)
+            ) = moe_kernel.moe_align_block_size(expert_indices, padding_size, E)
 
             x1, x3 = (
                 torch.ops.moe.moe_mm(
@@ -347,7 +347,27 @@ class ConditionalFeedForward(nn.Module):
                 .view(-1, N)
                 .chunk(2, dim=1)
             )
-            return torch.ops.moe.moe_mm(
+
+            # torch.testing.assert_close(x, x_orig)
+
+            # x1_vllm, x3_vllm = (
+            #     torch.ops.moe.moe_mm_vllm(
+            #         x,
+            #         self.w13,
+            #         expert_indices,
+            #         padded_token_ids_per_block,
+            #         expert_block_mapping,
+            #         total_padded_tokens,
+            #         expert_indices.shape[1],
+            #     )
+            #     .view(-1, N)
+            #     .chunk(2, dim=1)
+            # )
+
+            # torch.testing.assert_close(x1, x1_vllm)
+            # torch.testing.assert_close(x3, x3_vllm)
+
+            y = torch.ops.moe.moe_mm(
                 F.silu(x1) * x3,
                 self.w2,
                 expert_indices,
@@ -357,6 +377,20 @@ class ConditionalFeedForward(nn.Module):
                 1,
                 padding_size,
             )
+
+            # y_vllm = torch.ops.moe.moe_mm_vllm(
+            #     F.silu(x1_vllm) * x3_vllm,
+            #     self.w2,
+            #     expert_indices,
+            #     padded_token_ids_per_block,
+            #     expert_block_mapping,
+            #     total_padded_tokens,
+            #     1,
+            # )
+
+            # torch.testing.assert_close(y, y_vllm)
+
+            return y
         elif self.moe_impl == "vllm":
             # Check constraints.
             assert x.shape[1] == self.w13.shape[2], "Hidden size mismatch"
@@ -386,7 +420,9 @@ class ConditionalFeedForward(nn.Module):
                 padded_token_ids_per_block,
                 expert_block_mapping,
                 total_padded_tokens,
-            ) = torch.ops.moe.align_vllm(expert_indices, config["BLOCK_SIZE_M"], E)
+            ) = moe_kernel.moe_align_block_size(
+                expert_indices, config["BLOCK_SIZE_M"], E
+            )
 
             x1, x3 = (
                 torch.ops.moe.moe_mm_vllm(

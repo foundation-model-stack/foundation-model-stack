@@ -1,3 +1,4 @@
+import math
 import pathlib
 from typing import Any, Dict, Tuple
 
@@ -9,8 +10,19 @@ import triton.language as tl  # type: ignore[import-untyped]
 """Fused MoE kernel."""
 
 
-@triton.jit
-def fused_moe_kernel(
+@triton.jit()
+def col_major(pid, m, n, block_m: tl.constexpr, block_n: tl.constexpr):
+    grid_m = tl.cdiv(m, block_m)
+    grid_n = tl.cdiv(n, block_n)
+
+    pid_m = (pid % grid_n) % grid_m
+    pid_n = pid // grid_m
+
+    return pid_m, pid_n
+
+
+@triton.jit()
+def fused_moe_kernel_v3(
     # Pointers to matrices
     a_ptr,
     b_ptr,
@@ -34,11 +46,10 @@ def fused_moe_kernel(
     stride_cm,
     stride_cn,
     # Meta-parameters
-    BLOCK_SIZE_M: tl.constexpr,
-    BLOCK_SIZE_N: tl.constexpr,
-    BLOCK_SIZE_K: tl.constexpr,
-    GROUP_SIZE_M: tl.constexpr,
-    SPLIT_K: tl.constexpr,
+    block_m: tl.constexpr,
+    block_n: tl.constexpr,
+    block_k: tl.constexpr,
+    compute_type: tl.constexpr,
     top_k: tl.constexpr,
 ):
     """
@@ -52,79 +63,66 @@ def fused_moe_kernel(
     - sorted_token_ids: A tensor containing the sorted indices of tokens, repeated topk times and arranged by the expert index they are assigned to.
     - expert_ids: A tensor containing the indices of the expert for each block. It determines which expert matrix from B should be used for each block in A.
     This kernel performs the multiplication of a token by its corresponding expert matrix as determined by `expert_ids`. The sorting of `sorted_token_ids`
-    by expert index and padding ensures divisibility by BLOCK_SIZE_M, which is necessary to maintain consistency in block matrix multiplication across different blocks processed by the same expert.
+    by expert index and padding ensures divisibility by block_m, which is necessary to maintain consistency in block matrix multiplication across different blocks processed by the same expert.
     """
-    # -----------------------------------------------------------
-    # Map program ids `pid` to the block of C it should compute.
-    # This is done in a grouped ordering to promote L2 data reuse.
-    pid = tl.program_id(axis=0)
-    pid_k = tl.program_id(axis=1)
-    num_pid_m = tl.cdiv(EM, BLOCK_SIZE_M)
-    num_pid_n = tl.cdiv(N, BLOCK_SIZE_N)
-    num_pid_in_group = GROUP_SIZE_M * num_pid_n
-    group_id = pid // num_pid_in_group
-    first_pid_m = group_id * GROUP_SIZE_M
-    group_size_m = min(num_pid_m - first_pid_m, GROUP_SIZE_M)
-    pid_m = first_pid_m + ((pid % num_pid_in_group) % group_size_m)
-    pid_n = (pid % num_pid_in_group) // group_size_m
-    total_blocks_k = tl.cdiv(K, BLOCK_SIZE_K * SPLIT_K)
 
-    # ----------------------------------------------------------
-    # Create pointers for the first blocks of A and B.
-    # We will advance this pointer as we move in the K direction
-    # and accumulate
-    # `a_ptrs` is a block of [BLOCK_SIZE_M, BLOCK_SIZE_K] pointers
-    # `b_ptrs` is a block of [BLOCK_SIZE_K, BLOCK_SIZE_N] pointers
+    pid = tl.program_id(axis=0)
+    pid_m, pid_n = col_major(
+        pid,
+        EM,
+        N,
+        block_m,
+        block_n,
+    )
+
     num_tokens_post_padded = tl.load(total_padded_tokens_ptr)
-    if pid_m * BLOCK_SIZE_M >= num_tokens_post_padded:
+
+    if pid_m * block_m >= num_tokens_post_padded:
         return
-    offs_token_id = pid_m * BLOCK_SIZE_M + tl.arange(0, BLOCK_SIZE_M)
+
+    offs_token_id = pid_m * block_m + tl.arange(0, block_m)
     offs_token = tl.load(padded_token_ids_per_block_ptr + offs_token_id)
     token_mask = offs_token < num_valid_tokens
 
-    offs_bn = (pid_n * BLOCK_SIZE_N + tl.arange(0, BLOCK_SIZE_N)) % N
-    offs_k = pid_k * BLOCK_SIZE_K + tl.arange(0, BLOCK_SIZE_K)
-
+    offs_bn = (pid_n * block_n + tl.arange(0, block_n)) % N
+    offs_k = tl.arange(0, block_k)
     a_ptrs = a_ptr + (
         offs_token[:, None] // top_k * stride_am + offs_k[None, :] * stride_ak
     )
+
     off_experts = tl.load(expert_block_mapping_ptr + pid_m)
     b_ptrs = (
         b_ptr
         + off_experts * stride_be
         + (offs_k[:, None] * stride_bk + offs_bn[None, :] * stride_bn)
     )
-
     # -----------------------------------------------------------
     # Iterate to compute a block of the C matrix.
-    # We accumulate into a `[BLOCK_SIZE_M, BLOCK_SIZE_N]` block
+    # We accumulate into a `[block_m, block_n]` block
     # of fp32 values for higher accuracy.
     # `accumulator` will be converted back to fp16 after the loop.
-    accumulator = tl.zeros((BLOCK_SIZE_M, BLOCK_SIZE_N), dtype=tl.float32)
-    for k in range(0, total_blocks_k):
+    accumulator = tl.zeros((block_m, block_n), dtype=tl.float32)
+
+    for k in range(0, tl.cdiv(K, block_k)):
         # Load the next block of A and B, generate a mask by checking the K dimension.
         a = tl.load(
             a_ptrs,
-            mask=token_mask[:, None]
-            & (offs_k[None, :] < K - k * (BLOCK_SIZE_K * SPLIT_K)),
+            mask=token_mask[:, None] & (offs_k[None, :] < K - k * block_k),
             other=0.0,
         )
-        b = tl.load(
-            b_ptrs, mask=offs_k[:, None] < K - k * (BLOCK_SIZE_K * SPLIT_K), other=0.0
-        )
+        b = tl.load(b_ptrs, mask=offs_k[:, None] < K - k * block_k, other=0.0)
         # We accumulate along the K dimension.
         accumulator += tl.dot(a, b)
         # Advance the ptrs to the next K block.
-        a_ptrs += BLOCK_SIZE_K * stride_ak * SPLIT_K
-        b_ptrs += BLOCK_SIZE_K * stride_bk * SPLIT_K
+        a_ptrs += block_k * stride_ak
+        b_ptrs += block_k * stride_bk
 
-    # accumulator = accumulator.to(compute_type)
     # -----------------------------------------------------------
     # Write back the block of the output
-    offs_cn = pid_n * BLOCK_SIZE_N + tl.arange(0, BLOCK_SIZE_N)
+    offs_cn = pid_n * block_n + tl.arange(0, block_n)
     c_ptrs = c_ptr + stride_cm * offs_token[:, None] + stride_cn * offs_cn[None, :]
     c_mask = token_mask[:, None] & (offs_cn[None, :] < N)
-    tl.atomic_add(c_ptrs, accumulator, mask=c_mask)
+    tl.store(c_ptrs, accumulator.to(compute_type), mask=c_mask)
 
 
 def moe_align_block_size(
@@ -229,15 +227,18 @@ def invoke_fused_moe_kernel(
     config: dict,
 ):
     assert A.is_contiguous()
+    assert B.is_contiguous()
     assert C.is_contiguous()
 
+    EM = padded_token_ids_per_block.shape[0]
+    N = B.shape[1]
+
     grid = lambda META: (
-        triton.cdiv(padded_token_ids_per_block.shape[0], META["BLOCK_SIZE_M"])
-        * triton.cdiv(B.shape[1], META["BLOCK_SIZE_N"]),
-        META["SPLIT_K"],
+        triton.cdiv(EM, META["block_m"]) * triton.cdiv(N, META["block_n"]),
     )
 
-    fused_moe_kernel[grid](
+    compute_type = tl.float16 if A.dtype == torch.float16 else tl.bfloat16
+    fused_moe_kernel_v3[grid](
         A,
         B,
         C,
@@ -256,6 +257,7 @@ def invoke_fused_moe_kernel(
         C.stride(1),
         C.stride(2),
         top_k=top_k,
+        compute_type=compute_type,
         **config,
     )
 
@@ -368,45 +370,18 @@ def moe_mm(
         # TODO: Add more configs?
         configs = [
             {
-                "BLOCK_SIZE_M": 32,
-                "BLOCK_SIZE_N": 64,
-                "BLOCK_SIZE_K": 64,
-                "GROUP_SIZE_M": 8,
-                "SPLIT_K": 2,
-                "num_warps": 8,
-                # "num_stages": 4,
+                "block_m": 64,
+                "block_n": 64,
+                "block_k": 32,
             },
             {
-                "BLOCK_SIZE_M": 32,
-                "BLOCK_SIZE_N": 64,
-                "BLOCK_SIZE_K": 128,
-                "GROUP_SIZE_M": 8,
-                "SPLIT_K": 2,
-                "num_warps": 8,
-                # "num_stages": 4,
-            },
-            {
-                "BLOCK_SIZE_M": 16,
-                "BLOCK_SIZE_N": 64,
-                "BLOCK_SIZE_K": 128,
-                "GROUP_SIZE_M": 8,
-                "SPLIT_K": 2,
-                "num_warps": 8,
-                # "num_stages": 4,
-            },
-            {
-                "BLOCK_SIZE_M": 16,
-                "BLOCK_SIZE_N": 128,
-                "BLOCK_SIZE_K": 64,
-                "GROUP_SIZE_M": 8,
-                "SPLIT_K": 4,
-                "num_warps": 8,
-                # "num_stages": 4,
+                "block_m": 16,
+                "block_n": 32,
+                "block_k": 64,
             },
         ]
-        configs = [
-            config for config in configs if config["BLOCK_SIZE_M"] == padding_size
-        ]
+
+        configs = [config for config in configs if config["block_m"] == padding_size]
         print("all configs len: ", len(configs))
         best, best_config = _autotune(
             configs,
@@ -429,6 +404,9 @@ def moe_mm(
     if best_config is None:
         return torch.tensor([])
 
+    grid = math.ceil(
+        padded_token_ids_per_block.shape[0] / best_config["block_m"]
+    ) * math.ceil(moe_matrix.shape[1] / best_config["block_n"])
     invoke_fused_moe_kernel(
         input,
         moe_matrix,
