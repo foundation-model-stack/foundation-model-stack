@@ -182,8 +182,8 @@ max_len = max([len(prompt) for prompt in [prompt1, prompt2]])
 # prompt2 = pad_prompt(prompt2, max_len)
 # ids = torch.stack((prompt2, prompt1), dim=0)
 
-ids = prompt1.unsqueeze(0)
-
+# ids = prompt1.unsqueeze(0)
+ids = torch.randint(0, 32000, (1, 1024), device=device)
 
 def print_result(result):
     if local_rank != 0:
@@ -215,7 +215,7 @@ def infer(use_cache, do_sample):
         prefill_model,
         decode_model,
         ids,
-        max_new_tokens=100,
+        max_new_tokens=128,
         use_cache=use_cache,
         do_sample=do_sample,
         max_seq_len=max_seq_len,

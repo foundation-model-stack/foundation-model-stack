@@ -9,12 +9,10 @@ import triton.language as tl  # type: ignore[import-untyped]
 
 """Fused MoE kernel."""
 
+
 @triton.jit()
-def col_major(pid,
-              m, n,
-              block_m: tl.constexpr, block_n: tl.constexpr):
-    
-    grid_m = tl.cdiv(m, block_m)    
+def col_major(pid, m, n, block_m: tl.constexpr, block_n: tl.constexpr):
+    grid_m = tl.cdiv(m, block_m)
     grid_n = tl.cdiv(n, block_n)
 
     pid_m = (pid % grid_n) % grid_m
@@ -69,25 +67,35 @@ def fused_moe_kernel_v3(
     """
 
     pid = tl.program_id(axis=0)
-    pid_m, pid_n = col_major(pid,
-                             EM, N,
-                             block_m, block_n,)
+    pid_m, pid_n = col_major(
+        pid,
+        EM,
+        N,
+        block_m,
+        block_n,
+    )
 
     num_tokens_post_padded = tl.load(total_padded_tokens_ptr)
-    
+
     if pid_m * block_m >= num_tokens_post_padded:
         return
-    
+
     offs_token_id = pid_m * block_m + tl.arange(0, block_m)
     offs_token = tl.load(padded_token_ids_per_block_ptr + offs_token_id)
     token_mask = offs_token < num_valid_tokens
 
     offs_bn = (pid_n * block_n + tl.arange(0, block_n)) % N
     offs_k = tl.arange(0, block_k)
-    a_ptrs = a_ptr + (offs_token[:, None] // top_k * stride_am + offs_k[None, :] * stride_ak)
+    a_ptrs = a_ptr + (
+        offs_token[:, None] // top_k * stride_am + offs_k[None, :] * stride_ak
+    )
 
     off_experts = tl.load(expert_block_mapping_ptr + pid_m)
-    b_ptrs = b_ptr + off_experts * stride_be + (offs_k[:, None] * stride_bk + offs_bn[None, :] * stride_bn)
+    b_ptrs = (
+        b_ptr
+        + off_experts * stride_be
+        + (offs_k[:, None] * stride_bk + offs_bn[None, :] * stride_bn)
+    )
     # -----------------------------------------------------------
     # Iterate to compute a block of the C matrix.
     # We accumulate into a `[block_m, block_n]` block
@@ -97,13 +105,12 @@ def fused_moe_kernel_v3(
 
     for k in range(0, tl.cdiv(K, block_k)):
         # Load the next block of A and B, generate a mask by checking the K dimension.
-        a = tl.load(a_ptrs,
-                    mask=token_mask[:, None] &
-                    (offs_k[None, :] < K - k * block_k),
-                    other=0.0)
-        b = tl.load(b_ptrs,
-                    mask=offs_k[:, None] < K - k * block_k,
-                    other=0.0)
+        a = tl.load(
+            a_ptrs,
+            mask=token_mask[:, None] & (offs_k[None, :] < K - k * block_k),
+            other=0.0,
+        )
+        b = tl.load(b_ptrs, mask=offs_k[:, None] < K - k * block_k, other=0.0)
         # We accumulate along the K dimension.
         accumulator += tl.dot(a, b)
         # Advance the ptrs to the next K block.
@@ -226,7 +233,9 @@ def invoke_fused_moe_kernel(
     EM = padded_token_ids_per_block.shape[0]
     N = B.shape[1]
 
-    grid = lambda META: (triton.cdiv(EM, META['block_m']) * triton.cdiv(N, META['block_n']), )
+    grid = lambda META: (
+        triton.cdiv(EM, META["block_m"]) * triton.cdiv(N, META["block_n"]),
+    )
 
     compute_type = tl.float16 if A.dtype == torch.float16 else tl.bfloat16
     fused_moe_kernel_v3[grid](
@@ -372,9 +381,7 @@ def moe_mm(
             },
         ]
 
-        configs = [
-            config for config in configs if config["block_m"] == padding_size
-        ]
+        configs = [config for config in configs if config["block_m"] == padding_size]
         print("all configs len: ", len(configs))
         best, best_config = _autotune(
             configs,
@@ -397,7 +404,9 @@ def moe_mm(
     if best_config is None:
         return torch.tensor([])
 
-    grid = math.ceil(padded_token_ids_per_block.shape[0] / best_config["block_m"]) * math.ceil(moe_matrix.shape[1] / best_config["block_n"])
+    grid = math.ceil(
+        padded_token_ids_per_block.shape[0] / best_config["block_m"]
+    ) * math.ceil(moe_matrix.shape[1] / best_config["block_n"])
     invoke_fused_moe_kernel(
         input,
         moe_matrix,
