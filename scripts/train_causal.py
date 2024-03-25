@@ -25,7 +25,24 @@ from fms.utils import print0, tokenizers
 #       --tokenizer=~/models/tokenizer.model --model_path=~/models/7B/ --output_path=./tuned/ \
 #       --report_steps=10 --checkpoint_format=meta --distributed=fsdp
 #
-
+# Simple example of pre-training on tokens stored in arrow files (pre-processed to length 4096):
+#
+# export LD_LIBRARY_PATH=/opt/amazon/efa/lib:/opt/amazon/openmpi/lib:/opt/aws-ofi-nccl/lib:/usr/local/cuda/lib:/usr/local/cuda/lib64:/usr/local/cuda:/usr/local/cuda/targets/x86_64-linux/lib/:/usr/local/cuda/extras/CUPTI/lib64:/usr/local/lib:$LD_LIBRARY_PATH
+# export FI_EFA_SET_CUDA_SYNC_MEMOPS=0
+# srun --gres=gpu:8 --cpus-per-task=96 -N 8 --mem=1T --unbuffered --gres-flags=enforce-binding \
+#       --exclusive bash -c 'torchrun --nnodes=$SLURM_NTASKS --nproc_per_node=8 --node_rank=$SLURM_NODEID \
+#       --master_addr=`scontrol show hostnames $SLURM_JOB_NODELIST | head -n 1` \
+#       scripts/train_causal.py --variant=7b --tokenizer=~/models/tokenizer.model \
+#       --device_type=cuda --distributed=hsdp  --dataset_style=arrow \
+#       --dataset_path=file:///lustre/users/bvaughan/data/'
+#
+# Logs output like:
+# 0 19 2024-03-11 19:58:35.773642 {'loss': '7.6250', 'avg_loss': '8.3703', 'tok/stp': '524,288.0', 's/stp': '2.227', 'tok/gpu/s': '3,679.1', 'gpu_mem_use': '0%', 'gpu_utzn': '0%'}
+# 0 28 2024-03-11 19:58:57.736138 {'loss': '7.6250', 'avg_loss': '7.6424', 'tok/stp': '524,288.0', 's/stp': '2.439', 'tok/gpu/s': '3,357.0', 'gpu_mem_use': '46%', 'gpu_utzn': '100%'}
+# 0 37 2024-03-11 19:59:17.431584 {'loss': '7.4688', 'avg_loss': '7.5139', 'tok/stp': '524,288.0', 's/stp': '2.189', 'tok/gpu/s': '3,743.4', 'gpu_mem_use': '37%', 'gpu_utzn': '100%'}
+#
+# use sbatch for longer running training jobs.
+#
 
 parser = argparse.ArgumentParser(description="Script to train or tune a model")
 
@@ -117,6 +134,7 @@ parser.add_argument(
 parser.add_argument(
     "--epochs", type=int, default=2, help="Number of epochs to train/tune"
 )
+parser.add_argument("--batch_size", type=int, default=2, help="Batch size")
 parser.add_argument(
     "--grad_accum_steps",
     type=int,
@@ -276,9 +294,7 @@ def main():
     eos_token = tokenizer.convert_ids_to_tokens([eos_token_id])[0]
 
     # TODO: split a validation dataset
-    dataset = datasets.get_dataset(
-        args.dataset_style, tokenizer, args.dataset_path, device=device
-    )
+    dataset = datasets.get_dataset(args.dataset_style, tokenizer, args.dataset_path)
 
     sampler = None
     # if the dataset is iterable, we can't shuffle it, and it should handle
@@ -292,7 +308,9 @@ def main():
         # if we shuffle the sampler then we don't shuffle the dataloader
         shuffle = False
 
-    dataloader = DataLoader(dataset, sampler=sampler, shuffle=shuffle)
+    dataloader = DataLoader(
+        dataset, batch_size=args.batch_size, sampler=sampler, shuffle=shuffle
+    )
 
     loss_fn = get_loss_fn()
 
@@ -327,6 +345,7 @@ def main():
             model,
             optimizer,
             dataloader,
+            device,
             loss_fn,
             start_epoch=epoch,
             epochs=args.epochs,

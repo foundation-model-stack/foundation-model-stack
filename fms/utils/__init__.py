@@ -12,7 +12,7 @@ def print0(*args, group: Optional[ProcessGroup] = None):
     if group is not None:
         rank = group.rank()
     else:
-        rank = int(os.environ.get("LOCAL_RANK", os.environ.get("RANK", 0)))
+        rank = int(os.environ.get("RANK", os.environ.get("LOCAL_RANK", 0)))
     if rank == 0:
         print(*args)
 
