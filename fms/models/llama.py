@@ -255,19 +255,19 @@ class LLaMA(nn.Module):
             assert x.mean().abs() < tolerance
             assert x.std().sub(.02).abs() < tolerance
         for m in self.modules():
-            if isinstance(LayerNormParameterized):
+            if isinstance(m, LayerNormParameterized):
                 if m.elementwise_scale:
                     assert m.weight.sum() == m.weight.numel()
                 if m.elementwise_shift:
                     assert m.bias.add(1).sum() == m.bias.numel()
-            elif isinstance(WordEmbedding):
+            elif isinstance(m, WordEmbedding):
                 check_close(m.emb.weight)
                 check_close(m.head.weight)
-            elif isinstance(GatedLinearUnit):
+            elif isinstance(m, GatedLinearUnit):
                 check_close(m.w1.weight)
                 check_close(m.w2.weight)
                 check_close(m.wg.weight)
-            elif isinstance(MultiHeadAttention):
+            elif isinstance(m, MultiHeadAttention):
                 check_close(m.query.weight)
                 check_close(m.key.weight)
                 check_close(m.value.weight)
