@@ -252,14 +252,14 @@ class LLaMA(nn.Module):
             assert p.isnan().int().sum() == 0
             assert p.isinf().int().sum() == 0
         def check_close(x):
-            assert x.mean().abs() < tolerance
-            assert x.std().sub(.02).abs() < tolerance
+            assert x.data.mean().abs().item() < tolerance
+            assert x.data.std().sub(.02).abs().item() < tolerance
         for m in self.modules():
             if isinstance(m, LayerNormParameterized):
                 if m.elementwise_scale:
-                    assert m.weight.sum() == m.weight.numel()
+                    assert m.weight.data.sum().item() == m.weight.data.numel()
                 if m.elementwise_shift:
-                    assert m.bias.add(1).sum() == m.bias.numel()
+                    assert m.bias.data.add(1).sum() == m.bias.data.numel()
             elif isinstance(m, WordEmbedding):
                 check_close(m.emb.weight)
                 check_close(m.head.weight)
