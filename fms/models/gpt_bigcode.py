@@ -340,6 +340,8 @@ _santacoder_config = GPTBigCodeConfig(
     p_dropout=0.1,
     emb_dropout=0.1,
 )
+
+# https://www.ibm.com/docs/en/cloud-paks/cp-data/4.8.x?topic=models-granite-13b-instruct-v2-model-card
 _13b_config = GPTBigCodeConfig(
     src_vocab_size=50304,
     emb_dim=5632,
@@ -352,13 +354,15 @@ _13b_config = GPTBigCodeConfig(
     emb_dropout=0.1,
     ln_eps=1e-5,
 )
+
+#  Config verified with IBM internal repo
 _20b_config = GPTBigCodeConfig(
     src_vocab_size=49152,
     emb_dim=6144,
-    nheads=52,
-    nlayers=48,
+    nheads=48,
+    nlayers=52,
     pad_id=0,
-    max_expected_seq_len=32768,
+    max_expected_seq_len=8192,
     hidden_grow_factor=4.0,
     p_dropout=0.1,
     emb_dropout=0.1,
