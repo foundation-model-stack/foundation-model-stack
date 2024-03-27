@@ -251,9 +251,11 @@ class LLaMA(nn.Module):
         for p in self.parameters():
             assert p.isnan().int().sum() == 0
             assert p.isinf().int().sum() == 0
+
         def check_close(x):
             assert x.mean().abs() < tolerance
-            assert x.std().sub(.02).abs() < tolerance
+            assert x.std().sub(0.02).abs() < tolerance
+
         for m in self.modules():
             if isinstance(LayerNormParameterized):
                 if m.elementwise_scale:
