@@ -1,9 +1,11 @@
 import argparse
 import logging
 import os
+import random
 import statistics
 import timeit
 
+import numpy as np
 import torch
 from torch import distributed as dist
 from torch._dynamo import OptimizedModule
@@ -90,6 +92,11 @@ parser.add_argument(
     choices=["default", "reduce-overhead"],
 )
 parser.add_argument(
+    "--deterministic",
+    action="store_true",
+    help="Set seeds and torch.use_deterministic_algorithms? Requires env variable `CUBLAS_WORKSPACE_CONFIG=:4096:8`",
+)
+parser.add_argument(
     "--distributed",
     action="store_true",
     help="This is a distributed job (multiple instances run with RANK+WORLD_SIZE)",
@@ -137,6 +144,14 @@ else:
     device = torch.device(args.device_type)
 
 torch.set_default_dtype(torch.half)
+
+# requires setting environment variable: `CUBLAS_WORKSPACE_CONFIG=:4096:8`
+if args.deterministic:
+    SEED = 42
+    random.seed(SEED)
+    torch.manual_seed(SEED)  # pytorch random seed
+    np.random.seed(SEED)  # numpy random seed
+    torch.use_deterministic_algorithms(True)
 
 if world_size > 1:
     dist.init_process_group()
