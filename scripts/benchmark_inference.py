@@ -225,7 +225,8 @@ def one_token(model, use_cache):
     if local_rank == 0 and not args.skip_correctness_check:
         torch.testing.assert_close(actual, expected)
     else:
-        torch.cuda.synchronize()
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
 
 
 def end_to_end(model, use_cache, expected=None):
@@ -247,7 +248,8 @@ def end_to_end(model, use_cache, expected=None):
     if expected is not None and not args.skip_correctness_check:
         torch.testing.assert_close(result, expected)
     else:
-        torch.cuda.synchronize()
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
     return result
 
 
