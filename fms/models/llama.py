@@ -247,6 +247,10 @@ class LLaMA(nn.Module):
                 m.reset_parameters()
 
     def validate_reset_parameters(self):
+        # Verifies that the above self.reset_parameters() executed correctly.
+        # This may not always be the case for distributed settings with sharded tensors,
+        # such as FSDP or TP. Note that performing this check may require unsharding /
+        # re-materializing the full model on a single rank to access the underlying tensors.
         tolerance = 1e-3
 
         def check_close(x):
