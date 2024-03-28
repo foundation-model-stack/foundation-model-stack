@@ -179,7 +179,7 @@ class LLaMA(nn.Module):
         self.pad_id = self.config.pad_id
         self.max_expected_seq_len = self.config.max_expected_seq_len
 
-        shared = WordEmbedding(
+        self.shared = WordEmbedding(
             self.config.src_vocab_size,
             self.config.emb_dim,
             padding_idx=self.config.pad_id,
@@ -188,7 +188,6 @@ class LLaMA(nn.Module):
             tie_weights=False,
             bias=False,
         )
-        self.shared = self.distributed_strategy.distribute_module(shared)
 
         self.rot_emb = RotaryEmbedding(
             dim=self.config.emb_dim // self.config.nheads,
