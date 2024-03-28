@@ -248,32 +248,33 @@ class LLaMA(nn.Module):
 
     def validate_reset_parameters(self):
         tolerance = 1e-3
-        for p in self.parameters():
-            assert p.isnan().int().sum() == 0
-            assert p.isinf().int().sum() == 0
 
         def check_close(x):
             assert x.mean().abs() < tolerance
             assert x.std().sub(0.02).abs() < tolerance
 
-        for m in self.modules():
-            if isinstance(LayerNormParameterized):
-                if m.elementwise_scale:
-                    assert m.weight.sum() == m.weight.numel()
-                if m.elementwise_shift:
-                    assert m.bias.add(1).sum() == m.bias.numel()
-            elif isinstance(WordEmbedding):
-                check_close(m.emb.weight)
-                check_close(m.head.weight)
-            elif isinstance(GatedLinearUnit):
-                check_close(m.w1.weight)
-                check_close(m.w2.weight)
-                check_close(m.wg.weight)
-            elif isinstance(MultiHeadAttention):
-                check_close(m.query.weight)
-                check_close(m.key.weight)
-                check_close(m.value.weight)
-                check_close(m.dense.weight)
+        with torch.no_grad():
+            for p in self.parameters():
+                assert p.isnan().int().sum() == 0
+                assert p.isinf().int().sum() == 0
+            for m in self.modules():
+                if isinstance(LayerNormParameterized):
+                    if m.elementwise_scale:
+                        assert m.weight.sum() == m.weight.numel()
+                    if m.elementwise_shift:
+                        assert m.bias.add(1).sum() == m.bias.numel()
+                elif isinstance(WordEmbedding):
+                    check_close(m.emb.weight)
+                    check_close(m.head.weight)
+                elif isinstance(GatedLinearUnit):
+                    check_close(m.w1.weight)
+                    check_close(m.w2.weight)
+                    check_close(m.wg.weight)
+                elif isinstance(MultiHeadAttention):
+                    check_close(m.query.weight)
+                    check_close(m.key.weight)
+                    check_close(m.value.weight)
+                    check_close(m.dense.weight)
 
     def _helper(
         self,
