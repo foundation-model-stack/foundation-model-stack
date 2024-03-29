@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 import torch
 import torch.distributed
@@ -118,8 +118,8 @@ class TPFeedForwardBlock(FeedForwardBlock, TPModule):
         )
         self.setup_tp(rank, world_size)
 
-    def colwise_param_names(self) -> List[str]:
-        return ["w1"]
+    def colwise_params(self) -> Dict[str, int]:
+        return {"w1": 1}
 
     def rowwise_param_names(self) -> List[str]:
         return ["w2"]
@@ -256,8 +256,8 @@ class TPGatedLinearUnit(GatedLinearUnit, TPModule):
         )
         self.setup_tp(rank, world_size)
 
-    def colwise_param_names(self) -> List[str]:
-        return ["w1", "wg"]
+    def colwise_params(self) -> Dict[str, int]:
+        return {"w1": 1, "wg": 1}
 
     def rowwise_param_names(self) -> List[str]:
         return ["w2"]

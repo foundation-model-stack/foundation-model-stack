@@ -1,5 +1,5 @@
 import math
-from typing import List, Optional, Tuple, Union
+from typing import Dict, List, Optional, Tuple, Union
 
 import torch
 import torch.distributed
@@ -215,10 +215,10 @@ class TPWordEmbedding(WordEmbedding, TPModule):
         )
         return tp_we
 
-    def colwise_param_names(self) -> List[str]:
+    def colwise_params(self) -> Dict[str, int]:
         if self.reversible and not self.tie_weights:
-            return ["head"]
-        return []
+            return {"head": 1}
+        return {}
 
     def embedding_param_names(self) -> List[str]:
         emb_weights = ["emb"]

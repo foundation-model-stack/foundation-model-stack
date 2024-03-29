@@ -321,7 +321,14 @@ def load_state_dict_into_model(
             del fms_partial_sd
 
 
-def _copy_colwise(param: torch.nn.Parameter, tensor_value, is_bias, rank, world_size):
+def _copy_colwise(
+    param: torch.nn.Parameter,
+    tensor_value,
+    expansion_factor: int,
+    is_bias,
+    rank,
+    world_size,
+):
     """
     This function copies the correct shard of the weights for a colwise-TP'd module
     according to the rank of the process and the world_size.
@@ -332,6 +339,8 @@ def _copy_colwise(param: torch.nn.Parameter, tensor_value, is_bias, rank, world_
         Parameter that has had TP applied
     tensor_value: torch.Tensor
         tensor that needs sharding
+    expansion_factor: int
+        determines the duplication amongst the ranks
     rank: int
         Rank of the current process
     world_size: int
@@ -339,17 +348,20 @@ def _copy_colwise(param: torch.nn.Parameter, tensor_value, is_bias, rank, world_
     """
     # Divide the weight matrix along the first dimension.
     output_size_per_partition = param.shape[0]
+
+    index = rank // expansion_factor
+
     if not is_bias:
         tensor = tensor_value[
-            (rank * output_size_per_partition) : (
-                (rank + 1) * output_size_per_partition
+            (index * output_size_per_partition) : (
+                (index + 1) * output_size_per_partition
             ),
             :,
         ]
     else:
         tensor = tensor_value[
-            (rank * output_size_per_partition) : (
-                (rank + 1) * output_size_per_partition
+            (index * output_size_per_partition) : (
+                (index + 1) * output_size_per_partition
             )
         ]
     param.copy_(tensor, non_blocking=True)
@@ -462,15 +474,18 @@ def _load_partial_state_dict(
                 _copy_if_present(param, tensor_value)
             elif tp_module is not None:
                 # Handle TP sharding
-                if key_steps[-2] in tp_module.colwise_param_names():
+                if key_steps[-2] in tp_module.colwise_params():
+                    expansion_factor = tp_module.colwise_params()[key_steps[-2]]
+
                     _copy_colwise(
                         param,
                         tensor_value,
+                        expansion_factor,
                         key_steps[-1] == "bias",
                         rank,
                         world_size,
                     )
-                if key_steps[-2] in tp_module.rowwise_param_names():
+                elif key_steps[-2] in tp_module.rowwise_param_names():
                     _copy_rowwise(
                         param,
                         tensor_value,
@@ -478,12 +493,16 @@ def _load_partial_state_dict(
                         rank,
                         world_size,
                     )
-                if key_steps[-2] in tp_module.embedding_param_names():
+                elif key_steps[-2] in tp_module.embedding_param_names():
                     _copy_embedding(
                         param,
                         tensor_value,
                         rank,
                         world_size,
                     )
+                else:
+                    # it's possible for a TPModule to decide not to shard a parameter, in which case we just need to
+                    # copy it. For example, this occurs in MQA of MultiHeadAttention
+                    _copy_if_present(param, tensor_value)
         except AttributeError:
             unused_params.append(key)

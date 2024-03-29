@@ -1,4 +1,4 @@
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import torch
 import torch.distributed
@@ -262,8 +262,8 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
         assert torch.distributed.is_initialized()
 
         rank, world_size = distributed.rank_and_world(group)
-        assert (
-            nheads % world_size == 0
+        assert nheads % world_size == 0 and (
+            kvheads % world_size == 0 or world_size % kvheads == 0
         ), "The number of heads must be divisible by world size"
         MultiHeadAttention.__init__(
             self,
@@ -271,7 +271,7 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
             emb_kq,
             emb_v,
             nheads // world_size,
-            (kvheads // world_size) if kvheads > 1 else kvheads,
+            (kvheads // world_size) if kvheads >= world_size else 1,
             p_dropout,
             use_bias,
             position_encoder,
@@ -279,12 +279,16 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
         self.pre_tp_kvheads = kvheads
         self.setup_tp(rank, world_size)
 
-    def colwise_param_names(self) -> List[str]:
-        colwise_weights = ["query"]
-        if self.pre_tp_kvheads != 1:
-            colwise_weights.append("key")
-            colwise_weights.append("value")
-        return colwise_weights
+    def colwise_params(self) -> Dict[str, int]:
+        return {
+            "query": 1,
+            "key": self.world_size // self.pre_tp_kvheads
+            if self.world_size > self.pre_tp_kvheads
+            else 1,
+            "value": self.world_size // self.pre_tp_kvheads
+            if self.world_size > self.pre_tp_kvheads
+            else 1,
+        }
 
     def rowwise_param_names(self) -> List[str]:
         return ["dense"]
