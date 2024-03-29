@@ -470,7 +470,7 @@ def _load_partial_state_dict(
                         rank,
                         world_size,
                     )
-                if key_steps[-2] in tp_module.rowwise_param_names():
+                elif key_steps[-2] in tp_module.rowwise_param_names():
                     _copy_rowwise(
                         param,
                         tensor_value,
@@ -478,12 +478,16 @@ def _load_partial_state_dict(
                         rank,
                         world_size,
                     )
-                if key_steps[-2] in tp_module.embedding_param_names():
+                elif key_steps[-2] in tp_module.embedding_param_names():
                     _copy_embedding(
                         param,
                         tensor_value,
                         rank,
                         world_size,
                     )
+                else:
+                    # it's possible for a TPModule to decide not to shard a parameter, in which case we just need to
+                    # copy it. For example, this occurs in MQA of MultiHeadAttention
+                    _copy_if_present(param, tensor_value)
         except AttributeError:
             unused_params.append(key)
