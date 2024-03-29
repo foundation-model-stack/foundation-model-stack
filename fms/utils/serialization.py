@@ -502,7 +502,7 @@ def _load_partial_state_dict(
                     )
                 else:
                     # it's possible for a TPModule to decide not to shard a parameter, in which case we just need to
-                    # copy it. For example, this occurs in MQA of MultiHeadAttention
+                    # copy it.
                     _copy_if_present(param, tensor_value)
         except AttributeError:
             unused_params.append(key)
