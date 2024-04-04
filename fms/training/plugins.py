@@ -93,6 +93,7 @@ class InferenceValidator(TrainerPlugin):
         metrics: Dict = {},
         step: Optional[int] = None,
     ):
+
         if not self.run(step):
             return
         training = model.training
