@@ -100,7 +100,7 @@ def train(
     dataloader: DataLoader,
     device,
     loss_fn: nn.Module,
-    start_epoch=0,
+    start_epoch: int = 0,
     epochs: int = 1,
     prev_step: int = -1,
     trainer_plugins: List[TrainerPlugin] = [],

@@ -251,6 +251,7 @@ def training_state(model_path, model, rank):
     dataset_sd = {}
     epoch = 0
     prev_step = -1
+    cumulative_tokens = 0
 
     if model_path is not None:
         path = Path(args.model_path).expanduser()
@@ -280,6 +281,7 @@ def training_state(model_path, model, rank):
                 optim_sd = sd["optimizer"]
                 epoch = sd["epoch"]
                 prev_step = sd["step"]
+                cumulative_tokens = sd["cumulative_tokens"]
                 if "dataset" in sd:
                     dataset_sd = sd["dataset"]
                 if isinstance(model, FSDP):
@@ -288,8 +290,8 @@ def training_state(model_path, model, rank):
                     )
                 optimizer.load_state_dict(optim_sd)
 
-                return (optimizer, dataset_sd, epoch, prev_step)
-    return (optimizer, dataset_sd, epoch, prev_step)
+                return (optimizer, dataset_sd, epoch, prev_step, cumulative_tokens)
+    return (optimizer, dataset_sd, epoch, prev_step, cumulative_tokens)
 
 
 def main():
@@ -306,11 +308,14 @@ def main():
         group=group,
     )
     # model.to(torch.half)
-    optimizer, dataset_sd, epoch, prev_step = training_state(
+    optimizer, dataset_sd, epoch, prev_step, cum_tokens = training_state(
         args.model_path, model, rank
     )
     print("model loaded on worker", rank)
-    print0("starting from epoch", epoch, "prior step", prev_step)
+    print0(
+        "starting from epoch", epoch, "prior step", prev_step, "cum tokens", cum_tokens
+    )
+    print0("dataset state", dataset_sd)
 
     tokenizer = tokenizers.get_tokenizer(args.tokenizer)
 
@@ -376,9 +381,14 @@ def main():
         group=ckp_group,
         save_dir=args.output_path,
         dataset=dataset,
+        device=device,
     )
     reporting = trainplugins.MetricReporter(
-        seconds=20, prev_step=prev_step, group=group, device=device
+        seconds=20,
+        prev_step=prev_step,
+        cumulative_tokens=cum_tokens,
+        group=group,
+        device=device,
     )
 
     plugins = [reporting, validator, validator2, checkpointing]

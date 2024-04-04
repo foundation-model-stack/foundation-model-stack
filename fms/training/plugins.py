@@ -127,13 +127,15 @@ class MetricReporter(TrainerPlugin):
         seconds=10,
         group: Optional[dist.ProcessGroup] = None,
         prev_step: int = -1,
+        cumulative_tokens: int = 0,
         device="cpu",
         writer=print0,
     ):
         super().__init__(1)
         self.seconds = seconds
         self.last_reported_time = datetime.now()
-        self.tokens_seen = torch.tensor(0.0, device=device)
+        self.tokens_seen = torch.tensor(0, device=device)
+        self.cumulative_tokens = torch.tensor(cumulative_tokens, device=device)
         self.last_reported_step = prev_step
         self.cum_loss = torch.tensor(0.0, device=device)
         self.time_per_step = torch.tensor(1.0, device=device)
@@ -174,22 +176,27 @@ class MetricReporter(TrainerPlugin):
             steps = step - self.last_reported_step
             self.last_reported_step = step
 
-        world = 1 if self.group is None else self.group.size()
-        if world > 1 and self.tokens_seen.device.type == "cuda":
+        # group and global world are only different for HSDP
+        group_world = 1 if self.group is None else self.group.size()
+        global_world = 1 if not dist.is_initialized() else dist.get_world_size()
+        if global_world > 1 and self.tokens_seen.device.type == "cuda":
+            # these use the default process group (all nodes even if HSDP)
             dist.all_reduce(self.tokens_seen, op=dist.ReduceOp.SUM)
             dist.all_reduce(self.cum_loss, op=dist.ReduceOp.SUM)
-            dist.all_reduce(self.time_per_step, op=dist.ReduceOp.SUM)
-            self.time_per_step /= world
+            dist.all_reduce(self.time_per_step, op=dist.ReduceOp.AVG)
+
+        self.cumulative_tokens += self.tokens_seen
 
         to_report = {}
         if "loss" in metrics:
             to_report["loss"] = f"{metrics['loss']:.4f}"
-        to_report["avg_loss"] = f"{self.cum_loss.item() / steps / world:.4f}"
+        to_report["avg_loss"] = f"{self.cum_loss.item() / steps / group_world:.4f}"
 
         more_metrics = {
             "tok/stp": f"{self.tokens_seen.item() / steps:,.1f}",
             "s/stp": f"{self.time_per_step.item():,.3f}",
-            "tok/gpu/s": f"{self.tokens_seen.item() / elapsed / world:,.1f}",
+            "tok/gpu/s": f"{self.tokens_seen.item() / elapsed / global_world:,.1f}",
+            "cum_tokens": f"{self.cumulative_tokens.item():,}",
         }
         if torch.cuda.is_available() and utils.has_package("pynvml"):
             nvidia_metrics = {
@@ -227,16 +234,21 @@ class Checkpointer(TrainerPlugin):
         save_dir: str | Path = Path("./checkpoints"),
         dataset: Optional[SavableDataset] = None,
         steps: Optional[int] = None,
+        cumulative_tokens: int = 0,
         name: Optional[str] = None,
         group: Optional[dist.ProcessGroup] = None,
+        device="cpu",
     ):
         super().__init__(steps)
         os.makedirs(save_dir, exist_ok=True)
         save_dir = os.path.expanduser(save_dir)
         self.dataset = dataset
         self.save_dir = Path(save_dir)
+        self.cumulative_tokens = torch.tensor(cumulative_tokens, device=device)
         self.group = group
         self.name = name
+        self.last_step = -1
+        self.device = device
 
     # TODO: this probably also needs to accept a dataset since we want to
     # support checkpointable datasets.
@@ -248,8 +260,22 @@ class Checkpointer(TrainerPlugin):
         metrics: Dict = {},
         step: Optional[int] = None,
     ):
+
         if not self.run(step):
             return
+
+        steps_since_last = step - self.last_step
+        self.last_step = step
+
+        # other metrics are per-rank so we need to aggregate cumulative tokens
+        # manually
+        tokens = metrics["batch_size"] * metrics["input_length"] * steps_since_last
+        tokens = torch.tensor(tokens, device=self.device)
+        global_world = 1 if not dist.is_initialized() else dist.get_world_size()
+        if global_world > 1 and tokens.device.type == "cuda":
+            # these use the default process group (all nodes even if HSDP)
+            dist.all_reduce(tokens, op=dist.ReduceOp.SUM)
+        self.cumulative_tokens += tokens
 
         model_name = (
             model.__class__.__name__.lower() if self.name is None else self.name
@@ -302,10 +328,18 @@ class Checkpointer(TrainerPlugin):
             torch.save(model_dict, path)
 
         print0("Writing training state", train_file)
-        train_dict = {"optimizer": optim_dict, "epoch": epoch, "step": step}
+        train_dict = {
+            "optimizer": optim_dict,
+            "epoch": epoch,
+            "step": step,
+            "cumulative_tokens": self.cumulative_tokens.item(),
+        }
+
         if self.dataset is not None:
             dataset_sd = self.dataset.state_dict()
             train_dict |= {"dataset": dataset_sd}
 
-        if self.group is None or self.group.rank() == 0:
+        if not dist.is_initialized() or (
+            self.group is not None and self.group.rank() == 0
+        ):
             torch.save(train_dict, train_file)
