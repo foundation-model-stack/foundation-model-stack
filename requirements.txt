@@ -1,0 +1,4 @@
+# Used to install pinned dependencies
+# Useful for dev/test jobs caches
+# Must be kept in sync with setup.py
+torch == 2.2.0 # This is what is installed in CI today
