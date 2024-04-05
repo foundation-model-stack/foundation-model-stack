@@ -10,10 +10,12 @@ from torch import nn
 from torch.distributed.fsdp import FullStateDictConfig
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.distributed.fsdp import StateDictType
+from torch.optim import Optimizer
 
 from fms import utils
 from fms.datasets.util import SavableDataset
 from fms.utils import generation, print0
+from fms.utils.tokenizers import BaseTokenizer
 
 
 class TrainerPlugin:
@@ -26,11 +28,10 @@ class TrainerPlugin:
     def __init__(self, steps: Optional[int] = None):
         self.steps = steps
 
-    def run(self, step, end_of_epoch):
+    def run(self, step: int, end_of_epoch: bool):
         """
         Whether or not to run this plugin on the current step.
         """
-        # if step is None, we're at an epoch end not an intermediate step.
         # By default we always run for epoch ends.
         if end_of_epoch:
             return True
@@ -71,10 +72,10 @@ class InferenceValidator(TrainerPlugin):
         self,
         model: nn.Module,
         prompt_tokens: List[str],
-        tokenizer,
-        device,
-        steps=None,
-        eos_token=None,
+        tokenizer: BaseTokenizer,
+        device: torch.device | str,
+        steps: Optional[int] = None,
+        eos_token: Optional[str] = None,
     ):
         super().__init__(steps)
         self.model = model
@@ -224,7 +225,7 @@ class Checkpointer(TrainerPlugin):
     def __init__(
         self,
         model: nn.Module,
-        optimizer,
+        optimizer: Optimizer,
         dataset: Optional[SavableDataset] = None,
         save_dir: str | Path = Path("./checkpoints"),
         steps: Optional[int] = None,
