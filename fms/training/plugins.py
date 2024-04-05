@@ -90,7 +90,6 @@ class InferenceValidator(TrainerPlugin):
     def step(
         self, epoch: int, step: int, metrics: Dict = {}, end_of_epoch: bool = False
     ):
-
         if not self.run(step, end_of_epoch):
             return
         training = self.model.training
@@ -253,7 +252,6 @@ class Checkpointer(TrainerPlugin):
     def step(
         self, epoch: int, step: int, metrics: Dict = {}, end_of_epoch: bool = False
     ):
-
         if not self.run(step, end_of_epoch):
             return
 
