@@ -23,16 +23,16 @@ class TrainerPlugin:
     or validation.
     """
 
-    def __init__(self, steps=None):
+    def __init__(self, steps: Optional[int] = None):
         self.steps = steps
 
-    def run(self, step):
+    def run(self, step, end_of_epoch):
         """
         Whether or not to run this plugin on the current step.
         """
         # if step is None, we're at an epoch end not an intermediate step.
         # By default we always run for epoch ends.
-        if step is None:
+        if end_of_epoch:
             return True
         # If self.steps is None, we're only recording epoch ends and this isn't one.
         if self.steps is None:
@@ -44,12 +44,7 @@ class TrainerPlugin:
 
     @abstractmethod
     def step(
-        self,
-        model: nn.Module,
-        optimizer,
-        epoch: int,
-        metrics: Dict = {},
-        step: Optional[int] = None,
+        self, epoch: int, step: int, metrics: Dict = {}, end_of_epoch: bool = False
     ):
         """
         This method is called on every step of training, or with step=None
@@ -73,9 +68,16 @@ class InferenceValidator(TrainerPlugin):
     """
 
     def __init__(
-        self, prompt_tokens: List[str], tokenizer, device, steps=None, eos_token=None
+        self,
+        model: nn.Module,
+        prompt_tokens: List[str],
+        tokenizer,
+        device,
+        steps=None,
+        eos_token=None,
     ):
         super().__init__(steps)
+        self.model = model
         self.tokenizer = tokenizer
         input_ids = tokenizer.convert_tokens_to_ids(prompt_tokens)
         self.input_ids = torch.tensor(input_ids, dtype=torch.long, device=device)
@@ -86,31 +88,26 @@ class InferenceValidator(TrainerPlugin):
         )
 
     def step(
-        self,
-        model: nn.Module,
-        optimizer,
-        epoch: int,
-        metrics: Dict = {},
-        step: Optional[int] = None,
+        self, epoch: int, step: int, metrics: Dict = {}, end_of_epoch: bool = False
     ):
 
-        if not self.run(step):
+        if not self.run(step, end_of_epoch):
             return
-        training = model.training
-        model.eval()
+        training = self.model.training
+        self.model.eval()
         with torch.no_grad():
             curtime = datetime.now().strftime("%H:%M.%S")
             prefix = f"{curtime}:{epoch:02d}"
             if step is not None:
                 prefix = prefix + f":{step:04d}"
 
-            result = generation.generate(model, self.input_ids, use_cache=True)
+            result = generation.generate(self.model, self.input_ids, use_cache=True)
             result = generation.truncate_after_eos(result, self.eos_token_id)
             result = self.tokenizer.convert_ids_to_tokens(result)
             result = self.tokenizer.convert_tokens_to_string(result)
             print0("generated result:")
             print0(result)
-        model.train(training)
+        self.model.train(training)
 
 
 class MetricReporter(TrainerPlugin):
@@ -145,12 +142,7 @@ class MetricReporter(TrainerPlugin):
         self.writer = writer
 
     def step(
-        self,
-        model: nn.Module,
-        optimizer,
-        epoch: int,
-        metrics: Dict = {},
-        step: Optional[int] = None,
+        self, epoch: int, step: int, metrics: Dict = {}, end_of_epoch: bool = False
     ):
         if "batch_size" in metrics and "input_length" in metrics:
             self.tokens_seen += metrics["batch_size"] * metrics["input_length"]
@@ -160,7 +152,7 @@ class MetricReporter(TrainerPlugin):
         current_time = datetime.now()
         elapsed = (current_time - self.last_reported_time).total_seconds()
 
-        if step is None:
+        if end_of_epoch:
             step = self.last_step + 1
             self.last_step = 0
             steps = step - self.last_reported_step
@@ -232,10 +224,13 @@ class Checkpointer(TrainerPlugin):
 
     def __init__(
         self,
-        save_dir: str | Path = Path("./checkpoints"),
+        model: nn.Module,
+        optimizer,
         dataset: Optional[SavableDataset] = None,
+        save_dir: str | Path = Path("./checkpoints"),
         steps: Optional[int] = None,
         cumulative_tokens: int = 0,
+        prev_step: int = -1,
         name: Optional[str] = None,
         group: Optional[dist.ProcessGroup] = None,
         device="cpu",
@@ -243,30 +238,30 @@ class Checkpointer(TrainerPlugin):
         super().__init__(steps)
         os.makedirs(save_dir, exist_ok=True)
         save_dir = os.path.expanduser(save_dir)
+        self.model = model
+        self.optimizer = optimizer
         self.dataset = dataset
         self.save_dir = Path(save_dir)
         self.cumulative_tokens = torch.tensor(cumulative_tokens, device=device)
         self.group = group
         self.name = name
-        self.last_step = -1
+        self.prev_step = prev_step
         self.device = device
 
     # TODO: this probably also needs to accept a dataset since we want to
     # support checkpointable datasets.
     def step(
-        self,
-        model: nn.Module,
-        optimizer,
-        epoch: int,
-        metrics: Dict = {},
-        step: Optional[int] = None,
+        self, epoch: int, step: int, metrics: Dict = {}, end_of_epoch: bool = False
     ):
 
-        if not self.run(step):
+        if not self.run(step, end_of_epoch):
             return
 
-        steps_since_last = step - self.last_step
-        self.last_step = step
+        steps_since_last = step - self.prev_step
+        if end_of_epoch:
+            self.prev_step = -1
+        else:
+            self.prev_step = step
 
         # other metrics are per-rank so we need to aggregate cumulative tokens
         # manually
@@ -279,14 +274,14 @@ class Checkpointer(TrainerPlugin):
         self.cumulative_tokens += tokens
 
         model_name = (
-            model.__class__.__name__.lower() if self.name is None else self.name
+            self.model.__class__.__name__.lower() if self.name is None else self.name
         )
 
         # For FSDP, consolidate checkpointable data to rank0.
         # TODO: may also want to support distcp checkpoints which should be faster
         # to save and load but are harder to use for inference.
 
-        is_fsdp = isinstance(model, FSDP)
+        is_fsdp = isinstance(self.model, FSDP)
         # For HSDP, self.group is only set for the first shard group. We only
         # need to save checkpoints for one shard group.
         if is_fsdp and self.group is None:
@@ -296,15 +291,17 @@ class Checkpointer(TrainerPlugin):
             dict_type = StateDictType.FULL_STATE_DICT
             cfg = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)
             with dist.fsdp.FullyShardedDataParallel.state_dict_type(
-                model, dict_type, cfg
+                self.model, dict_type, cfg
             ):
                 print0("Aggregating FSDP model statedict")
-                model_dict = model.state_dict()
+                model_dict = self.model.state_dict()
                 print0("Aggregating optim statedict")
-                optim_dict = FSDP.optim_state_dict(model, optimizer, group=self.group)
+                optim_dict = FSDP.optim_state_dict(
+                    self.model, self.optimizer, group=self.group
+                )
         else:
-            model_dict = model.state_dict()
-            optim_dict = optimizer.state_dict()
+            model_dict = self.model.state_dict()
+            optim_dict = self.optimizer.state_dict()
 
         if step is not None:
             file = f"{model_name}_{epoch:03d}_{step+1:05d}"
@@ -332,9 +329,11 @@ class Checkpointer(TrainerPlugin):
         train_dict = {
             "optimizer": optim_dict,
             "epoch": epoch,
-            "step": step,
             "cumulative_tokens": self.cumulative_tokens.item(),
         }
+
+        if step:
+            train_dict |= {"step": step}
 
         if self.dataset is not None:
             dataset_sd = self.dataset.state_dict()

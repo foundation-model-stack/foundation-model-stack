@@ -364,10 +364,20 @@ def main():
     sample_prompt2 = [bos_token] + tokenizer.tokenize(sample_prompt2)
 
     validator = trainplugins.InferenceValidator(
-        sample_prompt, tokenizer, device, steps=args.report_steps, eos_token=eos_token
+        model,
+        sample_prompt,
+        tokenizer,
+        device,
+        steps=args.report_steps,
+        eos_token=eos_token,
     )
     validator2 = trainplugins.InferenceValidator(
-        sample_prompt2, tokenizer, device, steps=args.report_steps, eos_token=eos_token
+        model,
+        sample_prompt2,
+        tokenizer,
+        device,
+        steps=args.report_steps,
+        eos_token=eos_token,
     )
     if args.distributed == "hsdp":
         ckp_group = dist.new_group(list(range(torch.cuda.device_count())))
@@ -377,10 +387,14 @@ def main():
     else:
         ckp_group = group
     checkpointing = trainplugins.Checkpointer(
-        steps=args.checkpoint_steps,
-        group=ckp_group,
-        save_dir=args.output_path,
+        model,
+        optimizer,
         dataset=dataset,
+        save_dir=args.output_path,
+        steps=args.checkpoint_steps,
+        cumulative_tokens=cum_tokens,
+        prev_step=prev_step,
+        group=ckp_group,
         device=device,
     )
     reporting = trainplugins.MetricReporter(
