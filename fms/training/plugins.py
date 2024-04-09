@@ -2,7 +2,7 @@ import os
 from abc import abstractmethod
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Union
 
 import torch
 from torch import distributed as dist
@@ -73,7 +73,7 @@ class InferenceValidator(TrainerPlugin):
         model: nn.Module,
         prompt_tokens: List[str],
         tokenizer: BaseTokenizer,
-        device: torch.device | str,
+        device: Union[torch.device, str],
         steps: Optional[int] = None,
         eos_token: Optional[str] = None,
     ):
@@ -227,7 +227,7 @@ class Checkpointer(TrainerPlugin):
         model: nn.Module,
         optimizer: Optimizer,
         dataset: Optional[SavableDataset] = None,
-        save_dir: str | Path = Path("./checkpoints"),
+        save_dir: Union[str, Path] = Path("./checkpoints"),
         steps: Optional[int] = None,
         cumulative_tokens: int = 0,
         prev_step: int = -1,
