@@ -65,8 +65,10 @@ def __one_epoch(
     optimized = False
     optimizer.zero_grad()
 
+    highest_step = prev_step
     for step, (input, label) in enumerate(data):
         step = prev_step + step + 1
+        highest_step = step
 
         batch_size = input.shape[0]
         input_length = input.shape[1]
@@ -87,11 +89,11 @@ def __one_epoch(
             "input_length": input_length,
         }
         for plugin in plugins:
-            plugin.step(model, optimizer, epoch, metrics, step)
+            plugin.step(epoch, step, metrics)
     if not optimized:
         __optimize(model, optimizer, grad_scaler)
     for plugin in plugins:
-        plugin.step(model, optimizer, epoch)
+        plugin.step(epoch, step=highest_step, end_of_epoch=True)
 
 
 def train(
@@ -100,7 +102,7 @@ def train(
     dataloader: DataLoader,
     device,
     loss_fn: nn.Module,
-    start_epoch=0,
+    start_epoch: int = 0,
     epochs: int = 1,
     prev_step: int = -1,
     trainer_plugins: List[TrainerPlugin] = [],
