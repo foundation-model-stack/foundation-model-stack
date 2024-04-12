@@ -564,3 +564,206 @@ def convert_hf_llama(hf_model: "LlamaForCausalLM") -> LLaMA:  # type: ignore
         layer.attn.key.weight.data = k
 
     return model
+
+
+def _gptq_hf_ckpt_to_fms_sd(
+        hf_gptq_ckpt_path: str,
+        device: Optional[str] = "cuda",
+        save_fms_sd: bool = False,
+    ) -> dict:
+    """Generate FMS state dictionary from Huggingface GPTQ safetensors checkpoint.
+    GPTQ quantization parameters are unpacked, permuted, and re-packed as needed.
+
+    Dimensions of GPTQ quantization parameters:
+    - qweight (packed): [in_feat * bits // 32, out_feat]
+    - scales: [num_groups, out_feat], with num_groups = in_feat * bits // 32
+    - qzeros (packed): [num_groups, out_feat * bits // 32]
+
+    Parameters
+    ----------
+    hf_gptq_ckpt_path: str
+        path to Huggingface GPTQ safetensor checkpoint
+    device: str
+        device of FMS state dictionary tensors (e.g., 'cuda', 'cpu')
+    save_fms_sd: bool
+        flag to save generated state dictionary to file
+        (as fms_model.safetensors)
+
+    Returns
+    -------
+    fms_sd: dict
+        state dictionary using fms keywords and fms-converted quantization
+        parameters (qweight, scales, qzeros)
+    """
+
+    replacements = [
+        (r"^lm_head.weight", "shared.head.weight"),
+        (r"^model.embed_tokens.weight", "shared.emb.weight"),
+        (r"^model.norm", "dec_norm"),
+        (r"^model.layers", "layers"),
+        (r"self_attn\.k_proj", "attn.key"),
+        (r"self_attn\.v_proj", "attn.value"),
+        (r"self_attn\.q_proj", "attn.query"),
+        (r"self_attn\.o_proj", "attn.dense"),
+        (r"mlp\.gate_proj", "ff_sub_layer.wg"),
+        (r"mlp\.up_proj", "ff_sub_layer.w1"),
+        (r"mlp\.down_proj", "ff_sub_layer.w2"),
+        (r"input_layernorm", "ln"),
+        (r"post_attention_layernorm", "ff_ln"),
+    ]
+    trans_required_pattern = re.compile(
+        "layers.[0-9]+.attn.(query|key).(qweight|scales|qzeros)"
+    )
+    fms_sd = {}
+
+    with safe_open(hf_gptq_ckpt_path, framework="pt", device=device) as f:
+        for hf_name in f.keys():
+            param = f.get_tensor(hf_name)
+            fms_name = hf_name
+
+            for pattern, repl in replacements:
+                fms_name = re.sub(pattern, repl, fms_name)
+
+            if fms_name.endswith("q_handle") or fms_name.endswith("q4"):
+                fms_sd[fms_name] = None
+
+            elif bool(trans_required_pattern.match(fms_name)):
+                if "qweight" in fms_name:
+                    w_int4 = unpack_qparam(param, bits=4)
+                    w_int4 = permute_qparam(w_int4.t())
+                    fms_sd[fms_name] = pack_qparam(w_int4.t(), bits=4)
+                elif "scales" in fms_name:
+                    fms_sd[fms_name] = permute_qparam(param.t()).t()
+                elif "qzeros" in fms_name:
+                    qzeros_int4 = unpack_qparam(param, bits=4, transpose=True)
+                    qzeros_int4 = permute_qparam(qzeros_int4.t())
+                    fms_sd[fms_name] = pack_qparam(qzeros_int4, bits=4).t()
+            else:
+                fms_sd[fms_name] = param
+
+    if save_fms_sd:
+        save_path = "/".join(hf_gptq_ckpt_path.split("/")[:-1])
+        save_file(new_sd, save_path + "/fms_model.safetensors")
+    return fms_sd
+
+
+def unpack_qparam(
+        qparam: torch.Tensor,
+        bits: int = 4,
+        transpose=False,
+    ) -> torch.Tensor:
+    """Unpack GPTQ tensor of quantized qweight or qzeros, expanding
+    input matrix "32 // bits" times along originally packed dimension.
+
+    - qweights are packed by GPTQ along dim=0 and expanded row-wise
+    - qzeros are packed by GPTQ along dim=1 and expanded column-wise
+      (matrix is transposed before and after packing)
+
+    qweight packed size: [in_feat * bits // 32, out_feat]
+    qzeros packed size: [n_grp, out_feat * bits // 32]
+                        with n_grp = in_feat / grp_size
+
+    qweight unpacked size: [in_feat, out_feat]
+    qzeros unpacked size: [n_grp, out_feat]
+
+    Parameters
+    ----------
+        qparam: torch.Tensor
+            a packed quantization parameter (qweight or qzeros)
+        bits: int
+            number of quantization bits
+        transpose: bool
+            apply transpose before and after unpacking (needed by qzeros)
+
+    Return
+    ------
+        qparam_unpacked: torch.Tensor
+            the quantization parameter (qweight or qzeros) unpacked
+    """
+
+    if transpose:
+        qparam = qparam.t()
+
+    device = qparam.device
+    unpack_size = 32 // bits
+    qparam_unpacked = torch.zeros(
+        (qparam.size(0) * unpack_size, qparam.size(1)),
+        dtype=torch.int,
+        device=device,
+    )
+
+    for j in range(unpack_size):
+        qparam_unpacked[j::unpack_size,:] = (qparam >> (j * bits)) & 0xF
+    return qparam_unpacked.t() if transpose else qparam_unpacked
+
+
+def pack_qparam(
+        qparam: torch.Tensor,
+        bits: int = 4,
+        transpose=False,
+    ) -> torch.Tensor:
+    """Pack input tensor, storing each N integer values into a single INT32.
+    Input matrix is compressed "32 // bits" times along packing dimension.
+    Packing occurs along row dimension. Set transpose = True for column packing.
+
+    Example:
+        qweight: [in_feat, out_feat] --> [in_feat * 32 / bits, out_feat]
+        qzeros: [num_groups, out_feat] --> [num_groups, out_feat * 32 / bits]
+                (if provided in this form, qzeros require transpose = True)
+
+    Parameters
+    ----------
+        qparam: torch.Tensor
+            an unpacked quantization parameter (qweight or qzeros)
+        bits: int
+            number of quantization bits
+        transpose: bool
+            apply transpose before and after unpacking (optional)
+
+    Return
+    ------
+        qparam_packed: torch.Tensor
+            the packed quantization parameter (qweight or qzeros)
+    """
+
+    if transpose:
+        qparam = qparam.t()
+
+    device = qparam.device
+    pack_size = 32 // bits
+    qparam_packed = torch.zeros(
+        (qparam.size(0) // pack_size, qparam.size(1)),
+        dtype=torch.int,
+        device=device,
+    )
+
+    for j in range(pack_size):
+        qparam_packed |= (qparam[j::pack_size] & 0xF) << (j * bits)
+    return qparam_packed.t().contiguous() if transpose else qparam_packed
+
+
+def permute_qparam(qparam: torch.Tensor) -> torch.Tensor:
+    """Permute input tensor along row dimension (expected: out_feat),
+    as per FMS requirements on Q and K matrices
+
+    Parameters
+    ----------
+        qparam: torch.Tensor
+            parameter from checkpoint (typically post unpacking and transpose)
+            expected size: [out_feat, *]
+
+    Returns
+    -------
+        qparam: torch.Tensor
+            parameter after FMS permutation. Input dimensions are preserved
+    """
+
+    # recover number of heads, as per `_hf_sd_to_fms_sd`
+    # compatible with most popular LLaMA models (7B, 13B, 70B)
+    num_heads = int(qparam.size(0) / 128)
+
+    return (
+        qparam.view(num_heads, 2, -1, qparam.size(1))
+        .transpose(1, 2)
+        .reshape(*qparam.size())
+    )
