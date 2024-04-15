@@ -272,7 +272,7 @@ class PagedTensor(torch.Tensor):
 
     def __init__(
         self,
-        tensor: torch.tensor,
+        tensor: torch.Tensor,
         static_dims: Union[int, List[int]] = -1,
         page_size: int = 16,
     ):
