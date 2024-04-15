@@ -1,0 +1,5 @@
+# Marker file for PEP 561. 
+# The ibm-fms package uses inline types.
+
+# Inline types are only partially implemented in the fms.models.hf package
+partial
