@@ -1,7 +1,7 @@
 import functools
 import itertools
 import math
-from typing import List, Tuple, Union
+from typing import List, Tuple, TypeAlias, Union
 
 import torch
 
@@ -154,6 +154,7 @@ def _paged_implements(torch_function):
     return decorator
 
 
+R_LIST: TypeAlias = List[Union[int, "R_LIST"]]
 """
 If we treat a tensor's underlying storage as a paged memory space,
 This method constructs the appropriate list of "page ids" to index
@@ -165,13 +166,15 @@ detail used in recursion.
 """
 
 
-def _create_page_ids(dynamic_shapes, page_size, start_page) -> Tuple[List[int], int]:
+def _create_page_ids(
+    dynamic_shapes: List[int], page_size: int, start_page: int
+) -> Tuple[R_LIST, int]:
     if len(dynamic_shapes) == 1:
         pages = int(math.ceil(dynamic_shapes[0] / page_size))
         last_page = start_page + pages
         return list(range(start_page, last_page)), last_page
     else:
-        result = []
+        result: R_LIST = []
         last_page = start_page
         for _ in range(dynamic_shapes[0]):
             to_add, last_page = _create_page_ids(
@@ -277,9 +280,12 @@ class PagedTensor(torch.Tensor):
         page_size: int = 16,
     ):
         super().__init__()
-        self.static_dims = static_dims
-        if type(self.static_dims) == int:
-            self.static_dims = [self.static_dims]
+
+        if isinstance(static_dims, int):
+            self.static_dims = [static_dims]
+        else:
+            self.static_dims = static_dims
+
         # normalize the dims in case of dims like `-1`
         self.static_dims = [dim % tensor.ndim for dim in self.static_dims]
         self.dynamic_dims = [
