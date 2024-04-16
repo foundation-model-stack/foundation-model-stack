@@ -1,0 +1,7 @@
+# Used to install pinned dependencies
+# Useful for dev/test jobs caches
+# Must be kept in sync with setup.py
+
+-r requirements.txt
+
+transformers==4.35.0

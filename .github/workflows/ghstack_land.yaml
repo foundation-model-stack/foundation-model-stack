@@ -1,0 +1,120 @@
+# The land-command workflow runs ghstack land on the PR
+#
+# This workflow is triggered by leaving a "/land" comment on
+# a pull request. If the required preconditions are met, it will
+# merge a stack of PRs that includes the current one as well as
+# all the PRs underneath it in the stack.
+#
+# Conditions are checked through the "ghstack-perm-check.py"
+# python script defined in the .github/workflows/scripts folder.
+#
+# Condition for the "/land" command are:
+# - the issuer is a maintainer (this is enforced by the "slash"
+#   workflow, which verifies permissions before dispatching)
+# - the current PR and all those underneath in the stack have no
+#   failing check (this is limited to the GitHub check API, which
+#   is used by GitHub Actions, it does not enforce commit statuses)
+# - the current PR and all those underneath in the stack are approved
+#
+# The PRs are merged by a bot account "fms-cibot" which has push
+# permissions on the repo.
+#
+# The PR(s) are landed differently depending on the their format:
+# - ghstack format: the PR stack is merged via "ghstack land"
+# - github format: a single PR is merged via the GitHub API using
+#   the "rebase" strategy https://docs.github.com/en/rest/pulls/pulls?apiVersion=2022-11-28#merge-a-pull-request
+#
+# When PRs are landed successfully, the horray emoji is added
+# When landing fails, a comment is added with a link to the logs
+
+name: Land ghstack PRs
+on:
+  repository_dispatch:
+    types: [land-command]
+
+jobs:
+  ghstack_land:
+    name: ghstack Land
+    runs-on: ubuntu-latest
+    steps:
+    - name: Show Environment Variables
+      run: env
+    - name: Show Github Object
+      run: |
+        cat <<'EOF'
+        ${{ toJson(github) }}
+        EOF
+    - name: Show Github Event Path Json
+      run: 'cat $GITHUB_EVENT_PATH || true'
+    - uses: actions/checkout@v3
+      with:
+        token: ${{ secrets.LAND_TOKEN }}
+        fetch-depth: '0'
+    - uses: actions/setup-python@v4
+      with:
+        python-version: 3.9
+    - name: Check Current CI Status
+      run: |
+        pip install requests ghstack
+
+        # Check prerequisites and set environment variables
+        # IS_GHSTACK, REPO, PR_NUMBER, PR_REF, PR_URL, PR_FROM_FORK
+        .github/workflows/scripts/ghstack-perm-check.py land <<'EOF'
+        ${{ toJson(github) }}
+        EOF
+      env:
+        GITHUB_TOKEN: ${{ secrets.LAND_TOKEN }}
+    - name: Land It!
+      id: landStack
+      run: |
+        # Configure Git and GHStack
+        # TODO: update the bot e-mail once a correct e-mail is available
+        git config --global user.email "foundation-model-stack@googlegroups.com"
+        git config --global user.name "Foundation Model Stack CI Bot"
+
+        if [[ "${IS_GHSTACK}" == "True" ]]; then
+          # Configure ghstack
+          cat <<EOF > ~/.ghstackrc
+          [ghstack]
+          github_url = github.com
+          github_oauth = $GITHUB_TOKEN
+          github_username = fms-cibot
+          remote_name = origin
+        EOF
+
+          # Run the land command
+          ghstack land "${PR_URL}"
+        else
+          # Rebase merge through the GitHub API, which ensures all
+          # branch protection requirements are satisfied
+          # Commits are not squashed, it's up to the PR owner to squash commits
+          gh pr merge --repo "${REPO}" --rebase "${PR_URL}"
+        fi
+      env:
+        GITHUB_TOKEN: ${{ secrets.LAND_TOKEN }}
+
+    - name: Create URL to the run output
+      if: ${{ failure() && steps.landStack.outcome == 'failure' }}
+      id: vars
+      run: echo "run-url=https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >> "$GITHUB_OUTPUT"
+
+    - name: Create comment
+      if: ${{ failure() && steps.landStack.outcome == 'failure' }}
+      uses: peter-evans/create-or-update-comment@v2
+      with:
+        token: ${{ secrets.LAND_TOKEN }}
+        repository: ${{ github.event.client_payload.github.payload.repository.full_name }}
+        issue-number: ${{ github.event.client_payload.github.payload.issue.number }}
+        body: |
+          Something went wrong with your `/${{ github.event.client_payload.slash_command.command }}` command: [please check the logs][1].
+
+          [1]: ${{ steps.vars.outputs.run-url }}
+
+    - name: Add reaction
+      if: ${{ success() }}
+      uses: peter-evans/create-or-update-comment@v2
+      with:
+        token: ${{ secrets.LAND_TOKEN }}
+        repository: ${{ github.event.client_payload.github.payload.repository.full_name }}
+        comment-id: ${{ github.event.client_payload.github.payload.comment.id }}
+        reaction-type: hooray
