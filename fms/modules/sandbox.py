@@ -403,9 +403,9 @@ class ScanCacheAttention(nn.Module):
         # k/v: b l h d
         keys = keys.view(batch_size, kv_len, -1)
         values = values.view(batch_size, kv_len, -1)
-        gate = self.gates.repeat(4,1,1)[None]  # 1 4096 32 32
-        # gate = self.gates[None,None]  # 1 1 32 32
-        # gate = gate.expand(batch_size, kv_len, -1, -1)  # b l 32 32
+        # gate = self.gates.repeat(4,1,1)[None]  # 1 4096 32 32
+        gate = self.gates[None,None]  # 1 1 32 32
+        gate = gate.expand(batch_size, kv_len, -1, -1)  # b l 32 32
         keys = keys.unsqueeze(3)  # b l d 1
         keys = F.pad(keys, (0, 32-1))  # b l d 32
         keys = self.scan(keys, gate).view(batch_size, kv_len, self.kvheads, self.emb_kq_per_head, -1)  # b l h d 32
