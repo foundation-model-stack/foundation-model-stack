@@ -88,7 +88,7 @@ class LLaMABlock(nn.Module):
             emb_kq,
             emb_v,
             self.config.nheads,
-            kvheads,
+            kvheads//4,
             p_dropout=self.config.p_dropout,
             use_bias=False,
             position_encoder=rotary_emb,
