@@ -150,3 +150,31 @@ def test_pointwise():
     pt += 4
     assert isinstance(pt, PagedTensor)
     assert torch.allclose(pt._tensor(), result._tensor())
+
+
+def test_expand():
+    pt = get_paged_tensor()
+    free_pages = pt.paged_storage.free_pages()
+    tensor = pt._tensor()
+    initial_size = pt.paged_storage.storage.shape
+    pt.paged_storage.expand()
+    print(tensor.shape)
+    assert tensor.shape == pt._tensor().shape
+    print(pt.paged_storage.storage.shape, initial_size)
+    assert pt.paged_storage.storage.shape[0] > initial_size[0]
+    assert pt.paged_storage.free_pages() > free_pages
+
+
+def test_remove():
+    pt = get_paged_tensor()
+    free_pages = pt.paged_storage.free_pages()
+    tensor = pt._tensor()
+    pt.remove(0, 0)
+    new_tensor = pt._tensor()
+
+    joined = tensor[1:, :, :]
+
+    assert joined.shape == new_tensor.shape
+    assert torch.allclose(joined, new_tensor)
+    # make sure the deletion freed up space:
+    assert pt.paged_storage.free_pages() > free_pages
