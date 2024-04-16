@@ -22,7 +22,7 @@ from fms.modules.embedding import WordEmbedding
 from fms.modules.feedforward import GatedLinearUnit
 from fms.modules.layernorm import LayerNormParameterized
 from fms.modules.positions import RotaryEmbedding
-from fms.modules.sandbox import SlidingWindowAttention
+from fms.modules.sandbox import SlidingWindowAttention, ScanCacheAttention
 from fms.utils import serialization
 from fms.utils.activation import str_to_activation
 from fms.utils.config import ModelConfig
@@ -83,7 +83,7 @@ class LLaMABlock(nn.Module):
             kvheads = self.config.kvheads
             assert self.config.nheads % self.config.kvheads == 0
 
-        self.attn = SlidingWindowAttention(
+        self.attn = ScanCacheAttention(
             self.config.emb_dim,
             emb_kq,
             emb_v,
@@ -242,6 +242,7 @@ class LLaMA(nn.Module):
             if (
                 isinstance(m, MultiHeadAttention)
                 or isinstance(m, SlidingWindowAttention)
+                or isinstance(m, ScanCacheAttention)
                 or isinstance(m, WordEmbedding)
                 or isinstance(m, GatedLinearUnit)
                 or isinstance(m, LayerNormParameterized)
@@ -276,7 +277,7 @@ class LLaMA(nn.Module):
                     check_close(m.w1.weight)
                     check_close(m.w2.weight)
                     check_close(m.wg.weight)
-                elif isinstance(MultiHeadAttention) or isinstance(SlidingWindowAttention):
+                elif isinstance(MultiHeadAttention) or isinstance(SlidingWindowAttention) or isinstance(ScanCacheAttention):
                     check_close(m.query.weight)
                     check_close(m.key.weight)
                     check_close(m.value.weight)
