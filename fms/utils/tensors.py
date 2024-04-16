@@ -195,7 +195,6 @@ def _flatten(ids: List[int]):
 
 
 class PagedStorage:
-
     def __init__(
         self,
         storage,
