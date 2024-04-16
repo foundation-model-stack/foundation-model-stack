@@ -56,65 +56,6 @@ def list_sources(architecture: str):
     return list(__adapters[architecture].keys())
 
 
-def _legacy_attn_unfused_to_fused_weight_conversion(
-    name: str, orig_sd: Mapping
-) -> Optional[Tuple[str, torch.Tensor]]:
-    """
-    function which converts unfused fms weights to fused fms weights in the case the model was using the older unfused
-    weights (version 0.0.3)
-
-    Args:
-        name: str
-            current name to convert
-        orig_sd: Mapping
-            a mapping from a name to a param, in most cases will be a singleton, however when
-
-    Returns:
-    Optional[Tuple[str, torch.Tensor]]
-        if query/key/value all exist in the given state dict, a tuple of the new fused name as well as weights will be
-        returned from this function
-        if one of query, key, or value exists in state dict (not all together), a FusableWeightsMissingError will be
-        raised with the weights that are missing
-        otherwise this function will return None signifying that no preprocessing needed to be done for this name param
-    """
-    # if we find query/key/value, this means the weights are unfused and therefore need to be fused
-    if "attn.query" in name or "attn.key" in name or "attn.value" in name:
-        weight_type = name.split(".")[-1]
-
-        unfused_weights = [
-            re.sub(
-                rf"attn.(query|key|value).{weight_type}",
-                f"attn.query.{weight_type}",
-                name,
-            ),
-            re.sub(
-                rf"attn.(query|key|value).{weight_type}",
-                f"attn.key.{weight_type}",
-                name,
-            ),
-            re.sub(
-                rf"attn.(query|key|value).{weight_type}",
-                f"attn.value.{weight_type}",
-                name,
-            ),
-        ]
-        missing_weights = [w for w in unfused_weights if w not in orig_sd.keys()]
-        if len(missing_weights) != 0:
-            raise FusableWeightsMissingError(missing_weights)
-
-        result = (
-            re.sub(
-                rf"attn.(query|key|value).{weight_type}",
-                f"attn.in_proj.qkv_fused.{weight_type}",
-                name,
-            ),
-            torch.cat([orig_sd[w] for w in unfused_weights], dim=0),
-        )
-
-        return result
-    return None
-
-
 def _get_adapters(
     architecture: str, source: Optional[str]
 ) -> List[Callable[[Mapping[str, Any]], Mapping[str, Any]]]:
@@ -369,7 +310,6 @@ def load_state_dict_into_model(
 
     # do a full run through each adapter as they are ordered and may require change from previous version
     for adapter in adapters:
-
         # 3. Iterate over the weights and load them into the model
         used_keys = set()
 
