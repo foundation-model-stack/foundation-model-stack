@@ -292,11 +292,12 @@ class ScanCacheAttention(nn.Module):
         )
         self.previous_math: bool = torch.backends.cuda.math_sdp_enabled()
 
-        gates = self.make_gates()
-        # g = torch.tensor([1 - 2**(-i/32*5-1) for i in range(32)])
-        # gates = torch.diag(g)
-        # for i in range(1, g.size(0)):
-        #     gates[i-1,i] = (1-g[i])
+        # gates = self.make_gates()
+        g = torch.tensor([1 - 2**(-i/32*5-1) for i in range(32)])
+        gates = torch.diag(g)
+        for i in range(1, g.size(0)):
+            gates[i-1,i] = (1-g[i])
+        
         self.register_buffer("gates", gates)
         self.scan = MatScan.apply
         self.ln_k = LayerNormParameterized(emb_kq, use_high_precision_pow=True)
