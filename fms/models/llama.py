@@ -477,8 +477,8 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
     return new_sd
 
 
-serialization.register_adapter("llama", "meta", _rename_weights_to_fms)
-serialization.register_adapter("llama", "hf", _hf_sd_to_fms_sd)
+serialization.register_adapter("llama", "meta.v0.0.1", _rename_weights_to_fms)
+serialization.register_adapter("llama", "hf.v0.0.1", _hf_sd_to_fms_sd)
 
 
 def convert_hf_llama(hf_model: "LlamaForCausalLM") -> LLaMA:  # type: ignore
