@@ -1,7 +1,9 @@
 import argparse
 import itertools
 import os
+import random
 
+import numpy as np
 import torch
 import torch._inductor.config
 from torch import distributed as dist
@@ -91,6 +93,7 @@ local_rank = int(os.getenv("LOCAL_RANK", 0))
 world_size = int(os.getenv("WORLD_SIZE", 1))
 if args.device_type == "cuda":
     device = torch.device(args.device_type, local_rank)
+    torch.cuda.set_device(device)
 else:
     device = torch.device(args.device_type)
 
@@ -98,10 +101,16 @@ torch.set_default_dtype(torch.half)
 
 # requires setting environment variable: `CUBLAS_WORKSPACE_CONFIG=:4096:8`
 if args.deterministic:
+    SEED = 42
+    random.seed(SEED)
+    torch.manual_seed(SEED)  # pytorch random seed
+    np.random.seed(SEED)  # numpy random seed
     torch.use_deterministic_algorithms(True)
 
 if args.distributed:
     dist.init_process_group()
+    # Fix until PT 2.3
+    torch._C._distributed_c10d._register_process_group("default", dist.group.WORLD)
 
 print("loading model")
 if args.distributed:

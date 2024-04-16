@@ -22,12 +22,11 @@ class CausalTextDatasetFromString(Dataset):
         tokenizer: tokenizers.BaseTokenizer,
         seq_len: int = 1024,
         pad_token: Optional[str] = None,
-        device: torch.device | str = "cpu",
         ignore_index: int = -100,
     ):
         tokens = tokenizer.tokenize(text)
         ids = tokenizer.convert_tokens_to_ids(tokens)
-        self.ids = torch.tensor(ids, dtype=torch.long, device=device)
+        self.ids = torch.tensor(ids, dtype=torch.long)
         self.ignore_index = ignore_index
         if pad_token is not None:
             self.pad_id = tokenizer.convert_tokens_to_ids([pad_token])[0]
@@ -35,10 +34,6 @@ class CausalTextDatasetFromString(Dataset):
             self.pad_id = None
         self.tokenizer = tokenizer
         self.seq_len = seq_len
-
-    def to(self, device: torch.device):
-        self.ids = self.ids.to(device)
-        return self
 
     def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
         start_idx = idx * self.seq_len
@@ -49,9 +44,7 @@ class CausalTextDatasetFromString(Dataset):
         label = self.ids[start_idx + 1 : end_idx]
 
         if self.pad_id is not None and input.shape[0] < self.seq_len:
-            pad = torch.zeros(
-                self.seq_len - input.shape[0], device=self.ids.device, dtype=torch.long
-            )
+            pad = torch.zeros(self.seq_len - input.shape[0], dtype=torch.long)
             pad.fill_(self.pad_id)
             input = torch.cat((pad, input), dim=0)
             label = torch.cat((pad.fill_(self.ignore_index), label), dim=0)

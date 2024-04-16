@@ -59,7 +59,7 @@ class QKV(nn.Module, metaclass=abc.ABCMeta):
         pass
 
     @abc.abstractmethod
-    def reset_params(self, gain: int = 1):
+    def reset_parameters(self):
         """resets the query, key, and value weights for training
 
         Args:
@@ -105,23 +105,12 @@ class UnfusedQKV(QKV):
             self.emb_dim, self.kvheads * self.emb_v_per_head, bias=use_bias
         )
 
-    def reset_params(self, gain: int = 1):
-        # Ensure softmax inputs are standard normal
-        for layer in ["query", "key"]:
-            nn.init.trunc_normal_(
-                getattr(self, layer).weight, mean=0.0, std=self.emb_dim**-0.5
-            )
-        # Ensure projection layers have same scale (for normalized-step dataloaders like
-        # AdamW / Sophia), and maintain input norm up to attention remix, in expectation
-        nn.init.trunc_normal_(
-            self.value.weight,
-            mean=0.0,
-            std=(gain / (self.emb_dim * self.nheads * self.emb_v_per_head) ** 0.5)
-            ** 0.5,
-        )  # Using explicit terms instead of numel to account for eventual MQA addition
-        if self.use_bias:
-            for layer in ["query", "key", "value"]:
-                getattr(self, layer).bias.data.zero_()
+    def reset_parameters(self):
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.trunc_normal_(m.weight, mean=0.0, std=0.02)
+                if self.use_bias:
+                    m.bias.data.zero_()
 
     def forward(
         self, q: torch.Tensor, k: Optional[torch.Tensor], v: Optional[torch.Tensor]
@@ -179,18 +168,8 @@ class FusedQKV(QKV):
             bias=self.use_bias,
         )
 
-    def reset_params(self, gain: int = 1):
-        # Ensure softmax inputs are standard normal
-        self.qkv_fused.weight.data[
-            : self.emb_kq_per_head * (self.nheads + self.kvheads)
-        ].normal_(0, self.emb_dim**-0.5)
-        # Ensure projection layers have same scale (for normalized-step dataloaders like
-        # AdamW / Sophia), and maintain input norm up to attention remix, in expectation
-        self.qkv_fused.weight.data[
-            self.emb_kq_per_head * (self.nheads + self.kvheads) :
-        ].normal_(
-            0, (gain / (self.emb_dim * self.nheads * self.emb_v_per_head) ** 0.5) ** 0.5
-        )
+    def reset_parameters(self):
+        nn.init.trunc_normal_(self.qkv_fused.weight, mean=0.0, std=0.02)
         if self.use_bias:
             self.qkv_fused.bias.data.zero_()
 
@@ -237,7 +216,6 @@ class MultiHeadAttention(nn.Module):
         p_dropout=None,
         use_bias=False,
         position_encoder: Optional[PositionEncoder] = None,
-        gain=1,
         fused: bool = True,
     ):
         super(MultiHeadAttention, self).__init__()
@@ -271,15 +249,15 @@ class MultiHeadAttention(nn.Module):
             torch.backends.cuda.mem_efficient_sdp_enabled()
         )
         self.previous_math: bool = torch.backends.cuda.math_sdp_enabled()
-        self.reset_params(gain)
 
-    def reset_params(self, gain=1):
-        self.in_proj.reset_params(gain)
-        self.dense.weight.data.normal_(
-            0, (gain / (self.emb_dim * self.nheads * self.emb_v_per_head) ** 0.5) ** 0.5
-        )
-        if self.use_bias:
-            self.dense.bias.data.zero_()
+    def reset_parameters(self):
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.trunc_normal_(m.weight, mean=0.0, std=0.02)
+                if self.use_bias:
+                    m.bias.data.zero_()
+            elif isinstance(m, QKV):
+                m.reset_parameters()
 
     def forward(
         self,
@@ -316,25 +294,31 @@ class MultiHeadAttention(nn.Module):
         # mask: batch_size x seq_len x seq_len
         batch_size, q_len, _ = q.size()
 
+        # if this is self attention, we always recompute
+        # cross attention only gets computed when a cache does not exist
+        # if we dont have the cache yet, we need to compute
+        # d x (h x ds)
+        # b x kvlen x d
+        # b x kvlen x h x ds
+        # b x h x kvlen x ds
+        # todo: Cross attention (This always is true for now)
         if is_self or past_key_value_state is None:
             q_out, k_out, v_out = self.in_proj(q, k, v)
 
             # note: transposes will be moved in a later PR to fix dis-contiguous tensor issues
-            queries = q_out.view(
-                batch_size, q_len, self.nheads, self.emb_kq_per_head
-            ).transpose(2, 1)
-            keys = k_out.view(
-                batch_size, q_len, self.kvheads, self.emb_kq_per_head
-            ).transpose(2, 1)
-            values = v_out.view(
-                batch_size, q_len, self.kvheads, self.emb_v_per_head
-            ).transpose(2, 1)
+            queries = q_out.view(batch_size, q_len, self.nheads, self.emb_kq_per_head)
+            keys = k_out.view(batch_size, q_len, self.kvheads, self.emb_kq_per_head)
+            values = v_out.view(batch_size, q_len, self.kvheads, self.emb_v_per_head)
 
             # You want to apply rotary embeddings pre-cache
             if self.position_encoder is not None:
                 queries, keys = self.position_encoder.adjusted_qk(
                     queries, keys, position_ids, past_key_value_state, use_cache
                 )
+
+        queries = queries.transpose(2, 1)  # / (self.emb_kq_per_head**(1/4))
+        keys = keys.transpose(2, 1)  # / (self.emb_kq_per_head**(1/4))
+        values = values.transpose(2, 1)  # compatible with QK.T
 
         # if you want to use caching and past_key_value_state is not None meaning you have values in your cache
         if use_cache and past_key_value_state is not None:
@@ -438,7 +422,6 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
         p_dropout=None,
         use_bias=False,
         position_encoder: Optional[PositionEncoder] = None,
-        gain=1,
         fused: bool = True,
         group: Optional[ProcessGroup] = None,
     ):
@@ -458,9 +441,9 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
             p_dropout,
             use_bias,
             position_encoder,
-            gain,
             fused,
         )
+        self.pre_tp_kvheads = kvheads
         self.setup_tp(rank, world_size)
 
     def colwise_param_names(self) -> List[str]:
@@ -468,7 +451,7 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
             colwise_weights = ["qkv_fused"]
         else:
             colwise_weights = ["query"]
-            if self.kvheads != 1:
+            if self.pre_tp_kvheads != 1:
                 colwise_weights.append("key")
                 colwise_weights.append("value")
         return colwise_weights

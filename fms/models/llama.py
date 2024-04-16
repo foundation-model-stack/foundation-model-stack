@@ -193,6 +193,16 @@ class LLaMA(nn.Module):
             ntk_scaling=self.config.ntk_scaling,
             max_seq_len=self.config.max_expected_seq_len,
         )
+        # RoPE init
+        if isinstance(self.distributed_strategy, UniformModelParallelStrategy):
+            for dev_idx in set(self.distributed_strategy.layer_to_device):
+                self.rot_emb.compute_freqs_cis(
+                    torch.device("cuda", dev_idx), self.config.max_expected_seq_len
+                )
+        else:
+            self.rot_emb.compute_freqs_cis(
+                self.shared.emb.weight.device, self.config.max_expected_seq_len
+            )
 
         layers = []
         for i in range(self.config.nlayers):
@@ -216,8 +226,6 @@ class LLaMA(nn.Module):
         if self.config.p_dropout:
             self.dropout = nn.Dropout(self.config.p_dropout)
 
-        self.reset_params()
-
     def get_config(self) -> LLaMAConfig:
         return self.config
 
@@ -225,22 +233,50 @@ class LLaMA(nn.Module):
     def from_config(cls, config: LLaMAConfig) -> "LLaMA":
         return cls(config)
 
-    def reset_params(self):
-        # Modules are self-initializing, we're just going to down-scale the final prediction head to be
-        # mixed-fan (inputs and gradients scale to the same inverse factors) if it isn't tied
-        self.shared.head.weight.data.normal_(
-            0, 1 / math.sqrt(math.sqrt(self.width * self.shared.vocab_size))
-        )
+    def reset_parameters(self):
+        # Call reset_parameters for relevant sub-layers
+        for m in self.modules():
+            if (
+                isinstance(m, MultiHeadAttention)
+                or isinstance(m, WordEmbedding)
+                or isinstance(m, GatedLinearUnit)
+                or isinstance(m, LayerNormParameterized)
+            ):
+                m.reset_parameters()
 
-        if isinstance(self.distributed_strategy, UniformModelParallelStrategy):
-            for dev_idx in set(self.distributed_strategy.layer_to_device):
-                self.rot_emb.compute_freqs_cis(
-                    torch.device("cuda", dev_idx), self.config.max_expected_seq_len
-                )
-        else:
-            self.rot_emb.compute_freqs_cis(
-                self.shared.emb.weight.device, self.config.max_expected_seq_len
-            )
+    def validate_reset_parameters(self):
+        # Verifies that the above self.reset_parameters() executed correctly.
+        # This may not always be the case for distributed settings with sharded tensors,
+        # such as FSDP or TP. Note that performing this check may require unsharding /
+        # re-materializing the full model on a single rank to access the underlying tensors.
+        tolerance = 1e-3
+
+        def check_close(x):
+            assert x.mean().abs() < tolerance
+            assert x.std().sub(0.02).abs() < tolerance
+
+        with torch.no_grad():
+            for p in self.parameters():
+                assert p.isnan().int().sum() == 0
+                assert p.isinf().int().sum() == 0
+            for m in self.modules():
+                if isinstance(LayerNormParameterized):
+                    if m.elementwise_scale:
+                        assert m.weight.sum() == m.weight.numel()
+                    if m.elementwise_shift:
+                        assert m.bias.add(1).sum() == m.bias.numel()
+                elif isinstance(WordEmbedding):
+                    check_close(m.emb.weight)
+                    check_close(m.head.weight)
+                elif isinstance(GatedLinearUnit):
+                    check_close(m.w1.weight)
+                    check_close(m.w2.weight)
+                    check_close(m.wg.weight)
+                elif isinstance(MultiHeadAttention):
+                    check_close(m.query.weight)
+                    check_close(m.key.weight)
+                    check_close(m.value.weight)
+                    check_close(m.dense.weight)
 
     def _helper(
         self,
@@ -392,25 +428,6 @@ def _rename_weights_to_fms(orig_sd):
             new_name = re.sub(pattern, repl, new_name)
         new_sd[new_name] = param
 
-        # llama in meta has unfused qkv attn weights, so these weights must be converted to fused weights in fms
-        if (
-            "attn.query" in new_name
-            or "attn.key" in new_name
-            or "attn.value" in new_name
-        ):
-            unfused_weights = [
-                re.sub(r"w[qkv]", "wq", name),
-                re.sub(r"w[qkv]", "wk", name),
-                re.sub(r"w[qkv]", "wv", name),
-            ]
-            missing_weights = [w for w in unfused_weights if w not in orig_sd.keys()]
-            if len(missing_weights) != 0:
-                raise serialization.FusableWeightsMissingError(missing_weights)
-
-            new_sd[
-                re.sub(r"attn.(query|key|value)", "attn.in_proj.qkv_fused", new_name)
-            ] = torch.cat([orig_sd[w] for w in unfused_weights], dim=0)
-
     return new_sd
 
 
@@ -431,6 +448,7 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
         (r"post_attention_layernorm", "ff_ln"),
     ]
     new_sd = {}
+    trans_required_pattern = re.compile("layers.[0-9]+.attn.(query|key).weight")
 
     for name, param in hf_sd.items():
         new_name = name
@@ -438,51 +456,35 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
             new_name = re.sub(pattern, repl, new_name)
         new_sd[new_name] = param
 
-        # llama in hf has unfused qkv attn weights, so these weights must be converted to fused weights in fms
-        if (
-            "attn.query" in new_name
-            or "attn.key" in new_name
-            or "attn.value" in new_name
-        ):
-            unfused_weights = [
-                re.sub(r"self_attn\.[kvq]_proj", "self_attn.q_proj", name),
-                re.sub(r"self_attn\.[kvq]_proj", "self_attn.k_proj", name),
-                re.sub(r"self_attn\.[kvq]_proj", "self_attn.v_proj", name),
-            ]
-            missing_weights = [w for w in unfused_weights if w not in hf_sd.keys()]
-            if len(missing_weights) != 0:
-                raise serialization.FusableWeightsMissingError(missing_weights)
+        # hf -> fms requires a transpose operation for the query and key
+        if bool(trans_required_pattern.match(new_name)):
+            temp = new_sd[new_name]
+            # nheads is used in the transformation required for hf->fms
+            # here we are using 128 as this value fits with all popular models
+            #   7B, 13B, 70B to recover the number of heads
+            nheads = int(temp.size(0) / 128)
 
-            raw_mapping = {w: hf_sd[w] for w in unfused_weights}
+            temp = (
+                temp.view(nheads, 2, -1, temp.size(1))
+                .transpose(1, 2)
+                .reshape(*temp.size())
+            )
 
-            # q=0, k=1
-            for unfused_weight_key in unfused_weights[:2]:
-                temp = raw_mapping[unfused_weight_key]
-                # nheads is used in the transformation required for hf->fms
-                # here we are using 128 as this value fits with all popular models
-                #   7B, 13B, 70B to recover the number of heads
-                nheads = int(temp.size(0) / 128)
-
-                temp = (
-                    temp.view(nheads, 2, -1, temp.size(1))
-                    .transpose(1, 2)
-                    .reshape(*temp.size())
-                )
-
-                raw_mapping[unfused_weight_key] = temp
-
-            new_sd[
-                re.sub(r"attn.(query|key|value)", "attn.in_proj.qkv_fused", new_name)
-            ] = torch.cat([raw_mapping[w] for w in unfused_weights], dim=0)
+            new_sd[new_name] = temp
 
     return new_sd
 
 
-serialization.register_adapter("llama", "meta", _rename_weights_to_fms)
-serialization.register_adapter("llama", "hf", _hf_sd_to_fms_sd)
-serialization._register_legacy_weight_preprocessor(
-    "llama", serialization._legacy_attn_unfused_to_fused_weight_conversion
+serialization.register_adapter("llama", "meta.v0.0.1", _rename_weights_to_fms)
+serialization.register_adapter("llama", "hf.v0.0.1", _hf_sd_to_fms_sd)
+
+_convert_fused_qkv_0_0_4 = lambda sd: serialization.simple_mapping(
+    sd, serialization._legacy_attn_unfused_to_fused_weight_conversion
 )
+
+serialization.register_adapter("llama", "meta.v0.0.4", _convert_fused_qkv_0_0_4)
+serialization.register_adapter("llama", "hf.v0.0.4", _convert_fused_qkv_0_0_4)
+serialization.register_adapter("llama", "fms.v0.0.4", _convert_fused_qkv_0_0_4)
 
 
 def convert_hf_llama(hf_model: "LlamaForCausalLM") -> LLaMA:  # type: ignore

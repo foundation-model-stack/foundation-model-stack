@@ -23,7 +23,7 @@ class GPTBigCodeConfig(ModelConfig):
     nheads: int = 12
     nlayers: int = 12
     pad_id: int = 0
-    max_pos: int = 512
+    max_expected_seq_len: int = 512
     hidden_grow_factor: float = 4.0
     activation_fn: str = "gelu-tanh"
     p_dropout: float = 0.0
@@ -122,7 +122,9 @@ class GPTBigCodeHeadless(nn.Module):
         )
 
         self.embedding = nn.Embedding(self.config.src_vocab_size, self.config.emb_dim)
-        self.position_embedding = nn.Embedding(self.config.max_pos, self.config.emb_dim)
+        self.position_embedding = nn.Embedding(
+            self.config.max_expected_seq_len, self.config.emb_dim
+        )
 
         self.dec_norm = nn.LayerNorm(self.config.emb_dim, eps=self.config.ln_eps)
 
@@ -191,7 +193,7 @@ class GPTBigCodeHeadless(nn.Module):
             # we are caching and can assume all 1s in the mask
             if use_cache and klen != 1 and qlen == 1:
                 # b x h x qlen x kvlen
-                mask = torch.ones(qlen, klen, device=x.device)
+                mask = torch.ones(qlen, klen, dtype=torch.bool, device=x.device)
             else:
                 pad_id: int = self.config.pad_id
                 is_pad: torch.Tensor = x == pad_id
@@ -276,8 +278,6 @@ class GPTBigCode(nn.Module):
         # this model ties weights, so we tie here
         self.head.weight = self.base_model.embedding.weight
 
-        self.reset_params()
-
     @classmethod
     def from_config(cls, config: GPTBigCodeConfig) -> "GPTBigCode":
         return cls(config)
@@ -285,13 +285,21 @@ class GPTBigCode(nn.Module):
     def get_config(self) -> GPTBigCodeConfig:
         return self.config
 
-    def reset_params(self):
-        # Modules are self-initializing, we're just going to down-scale the final prediction head to be
-        # mixed-fan (inputs and gradients scale to the same inverse factors) if it isn't tied
-        self.head.weight.data.normal_(
-            0,
-            1 / math.sqrt(math.sqrt(self.config.emb_dim * self.config.src_vocab_size)),
-        )
+    def reset_parameters(self):
+        # Do not re-initialize head, as weights are tied
+        for m in self.modules():
+            if (
+                isinstance(m, MultiHeadAttention)
+                or isinstance(m, FeedForwardBlock)
+                or isinstance(m, nn.LayerNorm)
+            ):
+                m.reset_parameters()
+            elif isinstance(m, nn.Embedding):
+                nn.init.normal_(
+                    m.weight,
+                    mean=0.0,
+                    std=self.config.emb_dim**-0.5,
+                )
 
     def forward(
         self,
@@ -319,15 +327,44 @@ class GPTBigCode(nn.Module):
             return preds
 
 
+# Register common GPT Bigcode variants with the model registration API
 _santacoder_config = GPTBigCodeConfig(
     src_vocab_size=49280,
     emb_dim=2048,
     nheads=16,
     nlayers=24,
     pad_id=-1,
-    max_pos=2048,
+    max_expected_seq_len=2048,
     p_dropout=0.1,
     emb_dropout=0.1,
+)
+
+# https://www.ibm.com/docs/en/cloud-paks/cp-data/4.8.x?topic=models-granite-13b-instruct-v2-model-card
+_13b_config = GPTBigCodeConfig(
+    src_vocab_size=50304,
+    emb_dim=5632,
+    nheads=44,
+    nlayers=40,
+    pad_id=50280,
+    max_expected_seq_len=8192,
+    hidden_grow_factor=4.0,
+    p_dropout=0.1,
+    emb_dropout=0.1,
+    ln_eps=1e-5,
+)
+
+#  Config verified with IBM internal repo
+_20b_config = GPTBigCodeConfig(
+    src_vocab_size=49152,
+    emb_dim=6144,
+    nheads=48,
+    nlayers=52,
+    pad_id=0,
+    max_expected_seq_len=8192,
+    hidden_grow_factor=4.0,
+    p_dropout=0.1,
+    emb_dropout=0.1,
+    ln_eps=1e-5,
 )
 
 _architecture_name = "gpt_bigcode"
@@ -343,6 +380,12 @@ def _gpt_bigcode_factory_factory(config):
 models.register_model(
     _architecture_name, "santacoder", _gpt_bigcode_factory_factory(_santacoder_config)
 )
+models.register_model(
+    _architecture_name, "ibm.13b", _gpt_bigcode_factory_factory(_13b_config)
+)
+models.register_model(
+    _architecture_name, "ibm.20b", _gpt_bigcode_factory_factory(_20b_config)
+)
 
 
 def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
@@ -354,13 +397,15 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
         (r"^transformer.wpe.weight", "base_model.position_embedding.weight"),
         (r"^transformer.ln_f", "base_model.dec_norm"),
         (r"^transformer.h", "base_model.layers"),
-        (r"attn\.c_attn", "attn.in_proj.qkv_fused"),
+        # need to do kqv manually
         (r"attn\.c_proj", "attn.dense"),
         (r"mlp\.c_fc", "ff_sub_layer.w1"),
         (r"mlp\.c_proj", "ff_sub_layer.w2"),
         (r"ln_1", "ln"),
         (r"ln_2", "ff_ln"),
     ]
+    qkv_weight_pattern = re.compile("transformer.h.[0-9]+.attn.c_attn.weight")
+    qkv_bias_pattern = re.compile("transformer.h.[0-9]+.attn.c_attn.bias")
 
     new_sd = {}
     for name, param in hf_sd.items():
@@ -370,10 +415,62 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
 
         new_sd[new_name] = param
 
+        # qkv fused
+        if bool(qkv_weight_pattern.match(name)):
+            bias_name = name.replace("weight", "bias")
+            if bias_name not in hf_sd:
+                raise FusableWeightsMissingError([bias_name])
+            new_sd.pop(new_name)
+
+            emb_dim = param.size(1)
+            num_heads = emb_dim // 128
+            num_key_value_heads = (param.size(0) // 128 - num_heads) // 2
+            attn_splits = [
+                (num_heads * 128) // num_key_value_heads,
+                (num_key_value_heads * 128) // num_key_value_heads,
+                (num_key_value_heads * 128) // num_key_value_heads,
+            ]
+
+            prefix = new_name.replace("c_attn.weight", "")
+            q, k, v = param.split(attn_splits, dim=0)
+
+            new_sd[f"{prefix}query.weight"] = q
+            new_sd[f"{prefix}key.weight"] = k
+            new_sd[f"{prefix}value.weight"] = v
+        elif bool(qkv_bias_pattern.match(name)):
+            weight_name = name.replace("bias", "weight")
+            if weight_name not in hf_sd:
+                raise FusableWeightsMissingError([weight_name])
+            new_sd.pop(new_name)
+
+            emb_dim = hf_sd[weight_name].size(1)
+            num_heads = emb_dim // 128
+            num_key_value_heads = (param.size(0) // 128 - num_heads) // 2
+            attn_splits = [
+                (num_heads * 128) // num_key_value_heads,
+                (num_key_value_heads * 128) // num_key_value_heads,
+                (num_key_value_heads * 128) // num_key_value_heads,
+            ]
+
+            prefix = new_name.replace("c_attn.bias", "")
+            q, k, v = param.split(attn_splits, dim=0)
+
+            new_sd[f"{prefix}query.bias"] = q
+            new_sd[f"{prefix}key.bias"] = k
+            new_sd[f"{prefix}value.bias"] = v
+
     return new_sd
 
 
-serialization.register_adapter(_architecture_name, "hf", _hf_sd_to_fms_sd)
-serialization._register_legacy_weight_preprocessor(
-    "gpt_bigcode", serialization._legacy_attn_unfused_to_fused_weight_conversion
+serialization.register_adapter(_architecture_name, "hf.v0.0.1", _hf_sd_to_fms_sd)
+
+_convert_fused_qkv_0_0_4 = lambda sd: serialization.simple_mapping(
+    sd, serialization._legacy_attn_unfused_to_fused_weight_conversion
+)
+
+serialization.register_adapter(
+    _architecture_name, "hf.v0.0.4", _convert_fused_qkv_0_0_4
+)
+serialization.register_adapter(
+    _architecture_name, "fms.v0.0.4", _convert_fused_qkv_0_0_4
 )

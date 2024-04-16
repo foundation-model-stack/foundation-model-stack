@@ -12,9 +12,9 @@ from fms.modules.tp import TPModule
 
 
 __adapters: MutableMapping[str, MutableMapping[str, Callable[[Mapping], Mapping]]] = {}
-__legacy_weight_preprocessors: MutableMapping[
-    str, List[Callable[[str, Mapping], Optional[Tuple[str, torch.Tensor]]]]
-] = {}
+# __legacy_weight_preprocessors: MutableMapping[
+#     str, List[Callable[[str, Mapping], Optional[Tuple[str, torch.Tensor]]]]
+# ] = {}
 
 
 def register_adapter(
@@ -57,18 +57,6 @@ def list_sources(architecture: str):
     if architecture not in __adapters:
         return []
     return list(__adapters[architecture].keys())
-
-
-def _register_legacy_weight_preprocessor(
-    architecture: str,
-    legacy_weight_preprocessor: Callable[
-        [str, Mapping], Optional[Tuple[str, torch.Tensor]]
-    ],
-):
-    if architecture not in __legacy_weight_preprocessors:
-        __legacy_weight_preprocessors[architecture] = []
-
-    __legacy_weight_preprocessors[architecture].append(legacy_weight_preprocessor)
 
 
 def _legacy_attn_unfused_to_fused_weight_conversion(
@@ -130,19 +118,16 @@ def _legacy_attn_unfused_to_fused_weight_conversion(
     return None
 
 
-def __fms_weights_preprocessing(orig_sd: Mapping, architecture: str) -> Mapping:
-    # list of preprocessors to handle conversion of legacy weights
-    # each fms model will have its own set of preprocessors, as some models were created at different times
-    preprocessors = __legacy_weight_preprocessors.get(architecture, [])
-
+def simple_mapping(
+    orig_sd: Mapping,
+    mapper: Callable[[str, Mapping], Optional[Tuple[str, torch.Tensor]]],
+) -> Mapping:
     new_sd = {}
     for name, param in orig_sd.items():
-        for preprocessor in preprocessors:
-            preprocessor_out = preprocessor(name, orig_sd)
+        mapper_out = mapper(name, orig_sd)
 
-            if preprocessor_out is not None:
-                name, param = preprocessor_out
-                break
+        if mapper_out is not None:
+            name, param = mapper_out
 
         new_sd[name] = param
 
@@ -151,18 +136,37 @@ def __fms_weights_preprocessing(orig_sd: Mapping, architecture: str) -> Mapping:
 
 def _get_adapter(
     architecture: str, source: Optional[str]
-) -> Callable[[Mapping[str, Any]], Mapping[str, Any]]:
+) -> List[Callable[[Mapping[str, Any]], Mapping[str, Any]]]:
+    version_pattern = re.compile(
+        f"{source}(\.v[0-9]+((\.[0-9]+\.[0-9]+)|(\.[0-9]+)))?$"
+    )
     if (
         source is None
         or architecture not in __adapters
-        or source not in __adapters[architecture]
+        or all(
+            re.match(version_pattern, k) is None
+            for k in __adapters[architecture].keys()
+        )
     ):
         # if no adapter is registered, assume the attributes are already in
         # fms format.
         # handle any necessary weight conversions here to solve weight backwards compatibility issues
-        return lambda mapping: __fms_weights_preprocessing(mapping, architecture)
+        return [lambda x: x]
     else:
-        return __adapters[architecture][source]
+        from packaging.version import Version
+
+        versions = []
+        for k in __adapters[architecture].keys():
+            matched_pattern = re.match(version_pattern, k)
+            if matched_pattern is not None and k != source:
+                versions.append(k[len(source) + 2 :])
+        versions.sort(key=Version)
+
+        adapters = [
+            __adapters[architecture][f"{source}.v{version}"] for version in versions
+        ]
+
+        return adapters
 
 
 def get_adapted(
@@ -180,8 +184,10 @@ def get_adapted(
     # sometimes we only load onto rank 0 so may not have a state_dict here.
     if not len(state_dict):
         return state_dict
-    adapter = _get_adapter(architecture, source)
-    adapted = adapter(state_dict)
+    adapters = _get_adapter(architecture, source)
+    adapted = state_dict
+    for adapter in adapters:
+        adapted = adapter(adapted)
     return adapted
 
 
@@ -293,6 +299,14 @@ def load_state_dict(
 
         checkpoints = [checkpoints[rank]]
 
+    # if there's only one checkpoint for fsdp/hsdp, load it only into rank zero
+    # and it will be distributed by the FSDP `sync_module_states` parameter
+    if checkpoint_sharding is None and distributed_strategy in {"hsdp", "fsdp"}:
+        if rank == 0:
+            checkpoints = [checkpoints[0]]
+        else:
+            return {}
+
     checkpoint_sds = []
     if checkpoints[0].suffix == ".safetensors":
         for ckp in checkpoints:
@@ -367,44 +381,51 @@ def load_state_dict_into_model(
     """
 
     # 1. Get the adapter from checkpoint sd to fms sd
-    adapter = _get_adapter(architecture, source)
+    adapters = _get_adapter(architecture, source)
 
-    # 2. Decide if model needs sharding and how (for now only TP)
-    needs_tp_sharding = checkpoint_sharding != "tp" and distributed_strategy == "tp"
+    # do a full run through each adapter as they are ordered and may require change from previous version
+    for adapter_i, adapter in enumerate(adapters):
+        # 2. Decide if model needs sharding and how (for now only TP)
+        needs_tp_sharding = checkpoint_sharding != "tp" and distributed_strategy == "tp"
 
-    # 3. Iterate over the weights and load them into the model
-    used_keys = set()
-    sd_keys = list(state_dict.keys())
-    with torch.no_grad():
-        for key in sd_keys:
-            if key in used_keys:
-                continue
-            used_keys.add(key)
-            try:
-                partial_sd = {key: state_dict[key]}
-                if partial_sd[key].device != initial_device:
-                    partial_sd[key] = partial_sd[key].to(device=initial_device)
-                fms_partial_sd = adapter(partial_sd)
-            except FusableWeightsMissingError as e:
-                for weight in e.missing_weights:
-                    used_keys.add(weight)
-                    partial_sd[weight] = state_dict[weight]
-                    if partial_sd[weight].device != initial_device:
-                        partial_sd[weight] = partial_sd[weight].to(
-                            device=initial_device
-                        )
-                fms_partial_sd = adapter(partial_sd)
-            _load_partial_state_dict(
-                model, fms_partial_sd, needs_tp_sharding, rank, world_size
-            )
-            for p_key in partial_sd.keys():
-                if isinstance(state_dict, ChainMap):
-                    for child_sd in state_dict.maps:
-                        child_sd.pop(p_key, None)
-                else:
-                    state_dict.pop(p_key)
-            del partial_sd
-            del fms_partial_sd
+        # 3. Iterate over the weights and load them into the model
+        used_keys = set()
+
+        current_state_dict = state_dict
+
+        sd_keys = list(current_state_dict.keys())
+        with torch.no_grad():
+            for key in sd_keys:
+                if key in used_keys:
+                    continue
+                used_keys.add(key)
+                try:
+                    partial_sd = {key: current_state_dict[key]}
+                    if partial_sd[key].device != initial_device:
+                        partial_sd[key] = partial_sd[key].to(device=initial_device)
+                    fms_partial_sd = adapter(partial_sd)
+                except FusableWeightsMissingError as e:
+                    for weight in e.missing_weights:
+                        used_keys.add(weight)
+                        partial_sd[weight] = current_state_dict[weight]
+                        if partial_sd[weight].device != initial_device:
+                            partial_sd[weight] = partial_sd[weight].to(
+                                device=initial_device
+                            )
+                    fms_partial_sd = adapter(partial_sd)
+                _load_partial_state_dict(
+                    model, fms_partial_sd, needs_tp_sharding, rank, world_size
+                )
+                for p_key in partial_sd.keys():
+                    if isinstance(current_state_dict, ChainMap):
+                        for child_sd in current_state_dict.maps:
+                            child_sd.pop(p_key, None)
+                    else:
+                        current_state_dict.pop(p_key)
+                for k, v in fms_partial_sd.items():
+                    current_state_dict[k] = v
+                del partial_sd
+                del fms_partial_sd
 
 
 def _copy_colwise(param: torch.nn.Parameter, tensor_value, is_bias, rank, world_size):

@@ -136,13 +136,17 @@ class RoBERTaHeadless(nn.Module):
         if self.config.p_dropout:
             self.dropout = nn.Dropout(self.config.p_dropout)
 
-    def reset_params(self):
+    def reset_parameters(self):
         for layer in ["embedding", "position_embedding"]:
             nn.init.normal_(
                 getattr(self, layer).weight,
                 mean=0.0,
                 std=self.config.emb_dim**-0.5,
             )
+        for layer in self.layers:
+            for sublayer in ["ln", "ff_ln", "attn", "ff_sub_layer"]:
+                getattr(layer, sublayer).reset_parameters()
+        self.enc_norm.reset_parameters()
 
     def forward(
         self,
@@ -252,8 +256,8 @@ class RoBERTa(nn.Module):
     def get_config(self) -> RoBERTaConfig:
         return self.config
 
-    def reset_params(self):
-        self.base_model.reset_params()
+    def reset_parameters(self):
+        self.base_model.reset_parameters()
         if self.config.tie_heads:
             self.classification_head.head.bias.data.zero_()
         else:
@@ -323,35 +327,18 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping[Any, Any]) -> Mapping[Any, Any]:
         if name == "roberta.embeddings.position_embeddings.weight":
             new_sd[new_name] = new_sd[new_name][2:]
 
-        # roberta in hf has unfused qkv attn weights, so these weights must be converted to fused weights in fms
-        if (
-            "attn.query" in new_name
-            or "attn.key" in new_name
-            or "attn.value" in new_name
-        ):
-            unfused_weights = [
-                re.sub(
-                    r"attention\.self\.(key|query|value)", "attention.self.query", name
-                ),
-                re.sub(
-                    r"attention\.self\.(key|query|value)", "attention.self.key", name
-                ),
-                re.sub(
-                    r"attention\.self\.(key|query|value)", "attention.self.value", name
-                ),
-            ]
-            missing_weights = [w for w in unfused_weights if w not in hf_sd.keys()]
-            if len(missing_weights) != 0:
-                raise serialization.FusableWeightsMissingError(missing_weights)
-
-            new_sd[
-                re.sub(r"attn.(query|key|value)", "attn.in_proj.qkv_fused", new_name)
-            ] = torch.cat([hf_sd[w] for w in unfused_weights], dim=0)
-
     return new_sd
 
 
-serialization.register_adapter("roberta", "hf", _hf_sd_to_fms_sd)
-serialization._register_legacy_weight_preprocessor(
-    "roberta", serialization._legacy_attn_unfused_to_fused_weight_conversion
+serialization.register_adapter("roberta", "hf.v0.0.1", _hf_sd_to_fms_sd)
+
+_convert_fused_qkv_0_0_4 = lambda sd: serialization.simple_mapping(
+    sd, serialization._legacy_attn_unfused_to_fused_weight_conversion
+)
+
+serialization.register_adapter(
+    _architecture_name, "hf.v0.0.4", _convert_fused_qkv_0_0_4
+)
+serialization.register_adapter(
+    _architecture_name, "fms.v0.0.4", _convert_fused_qkv_0_0_4
 )

@@ -27,7 +27,7 @@ def __one_step(
         grad_scaler.scale(loss).backward()
     else:
         loss.backward()
-    return loss.item()
+    return loss
 
 
 def __optimize(model, optimizer, grad_scaler):
@@ -46,8 +46,10 @@ def __one_epoch(
     model: nn.Module,
     optimizer: Optimizer,
     data: DataLoader,
+    device,
     loss_fn,
     epoch: int,
+    prev_step: int,
     plugins: List[TrainerPlugin],
     accum_iters: int = 1,
 ):
@@ -62,7 +64,18 @@ def __one_epoch(
 
     optimized = False
     optimizer.zero_grad()
+
+    highest_step = prev_step
     for step, (input, label) in enumerate(data):
+        step = prev_step + step + 1
+        highest_step = step
+
+        batch_size = input.shape[0]
+        input_length = input.shape[1]
+
+        input = input.to(device)
+        label = label.to(device)
+
         loss = __one_step(model, input, label, loss_fn, grad_scaler)
         if (step + 1) % accum_iters == 0:
             __optimize(model, optimizer, grad_scaler)
@@ -72,24 +85,26 @@ def __one_epoch(
 
         metrics = {
             "loss": loss,
-            "batch_size": input.shape[0],
-            "input_length": input.shape[1],
+            "batch_size": batch_size,
+            "input_length": input_length,
         }
         for plugin in plugins:
-            plugin.step(model, optimizer, epoch, metrics, step)
+            plugin.step(epoch, step, metrics)
     if not optimized:
         __optimize(model, optimizer, grad_scaler)
     for plugin in plugins:
-        plugin.step(model, optimizer, epoch)
+        plugin.step(epoch, step=highest_step, end_of_epoch=True)
 
 
 def train(
     model,
     optimizer,
     dataloader: DataLoader,
+    device,
     loss_fn: nn.Module,
-    start_epoch=0,
+    start_epoch: int = 0,
     epochs: int = 1,
+    prev_step: int = -1,
     trainer_plugins: List[TrainerPlugin] = [],
     grad_accum_iters: int = 1,
 ):
@@ -98,8 +113,10 @@ def train(
             model,
             optimizer,
             dataloader,
+            device,
             loss_fn,
             epoch,
+            prev_step,
             trainer_plugins,
             accum_iters=grad_accum_iters,
         )

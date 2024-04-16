@@ -1,17 +1,23 @@
 import argparse
-from contextlib import nullcontext
 import os
+from contextlib import nullcontext
+from datetime import timedelta
 from pathlib import Path
+
 import torch
 from torch import distributed as dist
 from torch import nn
+from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+from torch.distributed.fsdp import ShardingStrategy
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
-from fms import models
-from fms import datasets
+
+from fms import datasets, models
 from fms.models.hf.utils import to_hf_api
+from fms.training import plugins as trainplugins
+from fms.training import trainer
 from fms.utils import print0, tokenizers
-from fms.training import trainer, plugins as trainplugins
+
 
 #
 # This is a fairly minimal training/tuning script for causal language models.
@@ -22,7 +28,24 @@ from fms.training import trainer, plugins as trainplugins
 #       --tokenizer=~/models/tokenizer.model --model_path=~/models/7B/ --output_path=./tuned/ \
 #       --report_steps=10 --checkpoint_format=meta --distributed=fsdp
 #
-
+# Simple example of pre-training on tokens stored in arrow files (pre-processed to length 4096):
+#
+# export LD_LIBRARY_PATH=/opt/amazon/efa/lib:/opt/amazon/openmpi/lib:/opt/aws-ofi-nccl/lib:/usr/local/cuda/lib:/usr/local/cuda/lib64:/usr/local/cuda:/usr/local/cuda/targets/x86_64-linux/lib/:/usr/local/cuda/extras/CUPTI/lib64:/usr/local/lib:$LD_LIBRARY_PATH
+# export FI_EFA_SET_CUDA_SYNC_MEMOPS=0
+# srun --gres=gpu:8 --cpus-per-task=96 -N 8 --mem=1T --unbuffered --gres-flags=enforce-binding \
+#       --exclusive bash -c 'torchrun --nnodes=$SLURM_NTASKS --nproc_per_node=8 --node_rank=$SLURM_NODEID \
+#       --master_addr=`scontrol show hostnames $SLURM_JOB_NODELIST | head -n 1` \
+#       scripts/train_causal.py --variant=7b --tokenizer=~/models/tokenizer.model \
+#       --device_type=cuda --distributed=hsdp  --dataset_style=arrow \
+#       --dataset_path=file:///lustre/users/bvaughan/data/'
+#
+# Logs output like:
+# 0 19 2024-03-11 19:58:35.773642 {'loss': '7.6250', 'avg_loss': '8.3703', 'tok/stp': '524,288.0', 's/stp': '2.227', 'tok/gpu/s': '3,679.1', 'gpu_mem_use': '0%', 'gpu_utzn': '0%'}
+# 0 28 2024-03-11 19:58:57.736138 {'loss': '7.6250', 'avg_loss': '7.6424', 'tok/stp': '524,288.0', 's/stp': '2.439', 'tok/gpu/s': '3,357.0', 'gpu_mem_use': '46%', 'gpu_utzn': '100%'}
+# 0 37 2024-03-11 19:59:17.431584 {'loss': '7.4688', 'avg_loss': '7.5139', 'tok/stp': '524,288.0', 's/stp': '2.189', 'tok/gpu/s': '3,743.4', 'gpu_mem_use': '37%', 'gpu_utzn': '100%'}
+#
+# use sbatch for longer running training jobs.
+#
 
 parser = argparse.ArgumentParser(description="Script to train or tune a model")
 
@@ -114,6 +137,7 @@ parser.add_argument(
 parser.add_argument(
     "--epochs", type=int, default=2, help="Number of epochs to train/tune"
 )
+parser.add_argument("--batch_size", type=int, default=2, help="Batch size")
 parser.add_argument(
     "--grad_accum_steps",
     type=int,
@@ -125,6 +149,7 @@ parser.add_argument(
 args = parser.parse_args()
 
 local_rank = int(os.getenv("LOCAL_RANK", 0))
+rank = int(os.getenv("RANK", 0))
 world_size = int(os.getenv("WORLD_SIZE", 1))
 
 # default search for what's available
@@ -137,13 +162,20 @@ if device_type is None:
     else:
         device_type = "cpu"
 
-device = torch.device(device_type, local_rank)
+if device_type == "cuda":
+    device = torch.device(device_type, local_rank)
+    torch.cuda.set_device(device)
+else:
+    device = torch.device(device_type)
 
 group = None
 
 if args.distributed is not None:
-    dist.init_process_group(backend="nccl", rank=local_rank, world_size=world_size)
+    # gathering optimizer state takes more than 10 minutes, so need a longer timeout.
+    dist.init_process_group(backend="nccl")
     group = dist.GroupMember.WORLD
+    # Fix until PT 2.3
+    torch._C._distributed_c10d._register_process_group("default", dist.group.WORLD)
 
 
 def get_loss_fn():
@@ -190,7 +222,7 @@ def peft_model(model):
     from fms.models.hf.llama.modeling_llama_hf import HFAdaptedLLaMAForCausalLM
 
     model = to_hf_api(model)
-    from peft import get_peft_config, get_peft_model, LoraConfig
+    from peft import LoraConfig, get_peft_config, get_peft_model
     from peft.mapping import PeftModelForCausalLM
 
     lora_config = LoraConfig(
@@ -215,31 +247,56 @@ def peft_model(model):
 
 def training_state(model_path, model, rank):
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4)
+    is_fsdp = isinstance(model, FSDP)
+    dataset_sd = {}
     epoch = 0
+    prev_step = -1
+    cumulative_tokens = 0
 
     if model_path is not None:
         path = Path(args.model_path).expanduser()
         if path.exists():
             if path.is_dir():
                 files = sorted(path.glob("*.train"))
-                if len(files):
+                if len(files) == 1:
+                    training = files[0]
+                elif (
+                    len(files) > 1
+                    and is_fsdp
+                    and model.sharding_strategy == ShardingStrategy.FULL_SHARD
+                ):
                     training = files[rank]
+                elif (
+                    len(files) > 1
+                    and is_fsdp
+                    and model.sharding_strategy == ShardingStrategy.HYBRID_SHARD
+                ):
+                    training = files[local_rank]
                 else:
                     training = None
             else:
                 training = path.parent / (path.stem + ".train")
             if training is not None and training.exists():
                 sd = torch.load(training)
-                optim = sd["optimizer"]
+                optim_sd = sd["optimizer"]
                 epoch = sd["epoch"]
-                optimizer.load_state_dict(optim)
-                epoch = epoch + 1
+                prev_step = sd["step"]
+                cumulative_tokens = sd["cumulative_tokens"]
+                if "dataset" in sd:
+                    dataset_sd = sd["dataset"]
+                if isinstance(model, FSDP):
+                    optim_sd = model.optim_state_dict_to_load(
+                        model, optimizer, optim_sd
+                    )
+                optimizer.load_state_dict(optim_sd)
 
-                return (optimizer, epoch)
-    return (optimizer, epoch)
+                return (optimizer, dataset_sd, epoch, prev_step, cumulative_tokens)
+    return (optimizer, dataset_sd, epoch, prev_step, cumulative_tokens)
 
 
 def main():
+    torch.set_default_dtype(torch.bfloat16)
+
     print0("Loading model...")
     model = models.get_model(
         args.architecture,
@@ -251,9 +308,14 @@ def main():
         group=group,
     )
     # model.to(torch.half)
-    optimizer, epoch = training_state(args.model_path, model, local_rank)
-
-    print("model loaded", local_rank)
+    optimizer, dataset_sd, epoch, prev_step, cum_tokens = training_state(
+        args.model_path, model, rank
+    )
+    print("model loaded on worker", rank)
+    print0(
+        "starting from epoch", epoch, "prior step", prev_step, "cum tokens", cum_tokens
+    )
+    print0("dataset state", dataset_sd)
 
     tokenizer = tokenizers.get_tokenizer(args.tokenizer)
 
@@ -266,20 +328,25 @@ def main():
     eos_token = tokenizer.convert_ids_to_tokens([eos_token_id])[0]
 
     # TODO: split a validation dataset
-    dataset = datasets.get_dataset(
-        args.dataset_style, tokenizer, args.dataset_path, device=device
-    )
+    dataset = datasets.get_dataset(args.dataset_style, tokenizer, args.dataset_path)
+    if len(dataset_sd):
+        dataset.load_state_dict(dataset_sd)
 
     sampler = None
-    shuffle = True
-    if args.distributed == "fsdp":
+    # if the dataset is iterable, we can't shuffle it, and it should handle
+    # sharding internally
+    shuffle = not isinstance(dataset, datasets.IterableDataset)
+
+    if args.distributed == "fsdp" and not isinstance(dataset, datasets.IterableDataset):
         sampler = DistributedSampler(
-            dataset, rank=local_rank, num_replicas=world_size, shuffle=True
+            dataset, rank=rank, num_replicas=world_size, shuffle=True
         )
         # if we shuffle the sampler then we don't shuffle the dataloader
         shuffle = False
 
-    dataloader = DataLoader(dataset, sampler=sampler, shuffle=shuffle)
+    dataloader = DataLoader(
+        dataset, batch_size=args.batch_size, sampler=sampler, shuffle=shuffle
+    )
 
     loss_fn = get_loss_fn()
 
@@ -297,15 +364,46 @@ def main():
     sample_prompt2 = [bos_token] + tokenizer.tokenize(sample_prompt2)
 
     validator = trainplugins.InferenceValidator(
-        sample_prompt, tokenizer, device, steps=args.report_steps, eos_token=eos_token
+        model,
+        sample_prompt,
+        tokenizer,
+        device,
+        steps=args.report_steps,
+        eos_token=eos_token,
     )
     validator2 = trainplugins.InferenceValidator(
-        sample_prompt2, tokenizer, device, steps=args.report_steps, eos_token=eos_token
+        model,
+        sample_prompt2,
+        tokenizer,
+        device,
+        steps=args.report_steps,
+        eos_token=eos_token,
     )
+    if args.distributed == "hsdp":
+        ckp_group = dist.new_group(list(range(torch.cuda.device_count())))
+        # if current shard group isn't part of the new group, `new_group` returns an int (-100)
+        if not isinstance(ckp_group, dist.ProcessGroup):
+            ckp_group = None
+    else:
+        ckp_group = group
     checkpointing = trainplugins.Checkpointer(
-        steps=args.checkpoint_steps, group=group, save_dir=args.output_path
+        model,
+        optimizer,
+        dataset=dataset,
+        save_dir=args.output_path,
+        steps=args.checkpoint_steps,
+        cumulative_tokens=cum_tokens,
+        prev_step=prev_step,
+        group=ckp_group,
+        device=device,
     )
-    reporting = trainplugins.MetricReporter()
+    reporting = trainplugins.MetricReporter(
+        seconds=20,
+        prev_step=prev_step,
+        cumulative_tokens=cum_tokens,
+        group=group,
+        device=device,
+    )
 
     plugins = [reporting, validator, validator2, checkpointing]
     print0("training...")
@@ -314,9 +412,11 @@ def main():
             model,
             optimizer,
             dataloader,
+            device,
             loss_fn,
             start_epoch=epoch,
             epochs=args.epochs,
+            prev_step=prev_step,
             trainer_plugins=plugins,
             grad_accum_iters=args.grad_accum_steps,
         )
