@@ -400,8 +400,8 @@ class ScanCacheAttention(nn.Module):
             #         queries, keys, position_ids, past_key_value_state, use_cache
             #     )
 
-        queries = queries / (self.emb_kq_per_head**(1/4))  # b l h d
-        keys = keys / (self.emb_kq_per_head**(1/4))  # b l h d
+        queries = queries  # / (self.emb_kq_per_head**(1/4))  # b l h d
+        keys = keys  # / (self.emb_kq_per_head**(1/4))  # b l h d
 
         # Build scan cache
         # k/v: b l h d
@@ -458,7 +458,7 @@ class ScanCacheAttention(nn.Module):
 
 
         qk = torch.einsum("blhd,blhed->blhe", queries, keys_e)  # b l h 32
-        qk = qk.softmax(3)
+        qk = qk.div((self.emb_kq_per_head+1)**.5).softmax(3)
         attn = torch.einsum("blhe,blhed->blhd", qk, values_e)  # b l h d
 
         # qk = queries.matmul(keys_e.transpose(2,3))
