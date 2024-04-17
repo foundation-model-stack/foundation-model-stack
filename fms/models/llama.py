@@ -85,9 +85,9 @@ class LLaMABlock(nn.Module):
 
         self.attn = ScanCacheAttention(
             self.config.emb_dim,
-            emb_kq//4,
-            emb_v//4,
-            self.config.nheads*4,
+            emb_kq,
+            emb_v,
+            self.config.nheads,
             kvheads,
             p_dropout=self.config.p_dropout,
             use_bias=False,
@@ -175,6 +175,9 @@ class LLaMA(nn.Module):
             self.config = LLaMAConfig()
         self.config = self.config.updated(**kwargs)
         self.distributed_strategy = distributed_strategy
+
+        self.config.kvheads = self.config.nheads
+        self.config.nheads *= 4
 
         self.width = self.config.emb_dim
         self.pad_id = self.config.pad_id
