@@ -85,10 +85,10 @@ class LLaMABlock(nn.Module):
 
         self.attn = ScanCacheAttention(
             self.config.emb_dim,
-            emb_kq,
-            emb_v,
-            self.config.nheads,
-            kvheads//4,
+            emb_kq//4,
+            emb_v//4,
+            self.config.nheads*4,
+            kvheads,
             p_dropout=self.config.p_dropout,
             use_bias=False,
             position_encoder=rotary_emb,
