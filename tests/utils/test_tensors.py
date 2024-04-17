@@ -95,12 +95,24 @@ def test_contiguous():
     assert type(expandable) != ExpandableTensor
 
 
+def get_paged_tensor():
+    batches = 5
+    # default page size is 16. using 15 x 7 ensures un-even paging, to ensure
+    # copy works correctly.
+    seq_len = 15 * 7
+    emb_dim = 4
+    t = torch.arange(batches * seq_len * emb_dim).view(batches, seq_len, emb_dim)
+    pt = PagedTensor.from_tensor(t, [-1])
+    return pt
+
+
 def test_paged():
+    # simplest test, the number of items is evenly divisible by page size
     batches = 5
     seq_len = 16 * 7
     emb_dim = 4
     t = torch.arange(batches * seq_len * emb_dim).view(batches, seq_len, emb_dim)
-    pt = PagedTensor(t, [-1])
+    pt = PagedTensor.from_tensor(t, [-1])
     extracted = pt._tensor()
     torch.testing.assert_close(t, extracted)
 
@@ -112,19 +124,29 @@ def test_paged_uneven():
     seq_len = 15 * 7
     emb_dim = 4
     t = torch.arange(batches * seq_len * emb_dim).view(batches, seq_len, emb_dim)
-    pt = PagedTensor(t, [-1])
+    pt = PagedTensor.from_tensor(t, [-1])
     extracted = pt._tensor()
     torch.testing.assert_close(t, extracted)
 
 
 def test_paged_cleanup():
-    batches = 5
-    seq_len = 16 * 7
-    emb_dim = 4
-    t = torch.arange(batches * seq_len * emb_dim).view(batches, seq_len, emb_dim)
-    pt = PagedTensor(t, [-1])
+    pt = get_paged_tensor()
     storage = pt.paged_storage
     del pt
     assert len(storage.refcounts)
     for refcount in storage.refcounts:
         assert refcount == 0
+
+
+def test_pointwise():
+    pt = get_paged_tensor()
+    result = torch.add(pt, 4)
+    # result = pt.add(4)
+    assert isinstance(result, PagedTensor)
+    assert result.shape == pt.shape
+    assert torch.allclose(pt._tensor() + 4, result._tensor())
+
+    # out of place
+    pt += 4
+    assert isinstance(pt, PagedTensor)
+    assert torch.allclose(pt._tensor(), result._tensor())

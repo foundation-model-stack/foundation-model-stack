@@ -184,6 +184,16 @@ def _create_page_ids(
         return result, last_page
 
 
+def _flatten(ids: List[int]):
+    result = []
+    for id in ids:
+        if isinstance(id, list):
+            result.extend(_flatten(id))
+        else:
+            result.append(id)
+    return result
+
+
 class PagedStorage:
     def __init__(
         self,
@@ -233,6 +243,28 @@ class PagedStorage:
 
         populate_refcounts(initial_page_ids)
 
+    def apply_inplace(self, op_name, args, kwargs, page_ids):
+        flattened = _flatten(page_ids)
+        for id in flattened:
+            op = getattr(self.storage[id], op_name)
+            op(*args, **kwargs)
+
+    def apply(self, op, args, kwargs, page_ids):
+        storage = PagedStorage(
+            self.static_shape,
+            self.dynamic_shape,
+            self.page_size,
+            self.storage.clone(),
+            page_ids,
+            self.storage.dtype,
+            self.storage.device,
+        )
+        storage.refcounts = [0 for _ in storage.refcounts]
+        for id in _flatten(page_ids):
+            storage.refcounts[id] = 1
+        storage.apply_inplace(op + "_", args, kwargs, page_ids)
+        return storage
+
     def expand(self, ratio=2, min_pages=128):
         current_pages = self.storage.numel() // (
             self.page_size * math.prod(self.static_shape)
@@ -258,6 +290,121 @@ class PagedStorage:
         decrement(page_ids)
 
 
+# list from: https://pytorch.org/docs/stable/torch.html
+_pointwise_ops = set(
+    [
+        "abs",
+        "absolute",
+        "acos",
+        "arccos",
+        "acosh",
+        "arccosh",
+        "add",
+        "addcdiv",
+        "addcmul",
+        "angle",
+        "asin",
+        "arcsin",
+        "asinh",
+        "arcsinh",
+        "atan",
+        "arctan",
+        "atanh",
+        "arctanh",
+        "atan2",
+        "arctan2",
+        "bitwise_not",
+        "bitwise_and",
+        "bitwise_or",
+        "bitwise_xor",
+        "bitwise_left_shift",
+        "bitwise_right_shift",
+        "ceil",
+        "clamp",
+        "clip",
+        "conj_physical",
+        "copysign",
+        "cos",
+        "cosh",
+        "deg2rad",
+        "div",
+        "divide",
+        "digamma",
+        "erf",
+        "erfc",
+        "erfinv",
+        "exp",
+        "exp2",
+        "expm1",
+        "fake_quantize_per_channel_affine",
+        "fake_quantize_per_tensor_affine",
+        "fix",
+        "float_power",
+        "floor",
+        "floor_divide",
+        "fmod",
+        "frac",
+        "frexp",
+        "gradient",
+        "imag",
+        "ldexp",
+        "lerp",
+        "lgamma",
+        "log",
+        "log10",
+        "log1p",
+        "log2",
+        "logaddexp",
+        "logaddexp2",
+        "logical_and",
+        "logical_not",
+        "logical_or",
+        "logical_xor",
+        "logit",
+        "hypot",
+        "i0",
+        "igamma",
+        "igammac",
+        "mul",
+        "multiply",
+        "mvlgamma",
+        "nan_to_num",
+        "neg",
+        "negative",
+        "nextafter",
+        "polygamma",
+        "positive",
+        "pow",
+        "quantized_batch_norm",
+        "quantized_max_pool1d",
+        "quantized_max_pool2d",
+        "rad2deg",
+        "real",
+        "reciprocal",
+        "remainder",
+        "round",
+        "rsqrt",
+        "sigmoid",
+        "sign",
+        "sgn",
+        "signbit",
+        "sin",
+        "sinc",
+        "sinh",
+        "softmax",
+        "sqrt",
+        "square",
+        "sub",
+        "subtract",
+        "tan",
+        "tanh",
+        "true_divide",
+        "trunc",
+        "xlogy",
+    ]
+)
+
+
 class PagedTensor(torch.Tensor):
     """
     A PagedTensor stores tensor data in pages of tensor memory. This allows for
@@ -275,43 +422,64 @@ class PagedTensor(torch.Tensor):
 
     def __init__(
         self,
+        static_dims,
+        dynamic_dims,
+        page_size,
+        current_shape,
+        paged_storage,
+        page_ids,
+    ):
+        super().__init__()
+        self.static_dims = static_dims
+        self.dynamic_dims = dynamic_dims
+        self.page_size = page_size
+        self.current_shape = current_shape
+        self.paged_storage = paged_storage
+        self.page_ids = page_ids
+
+    @classmethod
+    def from_tensor(
+        cls,
         tensor: torch.Tensor,
         static_dims: Union[int, List[int]] = -1,
         page_size: int = 16,
     ):
-        super().__init__()
-
         if isinstance(static_dims, int):
-            self.static_dims = [static_dims]
+            static_dims = [static_dims]
         else:
-            self.static_dims = static_dims
+            static_dims = static_dims
 
         # normalize the dims in case of dims like `-1`
-        self.static_dims = [dim % tensor.ndim for dim in self.static_dims]
-        self.dynamic_dims = [
-            i for i, _ in enumerate(tensor.shape) if i not in self.static_dims
-        ]
-        self.current_shape = list(tensor.shape)
-        self.page_size = page_size
-        self.static_shape = [tensor.shape[x] for x in self.static_dims]
-        self.dynamic_shape = [tensor.shape[x] for x in self.dynamic_dims]
-        self.true_page_size = page_size * math.prod(self.static_shape)
-        self.min_pages = tensor.numel() // self.true_page_size
-        if self.min_pages * self.true_page_size != tensor.numel():
-            self.min_pages += 1
+        static_dims = [dim % tensor.ndim for dim in static_dims]
+        dynamic_dims = [i for i, _ in enumerate(tensor.shape) if i not in static_dims]
+        current_shape = list(tensor.shape)
+        page_size = page_size
+        static_shape = [tensor.shape[x] for x in static_dims]
+        dynamic_shape = [tensor.shape[x] for x in dynamic_dims]
 
-        self.page_ids, _ = _create_page_ids(self.dynamic_shape, page_size, 0)
-        self.paged_storage = PagedStorage(
-            self.static_shape,
-            self.dynamic_shape,
-            self.page_size,
+        page_ids, _ = _create_page_ids(dynamic_shape, page_size, 0)
+        paged_storage = PagedStorage(
+            static_shape,
+            dynamic_shape,
+            page_size,
             tensor,
-            self.page_ids,
+            page_ids,
             dtype=tensor.dtype,
             device=tensor.dtype,
         )
+        return PagedTensor(
+            static_dims, dynamic_dims, page_size, current_shape, paged_storage, page_ids
+        )
 
-    def __new__(cls, tensor, static_dims=-1, page_size=16):
+    def __new__(
+        cls,
+        static_dims,
+        dynamic_dims,
+        page_size,
+        current_shape,
+        paged_storage,
+        page_ids,
+    ):
         return super().__new__(cls)
 
     def __del__(self):
@@ -334,7 +502,7 @@ class PagedTensor(torch.Tensor):
             dtype=self.paged_storage.storage.dtype,
         )
 
-        ranges = [range(dim) for dim in self.dynamic_shape[:-1]]
+        ranges = [range(dim) for dim in self.paged_storage.dynamic_shape[:-1]]
         dynamic_indices = list(itertools.product(*ranges))
 
         for indices in dynamic_indices:
@@ -366,16 +534,45 @@ class PagedTensor(torch.Tensor):
     def __repr__(self):
         return self._tensor().__repr__()
 
-    # Since this is currently using a copy of the original
-    # tensor, these are all handled as out-of-place operations
-    # for now.
-    # Pointwise ops could all just be pass-through the the appropriate
-    # page of the underlying storage, but more complicated ops may need
-    # custom kernels.
+    # Most of these return a copy of the original
+    # tensor, but it handles pointwise ops with look-through
+    # into the underlying storage.
     @classmethod
     def __torch_function__(cls, func, types, args=(), kwargs=None):
         if kwargs is None:
             kwargs = {}
+
+        name = func.__qualname__.split(".")[-1]
+        inplace = name[-1] == "_"
+        if name in _pointwise_ops or (inplace and name[:-1] in _pointwise_ops):
+            first_pt = args[0]
+            idx = 0
+            for i, arg in enumerate(args):
+                if isinstance(arg, PagedTensor):
+                    first_pt = arg
+                    idx = i
+                    break
+            assert isinstance(first_pt, PagedTensor)
+            new_args = args[:idx] + args[idx + 1 :]
+            if inplace:
+                first_pt.paged_storage.apply_inplace(
+                    name, new_args, kwargs, first_pt.page_ids
+                )
+                return first_pt
+            else:
+                new_storage = first_pt.paged_storage.apply(
+                    name, new_args, kwargs, first_pt.page_ids
+                )
+                new_pt = PagedTensor(
+                    first_pt.static_dims,
+                    first_pt.dynamic_dims,
+                    first_pt.page_size,
+                    first_pt.current_shape,
+                    new_storage,
+                    first_pt.page_ids,
+                )
+                return new_pt
+
         if func not in _PAGED_HANDLED_FUNCTIONS or not all(
             issubclass(t, (torch.Tensor, PagedTensor)) for t in types
         ):
