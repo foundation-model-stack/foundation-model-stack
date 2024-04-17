@@ -176,8 +176,9 @@ class LLaMA(nn.Module):
         self.config = self.config.updated(**kwargs)
         self.distributed_strategy = distributed_strategy
 
-        self.config.kvheads = self.config.nheads
-        self.config.nheads *= 4
+        # self.config.kvheads = self.config.nheads
+        # self.config.nheads *= 4
+        self.config.kvheads = self.config.nheads // 4
 
         self.width = self.config.emb_dim
         self.pad_id = self.config.pad_id

@@ -302,6 +302,8 @@ class ScanCacheAttention(nn.Module):
         self.scan = MatScan.apply
         self.ln_k = LayerNormParameterized(emb_kq, use_high_precision_pow=True)
         self.ln_v = LayerNormParameterized(emb_v, use_high_precision_pow=True)
+        self.key_pos = nn.Parameter(torch.zeros(emb_v, 32))
+        self.query_pos = nn.Parameter(torch.zeros(emb_kq))
 
 
     def make_gates(self):
@@ -330,6 +332,8 @@ class ScanCacheAttention(nn.Module):
                     m.bias.data.zero_()
             elif isinstance(m, LayerNormParameterized):
                 m.reset_parameters()
+        nn.init.trunc_normal_(self.key_pos, mean=0.0, std=0.02)
+        nn.init.trunc_normal_(self.query_pos, mean=0.0, std=0.02)
 
     def forward(
         self,
@@ -390,11 +394,11 @@ class ScanCacheAttention(nn.Module):
                 batch_size, kv_len, self.kvheads, self.emb_v_per_head
             )
 
-            # You want to apply rotary embeddings pre-cache
-            if self.position_encoder is not None:
-                queries, keys = self.position_encoder.adjusted_qk(
-                    queries, keys, position_ids, past_key_value_state, use_cache
-                )
+            # # You want to apply rotary embeddings pre-cache
+            # if self.position_encoder is not None:
+            #     queries, keys = self.position_encoder.adjusted_qk(
+            #         queries, keys, position_ids, past_key_value_state, use_cache
+            #     )
 
         queries = queries / (self.emb_kq_per_head**(1/4))  # b l h d
         keys = keys / (self.emb_kq_per_head**(1/4))  # b l h d
@@ -409,11 +413,13 @@ class ScanCacheAttention(nn.Module):
         keys = keys.unsqueeze(3)  # b l d 1
         keys = F.pad(keys, (0, 32-1))  # b l d 32
         keys = self.scan(keys, gate).view(batch_size, kv_len, self.kvheads, self.emb_kq_per_head, -1)  # b l h d 32
+        keys = keys + self.key_pos  # b l h d 32
         keys = self.ln_k(keys.transpose(3,4))  # b l h 32 d
         values = values.unsqueeze(3)  # b l d 1
         values = F.pad(values, (0, 32-1))  # b l d 32
         values = self.scan(values, gate).view(batch_size, kv_len, self.kvheads, self.emb_v_per_head, -1)  # b l h d 32
         values = self.ln_v(values.transpose(3,4))  # b l h 32 d
+        queries = queries + self.query_pos  # b l h d
 
         # if you want to use caching and past_key_value_state is not None meaning you have values in your cache
         if use_cache and past_key_value_state is not None:
