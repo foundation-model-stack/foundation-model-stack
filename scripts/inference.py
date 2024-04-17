@@ -79,6 +79,20 @@ parser.add_argument(
     action="store_true",
     help="This is a distributed job (multiple instances run with RANK+WORLD_SIZE)",
 )
+parser.add_argument(
+    "--distributed_strategy",
+    type=str,
+    default=None,
+    help="distributed execution mode",
+    choices=["fsdp", "hsdp", "tp", "mp"],
+)
+parser.add_argument(
+    "--checkpoint_sharding",
+    type=str,
+    default=None,
+    help="how the checkpoint files are sharded",
+    choices=["tp", "fsdp", "layer"],
+)
 parser.add_argument("--context_file", type=str, default=None, help="File to summarize")
 
 args = parser.parse_args()
@@ -114,6 +128,9 @@ else:
         distr_param = "mp"
     else:
         distr_param = None
+if args.distributed_strategy:
+    # --distributed_strategy option overrides --distributed option
+    distr_param = args.distributed_strategy
 
 model = get_model(
     args.architecture,
@@ -122,9 +139,11 @@ model = get_model(
     device_type=args.device_type,
     source=args.model_source,
     distributed_strategy=distr_param,
+    checkpoint_sharding=args.checkpoint_sharding,
     group=dist.group.WORLD,
 )
 tokenizer = tokenizers.get_tokenizer(args.tokenizer)
+
 model.eval()
 torch.set_grad_enabled(False)
 print("loading complete on rank", local_rank)
