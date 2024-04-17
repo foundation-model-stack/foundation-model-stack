@@ -3,7 +3,7 @@ import time
 import pytest
 import torch
 
-from fms.utils.tensors import ExpandableTensor
+from fms.utils.tensors import ExpandableTensor, PagedTensor
 
 
 def test_expandable_tensor():
@@ -93,3 +93,38 @@ def test_contiguous():
     torch.testing.assert_close(expandable, t)
     assert expandable.is_contiguous()
     assert type(expandable) != ExpandableTensor
+
+
+def test_paged():
+    batches = 5
+    seq_len = 16 * 7
+    emb_dim = 4
+    t = torch.arange(batches * seq_len * emb_dim).view(batches, seq_len, emb_dim)
+    pt = PagedTensor(t, [-1])
+    extracted = pt._tensor()
+    torch.testing.assert_close(t, extracted)
+
+
+def test_paged_uneven():
+    batches = 5
+    # default page size is 16. using 15 x 7 ensures un-even paging, to ensure
+    # copy works correctly.
+    seq_len = 15 * 7
+    emb_dim = 4
+    t = torch.arange(batches * seq_len * emb_dim).view(batches, seq_len, emb_dim)
+    pt = PagedTensor(t, [-1])
+    extracted = pt._tensor()
+    torch.testing.assert_close(t, extracted)
+
+
+def test_paged_cleanup():
+    batches = 5
+    seq_len = 16 * 7
+    emb_dim = 4
+    t = torch.arange(batches * seq_len * emb_dim).view(batches, seq_len, emb_dim)
+    pt = PagedTensor(t, [-1])
+    storage = pt.paged_storage
+    del pt
+    assert len(storage.refcounts)
+    for refcount in storage.refcounts:
+        assert refcount == 0
