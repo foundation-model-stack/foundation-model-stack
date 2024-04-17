@@ -564,14 +564,33 @@ class PagedTensor(torch.Tensor):
         to be removed at that level.
         E.g. if self.page_ids = [[1,2,3],[4,5,6]]:
         remove(0, 0) would return [[4,5,6]]
-        remove(1,1) would return [[1,3], [4,6]]
+        remove(2,1) would return [[1,2], [4,5]]
         """
+        # static dimensions can't be modified.
+        if dim in self.static_dims:
+            raise RuntimeError("can't remove static dimensions")
+
+        last_dynamic_dim = self.dynamic_dims[-1]
 
         def remove_helper(pages, current_dim):
             if current_dim == dim:
-                removed = pages.pop(idx)
-                self.paged_storage.decrement_refcounts(removed)
-                return pages
+                if dim == last_dynamic_dim:
+                    if idx != self.dynamic_shape[dim] - 1:
+                        raise RuntimeError(
+                            "Can only remove last idx of final dynamic dim"
+                        )
+                    elif idx % self.page_size == 0:
+                        removed = pages.pop(len(pages) - 1)
+                        self.paged_storage.decrement_refcounts(removed)
+                        return pages
+                    else:
+                        # just shortening the shape takes care of this case, no need to remove
+                        # any pages because only modifying within one page.
+                        return pages
+                else:
+                    removed = pages.pop(idx)
+                    self.paged_storage.decrement_refcounts(removed)
+                    return pages
             else:
                 return [remove_helper(nested, current_dim + 1) for nested in pages]
 
