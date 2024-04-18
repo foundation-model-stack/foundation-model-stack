@@ -109,8 +109,15 @@ def generate(
     #     profile_memory=True,
     #     record_shapes=True,
     # ) as prof:
+    if past_key_value_states_g is not None:
+        for layer_idx, cache_layer in enumerate(past_key_value_states_g):
+            for tensor_idx, kv_tensor in enumerate(cache_layer):
+                kv_tensor.fill_(0)
+        kwargs["past_key_value_states"] = past_key_value_states_g
+
+    total_start = time.time()
     for i in range(max_new_tokens):
-        itl_start = time.time()
+        # itl_start = time.time()
         input_ids = next_input[:, -max_seq_len:]
         if i == 0:
             output = prefill_model(input_ids, **kwargs)
@@ -124,11 +131,11 @@ def generate(
                     for cache_layer in past_key_value_states_g:
                         for kv_tensor in cache_layer:
                             torch._dynamo.mark_static_address(kv_tensor)
-                else:
-                    for layer_idx, cache_layer in enumerate(past_key_value_states_g):
-                        for tensor_idx, kv_tensor in enumerate(cache_layer):
-                            kv_tensor.copy_(past_key_value_states[layer_idx][tensor_idx])
-                    past_key_value_states = past_key_value_states_g
+                # else:
+                #     for layer_idx, cache_layer in enumerate(past_key_value_states_g):
+                #         for tensor_idx, kv_tensor in enumerate(cache_layer):
+                #             kv_tensor.copy_(past_key_value_states[layer_idx][tensor_idx])
+                #     past_key_value_states = past_key_value_states_g
                 
             # TODO: this should go away when reduce-overhead issues are fixed, or
             # maybe could be moved into model code to be more portable.
@@ -163,14 +170,16 @@ def generate(
         kwargs["position_ids"] = kwargs["position_ids"][:, -1:] + 1
         # if i == 0:
             # torch._dynamo.mark_static_address(kwargs["position_ids"])
-        torch.cuda.synchronize()
-        torch.distributed.barrier()
-        itl_end = time.time()
-        token_times.append((itl_end - itl_start) * 1000)
+        # itl_end = time.time()
+        # token_times.append((itl_end - itl_start) * 1000)
         # prof.step()
 
+    torch.cuda.synchronize()
+    # torch.distributed.barrier()
+    total_time = time.time() - total_start
+    
     print(
-        f"First token latency: {token_times[0]}, average after: {statistics.fmean(token_times[1:])} {token_times}"
+        f"Total time: {total_time}"
     )
     if not batched:
         result = result[0]

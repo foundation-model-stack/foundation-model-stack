@@ -6,6 +6,7 @@ import torch
 import torch.nn as nn
 
 from fms import models
+from fms.distributed.strategy import DistributedStrategy, NoOpStrategy
 from fms.modules.attention import MultiHeadAttention
 from fms.modules.feedforward import FeedForwardBlock
 from fms.utils import serialization
@@ -115,20 +116,28 @@ class GPTBigCodeBlock(nn.Module):
 
 
 class GPTBigCodeHeadless(nn.Module):
-    def __init__(self, config: GPTBigCodeConfig):
+    def __init__(
+        self, config: GPTBigCodeConfig, distributed_strategy: DistributedStrategy
+    ):
         super().__init__()
         self.config = config
+        self.distributed_strategy = distributed_strategy
 
-        self.layers = nn.ModuleList(
-            [GPTBigCodeBlock(self.config) for _ in range(self.config.nlayers)]
-        )
+        layers = []
+        for i in range(self.config.nlayers):
+            block = GPTBigCodeBlock(self.config)
+            block_module = self.distributed_strategy.distribute_layer(block, i)
+            layers.append(block_module)
+        self.layers = nn.ModuleList(layers)
 
         self.embedding = nn.Embedding(self.config.src_vocab_size, self.config.emb_dim)
         self.position_embedding = nn.Embedding(
             self.config.max_expected_seq_len, self.config.emb_dim
         )
 
-        self.dec_norm = nn.LayerNorm(self.config.emb_dim, eps=self.config.ln_eps)
+        self.dec_norm = self.distributed_strategy.distribute_module(
+            nn.LayerNorm(self.config.emb_dim, eps=self.config.ln_eps), final_layers=True
+        )
 
         if self.config.emb_dropout:
             self.emb_dropout = nn.Dropout(self.config.emb_dropout)
@@ -195,7 +204,7 @@ class GPTBigCodeHeadless(nn.Module):
             # we are caching and can assume all 1s in the mask
             if use_cache and klen != 1 and qlen == 1:
                 # b x h x qlen x kvlen
-                mask = torch.ones(qlen, klen, device=x.device)
+                mask = torch.ones(qlen, klen, dtype=torch.bool, device=x.device)
             else:
                 pad_id: int = self.config.pad_id
                 is_pad: torch.Tensor = x == pad_id
@@ -263,6 +272,7 @@ class GPTBigCode(nn.Module):
     def __init__(
         self,
         config: Optional[GPTBigCodeConfig] = None,
+        distributed_strategy: DistributedStrategy = NoOpStrategy,
         **kwargs,
     ):
         super(GPTBigCode, self).__init__()
@@ -271,8 +281,9 @@ class GPTBigCode(nn.Module):
         else:
             self.config = GPTBigCodeConfig()
         self.config = self.config.updated(**kwargs)
+        self.distributed_strategy = distributed_strategy
 
-        self.base_model = GPTBigCodeHeadless(self.config)
+        self.base_model = GPTBigCodeHeadless(self.config, self.distributed_strategy)
         self.head = nn.Linear(
             self.config.emb_dim, self.config.src_vocab_size, bias=False
         )
@@ -340,6 +351,8 @@ _santacoder_config = GPTBigCodeConfig(
     p_dropout=0.1,
     emb_dropout=0.1,
 )
+
+# https://www.ibm.com/docs/en/cloud-paks/cp-data/4.8.x?topic=models-granite-13b-instruct-v2-model-card
 _13b_config = GPTBigCodeConfig(
     src_vocab_size=50304,
     emb_dim=5632,
@@ -352,13 +365,15 @@ _13b_config = GPTBigCodeConfig(
     emb_dropout=0.1,
     ln_eps=1e-5,
 )
+
+#  Config verified with IBM internal repo
 _20b_config = GPTBigCodeConfig(
     src_vocab_size=49152,
     emb_dim=6144,
-    nheads=52,
-    nlayers=48,
+    nheads=48,
+    nlayers=52,
     pad_id=0,
-    max_expected_seq_len=32768,
+    max_expected_seq_len=8192,
     hidden_grow_factor=4.0,
     p_dropout=0.1,
     emb_dropout=0.1,
