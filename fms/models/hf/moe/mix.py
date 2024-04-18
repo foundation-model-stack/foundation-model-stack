@@ -30,7 +30,9 @@ ROUTERS_NAME = {
 EXPERTS_KEYS_MAPPING = {
     MixLlamaForCausalLM: {
         "mlp": "mlp.experts",
-        "q_proj": "q_proj"
+        "q_proj": "q_proj.experts",
+        "k_proj": "k_proj.experts",
+        "v_proj": "v_proj.experts",
     },
     MixtralForCausalLM: {
         "mlp": "block_sparse_moe.experts",
@@ -85,7 +87,8 @@ def mix(
     # /SUPPORT CHECK
 
     
-    mixture_of_attention_head = "q_proj" in modules_to_mix
+    mixture_of_attention_head = \
+        "q_proj" in modules_to_mix or "k_proj" in modules_to_mix or "v_proj" in modules_to_mix
     sd_base = model_base.state_dict()
     
     logging.info("creating base model...")
@@ -94,7 +97,10 @@ def mix(
         config_base.torch_dtype = torch.float16
         config = MOE_CFG_CLS(
             num_local_experts= len(ingredients),
-            moe_query_head=True,
+            moe_mlp ="mlp" in modules_to_mix, 
+            moe_query="q_proj" in modules_to_mix,
+            moe_key = "k_proj" in modules_to_mix,
+            moe_value="v_proj" in modules_to_mix,
             num_experts_per_tok=num_experts_per_tok,
             attn_implementation="flash_attention_2",
             **config_base.to_dict()
@@ -285,10 +291,8 @@ if __name__ == "__main__":
         args.modules,
         args.positive_tokens
     )
-    
     tokenizer = AutoTokenizer.from_pretrained(args.model_path)
     model.save_pretrained(args.output_dir)
     tokenizer.save_pretrained(args.output_dir)
-    if isinstance(model, MixLlamaForCausalLM):
-        shutil.copy(modeling_mixllama.__file__, os.path.join(args.output_dir, os.path.basename(modeling_mixllama.__file__)))
-        shutil.copy(configuration_mixllama.__file__, os.path.join(args.output_dir, os.path.basename(configuration_mixllama.__file__)))
+    shutil.copy(modeling_mixllama.__file__, os.path.join(args.output_dir, os.path.basename(modeling_mixllama.__file__)))
+    shutil.copy(configuration_mixllama.__file__, os.path.join(args.output_dir, os.path.basename(configuration_mixllama.__file__)))
