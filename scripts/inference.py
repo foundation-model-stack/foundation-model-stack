@@ -190,7 +190,7 @@ max_len = max([len(prompt) for prompt in [prompt1, prompt2]])
 # ids = torch.stack((prompt2, prompt1), dim=0)
 
 # ids = prompt1.unsqueeze(0)
-ids = torch.randint(0, 32000, (256, 128), device=device)
+ids = torch.randint(0, 32000, (384, 128), device=device)
 
 def print_result(result):
     if local_rank != 0:

@@ -189,8 +189,8 @@ class MultiHeadAttention(nn.Module):
             attn_mask = mask
 
         queries_sdpa = queries.transpose(2, 1)  # / (self.emb_kq_per_head**(1/4))
-        keys_sdpa = keys.transpose(2, 1)  # / (self.emb_kq_per_head**(1/4))
-        values_sdpa = values.transpose(2, 1)  # compatible with QK.T
+        keys_sdpa = keys_c.transpose(2, 1)  # / (self.emb_kq_per_head**(1/4))
+        values_sdpa = values_c.transpose(2, 1)  # compatible with QK.T
 
         # Expand kv so black-box attn will work
         expansion = self.nheads // self.kvheads
