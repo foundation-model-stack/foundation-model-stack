@@ -9,9 +9,11 @@ from typing import List, Optional, Tuple
 
 def scan(state, g):
     # state: b n d h
-    # g: 1/b n h h
+    # g: 1/b n/f h h
     state = state.clone()
     g = g.clone()
+    f = state.size(1) // g.size(1)
+    g = g.repeat(1,f,1,1)  # 1/b n h h
     s = state.size()
     g0 = g.size(0)
     logl = s[1].bit_length() - 1
@@ -405,7 +407,7 @@ class ScanCacheAttention(nn.Module):
         # k/v: b l h d
         keys = keys.view(batch_size, kv_len, -1)
         values = values.view(batch_size, kv_len, -1)
-        gate = self.gates.repeat(4,1,1)[None]  # 1 4096 32 32
+        gate = self.gates[None]  # 1 1024 32 32
         # gate = self.gates[None,None]  # 1 1 32 32
         # gate = gate.expand(batch_size, kv_len, -1, -1)  # b l 32 32
         keys = keys.unsqueeze(3)  # b l d 1
