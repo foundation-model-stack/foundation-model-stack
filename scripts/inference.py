@@ -116,7 +116,6 @@ else:
         distr_param = "mp"
     else:
         distr_param = None
-torch.cuda.memory._record_memory_history(max_entries=100000)
 model = get_model(
     args.architecture,
     args.variant,
@@ -139,6 +138,7 @@ if args.compile:
     # compiling can make first inference pass slow
     # torch._inductor.config.allow_buffer_reuse = False
     torch._inductor.config.fx_graph_cache = True
+    torch._inductor.config.coordinate_descent_tuning = True
     prefill_model = torch.compile(model, fullgraph=True)
     decode_model = torch.compile(model, mode=args.compile_mode, fullgraph=True)
 
@@ -240,4 +240,3 @@ for sample, cache in itertools.product(do_sample, use_cache):
     infer(cache, sample)
     infer(cache, sample)
     infer(cache, sample)
-torch.cuda.memory._dump_snapshot("./memory_prof.pck")
