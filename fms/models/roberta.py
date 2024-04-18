@@ -337,5 +337,4 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping[Any, Any]) -> Mapping[Any, Any]:
 
 
 serialization.register_adapter("roberta", "hf", _hf_sd_to_fms_sd)
-
 serialization.register_adapter("roberta", "fms.v0.0.4", _convert_fused_qkv_0_0_4)
