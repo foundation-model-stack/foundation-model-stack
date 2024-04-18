@@ -13,7 +13,6 @@ from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
 
 from fms import datasets, models
-from fms.models.hf.utils import to_hf_api
 from fms.training import plugins as trainplugins
 from fms.training import trainer
 from fms.utils import print0, tokenizers
@@ -219,12 +218,13 @@ def peft_model(model):
     requires some care. The state_dict will also contain all paramters, not
     just the adapter, though we plan to use merged tuned models for now.
     """
-    from fms.models.hf.llama.modeling_llama_hf import HFAdaptedLLaMAForCausalLM
-
-    model = to_hf_api(model)
     from peft import LoraConfig, get_peft_config, get_peft_model
     from peft.mapping import PeftModelForCausalLM
 
+    from fms.models.hf.llama.modeling_llama_hf import HFAdaptedLLaMAForCausalLM
+    from fms.models.hf.utils import to_hf_api
+
+    model = to_hf_api(model)
     lora_config = LoraConfig(
         r=8,
         lora_alpha=32,
