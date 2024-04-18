@@ -467,4 +467,4 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
     return new_sd
 
 
-serialization.register_adapter(_architecture_name, "hf.v0.0.1", _hf_sd_to_fms_sd)
+serialization.register_adapter(_architecture_name, "hf", _hf_sd_to_fms_sd)

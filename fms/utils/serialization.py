@@ -76,12 +76,17 @@ def _get_adapter(
     ):
         # if no adapter is registered, assume the attributes are already in proper fms format
         return lambda x: x
+    elif source in __adapters[architecture]:
+        # if a standard source without a version is an adapter, just use it and ignore versioning
+        return __adapters[architecture][source]
     else:
+        # use versioning with source
         versions = []
         for k in __adapters[architecture].keys():
             matched_pattern = re.match(version_pattern, k)
             if matched_pattern is not None and k != source:
                 versions.append(k[len(source) + 2 :])
+
         versions.sort(key=Version)
 
         def iter_adapter_func(sd):

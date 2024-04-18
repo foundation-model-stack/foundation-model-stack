@@ -332,4 +332,4 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping[Any, Any]) -> Mapping[Any, Any]:
     return new_sd
 
 
-serialization.register_adapter("roberta", "hf.v0.0.1", _hf_sd_to_fms_sd)
+serialization.register_adapter("roberta", "hf", _hf_sd_to_fms_sd)
