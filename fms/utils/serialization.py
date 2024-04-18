@@ -113,16 +113,71 @@ def _legacy_attn_unfused_to_fused_weight_conversion(
     return None
 
 
+def _legacy_mlp_glu_unfused_to_fused_weight_conversion(
+    name: str, orig_sd: Mapping
+) -> Optional[Tuple[str, torch.Tensor]]:
+    """
+    function which converts unfused fms GLU weights to fused fms weights in the case the model was using the older
+    unfused weights (version 0.0.3)
+
+    Args:
+        name: str
+            current name to convert
+        orig_sd: Mapping
+            a mapping from a name to a param, in most cases will be a singleton, however when
+
+    Returns:
+    Optional[Tuple[str, torch.Tensor]]
+        if wg/w1 all exist in the given state dict, a tuple of the new fused name as well as weights will be
+        returned from this function
+        if one of wg or w1 exists in state dict (not all together), a FusableWeightsMissingError will be
+        raised with the weights that are missing
+        otherwise this function will return None signifying that no preprocessing needed to be done for this name param
+    """
+    if (
+        "ff_sub_layer.wg_fused" not in name
+        and "ff_sub_layer.wg" in name
+        or "ff_sub_layer.w1" in name
+    ):
+        weight_type = name.split(".")[-1]
+
+        unfused_weights = [
+            re.sub(
+                rf"ff_sub_layer.(wg|w1).{weight_type}",
+                f"ff_sub_layer.wg.{weight_type}",
+                name,
+            ),
+            re.sub(
+                rf"ff_sub_layer.(wg|w1).{weight_type}",
+                f"ff_sub_layer.w1.{weight_type}",
+                name,
+            ),
+        ]
+
+        result = (
+            re.sub(
+                rf"ff_sub_layer.(w1|wg).{weight_type}",
+                f"ff_sub_layer.wg_fused.{weight_type}",
+                name,
+            ),
+            torch.cat([orig_sd[w] for w in unfused_weights], dim=0),
+        )
+        return result
+    return None
+
+
 def simple_mapping(
     orig_sd: Mapping,
-    mapper: Callable[[str, Mapping], Optional[Tuple[str, torch.Tensor]]],
+    mappers: List[Callable[[str, Mapping], Optional[Tuple[str, torch.Tensor]]]],
 ) -> Mapping:
     new_sd = {}
     for name, param in orig_sd.items():
-        mapper_out = mapper(name, orig_sd)
+        for mapper in mappers:
+            mapper_out = mapper(name, orig_sd)
 
-        if mapper_out is not None:
-            name, param = mapper_out
+            if mapper_out is not None:
+                name, param = mapper_out
+                break
 
         new_sd[name] = param
 

@@ -398,7 +398,7 @@ models.register_model(
 )
 
 _convert_fused_qkv_0_0_4 = lambda sd: serialization.simple_mapping(
-    sd, serialization._legacy_attn_unfused_to_fused_weight_conversion
+    sd, [serialization._legacy_attn_unfused_to_fused_weight_conversion]
 )
 
 
