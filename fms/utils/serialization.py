@@ -239,14 +239,6 @@ def _load_safetensors_state_dict(
     return sd
 
 
-class FusableWeightsMissingError(Exception):
-    missing_weights: List[str] = []
-
-    def __init__(self, missing_weights):
-        self.missing_weights = missing_weights
-        super().__init__()
-
-
 def load_state_dict_into_model(
     model: torch.nn.Module,
     state_dict: MutableMapping[str, Any],
@@ -286,39 +278,12 @@ def load_state_dict_into_model(
     # 2. Decide if model needs sharding and how (for now only TP)
     needs_tp_sharding = checkpoint_sharding != "tp" and distributed_strategy == "tp"
 
-    # 3. Iterate over the weights and load them into the model
-    used_keys = set()
-    sd_keys = list(state_dict.keys())
+    # 3. Adapt the model weights and load the weights into the model
     with torch.no_grad():
-        for key in sd_keys:
-            if key in used_keys:
-                continue
-            used_keys.add(key)
-            try:
-                partial_sd = {key: state_dict[key]}
-                if partial_sd[key].device != initial_device:
-                    partial_sd[key] = partial_sd[key].to(device=initial_device)
-                fms_partial_sd = adapter(partial_sd)
-            except FusableWeightsMissingError as e:
-                for weight in e.missing_weights:
-                    used_keys.add(weight)
-                    partial_sd[weight] = state_dict[weight]
-                    if partial_sd[weight].device != initial_device:
-                        partial_sd[weight] = partial_sd[weight].to(
-                            device=initial_device
-                        )
-                fms_partial_sd = adapter(partial_sd)
-            _load_partial_state_dict(
-                model, fms_partial_sd, needs_tp_sharding, rank, world_size
-            )
-            for p_key in partial_sd.keys():
-                if isinstance(state_dict, ChainMap):
-                    for child_sd in state_dict.maps:
-                        child_sd.pop(p_key, None)
-                else:
-                    state_dict.pop(p_key)
-            del partial_sd
-            del fms_partial_sd
+        adapted_state_dict = adapter(state_dict)
+        _load_partial_state_dict(
+            model, adapted_state_dict, needs_tp_sharding, rank, world_size
+        )
 
 
 def _copy_colwise(param: torch.nn.Parameter, tensor_value, is_bias, rank, world_size):
