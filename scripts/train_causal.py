@@ -221,7 +221,6 @@ def peft_model(model):
     from peft import LoraConfig, get_peft_config, get_peft_model
     from peft.mapping import PeftModelForCausalLM
 
-    from fms.models.hf.llama.modeling_llama_hf import HFAdaptedLLaMAForCausalLM
     from fms.models.hf.utils import to_hf_api
 
     model = to_hf_api(model)
