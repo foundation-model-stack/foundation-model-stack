@@ -57,6 +57,78 @@ def list_sources(architecture: str):
     return list(__adapters[architecture].keys())
 
 
+def _legacy_attn_unfused_to_fused_weight_conversion(
+    name: str, orig_sd: Mapping
+) -> Optional[Tuple[str, torch.Tensor]]:
+    """
+    function which converts unfused fms weights to fused fms weights in the case the model was using the older unfused
+    weights (version 0.0.3)
+
+    Args:
+        name: str
+            current name to convert
+        orig_sd: Mapping
+            a mapping from a name to a param, in most cases will be a singleton, however when
+
+    Returns:
+    Optional[Tuple[str, torch.Tensor]]
+        if query/key/value all exist in the given state dict, a tuple of the new fused name as well as weights will be
+        returned from this function
+        if one of query, key, or value exists in state dict (not all together), a FusableWeightsMissingError will be
+        raised with the weights that are missing
+        otherwise this function will return None signifying that no preprocessing needed to be done for this name param
+    """
+    # if we find query/key/value, this means the weights are unfused and therefore need to be fused
+    if "attn.query" in name or "attn.key" in name or "attn.value" in name:
+        weight_type = name.split(".")[-1]
+
+        unfused_weights = [
+            re.sub(
+                rf"attn.(query|key|value).{weight_type}",
+                f"attn.query.{weight_type}",
+                name,
+            ),
+            re.sub(
+                rf"attn.(query|key|value).{weight_type}",
+                f"attn.key.{weight_type}",
+                name,
+            ),
+            re.sub(
+                rf"attn.(query|key|value).{weight_type}",
+                f"attn.value.{weight_type}",
+                name,
+            ),
+        ]
+
+        result = (
+            re.sub(
+                rf"attn.(query|key|value).{weight_type}",
+                f"attn.in_proj.qkv_fused.{weight_type}",
+                name,
+            ),
+            torch.cat([orig_sd[w] for w in unfused_weights], dim=0),
+        )
+
+        return result
+    return None
+
+
+def simple_mapping(
+    orig_sd: Mapping,
+    mapper: Callable[[str, Mapping], Optional[Tuple[str, torch.Tensor]]],
+) -> Mapping:
+    new_sd = {}
+    for name, param in orig_sd.items():
+        mapper_out = mapper(name, orig_sd)
+
+        if mapper_out is not None:
+            name, param = mapper_out
+
+        new_sd[name] = param
+
+    return new_sd
+
+
 def _get_adapter(
     architecture: str, source: Optional[str]
 ) -> Callable[[Mapping[str, Any]], Mapping[str, Any]]:
@@ -76,12 +148,17 @@ def _get_adapter(
     ):
         # if no adapter is registered, assume the attributes are already in proper fms format
         return lambda x: x
+    elif source in __adapters[architecture]:
+        # if a standard source without a version is an adapter, just use it and ignore versioning
+        return __adapters[architecture][source]
     else:
+        # use versioning with source
         versions = []
         for k in __adapters[architecture].keys():
             matched_pattern = re.match(version_pattern, k)
             if matched_pattern is not None and k != source:
                 versions.append(k[len(source) + 2 :])
+
         versions.sort(key=Version)
 
         def iter_adapter_func(sd):
