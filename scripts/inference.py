@@ -2,10 +2,12 @@ import argparse
 import itertools
 import logging
 import os
-from re import M
+import random
 
+import numpy as np
 import torch
 import torch._inductor.config
+import torch._dynamo.config
 from torch import distributed as dist
 
 from fms.models import get_model
@@ -67,7 +69,7 @@ parser.add_argument(
     type=str,
     help="Mode for compilation",
     default="default",
-    choices=["default", "reduce-overhead"],
+    choices=["default", "reduce-overhead", "max-autotune"],
 )
 parser.add_argument(
     "--deterministic",
@@ -95,6 +97,10 @@ torch.set_default_dtype(torch.bfloat16)
 
 # requires setting environment variable: `CUBLAS_WORKSPACE_CONFIG=:4096:8`
 if args.deterministic:
+    SEED = 42
+    random.seed(SEED)
+    torch.manual_seed(SEED)  # pytorch random seed
+    np.random.seed(SEED)  # numpy random seed
     torch.use_deterministic_algorithms(True)
 
 if args.distributed:
@@ -110,7 +116,7 @@ else:
         distr_param = "mp"
     else:
         distr_param = None
-
+torch.cuda.memory._record_memory_history(max_entries=100000)
 model = get_model(
     args.architecture,
     args.variant,
@@ -132,6 +138,7 @@ if args.compile:
     print("compiling model")
     # compiling can make first inference pass slow
     # torch._inductor.config.allow_buffer_reuse = False
+    torch._inductor.config.fx_graph_cache = True
     prefill_model = torch.compile(model, fullgraph=True)
     decode_model = torch.compile(model, mode=args.compile_mode, fullgraph=True)
 
@@ -183,7 +190,7 @@ max_len = max([len(prompt) for prompt in [prompt1, prompt2]])
 # ids = torch.stack((prompt2, prompt1), dim=0)
 
 # ids = prompt1.unsqueeze(0)
-ids = torch.randint(0, 32000, (1, 1024), device=device)
+ids = torch.randint(0, 32000, (256, 128), device=device)
 
 def print_result(result):
     if local_rank != 0:
@@ -232,3 +239,5 @@ use_cache = [
 for sample, cache in itertools.product(do_sample, use_cache):
     infer(cache, sample)
     infer(cache, sample)
+    infer(cache, sample)
+torch.cuda.memory._dump_snapshot("./memory_prof.pck")
