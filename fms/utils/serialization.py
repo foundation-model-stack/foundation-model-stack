@@ -1,11 +1,13 @@
 import collections
 import os
+import re
 from collections import ChainMap
 from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Callable, List, Mapping, MutableMapping, Optional, Union
+from typing import Any, Callable, List, Mapping, MutableMapping, Optional, Tuple, Union
 
 import torch
+from packaging.version import Version
 
 from fms.modules.tp import TPModule
 
@@ -58,17 +60,37 @@ def list_sources(architecture: str):
 def _get_adapter(
     architecture: str, source: Optional[str]
 ) -> Callable[[Mapping[str, Any]], Mapping[str, Any]]:
+    if source is None:
+        source = "fms"
+
+    version_pattern = re.compile(
+        f"{source}(\.v[0-9]+((\.[0-9]+\.[0-9]+)|(\.[0-9]+)))?$"
+    )
     if (
-        source is None
+        source == "fms"
         or architecture not in __adapters
-        or source not in __adapters[architecture]
+        or all(
+            re.match(version_pattern, k) is None
+            for k in __adapters[architecture].keys()
+        )
     ):
-        # if no adapter is registered, assume the attributes are already in
-        # fms format.
-        # should we raise an error here instead?
+        # if no adapter is registered, assume the attributes are already in proper fms format
         return lambda x: x
     else:
-        return __adapters[architecture][source]
+        versions = []
+        for k in __adapters[architecture].keys():
+            matched_pattern = re.match(version_pattern, k)
+            if matched_pattern is not None and k != source:
+                versions.append(k[len(source) + 2 :])
+        versions.sort(key=Version)
+
+        def iter_adapter_func(sd):
+            result_sd = sd
+            for version in versions:
+                result_sd = __adapters[architecture][f"{source}.v{version}"](result_sd)
+            return result_sd
+
+        return iter_adapter_func
 
 
 def get_adapted(
