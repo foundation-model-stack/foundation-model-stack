@@ -403,8 +403,8 @@ models.register_model(_architecture_name, "7b", _llama_factory_factory(_7b_confi
 models.register_model(_architecture_name, "13b", _llama_factory_factory(_13b_config))
 models.register_model(_architecture_name, "70b", _llama_factory_factory(_70b_config))
 
-_convert_fused_qkv_0_0_4 = lambda sd: serialization.simple_mapping(
-    sd, serialization._legacy_attn_unfused_to_fused_weight_conversion
+_convert_fused_qkv_0_0_4 = serialization.simple_mapping_adapter(
+    [serialization._legacy_attn_unfused_to_fused_weight_conversion]
 )
 
 

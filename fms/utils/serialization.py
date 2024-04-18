@@ -4,15 +4,27 @@ import re
 from collections import ChainMap
 from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Callable, List, Mapping, MutableMapping, Optional, Tuple, Union
+from typing import (
+    Any,
+    Callable,
+    List,
+    Mapping,
+    MutableMapping,
+    Optional,
+    Set,
+    Tuple,
+    Union,
+)
 
 import torch
-from packaging.version import Version
 
 from fms.modules.tp import TPModule
 
 
 __adapters: MutableMapping[str, MutableMapping[str, Callable[[Mapping], Mapping]]] = {}
+__find_neighbors_funcs: MutableMapping[
+    str, MutableMapping[str, Callable[[str, Set[str]], List[str]]]
+] = {}
 
 
 def register_adapter(
@@ -113,61 +125,57 @@ def _legacy_attn_unfused_to_fused_weight_conversion(
     return None
 
 
-def simple_mapping(
-    orig_sd: Mapping,
-    mapper: Callable[[str, Mapping], Optional[Tuple[str, torch.Tensor]]],
-) -> Mapping:
-    new_sd = {}
-    for name, param in orig_sd.items():
-        mapper_out = mapper(name, orig_sd)
+def simple_mapping_adapter(
+    mappers: List[Callable[[str, Mapping], Optional[Tuple[str, torch.Tensor]]]],
+) -> Callable[[Mapping], Mapping]:
+    """
+    Create a simple adapter mapping using a mapper function. This function will iterate through the items in a
+    state_dict and execute the mapper on each key. This function could be used for versioning, where each version
+    requires a new mapping from the previous version.
 
-        if mapper_out is not None:
-            name, param = mapper_out
+    Parameters
+    ----------
+    mappers: List[Callable[[str, Mapping], Optional[Tuple[str, torch.Tensor]]]]
+        a list of function which given a param key and the original state dict, will optionally return the new name and param
+        to be set in the new state dict. If None is returned, no change will be made in the current iteration
 
-        new_sd[name] = param
+    Returns
+    -------
+    Callable[[Mapping], Mapping]
+        the adapter function which gets the new state dict with the items re-mapped
+    """
 
-    return new_sd
+    def mapping_adapter_func(orig_sd):
+        new_sd = {}
+        for name, param in orig_sd.items():
+            for mapper in mappers:
+                mapper_out = mapper(name, orig_sd)
+
+                if mapper_out is not None:
+                    name, param = mapper_out
+                    break
+
+            new_sd[name] = param
+
+        return new_sd
+
+    return mapping_adapter_func
 
 
 def _get_adapter(
     architecture: str, source: Optional[str]
 ) -> Callable[[Mapping[str, Any]], Mapping[str, Any]]:
-    if source is None:
-        source = "fms"
-
-    version_pattern = re.compile(
-        f"{source}(\.v[0-9]+((\.[0-9]+\.[0-9]+)|(\.[0-9]+)))?$"
-    )
     if (
-        source == "fms"
+        source is None
         or architecture not in __adapters
-        or all(
-            re.match(version_pattern, k) is None
-            for k in __adapters[architecture].keys()
-        )
+        or source not in __adapters[architecture]
     ):
-        # if no adapter is registered, assume the attributes are already in proper fms format
+        # if no adapter is registered, assume the attributes are already in
+        # fms format.
+        # should we raise an error here instead?
         return lambda x: x
-    elif source in __adapters[architecture]:
-        # if a standard source without a version is an adapter, just use it and ignore versioning
-        return __adapters[architecture][source]
     else:
-        # use versioning with source
-        versions = []
-        for k in __adapters[architecture].keys():
-            matched_pattern = re.match(version_pattern, k)
-            if matched_pattern is not None and k != source:
-                versions.append(k[len(source) + 2 :])
-
-        versions.sort(key=Version)
-
-        def iter_adapter_func(sd):
-            result_sd = sd
-            for version in versions:
-                result_sd = __adapters[architecture][f"{source}.v{version}"](result_sd)
-            return result_sd
-
-        return iter_adapter_func
+        return __adapters[architecture][source]
 
 
 def get_adapted(
@@ -338,6 +346,69 @@ def _load_safetensors_state_dict(
     return sd
 
 
+def register_find_neighbors_func(
+    architecture: str,
+    source: str,
+    find_neighbors_func: Callable[[str, Set[str]], List[str]],
+):
+    """
+    Registers a function to find neighbors of a key in a state dict
+
+    Args:
+    architecture: The name of the model architecture, e.g. 'llama'
+    source: A label representing the format of the weights to be converted.
+            E.g. 'hf'
+    find_neighbors_func: the finding function. It takes a key and a set of
+            keys in a state dict, and returns a list of neighboring keys.
+    """
+    sources: MutableMapping[str, Callable[[str, Set[str]], List[str]]] = {}
+    if architecture in __find_neighbors_funcs:
+        sources = __find_neighbors_funcs[architecture]
+
+    if source in sources:
+        raise KeyError(
+            f"Variant {source} already registered for architecture {architecture}"
+        )
+
+    sources[source] = find_neighbors_func
+    __find_neighbors_funcs[architecture] = sources
+
+
+def _get_find_neighbors_func(architecture, source):
+    if (
+        architecture in __find_neighbors_funcs
+        and source in __find_neighbors_funcs[architecture]
+    ):
+        return __find_neighbors_funcs[architecture][source]
+    return None
+
+
+def _find_key_neighbors(key: str, sd_keys: Set[str], architecture: str, source: str):
+    # If arch + source have a custom architecture,
+    # users can define their own way of finding neighbors,
+    # otherwise assume standard model and find neighbors
+    if _get_find_neighbors_func(architecture, source) != None:
+        return _get_find_neighbors_func(architecture, source)(key, sd_keys)
+
+    # For loading most models that concern us, a good partition is the
+    # one used for FSDP units: everything that is in a layer can
+    # go together and memory usage will be keep in control
+    key_steps = key.split(".")
+    prefix = ""
+    # Navigate the model tree to find a layer index. If not found,
+    # grab that weight alone
+    for idx, step in enumerate(key_steps):
+        prefix = ".".join(key_steps[: idx + 1])
+        if step.isnumeric():
+            prefix += "."
+            break
+    prefix_neighbors = set()
+    for key_in_sd in sd_keys:
+        if prefix in key_in_sd:
+            prefix_neighbors.add(key_in_sd)
+    return list(prefix_neighbors)
+
+
 def load_state_dict_into_model(
     model: torch.nn.Module,
     state_dict: MutableMapping[str, Any],
@@ -377,12 +448,41 @@ def load_state_dict_into_model(
     # 2. Decide if model needs sharding and how (for now only TP)
     needs_tp_sharding = checkpoint_sharding != "tp" and distributed_strategy == "tp"
 
-    # 3. Adapt the model weights and load the weights into the model
+    # 3. Iterate over the weights and load them into the model
+    used_keys = set()
+    sd_keys = set(state_dict.keys())
+
     with torch.no_grad():
-        adapted_state_dict = adapter(state_dict)
-        _load_partial_state_dict(
-            model, adapted_state_dict, needs_tp_sharding, rank, world_size
-        )
+        for key in sd_keys:
+            if key in used_keys:
+                continue
+            used_keys.add(key)
+
+            partial_sd = {key: state_dict[key]}
+            # Find neighbors to the key. If the adapter requires a neighbor and
+            # this function doesn't find it, it will crash. Users can define their
+            # own finding function if ours is not enough for a really custom arch
+            remaining_keys = sd_keys.difference(used_keys)
+            neighbors = _find_key_neighbors(key, remaining_keys, architecture, source)
+            for neighbor in neighbors:
+                partial_sd[neighbor] = state_dict[neighbor]
+                used_keys.add(neighbor)
+            for psd_key in partial_sd.keys():
+                if partial_sd[psd_key].device != initial_device:
+                    partial_sd[psd_key] = partial_sd[psd_key].to(device=initial_device)
+            fms_partial_sd = adapter(partial_sd)
+            _load_partial_state_dict(
+                model, fms_partial_sd, needs_tp_sharding, rank, world_size
+            )
+            # Be aggressive in removing weights to save as much memory as possible
+            for p_key in partial_sd.keys():
+                if isinstance(state_dict, ChainMap):
+                    for child_sd in state_dict.maps:
+                        child_sd.pop(p_key, None)
+                else:
+                    state_dict.pop(p_key)
+            del partial_sd
+            del fms_partial_sd
 
 
 def _copy_colwise(param: torch.nn.Parameter, tensor_value, is_bias, rank, world_size):

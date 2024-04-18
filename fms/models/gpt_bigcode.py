@@ -397,8 +397,8 @@ models.register_model(
     _architecture_name, "ibm.20b", _gpt_bigcode_factory_factory(_20b_config)
 )
 
-_convert_fused_qkv_0_0_4 = lambda sd: serialization.simple_mapping(
-    sd, serialization._legacy_attn_unfused_to_fused_weight_conversion
+_convert_fused_qkv_0_0_4 = serialization.simple_mapping_adapter(
+    [serialization._legacy_attn_unfused_to_fused_weight_conversion]
 )
 
 
