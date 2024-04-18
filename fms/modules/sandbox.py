@@ -57,8 +57,10 @@ class MatScan(torch.autograd.Function):
         gate = ctx.saved_tensors[0]
 
         # Gate-accumulate grads
-        gflip = gate.flip([1]).transpose(2,3)
-        gatesum = scan(grad.flip([1]), gflip.roll(1, dims=1)).flip([1])  # b n d h
+        gate = gate.flip([1]).transpose(2,3)
+        grad = grad.flip([1])
+        del ctx
+        gatesum = scan(grad, gate.roll(1, dims=1)).flip([1])  # b n d h
 
         return gatesum, None
 
