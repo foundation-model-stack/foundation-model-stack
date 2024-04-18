@@ -1,7 +1,9 @@
 import argparse
 import itertools
 import os
+import random
 
+import numpy as np
 import torch
 import torch._inductor.config
 from torch import distributed as dist
@@ -93,6 +95,10 @@ torch.set_default_dtype(torch.bfloat16)
 
 # requires setting environment variable: `CUBLAS_WORKSPACE_CONFIG=:4096:8`
 if args.deterministic:
+    SEED = 42
+    random.seed(SEED)
+    torch.manual_seed(SEED)  # pytorch random seed
+    np.random.seed(SEED)  # numpy random seed
     torch.use_deterministic_algorithms(True)
 
 if args.distributed:
