@@ -246,6 +246,40 @@ class LLaMA(nn.Module):
             ):
                 m.reset_parameters()
 
+    def validate_reset_parameters(self):
+        # Verifies that the above self.reset_parameters() executed correctly.
+        # This may not always be the case for distributed settings with sharded tensors,
+        # such as FSDP or TP. Note that performing this check may require unsharding /
+        # re-materializing the full model on a single rank to access the underlying tensors.
+        tolerance = 1e-3
+
+        def check_close(x):
+            assert x.mean().abs() < tolerance
+            assert x.std().sub(0.02).abs() < tolerance
+
+        with torch.no_grad():
+            for p in self.parameters():
+                assert p.isnan().int().sum() == 0
+                assert p.isinf().int().sum() == 0
+            for m in self.modules():
+                if isinstance(LayerNormParameterized):
+                    if m.elementwise_scale:
+                        assert m.weight.sum() == m.weight.numel()
+                    if m.elementwise_shift:
+                        assert m.bias.add(1).sum() == m.bias.numel()
+                elif isinstance(WordEmbedding):
+                    check_close(m.emb.weight)
+                    check_close(m.head.weight)
+                elif isinstance(GatedLinearUnit):
+                    check_close(m.w1.weight)
+                    check_close(m.w2.weight)
+                    check_close(m.wg.weight)
+                elif isinstance(MultiHeadAttention):
+                    check_close(m.query.weight)
+                    check_close(m.key.weight)
+                    check_close(m.value.weight)
+                    check_close(m.dense.weight)
+
     def _helper(
         self,
         x_in,
