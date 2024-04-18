@@ -87,13 +87,14 @@ class LLaMA2HFFixtures(ModelFixtureMixin, HFConfigFixtureMixin, HFModelFixtureMi
                 fms_hf_layer = fms_hf_model.decoder.model.layers[i]
 
                 # self attn
-                oss_hf_layer.self_attn.q_proj.weight.copy_(
-                    fms_hf_layer.attn.query.weight
+                q, k, v = torch.split(
+                    fms_hf_layer.attn.in_proj.qkv_fused.weight,
+                    fms_hf_layer.attn.in_proj.splits,
+                    dim=0,
                 )
-                oss_hf_layer.self_attn.k_proj.weight.copy_(fms_hf_layer.attn.key.weight)
-                oss_hf_layer.self_attn.v_proj.weight.copy_(
-                    fms_hf_layer.attn.value.weight
-                )
+                oss_hf_layer.self_attn.q_proj.weight.copy_(q)
+                oss_hf_layer.self_attn.k_proj.weight.copy_(k)
+                oss_hf_layer.self_attn.v_proj.weight.copy_(v)
                 oss_hf_layer.self_attn.o_proj.weight.copy_(
                     fms_hf_layer.attn.dense.weight
                 )
