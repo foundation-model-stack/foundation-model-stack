@@ -11,7 +11,6 @@ from fms.modules.feedforward import FeedForwardBlock
 from fms.utils import serialization
 from fms.utils.activation import str_to_activation
 from fms.utils.config import ModelConfig
-from fms.utils.serialization import FusableWeightsMissingError
 
 
 @dataclass
@@ -419,11 +418,6 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
 
         # qkv fused
         if bool(qkv_weight_pattern.match(name)):
-            bias_name = name.replace("weight", "bias")
-            if bias_name not in hf_sd:
-                raise FusableWeightsMissingError([bias_name])
-            new_sd.pop(new_name)
-
             emb_dim = param.size(1)
             num_heads = emb_dim // 128
             num_key_value_heads = (param.size(0) // 128 - num_heads) // 2
@@ -441,8 +435,6 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
             new_sd[f"{prefix}value.weight"] = v
         elif bool(qkv_bias_pattern.match(name)):
             weight_name = name.replace("bias", "weight")
-            if weight_name not in hf_sd:
-                raise FusableWeightsMissingError([weight_name])
             new_sd.pop(new_name)
 
             emb_dim = hf_sd[weight_name].size(1)
