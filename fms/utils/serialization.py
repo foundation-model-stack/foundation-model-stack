@@ -310,7 +310,10 @@ def load_state_dict_into_model(
 
             partial_sd = {key: state_dict[key]}
             # Find neighbors to the key. If the adapter requires a neighbor and
-            # this function doesn't find it, it will crash.
+            # this function doesn't find it, it will crash. This is useful when
+            # adapters merge multiple weights into one, e.g. if the source state
+            # dict has unfused q,k,v projections and your model has fused qkv, you
+            # want your partial_sd to have the three weights available at a time
             remaining_keys = sd_keys.difference(used_keys)
             neighbors = _find_key_neighbors(key, remaining_keys)
             for neighbor in neighbors:
