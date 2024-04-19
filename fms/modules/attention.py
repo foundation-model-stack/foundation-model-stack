@@ -449,7 +449,11 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
     def colwise_params(self) -> Dict[str, List[int]]:
         if self.fused:
             return {
-                "qkv_fused": [self.pre_tp_nheads, self.pre_tp_kvheads, self.pre_tp_kvheads]
+                "qkv_fused": [
+                    self.pre_tp_nheads,
+                    self.pre_tp_kvheads,
+                    self.pre_tp_kvheads,
+                ]
             }
         else:
             return {
