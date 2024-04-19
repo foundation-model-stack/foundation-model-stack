@@ -294,8 +294,8 @@ models.register_model(
     _architecture_name, "base", _roberta_factory_factory(_base_config)
 )
 
-_convert_fused_qkv_0_0_4 = lambda sd: serialization.simple_mapping(
-    sd, [serialization._legacy_attn_unfused_to_fused_weight_conversion]
+__v0_0_4_adapter = serialization.simple_mapping_adapter(
+    [serialization._legacy_attn_unfused_to_fused_weight_conversion]
 )
 
 
@@ -331,10 +331,10 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping[Any, Any]) -> Mapping[Any, Any]:
         if name == "roberta.embeddings.position_embeddings.weight":
             new_sd[new_name] = new_sd[new_name][2:]
 
-    fused_sd = _convert_fused_qkv_0_0_4(new_sd)
+    fused_sd = __v0_0_4_adapter(new_sd)
 
     return fused_sd
 
 
 serialization.register_adapter("roberta", "hf", _hf_sd_to_fms_sd)
-serialization.register_adapter("roberta", "fms.v0.0.4", _convert_fused_qkv_0_0_4)
+serialization.register_adapter("roberta", "fms.v0.0.4", __v0_0_4_adapter)
