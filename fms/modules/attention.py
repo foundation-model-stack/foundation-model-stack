@@ -1,5 +1,5 @@
 import abc
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import torch
 import torch.distributed
@@ -427,36 +427,45 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
         assert torch.distributed.is_initialized()
 
         rank, world_size = distributed.rank_and_world(group)
-        assert (
-            nheads % world_size == 0
-        ), "The number of heads must be divisible by world size"
+        assert nheads % world_size == 0 and (
+            kvheads % world_size == 0 or world_size % kvheads == 0
+        ), "The number of heads must be divisible by world size or the world size must be a multiple of kv heads"
         MultiHeadAttention.__init__(
             self,
             emb_dim,
             emb_kq,
             emb_v,
             nheads // world_size,
-            (kvheads // world_size) if kvheads > 1 else kvheads,
+            (kvheads // world_size) if kvheads >= world_size else 1,
             p_dropout,
             use_bias,
             position_encoder,
             fused,
         )
+        self.pre_tp_nheads = nheads
         self.pre_tp_kvheads = kvheads
         self.setup_tp(rank, world_size)
 
-    def colwise_param_names(self) -> List[str]:
+    def colwise_params(self) -> Dict[str, List[int]]:
         if self.fused:
-            colwise_weights = ["qkv_fused"]
+            return {
+                "qkv_fused": [
+                    self.pre_tp_nheads,
+                    self.pre_tp_kvheads,
+                    self.pre_tp_kvheads,
+                ]
+            }
         else:
-            colwise_weights = ["query"]
-            if self.pre_tp_kvheads != 1:
-                colwise_weights.append("key")
-                colwise_weights.append("value")
-        return colwise_weights
+            return {
+                "query": [
+                    self.pre_tp_nheads
+                ],  # this number will signify the largest world size til we need to duplicate. For instance if we have nheads=16 and world_size=32, then first 2 ranks will get first 1/16th of query
+                "key": [self.pre_tp_kvheads],
+                "value": [self.pre_tp_kvheads],
+            }
 
-    def rowwise_param_names(self) -> List[str]:
-        return ["dense"]
+    def rowwise_params(self) -> Dict[str, List[int]]:
+        return {"dense": [self.world_size]}
 
     @staticmethod
     def import_module(
