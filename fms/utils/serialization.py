@@ -395,14 +395,20 @@ def _copy_colwise(
             [
                 tensor_value[
                     (rank // max(1, world_size // replication))
-                    * output_size_per_partition
+                    * (
+                        output_size_per_partition
+                        * (max_partition_sizes[i] // min_partition_size)
+                    )
                     + (
                         cusum_max_partition_sizes[i]
                         * tensor_value.shape[0]
                         // cusum_max_partition_sizes[-1]
                     ) : (
                         ((rank // max(1, world_size // replication)) + 1)
-                        * output_size_per_partition
+                        * (
+                            output_size_per_partition
+                            * (max_partition_sizes[i] // min_partition_size)
+                        )
                         + (
                             cusum_max_partition_sizes[i]
                             * tensor_value.shape[0]
@@ -420,14 +426,20 @@ def _copy_colwise(
             [
                 tensor_value[
                     (rank // max(1, world_size // replication))
-                    * output_size_per_partition
+                    * (
+                        output_size_per_partition
+                        * (max_partition_sizes[i] // min_partition_size)
+                    )
                     + (
                         cusum_max_partition_sizes[i]
                         * tensor_value.shape[0]
                         // cusum_max_partition_sizes[-1]
                     ) : (
                         ((rank // max(1, world_size // replication)) + 1)
-                        * output_size_per_partition
+                        * (
+                            output_size_per_partition
+                            * (max_partition_sizes[i] // min_partition_size)
+                        )
                         + (
                             cusum_max_partition_sizes[i]
                             * tensor_value.shape[0]
@@ -504,14 +516,20 @@ def _copy_rowwise(
                 tensor_value[
                     :,
                     (rank // max(1, world_size // replication))
-                    * output_size_per_partition
+                    * (
+                        output_size_per_partition
+                        * (max_partition_sizes[i] // min_partition_size)
+                    )
                     + (
                         cusum_max_partition_sizes[i]
                         * tensor_value.shape[0]
                         // cusum_max_partition_sizes[-1]
                     ) : (
                         ((rank // max(1, world_size // replication)) + 1)
-                        * output_size_per_partition
+                        * (
+                            output_size_per_partition
+                            * (max_partition_sizes[i] // min_partition_size)
+                        )
                         + (
                             cusum_max_partition_sizes[i]
                             * tensor_value.shape[0]
@@ -586,14 +604,21 @@ def _copy_embedding(
         [
             tensor_value[
                 :,
-                (rank // max(1, world_size // replication)) * output_size_per_partition
+                (rank // max(1, world_size // replication))
+                * (
+                    output_size_per_partition
+                    * (max_partition_sizes[i] // min_partition_size)
+                )
                 + (
                     cusum_max_partition_sizes[i]
                     * tensor_value.shape[0]
                     // cusum_max_partition_sizes[-1]
                 ) : (
                     ((rank // max(1, world_size // replication)) + 1)
-                    * output_size_per_partition
+                    * (
+                        output_size_per_partition
+                        * (max_partition_sizes[i] // min_partition_size)
+                    )
                     + (
                         cusum_max_partition_sizes[i]
                         * tensor_value.shape[0]
