@@ -400,8 +400,8 @@ class ScanCacheAttention(nn.Module):
                     queries, keys, position_ids, past_key_value_state, use_cache
                 )
 
-        queries = queries / (self.emb_kq_per_head**(1/4))  # b l h d
-        keys = keys / (self.emb_kq_per_head**(1/4))  # b l h d
+        queries = queries / (self.emb_kq_per_head**(1/2))  # b l h d
+        keys = keys #/ (self.emb_kq_per_head**(1/4))  # b l h d
 
         # Build scan cache
         # k/v: b l h d
