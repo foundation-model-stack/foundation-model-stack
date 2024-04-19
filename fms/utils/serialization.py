@@ -438,7 +438,14 @@ def load_state_dict_into_model(
             del fms_partial_sd
 
 
-def _copy_colwise(param: torch.nn.Parameter, tensor_value, is_bias, rank, world_size):
+def _copy_colwise(
+    param: torch.nn.Parameter,
+    tensor_value,
+    is_bias,
+    max_partition_sizes,
+    rank,
+    world_size,
+):
     """
     This function copies the correct shard of the weights for a colwise-TP'd module
     according to the rank of the process and the world_size.
@@ -449,30 +456,104 @@ def _copy_colwise(param: torch.nn.Parameter, tensor_value, is_bias, rank, world_
         Parameter that has had TP applied
     tensor_value: torch.Tensor
         tensor that needs sharding
+    max_partition_sizes: List[int]
+        for each number in the list, if world_size is smaller than or equal to that number, the tensor will get
+        partitioned in worldsize parts, else if world size is larger than the number then you will get world size parts
+        replicated in worldsize / number
+
+        world_size = 4, max_partition_sizes = [8], tensor = [0 1 2 3 4 5 6 7]
+        [0 1] [2 3] [4 5] [6 7]
+
+        world_size = 8, max_partition_sizes = [4], tensor = [0 1 2 3 4 5 6 7]
+        [0 1] [0 1] [2 3] [2 3] [4 5] [4 5] [6 7] [6 7]
+
+        If there are multiple numbers in the max_partition_sizes list, then the param gets filled with non-contiguous
+        slices of the tensor_value. This is useful for fused weight cases (qkv, mlp, moe, etc.)
+
+        world_size = 4, max_partition_sizes = [4, 4], tensor = [0 1 2 3 4 5 6 7]
+        [0 4] [1 5] [2 6] [3 7]
+
+        world_size = 4, max_partition_sizes = [4, 1], tensor = [0 1 2 3 4 5 6 7 8 9]
+        [0 1 8 9] [2 3 8 9] [4 5 8 9] [6 7 8 9]
+
+    is_bias: bool
+        if True is bias, else is weight
     rank: int
         Rank of the current process
     world_size: int
         Total number of TP processes
     """
     # Divide the weight matrix along the first dimension.
-    output_size_per_partition = param.shape[0]
+    cusum_max_partition_sizes = [0]
+    min_partition_size = min(max_partition_sizes)
+    for m in max_partition_sizes:
+        cusum_max_partition_sizes.append(
+            cusum_max_partition_sizes[-1] + (m // min_partition_size)
+        )
+
+    output_size_per_partition = param.shape[0] // (
+        sum(max_partition_sizes) // min(max_partition_sizes)
+    )
     if not is_bias:
-        tensor = tensor_value[
-            (rank * output_size_per_partition) : (
-                (rank + 1) * output_size_per_partition
-            ),
-            :,
-        ]
+        tensor = torch.cat(
+            [
+                tensor_value[
+                    (rank // max(1, world_size // replication))
+                    * (output_size_per_partition * (max_partition_sizes[i] // min_partition_size))
+                    + (
+                        cusum_max_partition_sizes[i]
+                        * tensor_value.shape[0]
+                        // cusum_max_partition_sizes[-1]
+                    ) : (
+                        ((rank // max(1, world_size // replication)) + 1)
+                        * (output_size_per_partition * (max_partition_sizes[i] // min_partition_size))
+                        + (
+                            cusum_max_partition_sizes[i]
+                            * tensor_value.shape[0]
+                            // cusum_max_partition_sizes[-1]
+                        )
+                    ),
+                    :,
+                ]
+                for i, replication in enumerate(max_partition_sizes)
+            ],
+            dim=0,
+        )
     else:
-        tensor = tensor_value[
-            (rank * output_size_per_partition) : (
-                (rank + 1) * output_size_per_partition
-            )
-        ]
+        tensor = torch.cat(
+            [
+                tensor_value[
+                    (rank // max(1, world_size // replication))
+                    * (output_size_per_partition * (max_partition_sizes[i] // min_partition_size))
+                    + (
+                        cusum_max_partition_sizes[i]
+                        * tensor_value.shape[0]
+                        // cusum_max_partition_sizes[-1]
+                    ) : (
+                        ((rank // max(1, world_size // replication)) + 1)
+                        * (output_size_per_partition * (max_partition_sizes[i] // min_partition_size))
+                        + (
+                            cusum_max_partition_sizes[i]
+                            * tensor_value.shape[0]
+                            // cusum_max_partition_sizes[-1]
+                        )
+                    )
+                ]
+                for i, replication in enumerate(max_partition_sizes)
+            ],
+            dim=0,
+        )
     param.copy_(tensor, non_blocking=True)
 
 
-def _copy_rowwise(param: torch.nn.Parameter, tensor_value, is_bias, rank, world_size):
+def _copy_rowwise(
+    param: torch.nn.Parameter,
+    tensor_value,
+    is_bias,
+    max_partition_sizes,
+    rank,
+    world_size,
+):
     """
     This function copies the correct shard of the weights for a rowwise-TP'd module
     according to the rank of the process and the world_size.
@@ -483,20 +564,69 @@ def _copy_rowwise(param: torch.nn.Parameter, tensor_value, is_bias, rank, world_
         Parameter that has had TP applied
     tensor_value: torch.Tensor
         tensor that needs sharding
+    max_partition_sizes: List[int]
+        for each number in the list, if world_size is smaller than or equal to that number, the tensor will get
+        partitioned in worldsize parts, else if world size is larger than the number then you will get world size parts
+        replicated in worldsize / number
+
+        world_size = 4, max_partition_sizes = [8], tensor = [0 1 2 3 4 5 6 7]
+        [0 1] [2 3] [4 5] [6 7]
+
+        world_size = 8, max_partition_sizes = [4], tensor = [0 1 2 3 4 5 6 7]
+        [0 1] [0 1] [2 3] [2 3] [4 5] [4 5] [6 7] [6 7]
+
+        If there are multiple numbers in the max_partition_sizes list, then the param gets filled with non-contiguous
+        slices of the tensor_value. This is useful for fused weight cases (qkv, mlp, moe, etc.)
+
+        world_size = 4, max_partition_sizes = [4, 4], tensor = [0 1 2 3 4 5 6 7]
+        [0 4] [1 5] [2 6] [3 7]
+
+        world_size = 4, max_partition_sizes = [4, 1], tensor = [0 1 2 3 4 5 6 7 8 9]
+        [0 1 8 9] [2 3 8 9] [4 5 8 9] [6 7 8 9]
+
+    is_bias: bool
+        if True is bias, else is weight
     rank: int
         Rank of the current process
     world_size: int
         Total number of TP processes
     """
-    # Divide the weight matrix along the last dimension.
+    # Divide the weight matrix along the first dimension.
+    cusum_max_partition_sizes = [0]
+    min_partition_size = min(max_partition_sizes)
+    for m in max_partition_sizes:
+        cusum_max_partition_sizes.append(
+            cusum_max_partition_sizes[-1] + (m // min_partition_size)
+        )
+
+    output_size_per_partition = param.shape[1] // (
+        sum(max_partition_sizes) // min(max_partition_sizes)
+    )
     if not is_bias:
-        output_size_per_partition = param.shape[1]
-        tensor = tensor_value[
-            :,
-            (rank * output_size_per_partition) : (
-                (rank + 1) * output_size_per_partition
-            ),
-        ]
+        tensor = torch.cat(
+            [
+                tensor_value[
+                    :,
+                    (rank // max(1, world_size // replication))
+                    * (output_size_per_partition * (max_partition_sizes[i] // min_partition_size))
+                    + (
+                        cusum_max_partition_sizes[i]
+                        * tensor_value.shape[0]
+                        // cusum_max_partition_sizes[-1]
+                    ) : (
+                        ((rank // max(1, world_size // replication)) + 1)
+                        * (output_size_per_partition * (max_partition_sizes[i] // min_partition_size))
+                        + (
+                            cusum_max_partition_sizes[i]
+                            * tensor_value.shape[0]
+                            // cusum_max_partition_sizes[-1]
+                        )
+                    ),
+                ]
+                for i, replication in enumerate(max_partition_sizes)
+            ],
+            dim=1,
+        )
         param.copy_(tensor, non_blocking=True)
     else:
         if rank == 0:
@@ -505,7 +635,9 @@ def _copy_rowwise(param: torch.nn.Parameter, tensor_value, is_bias, rank, world_
             param.zero_()
 
 
-def _copy_embedding(param: torch.nn.Parameter, tensor_value, rank, world_size):
+def _copy_embedding(
+    param: torch.nn.Parameter, tensor_value, max_partition_sizes, rank, world_size
+):
     """
     This function copies the correct shard of the weights for a TP'd embedding module
     according to the rank of the process and the world_size.
@@ -516,17 +648,67 @@ def _copy_embedding(param: torch.nn.Parameter, tensor_value, rank, world_size):
         Parameter that has had TP applied
     tensor_value: torch.Tensor
         tensor that needs sharding
+    max_partition_sizes: List[int]
+        for each number in the list, if world_size is smaller than or equal to that number, the tensor will get
+        partitioned in worldsize parts, else if world size is larger than the number then you will get world size parts
+        replicated in worldsize / number
+
+        world_size = 4, max_partition_sizes = [8], tensor = [0 1 2 3 4 5 6 7]
+        [0 1] [2 3] [4 5] [6 7]
+
+        world_size = 8, max_partition_sizes = [4], tensor = [0 1 2 3 4 5 6 7]
+        [0 1] [0 1] [2 3] [2 3] [4 5] [4 5] [6 7] [6 7]
+
+        If there are multiple numbers in the max_partition_sizes list, then the param gets filled with non-contiguous
+        slices of the tensor_value. This is useful for fused weight cases (qkv, mlp, moe, etc.)
+
+        world_size = 4, max_partition_sizes = [4, 4], tensor = [0 1 2 3 4 5 6 7]
+        [0 4] [1 5] [2 6] [3 7]
+
+        world_size = 4, max_partition_sizes = [4, 1], tensor = [0 1 2 3 4 5 6 7 8 9]
+        [0 1 8 9] [2 3 8 9] [4 5 8 9] [6 7 8 9]
+
+    is_bias: bool
+        if True is bias, else is weight
     rank: int
         Rank of the current process
     world_size: int
         Total number of TP processes
     """
-    # Divide the weight matrix along the last dimension.
-    output_size_per_partition = param.shape[1]
-    tensor = tensor_value[
-        :,
-        (rank * output_size_per_partition) : ((rank + 1) * output_size_per_partition),
-    ]
+    # Divide the weight matrix along the first dimension.
+    cusum_max_partition_sizes = [0]
+    min_partition_size = min(max_partition_sizes)
+    for m in max_partition_sizes:
+        cusum_max_partition_sizes.append(
+            cusum_max_partition_sizes[-1] + (m // min_partition_size)
+        )
+
+    output_size_per_partition = param.shape[1] // (
+        sum(max_partition_sizes) // min(max_partition_sizes)
+    )
+    tensor = torch.cat(
+        [
+            tensor_value[
+                :,
+                (rank // max(1, world_size // replication)) * output_size_per_partition
+                + (
+                    cusum_max_partition_sizes[i]
+                    * tensor_value.shape[0]
+                    // cusum_max_partition_sizes[-1]
+                ) : (
+                    ((rank // max(1, world_size // replication)) + 1)
+                    * (output_size_per_partition * (max_partition_sizes[i] // min_partition_size))
+                    + (
+                        cusum_max_partition_sizes[i]
+                        * tensor_value.shape[0]
+                        // cusum_max_partition_sizes[-1]
+                    )
+                ),
+            ]
+            for i, replication in enumerate(max_partition_sizes)
+        ],
+        dim=1,
+    )
     param.copy_(tensor, non_blocking=True)
 
 
@@ -579,26 +761,29 @@ def _load_partial_state_dict(
                 _copy_if_present(param, tensor_value)
             elif tp_module is not None:
                 # Handle TP sharding
-                if key_steps[-2] in tp_module.colwise_param_names():
+                if key_steps[-2] in tp_module.colwise_params():
                     _copy_colwise(
                         param,
                         tensor_value,
                         key_steps[-1] == "bias",
+                        tp_module.colwise_params()[key_steps[-2]],
                         rank,
                         world_size,
                     )
-                if key_steps[-2] in tp_module.rowwise_param_names():
+                if key_steps[-2] in tp_module.rowwise_params():
                     _copy_rowwise(
                         param,
                         tensor_value,
                         key_steps[-1] == "bias",
+                        tp_module.rowwise_params()[key_steps[-2]],
                         rank,
                         world_size,
                     )
-                if key_steps[-2] in tp_module.embedding_param_names():
+                if key_steps[-2] in tp_module.embedding_params():
                     _copy_embedding(
                         param,
                         tensor_value,
+                        tp_module.embedding_params()[key_steps[-2]],
                         rank,
                         world_size,
                     )

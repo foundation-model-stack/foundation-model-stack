@@ -1,6 +1,6 @@
 import itertools
 from abc import ABCMeta, abstractmethod
-from typing import List, Type
+from typing import Dict, List, Type
 
 import torch
 import torch.nn as nn
@@ -31,14 +31,14 @@ class TPModule(nn.Module, metaclass=ABCMeta):
         self.rank = rank
         self.world_size = world_size
 
-    def colwise_param_names(self) -> List[str]:
-        return []
+    def colwise_params(self) -> Dict[str, List[int]]:
+        return {}
 
-    def rowwise_param_names(self) -> List[str]:
-        return []
+    def rowwise_params(self) -> Dict[str, List[int]]:
+        return {}
 
-    def embedding_param_names(self) -> List[str]:
-        return []
+    def embedding_params(self) -> Dict[str, List[int]]:
+        return {}
 
     @staticmethod
     @abstractmethod
