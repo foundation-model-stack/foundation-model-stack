@@ -7,7 +7,7 @@ from torch.nn import functional as F
 from typing import List, Optional, Tuple
 
 
-def scan(state, g):
+def scan(state, g, reverse=False):
     # state: b n d h
     # g: 1/b n/f h h
     state = state.clone()
@@ -22,26 +22,32 @@ def scan(state, g):
         span = 2**(i+1)
         state = state.view(s[0], -1, span, *s[2:])  # b -1 span d h
         g = g.view(g0, -1, span, s[3], s[3])  # 1 -1 span h h
-        newstate = state[:,:,span//2-1].matmul(g[:,:,-1])
-        newgate = g[:,:,span//2-1].matmul(g[:,:,-1])
-        state[:,:,-1] += newstate
-        g[:,:,-1] = newgate
+        src = span//2 if reverse else span//2-1
+        dest = 0 if reverse else -1
+        newstate = state[:,:,src].matmul(g[:,:,dest])
+        newgate = g[:,:,src].matmul(g[:,:,dest])
+        state[:,:,dest] += newstate
+        g[:,:,dest] = newgate
         
     # Down sweep: fill in blanks
     state = state.view(*s)
     g = g.view(g0, s[1], s[3], s[3])
-    state = nn.functional.pad(state, (0,0,0,0,1,0))
-    g = nn.functional.pad(g, (0,0,0,0,1,0))[:,:-1]
-    remainder = state[:,-1:]
-    state = state[:,:-1]
+    pads = (0,0,0,0,0,1) if reverse else (0,0,0,0,1,0)
+    state = nn.functional.pad(state, pads)
+    g = nn.functional.pad(g, pads)
+    g = g[:,1:] if reverse else g[:,:-1]
+    remainder = state[:,:1] if reverse else state[:,-1:]
+    state = state[:,1:] if reverse else state[:,:-1]
     for i in range(logl-1):
         span = 2**(logl-i-1)
         state = state.view(s[0], -1, span, *s[2:])  # b -1 span d h
         g = g.view(g0, -1, span, s[3], s[3])  # b -1 span h h
-        state[:,:,span//2] = state[:,:,span//2] + state[:,:,0].matmul(g[:,:,span//2])
-        g[:,:,span//2] = g[:,:,0].matmul(g[:,:,span//2])
-    state = torch.cat([state.view(*s)[:,1:], remainder], dim=1)
-    return state
+        src = -1 if reverse else 0
+        dest = span//2-1 if reverse else span//2
+        state[:,:,dest] = state[:,:,dest] + state[:,:,src].matmul(g[:,:,dest])
+        g[:,:,dest] = g[:,:,src].matmul(g[:,:,dest])
+        out = [remainder, state.view(*s)[:,:-1]] if reverse else [state.view(*s)[:,1:], remainder]
+    return torch.cat(out, dim=1) 
 
 
 class MatScan(torch.autograd.Function):
@@ -59,10 +65,8 @@ class MatScan(torch.autograd.Function):
         gate = ctx.saved_tensors[0]
 
         # Gate-accumulate grads
-        gate = gate.flip([1]).transpose(2,3)
-        grad = grad.flip([1])
-        del ctx
-        gatesum = scan(grad, gate.roll(1, dims=1)).flip([1])  # b n d h
+        gate = gate.roll(-1, dims=1).transpose(2,3)
+        gatesum = scan(grad, gate, reverse=True)  # b n d h
 
         return gatesum, None
 
@@ -311,6 +315,8 @@ class ScanCacheAttention(nn.Module):
     def make_gates(self):
         n = 1024  # Roughly, total cache window length (actually somewhat smaller)
         fmap = {8-i:64-(i)**2 for i in range(8)}  # Start point of each power of 2 cache range
+        fmap.pop(7)
+        fmap.pop(8)
         interval = sum([torch.arange(n).remainder(2**x).sub(2**x-1).sign().add(1) 
                         for x in range(n.bit_length())])  # Ruler tick sequence
         d = 64

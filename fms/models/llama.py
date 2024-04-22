@@ -179,6 +179,7 @@ class LLaMA(nn.Module):
         # self.config.kvheads = self.config.nheads
         # self.config.nheads *= 4
         self.config.kvheads = self.config.nheads // 16
+        self.config.hidden_grow_factor = 3.375
 
         self.width = self.config.emb_dim
         self.pad_id = self.config.pad_id
