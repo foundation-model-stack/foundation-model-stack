@@ -468,17 +468,11 @@ class PagedTensor(torch.Tensor):
     def from_tensor(
         cls,
         tensor: torch.Tensor,
-        static_dims: Union[int, List[int]] = -1,
+        paged_dim: int,
         page_size: int = 16,
     ):
-        if isinstance(static_dims, int):
-            static_dims = [static_dims]
-        else:
-            static_dims = static_dims
-
-        # normalize the dims in case of dims like `-1`
-        static_dims = [dim % tensor.ndim for dim in static_dims]
-        dynamic_dims = [i for i, _ in enumerate(tensor.shape) if i not in static_dims]
+        dynamic_dims = list(range(paged_dim + 1))
+        static_dims = [i for i, _ in enumerate(tensor.shape) if i > paged_dim]
         current_shape = list(tensor.shape)
         page_size = page_size
         static_shape = [tensor.shape[x] for x in static_dims]
