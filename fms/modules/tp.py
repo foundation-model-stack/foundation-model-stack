@@ -93,43 +93,42 @@ class TPModule(nn.Module, metaclass=ABCMeta):
         """
         return {}
 
-    def __get_start_index(
+    def __get_tp_slices(
         self,
         tensor_value,
         output_size_per_partition,
-        replication,
         max_partition_sizes,
-        min_partition_size,
-        cusum_max_partition_sizes,
-        weight_i,
     ):
-        return (self.rank // max(1, self.world_size // replication)) * (
-            output_size_per_partition
-            * (max_partition_sizes[weight_i] // min_partition_size)
-        ) + (
-            cusum_max_partition_sizes[weight_i]
-            * tensor_value.shape[0]
-            // cusum_max_partition_sizes[-1]
-        )
+        cusum_max_partition_sizes = [0]
+        min_partition_size = min(max_partition_sizes)
+        for m in max_partition_sizes:
+            cusum_max_partition_sizes.append(
+                cusum_max_partition_sizes[-1] + (m // min_partition_size)
+            )
 
-    def __get_end_index(
-        self,
-        tensor_value,
-        output_size_per_partition,
-        replication,
-        max_partition_sizes,
-        min_partition_size,
-        cusum_max_partition_sizes,
-        weight_i,
-    ):
-        return ((self.rank // max(1, self.world_size // replication)) + 1) * (
-            output_size_per_partition
-            * (max_partition_sizes[weight_i] // min_partition_size)
-        ) + (
-            cusum_max_partition_sizes[weight_i]
-            * tensor_value.shape[0]
-            // cusum_max_partition_sizes[-1]
-        )
+        for weight_i, replication in enumerate(max_partition_sizes):
+            yield slice(
+                (self.rank // max(1, self.world_size // replication))
+                * (
+                    output_size_per_partition
+                    * (max_partition_sizes[weight_i] // min_partition_size)
+                )
+                + (
+                    cusum_max_partition_sizes[weight_i]
+                    * tensor_value.shape[0]
+                    // cusum_max_partition_sizes[-1]
+                ),
+                ((self.rank // max(1, self.world_size // replication)) + 1)
+                * (
+                    output_size_per_partition
+                    * (max_partition_sizes[weight_i] // min_partition_size)
+                )
+                + (
+                    cusum_max_partition_sizes[weight_i]
+                    * tensor_value.shape[0]
+                    // cusum_max_partition_sizes[-1]
+                ),
+            )
 
     def _copy_rowwise(
         self,
@@ -148,6 +147,8 @@ class TPModule(nn.Module, metaclass=ABCMeta):
             Parameter that has had TP applied
         tensor_value: torch.Tensor
             tensor that needs sharding
+        is_bias: bool
+            if True is bias, else is weight
         max_partition_sizes: List[int]
             for each number in the list, if world_size is smaller than or equal to that number, the tensor will get
             partitioned in worldsize parts, else if world size is larger than the number then you will get world size parts
@@ -167,22 +168,8 @@ class TPModule(nn.Module, metaclass=ABCMeta):
 
             world_size = 4, max_partition_sizes = [4, 1], tensor = [0 1 2 3 4 5 6 7 8 9]
             [0 1 8 9] [2 3 8 9] [4 5 8 9] [6 7 8 9]
-
-        is_bias: bool
-            if True is bias, else is weight
-        rank: int
-            Rank of the current process
-        world_size: int
-            Total number of TP processes
         """
-        # Divide the weight matrix along the first dimension.
-        cusum_max_partition_sizes = [0]
-        min_partition_size = min(max_partition_sizes)
-        for m in max_partition_sizes:
-            cusum_max_partition_sizes.append(
-                cusum_max_partition_sizes[-1] + (m // min_partition_size)
-            )
-
+        # Divide the weight matrix along the second dimension.
         output_size_per_partition = param.shape[1] // (
             sum(max_partition_sizes) // min(max_partition_sizes)
         )
@@ -191,25 +178,11 @@ class TPModule(nn.Module, metaclass=ABCMeta):
                 [
                     tensor_value[
                         :,
-                        self.__get_start_index(
-                            tensor_value,
-                            output_size_per_partition,
-                            replication,
-                            max_partition_sizes,
-                            min_partition_size,
-                            cusum_max_partition_sizes,
-                            i,
-                        ) : self.__get_end_index(
-                            tensor_value,
-                            output_size_per_partition,
-                            replication,
-                            max_partition_sizes,
-                            min_partition_size,
-                            cusum_max_partition_sizes,
-                            i,
-                        ),
+                        tp_slice,
                     ]
-                    for i, replication in enumerate(max_partition_sizes)
+                    for tp_slice in self.__get_tp_slices(
+                        tensor_value, output_size_per_partition, max_partition_sizes
+                    )
                 ],
                 dim=1,
             )
@@ -237,6 +210,8 @@ class TPModule(nn.Module, metaclass=ABCMeta):
             Parameter that has had TP applied
         tensor_value: torch.Tensor
             tensor that needs sharding
+        is_bias: bool
+            if True is bias, else is weight
         max_partition_sizes: List[int]
             for each number in the list, if world_size is smaller than or equal to that number, the tensor will get
             partitioned in worldsize parts, else if world size is larger than the number then you will get world size parts
@@ -256,18 +231,8 @@ class TPModule(nn.Module, metaclass=ABCMeta):
 
             world_size = 4, max_partition_sizes = [4, 1], tensor = [0 1 2 3 4 5 6 7 8 9]
             [0 1 8 9] [2 3 8 9] [4 5 8 9] [6 7 8 9]
-
-        is_bias: bool
-            if True is bias, else is weight
         """
         # Divide the weight matrix along the first dimension.
-        cusum_max_partition_sizes = [0]
-        min_partition_size = min(max_partition_sizes)
-        for m in max_partition_sizes:
-            cusum_max_partition_sizes.append(
-                cusum_max_partition_sizes[-1] + (m // min_partition_size)
-            )
-
         output_size_per_partition = param.shape[0] // (
             sum(max_partition_sizes) // min(max_partition_sizes)
         )
@@ -275,52 +240,22 @@ class TPModule(nn.Module, metaclass=ABCMeta):
             tensor = torch.cat(
                 [
                     tensor_value[
-                        self.__get_start_index(
-                            tensor_value,
-                            output_size_per_partition,
-                            replication,
-                            max_partition_sizes,
-                            min_partition_size,
-                            cusum_max_partition_sizes,
-                            i,
-                        ) : self.__get_end_index(
-                            tensor_value,
-                            output_size_per_partition,
-                            replication,
-                            max_partition_sizes,
-                            min_partition_size,
-                            cusum_max_partition_sizes,
-                            i,
-                        ),
+                        tp_slice,
                         :,
                     ]
-                    for i, replication in enumerate(max_partition_sizes)
+                    for tp_slice in self.__get_tp_slices(
+                        tensor_value, output_size_per_partition, max_partition_sizes
+                    )
                 ],
                 dim=0,
             )
         else:
             tensor = torch.cat(
                 [
-                    tensor_value[
-                        self.__get_start_index(
-                            tensor_value,
-                            output_size_per_partition,
-                            replication,
-                            max_partition_sizes,
-                            min_partition_size,
-                            cusum_max_partition_sizes,
-                            i,
-                        ) : self.__get_end_index(
-                            tensor_value,
-                            output_size_per_partition,
-                            replication,
-                            max_partition_sizes,
-                            min_partition_size,
-                            cusum_max_partition_sizes,
-                            i,
-                        )
-                    ]
-                    for i, replication in enumerate(max_partition_sizes)
+                    tensor_value[tp_slice]
+                    for tp_slice in self.__get_tp_slices(
+                        tensor_value, output_size_per_partition, max_partition_sizes
+                    )
                 ],
                 dim=0,
             )
