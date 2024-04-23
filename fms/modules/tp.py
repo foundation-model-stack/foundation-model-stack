@@ -1,16 +1,10 @@
 import itertools
 from abc import ABCMeta, abstractmethod
-from typing import Dict, List, Type
+from typing import Dict, List, Type, Union
 
 import torch
 import torch.nn as nn
 from torch.distributed.distributed_c10d import ProcessGroup
-
-from fms.distributed.tensorparallel import (
-    apply_colwise_tp,
-    apply_embedding_tp,
-    apply_rowwise_tp,
-)
 
 
 class TPModule(nn.Module, metaclass=ABCMeta):
@@ -30,68 +24,6 @@ class TPModule(nn.Module, metaclass=ABCMeta):
     def setup_tp(self, rank: int, world_size: int) -> None:
         self.rank = rank
         self.world_size = world_size
-
-    def colwise_params(self) -> Dict[str, List[int]]:
-        """Override this method to mark weights as column-wise tensor-parallel. This method will also decide for each
-        weight, how the weight is to be split. Each weight name will have a List[int] (max_partition_sizes) associated
-        with it where if the list is larger than size 1, this implies the weight is fused (where the length of the list
-        is the number of fused weights in a single parameter). The max_partition_sizes act as follows:
-
-         for each number in the list, if world_size is smaller than or equal to that number, the tensor will get
-        partitioned in worldsize parts, else if world size is larger than the number then you will get world size parts
-        replicated in worldsize / number
-
-        world_size = 4, max_partition_sizes = [8], tensor = [0 1 2 3 4 5 6 7]
-        [0 1] [2 3] [4 5] [6 7]
-
-        world_size = 8, max_partition_sizes = [4], tensor = [0 1 2 3 4 5 6 7]
-        [0 1] [0 1] [2 3] [2 3] [4 5] [4 5] [6 7] [6 7]
-
-        If there are multiple numbers in the max_partition_sizes list, then the param gets filled with non-contiguous
-        slices of the tensor_value. This is useful for fused weight cases (qkv, mlp, moe, etc.)
-
-        world_size = 4, max_partition_sizes = [4, 4], tensor = [0 1 2 3 4 5 6 7]
-        [0 4] [1 5] [2 6] [3 7]
-
-        world_size = 4, max_partition_sizes = [4, 1], tensor = [0 1 2 3 4 5 6 7 8 9]
-        [0 1 8 9] [2 3 8 9] [4 5 8 9] [6 7 8 9]
-
-        Returns:
-        Dict[str, List[int]]
-            a dictionary of weight names to their corresponding max_partition_sizes list
-        """
-        return {}
-
-    def rowwise_params(self) -> Dict[str, List[int]]:
-        """Override this method to mark weights as row-wise tensor-parallel. This method will also decide for each
-        weight, how the weight is to be split. Each weight name will have a List[int] (max_partition_sizes) associated
-        with it where if the list is larger than size 1, this implies the weight is fused (where the length of the list
-        is the number of fused weights in a single parameter). The max_partition_sizes act as follows:
-
-         for each number in the list, if world_size is smaller than or equal to that number, the tensor will get
-        partitioned in worldsize parts, else if world size is larger than the number then you will get world size parts
-        replicated in worldsize / number
-
-        world_size = 4, max_partition_sizes = [8], tensor = [0 1 2 3 4 5 6 7]
-        [0 1] [2 3] [4 5] [6 7]
-
-        world_size = 8, max_partition_sizes = [4], tensor = [0 1 2 3 4 5 6 7]
-        [0 1] [0 1] [2 3] [2 3] [4 5] [4 5] [6 7] [6 7]
-
-        If there are multiple numbers in the max_partition_sizes list, then the param gets filled with non-contiguous
-        slices of the tensor_value. This is useful for fused weight cases (qkv, mlp, moe, etc.)
-
-        world_size = 4, max_partition_sizes = [4, 4], tensor = [0 1 2 3 4 5 6 7]
-        [0 4] [1 5] [2 6] [3 7]
-
-        world_size = 4, max_partition_sizes = [4, 1], tensor = [0 1 2 3 4 5 6 7 8 9]
-        [0 1 8 9] [2 3 8 9] [4 5 8 9] [6 7 8 9]
-
-        Returns:
-        Dict[str, List[int]]
-            a dictionary of weight names to their corresponding max_partition_sizes list
-        """
-        return {}
 
     def __get_tp_slices(
         self,
@@ -130,12 +62,12 @@ class TPModule(nn.Module, metaclass=ABCMeta):
                 ),
             )
 
-    def _copy_rowwise(
+    def copy_rowwise(
         self,
-        param: torch.nn.Parameter,
-        tensor_value,
-        is_bias,
-        max_partition_sizes,
+        param: Union[torch.nn.Parameter, torch.Tensor],
+        tensor_value: torch.Tensor,
+        is_bias: bool,
+        max_partition_sizes: List[int],
     ):
         """
         This function copies the correct shard of the weights for a rowwise-TP'd module
@@ -193,12 +125,12 @@ class TPModule(nn.Module, metaclass=ABCMeta):
             else:
                 param.zero_()
 
-    def _copy_colwise(
+    def copy_colwise(
         self,
-        param: torch.nn.Parameter,
-        tensor_value,
-        is_bias,
-        max_partition_sizes,
+        param: Union[torch.nn.Parameter, torch.Tensor],
+        tensor_value: torch.Tensor,
+        is_bias: bool,
+        max_partition_sizes: List[int],
     ):
         """
         This function copies the correct shard of the weights for a colwise-TP'd module
@@ -261,73 +193,61 @@ class TPModule(nn.Module, metaclass=ABCMeta):
             )
         param.copy_(tensor, non_blocking=True)
 
-    def load(
-        self,
-        param: torch.nn.Parameter,
-        tensor_value: torch.Tensor,
-        weight_name: str,
-        is_bias: bool,
+    def _get_sd_weight(
+        self, state_dict: Dict[str, torch.Tensor], conditions: List[str]
     ):
-        """Load a tensor value into a param if it is marked as rowwise/colwise tensor parallel
+        results = []
+        for k in state_dict:
+            all_conds = True
+            for cond in conditions:
+                if cond not in k:
+                    all_conds = False
+            if all_conds:
+                results.append(state_dict[k])
+        if len(results) == 1:
+            return results[0]
+        elif len(results) > 1:
+            raise ValueError(
+                f"Conditions not stringent enough: keys are {', '.join(state_dict.keys())}"
+            )
+        else:
+            raise ValueError(
+                f"Weight not found, weights names are {', '.join(state_dict.keys())}"
+            )
+
+    def load_weights(
+        self,
+        tensor_values: Dict[str, torch.Tensor],
+    ):
+        """Load all tensor values into a TP module.
+
+        Override this method to load weights into a TP module. You can see
+        examples for all TP modules in FMS, but the functions will generally
+        have the following structure:
+
+        1. Grab the necessary weights from tensor_values. Which weights
+            these are depend on each module.
+        2. Raise exceptions for missing required weights in tensor_values
+            (ValueError) or for unused weights in tensor_values
+            (AttributeError)
+        3. Use one of the copy_{rowwise,colwise} methods to load and shard
+            each weight correctly into the TP module. All the copy_ methods
+            explain in detail how to call them properly. Pay special attention
+            to the max_partition_sizes parameter for supporting fused weights
+            and MQA/GQA among others.
+
+        PSA: Each weight has a List[int] (max_partition_sizes) associated
+        with it where if the list is larger than size 1, this implies the
+        weight is fused (where the length of the list is the number of fused
+        weights in a single parameter).
 
         Args:
-            param: torch.nn.Parameter
-                the parameter to load the weight into
-            tensor_value: torch.Tensor
-                the tensor value to load into the parameter
-            weight_name: str
-                the weights name in the state_dict
-            is_bias: bool
-                True if param is referring to a bias, otherwise just a weight
+            tensor_values: Dict[str, torch.Tensor]
+                a state dict containing all the weights for a TP module
         """
-        if weight_name in self.colwise_params():
-            self._copy_colwise(
-                param, tensor_value, is_bias, self.colwise_params()[weight_name]
-            )
-        elif weight_name in self.rowwise_params():
-            self._copy_rowwise(
-                param, tensor_value, is_bias, self.rowwise_params()[weight_name]
-            )
+        pass
 
     @staticmethod
     @abstractmethod
     def import_module(module, group: ProcessGroup):
         pass
-
-    def import_weights(self, module: nn.Module):
-        for weight in self.colwise_param_names():
-            apply_colwise_tp(
-                getattr(self, weight),
-                getattr(module, weight),
-                self.world_size,
-                self.rank,
-            )
-        for weight in self.rowwise_param_names():
-            apply_rowwise_tp(
-                getattr(self, weight),
-                getattr(module, weight),
-                self.world_size,
-                self.rank,
-            )
-        for weight in self.embedding_param_names():
-            apply_embedding_tp(
-                getattr(self, weight),
-                getattr(module, weight),
-                self.world_size,
-                self.rank,
-            )
-        tp_sharded_modules = list(
-            itertools.chain(
-                self.colwise_param_names(),
-                self.rowwise_param_names(),
-                self.embedding_param_names(),
-            )
-        )
-        with torch.no_grad():
-            for mod_name, module in self.named_children():
-                if not mod_name in tp_sharded_modules:
-                    for param_name, param in module.named_parameters(recurse=False):
-                        param.copy_(
-                            getattr(getattr(module, mod_name), param_name),
-                            non_blocking=True,
-                        )

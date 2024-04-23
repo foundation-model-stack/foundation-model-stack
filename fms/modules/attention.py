@@ -295,6 +295,36 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
     def rowwise_params(self) -> Dict[str, List[int]]:
         return {"dense": [self.world_size]}
 
+    def load_weights(
+        self,
+        tensor_values: Dict[str, torch.Tensor],
+    ):
+        # 1. Grab the weights from tensor_values
+        query_weight = self._get_sd_weight(tensor_values, ["query", "weight"])
+        key_weight = self._get_sd_weight(tensor_values, ["key", "weight"])
+        value_weight = self._get_sd_weight(tensor_values, ["value", "weight"])
+        dense_weight = self._get_sd_weight(tensor_values, ["dense", "weight"])
+        if self.use_bias:
+            query_bias = self._get_sd_weight(tensor_values, ["query", "bias"])
+            key_bias = self._get_sd_weight(tensor_values, ["key", "bias"])
+            value_bias = self._get_sd_weight(tensor_values, ["value", "bias"])
+            dense_bias = self._get_sd_weight(tensor_values, ["dense", "bias"])
+
+        # 2. Raise exceptions
+        if len(tensor_values) > (8 if self.use_bias else 4):
+            raise AttributeError("Unused weight(s)")
+
+        # 3. Load and shard the weights
+        self.copy_colwise(self.query.weight, query_weight, False, [self.pre_tp_nheads])
+        self.copy_colwise(self.key.weight, key_weight, False, [self.pre_tp_kvheads])
+        self.copy_colwise(self.value.weight, value_weight, False, [self.pre_tp_kvheads])
+        self.copy_rowwise(self.dense.weight, dense_weight, False, [self.world_size])
+        if self.use_bias:
+            self.copy_colwise(self.query.bias, query_bias, True, [self.pre_tp_nheads])
+            self.copy_colwise(self.key.bias, key_bias, True, [self.pre_tp_kvheads])
+            self.copy_colwise(self.value.bias, value_bias, True, [self.pre_tp_kvheads])
+            self.copy_rowwise(self.dense.bias, dense_bias, True, [self.world_size])
+
     @staticmethod
     def import_module(
         mha: MultiHeadAttention, group: ProcessGroup

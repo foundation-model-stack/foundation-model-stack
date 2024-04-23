@@ -10,8 +10,6 @@ from torch.distributed.distributed_c10d import ProcessGroup
 from fms import distributed
 from fms.distributed.tensorparallel import (
     all_gather_from_tensor_model_parallel_region,
-    apply_colwise_tp,
-    apply_embedding_tp,
     copy_to_tensor_model_parallel_region,
 )
 from fms.modules.tp import TPModule
@@ -215,16 +213,37 @@ class TPWordEmbedding(WordEmbedding, TPModule):
         )
         return tp_we
 
-    def colwise_params(self) -> Dict[str, List[int]]:
-        if self.reversible and not self.tie_weights:
-            return {"head": [self.world_size]}
-        return {}
-
-    def rowwise_params(self) -> Dict[str, List[int]]:
-        emb_weights = {"emb": [self.world_size]}
+    def load_weights(
+        self,
+        tensor_values: Dict[str, torch.Tensor],
+    ):
+        # 1. Grab the weights from tensor_values
+        weight_count = 1
+        emb_weight = self._get_sd_weight(tensor_values, ["emb"])
         if self.abs_pos:
-            emb_weights["pos_emb"] = [self.world_size]
-        return emb_weights
+            pos_emb_weight = self._get_sd_weight(tensor_values, ["pos_emb"])
+            weight_count += 1
+        if self.reversible and not self.tie_weights:
+            head_weight = self._get_sd_weight(tensor_values, ["head", "weight"])
+            weight_count += 1
+            if self.bias:
+                head_bias = self._get_sd_weight(tensor_values, ["head", "bias"])
+                weight_count += 1
+
+        # 2. Raise exceptions
+        if len(tensor_values) > weight_count:
+            raise AttributeError("Unused weight(s)")
+
+        # 3. Load and shard the weights
+        self.copy_rowwise(self.emb.weight, emb_weight, False, [self.world_size])
+        if self.abs_pos:
+            self.copy_rowwise(
+                self.pos_emb.weight, pos_emb_weight, False, [self.world_size]
+            )
+        if self.reversible and not self.tie_weights:
+            self.copy_colwise(self.head.weight, head_weight, False, [self.world_size])
+            if self.bias:
+                self.copy_colwise(self.head.bias, head_bias, True, [self.world_size])
 
     def forward(self, inp, reverse=False):
         # If reverse is False, compute input embeddings. If reverse is True, compute output logits.
