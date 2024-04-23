@@ -155,20 +155,21 @@ def _paged_implements(torch_function):
 
 
 R_LIST: TypeAlias = List[Union[int, "R_LIST"]]
-"""
-If we treat a tensor's underlying storage as a paged memory space,
-This method constructs the appropriate list of "page ids" to index
-into storage. The format is a nested list of page_ids where the
-outermost list is indexed on the first dynamic shape, etc.
-
-The second part of the tuple returned here is just an implementation
-detail used in recursion.
-"""
 
 
 def _create_page_ids(
     dynamic_shapes: List[int], page_size: int, start_page: int
 ) -> Tuple[R_LIST, int]:
+    """
+    If we treat a tensor's underlying storage as a paged memory space,
+    This method constructs the appropriate list of "page ids" to index
+    into storage. The format is a nested list of page_ids where the
+    outermost list is indexed on the first dynamic shape, etc.
+
+    The second part of the tuple returned here is just an implementation
+    detail used in recursion.
+    """
+
     if len(dynamic_shapes) == 1:
         pages = int(math.ceil(dynamic_shapes[0] / page_size))
         last_page = start_page + pages
@@ -266,6 +267,16 @@ class PagedStorage:
         return storage
 
     def expand(self, ratio=2, min_pages=128):
+        """
+        Expand the size of the storage to be able to hold more "pages" of
+        memory. Will expand to the maximum of ratio x the current number of
+        pages or min_pages.
+
+        Args:
+            ratio (int): Expand the memory allocation to at least ratio x the
+                current size.
+            min_pages (int): Expand to at least this number of pages.
+        """
         current_pages = self.storage.numel() // (
             self.page_size * math.prod(self.static_shape)
         )
@@ -502,20 +513,38 @@ class PagedTensor(torch.Tensor):
             dtype=self.paged_storage.storage.dtype,
         )
 
+        # We need to index into every page of memory referenced by
+        # this tensor. Since the "paged" dim is a list in page_ids, we start
+        # by constructing an index into the page_ids up to the final
+        # dynamic dimension (the "paged" dimension)
+        #
+        # E.g. if we have dyn1 x dyn2 x 'paged' x static_dim1, ranges will be:
+        # `[range(0, dyn1), range(0,dyn2)]` and dynamic_dims will be:
+        # [ (0,0), (0,1), .... (0,dyn1), (1,0), (1,1) .... (dyn1-1, dyn2-1)]
         ranges = [range(dim) for dim in self.paged_storage.dynamic_shape[:-1]]
         dynamic_indices = list(itertools.product(*ranges))
 
         for indices in dynamic_indices:
             page_ids = self.page_ids
+            # iteratively go into the nested page_ids list
+            # until we arrive at the actual list of ints.
             for index in indices:
                 page_ids = page_ids[index]
+
             for i, page_id in enumerate(page_ids):
+                # create an 'advanced' index slicing into the `result` tensor
+                # selecting the locations of the current page
                 complete_index = [slice(None)] * result.ndim
                 for dim, index in zip(self.dynamic_dims, indices):
                     complete_index[dim] = index
                 last_dynamic = self.dynamic_dims[-1]
+                # get the actual page of memory from storage
                 page = self.paged_storage.storage[page_id]
 
+                # if it's the last page in the last dimension, it may not be a
+                # "full" page. We'll need to both set correct `end`` to the
+                # `slice` as well as select the relevant sub-part of this final
+                # page.
                 if i == len(page_ids) - 1:
                     end = self.current_shape[last_dynamic]
                     page_slices = [slice(0, size) for size in page.shape]
@@ -525,6 +554,8 @@ class PagedTensor(torch.Tensor):
                 else:
                     end = (i + 1) * self.page_size
 
+                # update the advanced index with the location of the final
+                # paged dimension (the one from a list of page_ids)
                 complete_index[last_dynamic] = slice(i * self.page_size, end)
                 complete_index = tuple(complete_index)
                 result[complete_index] = page
