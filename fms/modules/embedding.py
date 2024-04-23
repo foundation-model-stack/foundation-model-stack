@@ -220,7 +220,7 @@ class TPWordEmbedding(WordEmbedding, TPModule):
             return {"head": [self.world_size]}
         return {}
 
-    def embedding_params(self) -> Dict[str, List[int]]:
+    def rowwise_params(self) -> Dict[str, List[int]]:
         emb_weights = {"emb": [self.world_size]}
         if self.abs_pos:
             emb_weights["pos_emb"] = [self.world_size]
