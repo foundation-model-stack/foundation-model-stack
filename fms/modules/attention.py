@@ -283,18 +283,6 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
         self.pre_tp_kvheads = kvheads
         self.setup_tp(rank, world_size)
 
-    def colwise_params(self) -> Dict[str, List[int]]:
-        return {
-            "query": [
-                self.pre_tp_nheads
-            ],  # this number will signify the largest world size til we need to duplicate. For instance if we have nheads=16 and world_size=32, then first 2 ranks will get first 1/16th of query
-            "key": [self.pre_tp_kvheads],
-            "value": [self.pre_tp_kvheads],
-        }
-
-    def rowwise_params(self) -> Dict[str, List[int]]:
-        return {"dense": [self.world_size]}
-
     def load_weights(
         self,
         tensor_values: Dict[str, torch.Tensor],
@@ -315,6 +303,9 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
             raise AttributeError("Unused weight(s)")
 
         # 3. Load and shard the weights
+        # The number in max_partition_sizes will signify the largest world size
+        # til we need to duplicate.  For instance if we have nheads=16 and
+        # world_size=32, then first 2 ranks will get first 1/16th of query
         self.copy_colwise(self.query.weight, query_weight, False, [self.pre_tp_nheads])
         self.copy_colwise(self.key.weight, key_weight, False, [self.pre_tp_kvheads])
         self.copy_colwise(self.value.weight, value_weight, False, [self.pre_tp_kvheads])
