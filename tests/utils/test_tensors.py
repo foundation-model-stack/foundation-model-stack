@@ -95,7 +95,7 @@ def test_contiguous():
     assert type(expandable) != ExpandableTensor
 
 
-def get_paged_tensor():
+def get_paged_tensor() -> PagedTensor:
     batches = 5
     # default page size is 16. using 15 x 7 ensures un-even paging, to ensure
     # copy works correctly.
@@ -150,3 +150,64 @@ def test_pointwise():
     pt += 4
     assert isinstance(pt, PagedTensor)
     assert torch.allclose(pt._tensor(), result._tensor())
+
+
+def test_expand():
+    pt = get_paged_tensor()
+    free_pages = pt.paged_storage.free_pages()
+    tensor = pt._tensor()
+    initial_size = pt.paged_storage.storage.shape
+    pt.paged_storage.expand()
+    print(tensor.shape)
+    assert tensor.shape == pt._tensor().shape
+    print(pt.paged_storage.storage.shape, initial_size)
+    assert pt.paged_storage.storage.shape[0] > initial_size[0]
+    assert pt.paged_storage.free_pages() > free_pages
+
+
+def test_remove():
+    pt = get_paged_tensor()
+    free_pages = pt.paged_storage.free_pages()
+    tensor = pt._tensor()
+    pt.remove(0, 0)
+    new_tensor = pt._tensor()
+
+    joined = tensor[1:, :, :]
+
+    assert joined.shape == new_tensor.shape
+    assert torch.allclose(joined, new_tensor)
+    # make sure the deletion freed up space:
+    assert pt.paged_storage.free_pages() > free_pages
+
+    # a last row in batch
+    pt = get_paged_tensor()
+    free_pages = pt.paged_storage.free_pages()
+    tensor = pt._tensor()
+    pt.remove(4, 0)
+    new_tensor = pt._tensor()
+    joined = tensor[:-1, :, :]
+    assert joined.shape == new_tensor.shape
+    assert torch.allclose(joined, new_tensor)
+    # make sure the deletion freed up space:
+    assert pt.paged_storage.free_pages() > free_pages
+
+    # an end value on last dynamic dim
+    pt = get_paged_tensor()
+    free_pages = pt.paged_storage.free_pages()
+    tensor = pt._tensor()
+
+    pt.remove(15 * 7 - 1, 1)
+
+    new_tensor = pt._tensor()
+    joined = tensor[:, :-1, :]
+
+    assert joined.shape == new_tensor.shape
+    assert torch.allclose(joined, new_tensor)
+
+    # if we remove items up to page_size we should free up one page per batch.
+    to_remove = 15 * 7 % 16
+    last_idx = 15 * 7 - 2
+    for idx in range(last_idx, last_idx - to_remove, -1):
+        pt.remove(idx, 1)
+    # removes one page per batch-dim
+    assert free_pages + pt.shape[0] == pt.paged_storage.free_pages()
