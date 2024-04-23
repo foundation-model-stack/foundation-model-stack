@@ -6,12 +6,12 @@ import torch
 import torch.nn as nn
 
 from fms import models
+from fms.distributed.strategy import DistributedStrategy, NoOpStrategy
 from fms.modules.attention import MultiHeadAttention
 from fms.modules.feedforward import FeedForwardBlock
 from fms.utils import serialization
 from fms.utils.activation import str_to_activation
 from fms.utils.config import ModelConfig
-from fms.utils.serialization import FusableWeightsMissingError
 
 
 @dataclass
@@ -115,20 +115,28 @@ class GPTBigCodeBlock(nn.Module):
 
 
 class GPTBigCodeHeadless(nn.Module):
-    def __init__(self, config: GPTBigCodeConfig):
+    def __init__(
+        self, config: GPTBigCodeConfig, distributed_strategy: DistributedStrategy
+    ):
         super().__init__()
         self.config = config
+        self.distributed_strategy = distributed_strategy
 
-        self.layers = nn.ModuleList(
-            [GPTBigCodeBlock(self.config) for _ in range(self.config.nlayers)]
-        )
+        layers = []
+        for i in range(self.config.nlayers):
+            block = GPTBigCodeBlock(self.config)
+            block_module = self.distributed_strategy.distribute_layer(block, i)
+            layers.append(block_module)
+        self.layers = nn.ModuleList(layers)
 
         self.embedding = nn.Embedding(self.config.src_vocab_size, self.config.emb_dim)
         self.position_embedding = nn.Embedding(
             self.config.max_expected_seq_len, self.config.emb_dim
         )
 
-        self.dec_norm = nn.LayerNorm(self.config.emb_dim, eps=self.config.ln_eps)
+        self.dec_norm = self.distributed_strategy.distribute_module(
+            nn.LayerNorm(self.config.emb_dim, eps=self.config.ln_eps), final_layers=True
+        )
 
         if self.config.emb_dropout:
             self.emb_dropout = nn.Dropout(self.config.emb_dropout)
@@ -263,6 +271,7 @@ class GPTBigCode(nn.Module):
     def __init__(
         self,
         config: Optional[GPTBigCodeConfig] = None,
+        distributed_strategy: DistributedStrategy = NoOpStrategy,
         **kwargs,
     ):
         super(GPTBigCode, self).__init__()
@@ -271,8 +280,9 @@ class GPTBigCode(nn.Module):
         else:
             self.config = GPTBigCodeConfig()
         self.config = self.config.updated(**kwargs)
+        self.distributed_strategy = distributed_strategy
 
-        self.base_model = GPTBigCodeHeadless(self.config)
+        self.base_model = GPTBigCodeHeadless(self.config, self.distributed_strategy)
         self.head = nn.Linear(
             self.config.emb_dim, self.config.src_vocab_size, bias=False
         )
@@ -419,11 +429,6 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
 
         # qkv fused
         if bool(qkv_weight_pattern.match(name)):
-            bias_name = name.replace("weight", "bias")
-            if bias_name not in hf_sd:
-                raise FusableWeightsMissingError([bias_name])
-            new_sd.pop(new_name)
-
             emb_dim = param.size(1)
             num_heads = emb_dim // 128
             num_key_value_heads = (param.size(0) // 128 - num_heads) // 2
@@ -441,8 +446,6 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
             new_sd[f"{prefix}value.weight"] = v
         elif bool(qkv_bias_pattern.match(name)):
             weight_name = name.replace("bias", "weight")
-            if weight_name not in hf_sd:
-                raise FusableWeightsMissingError([weight_name])
             new_sd.pop(new_name)
 
             emb_dim = hf_sd[weight_name].size(1)

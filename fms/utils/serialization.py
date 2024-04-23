@@ -3,7 +3,7 @@ import os
 from collections import ChainMap
 from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Callable, List, Mapping, MutableMapping, Optional, Union
+from typing import Any, Callable, List, Mapping, MutableMapping, Optional, Set, Union
 
 import torch
 
@@ -239,12 +239,24 @@ def _load_safetensors_state_dict(
     return sd
 
 
-class FusableWeightsMissingError(Exception):
-    missing_weights: List[str] = []
-
-    def __init__(self, missing_weights):
-        self.missing_weights = missing_weights
-        super().__init__()
+def _find_key_neighbors(key: str, sd_keys: Set[str]):
+    # For loading most models that concern us, a good partition is the
+    # one used for FSDP units: everything that is in a layer can
+    # go together and memory usage will be keep in control
+    key_steps = key.split(".")
+    prefix = ""
+    # Navigate the model tree to find a layer index. If not found,
+    # grab that weight alone
+    for idx, step in enumerate(key_steps):
+        prefix = ".".join(key_steps[: idx + 1])
+        if step.isnumeric():
+            prefix += "."
+            break
+    prefix_neighbors = set()
+    for key_in_sd in sd_keys:
+        if prefix in key_in_sd:
+            prefix_neighbors.add(key_in_sd)
+    return list(prefix_neighbors)
 
 
 def load_state_dict_into_model(
@@ -288,29 +300,33 @@ def load_state_dict_into_model(
 
     # 3. Iterate over the weights and load them into the model
     used_keys = set()
-    sd_keys = list(state_dict.keys())
+    sd_keys = set(state_dict.keys())
+
     with torch.no_grad():
         for key in sd_keys:
             if key in used_keys:
                 continue
             used_keys.add(key)
-            try:
-                partial_sd = {key: state_dict[key]}
-                if partial_sd[key].device != initial_device:
-                    partial_sd[key] = partial_sd[key].to(device=initial_device)
-                fms_partial_sd = adapter(partial_sd)
-            except FusableWeightsMissingError as e:
-                for weight in e.missing_weights:
-                    used_keys.add(weight)
-                    partial_sd[weight] = state_dict[weight]
-                    if partial_sd[weight].device != initial_device:
-                        partial_sd[weight] = partial_sd[weight].to(
-                            device=initial_device
-                        )
-                fms_partial_sd = adapter(partial_sd)
+
+            partial_sd = {key: state_dict[key]}
+            # Find neighbors to the key. If the adapter requires a neighbor and
+            # this function doesn't find it, it will crash. This is useful when
+            # adapters merge multiple weights into one, e.g. if the source state
+            # dict has unfused q,k,v projections and your model has fused qkv, you
+            # want your partial_sd to have the three weights available at a time
+            remaining_keys = sd_keys.difference(used_keys)
+            neighbors = _find_key_neighbors(key, remaining_keys)
+            for neighbor in neighbors:
+                partial_sd[neighbor] = state_dict[neighbor]
+                used_keys.add(neighbor)
+            for psd_key in partial_sd.keys():
+                if partial_sd[psd_key].device != initial_device:
+                    partial_sd[psd_key] = partial_sd[psd_key].to(device=initial_device)
+            fms_partial_sd = adapter(partial_sd)
             _load_partial_state_dict(
                 model, fms_partial_sd, needs_tp_sharding, rank, world_size
             )
+            # Be aggressive in removing weights to save as much memory as possible
             for p_key in partial_sd.keys():
                 if isinstance(state_dict, ChainMap):
                     for child_sd in state_dict.maps:
