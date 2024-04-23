@@ -32,9 +32,65 @@ class TPModule(nn.Module, metaclass=ABCMeta):
         self.world_size = world_size
 
     def colwise_params(self) -> Dict[str, List[int]]:
+        """Override this method to mark weights as column-wise tensor-parallel. This method will also decide for each
+        weight, how the weight is to be split. Each weight name will have a List[int] (max_partition_sizes) associated
+        with it where if the list is larger than size 1, this implies the weight is fused (where the length of the list
+        is the number of fused weights in a single parameter). The max_partition_sizes act as follows:
+
+         for each number in the list, if world_size is smaller than or equal to that number, the tensor will get
+        partitioned in worldsize parts, else if world size is larger than the number then you will get world size parts
+        replicated in worldsize / number
+
+        world_size = 4, max_partition_sizes = [8], tensor = [0 1 2 3 4 5 6 7]
+        [0 1] [2 3] [4 5] [6 7]
+
+        world_size = 8, max_partition_sizes = [4], tensor = [0 1 2 3 4 5 6 7]
+        [0 1] [0 1] [2 3] [2 3] [4 5] [4 5] [6 7] [6 7]
+
+        If there are multiple numbers in the max_partition_sizes list, then the param gets filled with non-contiguous
+        slices of the tensor_value. This is useful for fused weight cases (qkv, mlp, moe, etc.)
+
+        world_size = 4, max_partition_sizes = [4, 4], tensor = [0 1 2 3 4 5 6 7]
+        [0 4] [1 5] [2 6] [3 7]
+
+        world_size = 4, max_partition_sizes = [4, 1], tensor = [0 1 2 3 4 5 6 7 8 9]
+        [0 1 8 9] [2 3 8 9] [4 5 8 9] [6 7 8 9]
+
+        Returns:
+        Dict[str, List[int]]
+            a dictionary of weight names to their corresponding max_partition_sizes list
+        """
         return {}
 
     def rowwise_params(self) -> Dict[str, List[int]]:
+        """Override this method to mark weights as row-wise tensor-parallel. This method will also decide for each
+        weight, how the weight is to be split. Each weight name will have a List[int] (max_partition_sizes) associated
+        with it where if the list is larger than size 1, this implies the weight is fused (where the length of the list
+        is the number of fused weights in a single parameter). The max_partition_sizes act as follows:
+
+         for each number in the list, if world_size is smaller than or equal to that number, the tensor will get
+        partitioned in worldsize parts, else if world size is larger than the number then you will get world size parts
+        replicated in worldsize / number
+
+        world_size = 4, max_partition_sizes = [8], tensor = [0 1 2 3 4 5 6 7]
+        [0 1] [2 3] [4 5] [6 7]
+
+        world_size = 8, max_partition_sizes = [4], tensor = [0 1 2 3 4 5 6 7]
+        [0 1] [0 1] [2 3] [2 3] [4 5] [4 5] [6 7] [6 7]
+
+        If there are multiple numbers in the max_partition_sizes list, then the param gets filled with non-contiguous
+        slices of the tensor_value. This is useful for fused weight cases (qkv, mlp, moe, etc.)
+
+        world_size = 4, max_partition_sizes = [4, 4], tensor = [0 1 2 3 4 5 6 7]
+        [0 4] [1 5] [2 6] [3 7]
+
+        world_size = 4, max_partition_sizes = [4, 1], tensor = [0 1 2 3 4 5 6 7 8 9]
+        [0 1 8 9] [2 3 8 9] [4 5 8 9] [6 7 8 9]
+
+        Returns:
+        Dict[str, List[int]]
+            a dictionary of weight names to their corresponding max_partition_sizes list
+        """
         return {}
 
     def __get_start_index(
@@ -277,6 +333,18 @@ class TPModule(nn.Module, metaclass=ABCMeta):
         weight_name: str,
         is_bias: bool,
     ):
+        """Load a tensor value into a param if it is marked as rowwise/colwise tensor parallel
+
+        Args:
+            param: torch.nn.Parameter
+                the parameter to load the weight into
+            tensor_value: torch.Tensor
+                the tensor value to load into the parameter
+            weight_name: str
+                the weights name in the state_dict
+            is_bias: bool
+                True if param is referring to a bias, otherwise just a weight
+        """
         if weight_name in self.colwise_params():
             self._copy_colwise(
                 param, tensor_value, is_bias, self.colwise_params()[weight_name]
