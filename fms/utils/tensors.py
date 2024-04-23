@@ -198,6 +198,19 @@ def _flatten(ids: List[int]):
 class PagedStorage:
     def __init__(
         self,
+        storage,
+        page_size,
+        refcounts,
+        static_shape,
+    ):
+        self.storage = storage
+        self.page_size = page_size
+        self.refcounts = refcounts
+        self.static_shape = static_shape
+
+    @classmethod
+    def from_tensor(
+        self,
         static_shape,
         dynamic_shape,
         page_size=16,
@@ -206,15 +219,12 @@ class PagedStorage:
         dtype=None,
         device=None,
     ):
-        self.static_shape = static_shape
-        self.dynamic_shape = dynamic_shape
-        self.page_size = page_size
-        self.storage = initial_storage
-        if self.storage is None:
-            self.storage = torch.tensor(
-                [128 * page_size] + self.static_shape, device=device, dtype=dtype
+        storage = initial_storage
+        if storage is None:
+            storage = torch.tensor(
+                [128, page_size] + static_shape, device=device, dtype=dtype
             )
-        elif initial_storage.numel() % (page_size * math.prod(self.static_shape)):
+        elif initial_storage.numel() % (page_size * math.prod(static_shape)):
             last_dynamic_len = dynamic_shape[-1]
             # number of rows left on last dynamic dim to make a whole page
             remaining_rows = page_size - (last_dynamic_len % page_size)
@@ -222,27 +232,28 @@ class PagedStorage:
             dyn_copy[-1] = remaining_rows
             buffer_shape = dyn_copy + static_shape
             new_storage = torch.zeros(
-                buffer_shape, device=self.storage.device, dtype=self.storage.dtype
+                buffer_shape, device=storage.device, dtype=storage.dtype
             )
             storage = torch.cat(
                 (initial_storage, new_storage), dim=len(dynamic_shape) - 1
             )
-            self.storage = storage.view([-1, page_size] + self.static_shape)
+            storage = storage.view([-1, page_size] + static_shape)
         else:
-            self.storage = initial_storage.view([-1, page_size] + self.static_shape)
+            storage = initial_storage.view([-1, page_size] + static_shape)
 
-        pages = int(math.ceil(self.storage.numel() // page_size))
+        pages = int(math.ceil(storage.numel() // page_size))
 
-        self.refcounts = [0] * pages
+        refcounts = [0] * pages
 
         def populate_refcounts(ids):
             if type(ids) == list:
                 for id in ids:
                     populate_refcounts(id)
             else:
-                self.refcounts[ids] += 1
+                refcounts[ids] += 1
 
         populate_refcounts(initial_page_ids)
+        return PagedStorage(storage, page_size, refcounts, static_shape)
 
     def apply_inplace(self, op_name, args, kwargs, page_ids):
         flattened = _flatten(page_ids)
@@ -252,13 +263,10 @@ class PagedStorage:
 
     def apply(self, op, args, kwargs, page_ids):
         storage = PagedStorage(
-            self.static_shape,
-            self.dynamic_shape,
-            self.page_size,
             self.storage.clone(),
-            page_ids,
-            self.storage.dtype,
-            self.storage.device,
+            self.page_size,
+            self.refcounts.copy(),
+            self.static_shape,
         )
         storage.refcounts = [0 for _ in storage.refcounts]
         for id in _flatten(page_ids):
@@ -277,9 +285,7 @@ class PagedStorage:
                 current size.
             min_pages (int): Expand to at least this number of pages.
         """
-        current_pages = self.storage.numel() // (
-            self.page_size * math.prod(self.static_shape)
-        )
+        current_pages = self.storage.shape[0]
         page_dim = max(min_pages, current_pages * ratio)
         storage = torch.empty(
             [page_dim, self.page_size] + self.static_shape,
@@ -289,6 +295,14 @@ class PagedStorage:
         target_slices = tuple(slice(0, size) for size in self.storage.shape)
         storage[target_slices] = self.storage
         self.storage = storage
+        added_pages = storage.shape[0] - current_pages
+        self.refcounts.extend([0] * added_pages)
+
+    def free_pages(self) -> int:
+        """
+        How many pages of storage are available for use.
+        """
+        return sum([1 for x in self.refcounts if x == 0])
 
     def decrement_refcounts(self, page_ids):
         def decrement(ids):
@@ -437,7 +451,8 @@ class PagedTensor(torch.Tensor):
         dynamic_dims,
         page_size,
         current_shape,
-        paged_storage,
+        dynamic_shape,
+        paged_storage: PagedStorage,
         page_ids,
     ):
         super().__init__()
@@ -445,6 +460,7 @@ class PagedTensor(torch.Tensor):
         self.dynamic_dims = dynamic_dims
         self.page_size = page_size
         self.current_shape = current_shape
+        self.dynamic_shape = dynamic_shape
         self.paged_storage = paged_storage
         self.page_ids = page_ids
 
@@ -469,7 +485,7 @@ class PagedTensor(torch.Tensor):
         dynamic_shape = [tensor.shape[x] for x in dynamic_dims]
 
         page_ids, _ = _create_page_ids(dynamic_shape, page_size, 0)
-        paged_storage = PagedStorage(
+        paged_storage = PagedStorage.from_tensor(
             static_shape,
             dynamic_shape,
             page_size,
@@ -479,7 +495,13 @@ class PagedTensor(torch.Tensor):
             device=tensor.dtype,
         )
         return PagedTensor(
-            static_dims, dynamic_dims, page_size, current_shape, paged_storage, page_ids
+            static_dims,
+            dynamic_dims,
+            page_size,
+            current_shape,
+            dynamic_shape,
+            paged_storage,
+            page_ids,
         )
 
     def __new__(
@@ -488,6 +510,7 @@ class PagedTensor(torch.Tensor):
         dynamic_dims,
         page_size,
         current_shape,
+        dynamic_shape,
         paged_storage,
         page_ids,
     ):
@@ -521,7 +544,7 @@ class PagedTensor(torch.Tensor):
         # E.g. if we have dyn1 x dyn2 x 'paged' x static_dim1, ranges will be:
         # `[range(0, dyn1), range(0,dyn2)]` and dynamic_dims will be:
         # [ (0,0), (0,1), .... (0,dyn1), (1,0), (1,1) .... (dyn1-1, dyn2-1)]
-        ranges = [range(dim) for dim in self.paged_storage.dynamic_shape[:-1]]
+        ranges = [range(dim) for dim in self.dynamic_shape[:-1]]
         dynamic_indices = list(itertools.product(*ranges))
 
         for indices in dynamic_indices:
@@ -565,6 +588,47 @@ class PagedTensor(torch.Tensor):
     def __repr__(self):
         return self._tensor().__repr__()
 
+    def remove(self, idx, dim):
+        """
+        Modifies self.page_ids, which is an arbitrarily nested list of integers.
+        The level of nesting depth is the `dim` (dimension) and `idx` is the index
+        to be removed at that level.
+        E.g. if self.page_ids = [[1,2,3],[4,5,6]]:
+        remove(0, 0) would return [[4,5,6]]
+        remove(2,1) would return [[1,2], [4,5]]
+        """
+        # static dimensions can't be modified.
+        if dim in self.static_dims:
+            raise RuntimeError("can't remove static dimensions")
+
+        last_dynamic_dim = self.dynamic_dims[-1]
+
+        def remove_helper(pages, current_dim):
+            if current_dim == dim:
+                if dim == last_dynamic_dim:
+                    if idx != self.dynamic_shape[dim] - 1:
+                        raise RuntimeError(
+                            "Can only remove last idx of final dynamic dim"
+                        )
+                    elif idx % self.page_size == 0:
+                        removed = pages.pop(len(pages) - 1)
+                        self.paged_storage.decrement_refcounts(removed)
+                        return pages
+                    else:
+                        # just shortening the shape takes care of this case, no need to remove
+                        # any pages because only modifying within one page.
+                        return pages
+                else:
+                    removed = pages.pop(idx)
+                    self.paged_storage.decrement_refcounts(removed)
+                    return pages
+            else:
+                return [remove_helper(nested, current_dim + 1) for nested in pages]
+
+        self.page_ids = remove_helper(self.page_ids, 0)
+        self.current_shape[dim] -= 1
+        self.dynamic_shape[dim] -= 1
+
     # Most of these return a copy of the original
     # tensor, but it handles pointwise ops with look-through
     # into the underlying storage.
@@ -599,6 +663,7 @@ class PagedTensor(torch.Tensor):
                     first_pt.dynamic_dims,
                     first_pt.page_size,
                     first_pt.current_shape,
+                    first_pt.dynamic_shape,
                     new_storage,
                     first_pt.page_ids,
                 )
