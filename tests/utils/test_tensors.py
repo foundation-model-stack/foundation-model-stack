@@ -102,7 +102,7 @@ def get_paged_tensor() -> PagedTensor:
     seq_len = 15 * 7
     emb_dim = 4
     t = torch.arange(batches * seq_len * emb_dim).view(batches, seq_len, emb_dim)
-    pt = PagedTensor.from_tensor(t, [-1])
+    pt = PagedTensor.from_tensor(t, 1)
     return pt
 
 
@@ -112,7 +112,7 @@ def test_paged():
     seq_len = 16 * 7
     emb_dim = 4
     t = torch.arange(batches * seq_len * emb_dim).view(batches, seq_len, emb_dim)
-    pt = PagedTensor.from_tensor(t, [-1])
+    pt = PagedTensor.from_tensor(t, 1)
     extracted = pt._tensor()
     torch.testing.assert_close(t, extracted)
 
@@ -124,7 +124,7 @@ def test_paged_uneven():
     seq_len = 15 * 7
     emb_dim = 4
     t = torch.arange(batches * seq_len * emb_dim).view(batches, seq_len, emb_dim)
-    pt = PagedTensor.from_tensor(t, [-1])
+    pt = PagedTensor.from_tensor(t, 1)
     extracted = pt._tensor()
     torch.testing.assert_close(t, extracted)
 
