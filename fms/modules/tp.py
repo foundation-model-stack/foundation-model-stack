@@ -37,9 +37,6 @@ class TPModule(nn.Module, metaclass=ABCMeta):
     def rowwise_params(self) -> Dict[str, List[int]]:
         return {}
 
-    def needs_tp(self, name: str):
-        return name in self.colwise_params() or name in self.rowwise_params()
-
     def __get_start_index(
         self,
         tensor_value,
