@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import Dict, List, Optional, Set
 
 import torch
 import torch.distributed
@@ -120,11 +120,29 @@ class TPFeedForwardBlock(FeedForwardBlock, TPModule):
         )
         self.setup_tp(rank, world_size)
 
-    def colwise_param_names(self) -> List[str]:
-        return ["w1"]
+    def load_weights(
+        self,
+        tensor_values: Dict[str, torch.Tensor],
+    ):
+        # 1. Grab the weights from tensor_values
+        used_keys: Set[str] = set()
+        w1_weight = self._get_sd_weight(tensor_values, used_keys, ["w1", "weight"])
+        w2_weight = self._get_sd_weight(tensor_values, used_keys, ["w2", "weight"])
+        if self.use_bias:
+            w1_bias = self._get_sd_weight(tensor_values, used_keys, ["w1", "bias"])
+            w2_bias = self._get_sd_weight(tensor_values, used_keys, ["w2", "bias"])
 
-    def rowwise_param_names(self) -> List[str]:
-        return ["w2"]
+        # 2. Raise exceptions for extra weights in tensor_values
+        if len(tensor_values) > (4 if self.use_bias else 2):
+            unused_keys = set(tensor_values.keys()).difference(used_keys)
+            raise AttributeError(f"Unused weight(s): {', '.join(unused_keys)}")
+
+        # 3. Load and shard the weights
+        self.sharded_copy(self.w1.weight, w1_weight, 0, [self.world_size])
+        self.sharded_copy(self.w2.weight, w2_weight, 1, [self.world_size])
+        if self.use_bias:
+            self.sharded_copy(self.w1.bias, w1_bias, 0, [self.world_size])
+            self.sharded_copy(self.w2.bias, w2_bias, 1, [self.world_size], False)
 
     @staticmethod
     def import_module(
@@ -258,11 +276,33 @@ class TPGatedLinearUnit(GatedLinearUnit, TPModule):
         )
         self.setup_tp(rank, world_size)
 
-    def colwise_param_names(self) -> List[str]:
-        return ["w1", "wg"]
+    def load_weights(
+        self,
+        tensor_values: Dict[str, torch.Tensor],
+    ):
+        # 1. Grab the weights from tensor_values
+        used_keys: Set[str] = set()
+        w1_weight = self._get_sd_weight(tensor_values, used_keys, ["w1", "weight"])
+        wg_weight = self._get_sd_weight(tensor_values, used_keys, ["wg", "weight"])
+        w2_weight = self._get_sd_weight(tensor_values, used_keys, ["w2", "weight"])
+        if self.use_bias:
+            w1_bias = self._get_sd_weight(tensor_values, used_keys, ["w1", "bias"])
+            wg_bias = self._get_sd_weight(tensor_values, used_keys, ["wg", "bias"])
+            w2_bias = self._get_sd_weight(tensor_values, used_keys, ["w2", "bias"])
 
-    def rowwise_param_names(self) -> List[str]:
-        return ["w2"]
+        # 2. Raise exceptions
+        if len(tensor_values) > (6 if self.use_bias else 3):
+            unused_keys = set(tensor_values.keys()).difference(used_keys)
+            raise AttributeError(f"Unused weight(s): {', '.join(unused_keys)}")
+
+        # 3. Load and shard the weights
+        self.sharded_copy(self.w1.weight, w1_weight, 0, [self.world_size])
+        self.sharded_copy(self.wg.weight, wg_weight, 0, [self.world_size])
+        self.sharded_copy(self.w2.weight, w2_weight, 1, [self.world_size])
+        if self.use_bias:
+            self.sharded_copy(self.w1.bias, w1_bias, 0, [self.world_size])
+            self.sharded_copy(self.wg.bias, wg_bias, 0, [self.world_size])
+            self.sharded_copy(self.w2.bias, w2_bias, 1, [self.world_size], False)
 
     @staticmethod
     def import_module(glu: GatedLinearUnit, group: ProcessGroup) -> "TPGatedLinearUnit":
@@ -307,160 +347,53 @@ class ConditionalFeedForward(nn.Module):
         self.intermediate_size = intermediate_size
         self.w13 = nn.Parameter(torch.empty(num_experts, 2 * intermediate_size, dim))
         self.w2 = nn.Parameter(torch.empty(num_experts, dim, intermediate_size))
-        self.moe_impl = "fms"
 
     def forward(self, x: torch.Tensor, expert_indices: torch.Tensor) -> torch.Tensor:
-        # if x.shape[0] > 4:
-        if self.moe_impl == "fms":
-            ## Triton path
-            # Check constraints.
-            assert x.shape[1] == self.w13.shape[2], "Hidden size mismatch"
-            assert x.is_contiguous(), "Hidden_states must be contiguous"
-            assert self.w13.is_contiguous(), "Expert weights 1 must be contiguous"
-            assert self.w2.is_contiguous(), "Expert weights 2 must be contiguous"
+        ## Triton path
+        # Check constraints.
+        assert x.shape[1] == self.w13.shape[2], "Hidden size mismatch"
+        assert x.is_contiguous(), "Hidden_states must be contiguous"
+        assert self.w13.is_contiguous(), "Expert weights 1 must be contiguous"
+        assert self.w2.is_contiguous(), "Expert weights 2 must be contiguous"
 
-            M, _ = x.shape
-            E, N, _ = self.w13.shape
+        M, _ = x.shape
+        E, N, _ = self.w13.shape
 
-            if expert_indices.numel() <= E:
-                padding_size = 16
-            else:
-                padding_size = 64
+        if expert_indices.numel() <= E:
+            padding_size = 16
+        else:
+            padding_size = 64
 
-            (
-                padded_token_ids_per_block,
-                expert_block_mapping,
-                total_padded_tokens,
-            ) = moe_kernel.moe_align_block_size(expert_indices, padding_size, E)
+        (
+            padded_token_ids_per_block,
+            expert_block_mapping,
+            total_padded_tokens,
+        ) = moe_kernel.moe_align_block_size(expert_indices, padding_size, E)
 
-            x1, x3 = (
-                torch.ops.moe.moe_mm(
-                    x,
-                    self.w13,
-                    expert_indices,
-                    padded_token_ids_per_block,
-                    expert_block_mapping,
-                    total_padded_tokens,
-                    expert_indices.shape[1],
-                    padding_size,
-                )
-                .view(-1, N)
-                .chunk(2, dim=1)
-            )
-
-            # torch.testing.assert_close(x, x_orig)
-
-            # x1_vllm, x3_vllm = (
-            #     torch.ops.moe.moe_mm_vllm(
-            #         x,
-            #         self.w13,
-            #         expert_indices,
-            #         padded_token_ids_per_block,
-            #         expert_block_mapping,
-            #         total_padded_tokens,
-            #         expert_indices.shape[1],
-            #     )
-            #     .view(-1, N)
-            #     .chunk(2, dim=1)
-            # )
-
-            # torch.testing.assert_close(x1, x1_vllm)
-            # torch.testing.assert_close(x3, x3_vllm)
-
-            y = torch.ops.moe.moe_mm(
-                F.silu(x1) * x3,
-                self.w2,
+        x1, x3 = (
+            torch.ops.moe.moe_mm(
+                x,
+                self.w13,
                 expert_indices,
                 padded_token_ids_per_block,
                 expert_block_mapping,
                 total_padded_tokens,
-                1,
+                expert_indices.shape[1],
                 padding_size,
             )
-
-            # y_vllm = torch.ops.moe.moe_mm_vllm(
-            #     F.silu(x1_vllm) * x3_vllm,
-            #     self.w2,
-            #     expert_indices,
-            #     padded_token_ids_per_block,
-            #     expert_block_mapping,
-            #     total_padded_tokens,
-            #     1,
-            # )
-
-            # torch.testing.assert_close(y, y_vllm)
-
-            return y
-        elif self.moe_impl == "vllm":
-            # Check constraints.
-            assert x.shape[1] == self.w13.shape[2], "Hidden size mismatch"
-            assert x.is_contiguous(), "Hidden_states must be contiguous"
-            assert self.w13.is_contiguous(), "Expert weights 1 must be contiguous"
-            assert self.w2.is_contiguous(), "Expert weights 2 must be contiguous"
-
-            M, _ = x.shape
-            E, N, _ = self.w13.shape
-
-            config = {
-                "BLOCK_SIZE_M": 64,
-                "BLOCK_SIZE_N": 64,
-                "BLOCK_SIZE_K": 32,
-                "GROUP_SIZE_M": 8,
-            }
-
-            if M <= E:
-                config = {
-                    "BLOCK_SIZE_M": 16,
-                    "BLOCK_SIZE_N": 32,
-                    "BLOCK_SIZE_K": 64,
-                    "GROUP_SIZE_M": 1,
-                }
-
-            (
-                padded_token_ids_per_block,
-                expert_block_mapping,
-                total_padded_tokens,
-            ) = moe_kernel.moe_align_block_size(
-                expert_indices, config["BLOCK_SIZE_M"], E
-            )
-
-            x1, x3 = (
-                torch.ops.moe.moe_mm_vllm(
-                    x,
-                    self.w13,
-                    expert_indices,
-                    padded_token_ids_per_block,
-                    expert_block_mapping,
-                    total_padded_tokens,
-                    expert_indices.shape[1],
-                )
-                .view(-1, N)
-                .chunk(2, dim=1)
-            )
-
-            return torch.ops.moe.moe_mm_vllm(
-                F.silu(x1) * x3,
-                self.w2,
-                expert_indices,
-                padded_token_ids_per_block,
-                expert_block_mapping,
-                total_padded_tokens,
-                1,
-            )
-
-        elif self.moe_impl == "gpt-fast":
-            ## Pure Pytorch path
-            # T = num_tokens, E = num_experts, D = hidden dim, A = activated experts
-            w13_weights = self.w13[expert_indices].transpose(-1, -2)  # [T, A, D, D]
-            # w3_weights = self.w13[:, self.intermediate_size:][expert_indices].transpose(-1, -2)  # [T, A, D, D]
-            w2_weights = self.w2[expert_indices]  # [T, A, D, D]
-            x1, x3 = torch.einsum("ti, taio -> tao", x, w13_weights).chunk(2, dim=2)
-            # x3 = torch.einsum("ti, taio -> tao", x, w3_weights)
-            expert_outs = torch.einsum(
-                "tao, taio -> tai", (F.silu(x1) * x3), w2_weights
-            )
-            return expert_outs
-        return x  # Should not hit this
+            .view(-1, N)
+            .chunk(2, dim=1)
+        )
+        return torch.ops.moe.moe_mm(
+            F.silu(x1) * x3,
+            self.w2,
+            expert_indices,
+            padded_token_ids_per_block,
+            expert_block_mapping,
+            total_padded_tokens,
+            1,
+            padding_size,
+        )
 
 
 class TPConditionalFeedForward(ConditionalFeedForward, TPModule):
@@ -499,8 +432,23 @@ class TPConditionalFeedForward(ConditionalFeedForward, TPModule):
         )
         self.setup_tp(rank, world_size)
 
-    def moe_param_names(self) -> List[str]:
-        return ["w13", "w2"]
+    def load_weights(
+        self,
+        tensor_values: Dict[str, torch.Tensor],
+    ):
+        # 1. Grab the weights from tensor_values
+        used_keys: Set[str] = set()
+        w13_weight = self._get_sd_weight(tensor_values, used_keys, ["w13"])
+        w2_weight = self._get_sd_weight(tensor_values, used_keys, ["w2"])
+
+        # 2. Raise exceptions
+        if len(tensor_values) > 2:
+            unused_keys = set(tensor_values.keys()).difference(used_keys)
+            raise AttributeError(f"Unused weight(s): {', '.join(unused_keys)}")
+
+        # 3. Load and shard the weights
+        self.sharded_copy(self.w13, w13_weight, 1, [self.world_size, self.world_size])
+        self.sharded_copy(self.w2, w2_weight, 2, [self.world_size])
 
     @staticmethod
     def import_module(
@@ -566,14 +514,7 @@ class MOEFeedForward(nn.Module):
             expert_weights, self.num_activated_experts, dim=-1
         )  # [T, A], [T, A]
         expert_weights /= expert_weights.sum(dim=-1, keepdim=True)  # [T, A]
-        # Given the balloning memory requirements, only process at most 10 tokens at a time
-        # if x.shape[0] > 10:
-        #     split_x = x.chunk(x.shape[0] // 10 + 1)
-        #     split_ei = expert_indices.chunk(expert_indices.shape[0] // 10 + 1)
-        #     expert_outs = torch.cat([self.cond_ffn(x_i, ei_i) for x_i, ei_i in zip(split_x, split_ei)], dim=0)
-        # else:
         expert_outs = self.cond_ffn(x, expert_indices)
-        # print(expert_outs.shape)
         int_v1 = torch.einsum("tai,ta -> ti", expert_outs, expert_weights)
         int_v2 = int_v1.view(B, S, self.dim)
         return int_v2
