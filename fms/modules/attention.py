@@ -1,4 +1,4 @@
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 import torch
 import torch.distributed
@@ -168,9 +168,7 @@ class MultiHeadAttention(nn.Module):
         else:
             B, _, H, E = keys.shape
             keys_c = torch.zeros((B, 256, H, E), device=keys.device, dtype=keys.dtype)
-            values_c = torch.zeros(
-                (B, 256, H, E), device=keys.device, dtype=keys.dtype
-            )
+            values_c = torch.zeros((B, 256, H, E), device=keys.device, dtype=keys.dtype)
             keys_c[:, position_ids[0]] = keys
             values_c[:, position_ids[0]] = values
 
@@ -278,29 +276,70 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
         assert (
             nheads % world_size == 0
         ), "The number of heads must be divisible by world size"
+        assert (kvheads >= world_size and kvheads % world_size == 0) or (
+            kvheads < world_size and world_size % kvheads == 0
+        ), "the kv heads must be divisible by the world size or the world size must be divisible by kv heads"
         MultiHeadAttention.__init__(
             self,
             emb_dim,
             emb_kq,
             emb_v,
             nheads // world_size,
-            (kvheads // world_size) if kvheads > 1 else kvheads,
+            (kvheads // world_size) if kvheads >= world_size else 1,
             p_dropout,
             use_bias,
             position_encoder,
         )
+        self.pre_tp_nheads = nheads
         self.pre_tp_kvheads = kvheads
         self.setup_tp(rank, world_size)
 
-    def colwise_param_names(self) -> List[str]:
-        colwise_weights = ["query"]
-        if self.pre_tp_kvheads != 1:
-            colwise_weights.append("key")
-            colwise_weights.append("value")
-        return colwise_weights
+    def load_weights(
+        self,
+        tensor_values: Dict[str, torch.Tensor],
+    ):
+        # 1. Grab the weights from tensor_values
+        used_keys: Set[str] = set()
+        query_weight = self._get_sd_weight(
+            tensor_values, used_keys, ["query", "weight"]
+        )
+        key_weight = self._get_sd_weight(tensor_values, used_keys, ["key", "weight"])
+        value_weight = self._get_sd_weight(
+            tensor_values, used_keys, ["value", "weight"]
+        )
+        dense_weight = self._get_sd_weight(
+            tensor_values, used_keys, ["dense", "weight"]
+        )
+        if self.use_bias:
+            query_bias = self._get_sd_weight(
+                tensor_values, used_keys, ["query", "bias"]
+            )
+            key_bias = self._get_sd_weight(tensor_values, used_keys, ["key", "bias"])
+            value_bias = self._get_sd_weight(
+                tensor_values, used_keys, ["value", "bias"]
+            )
+            dense_bias = self._get_sd_weight(
+                tensor_values, used_keys, ["dense", "bias"]
+            )
 
-    def rowwise_param_names(self) -> List[str]:
-        return ["dense"]
+        # 2. Raise exceptions
+        if len(tensor_values) > (8 if self.use_bias else 4):
+            unused_keys = set(tensor_values.keys()).difference(used_keys)
+            raise AttributeError(f"Unused weight(s): {', '.join(unused_keys)}")
+
+        # 3. Load and shard the weights
+        # The number in max_partition_sizes will signify the largest world size
+        # til we need to duplicate.  For instance if we have nheads=16 and
+        # world_size=32, then first 2 ranks will get first 1/16th of query
+        self.sharded_copy(self.query.weight, query_weight, 0, [self.pre_tp_nheads])
+        self.sharded_copy(self.key.weight, key_weight, 0, [self.pre_tp_kvheads])
+        self.sharded_copy(self.value.weight, value_weight, 0, [self.pre_tp_kvheads])
+        self.sharded_copy(self.dense.weight, dense_weight, 1, [self.world_size])
+        if self.use_bias:
+            self.sharded_copy(self.query.bias, query_bias, 0, [self.pre_tp_nheads])
+            self.sharded_copy(self.key.bias, key_bias, 0, [self.pre_tp_kvheads])
+            self.sharded_copy(self.value.bias, value_bias, 0, [self.pre_tp_kvheads])
+            self.sharded_copy(self.dense.bias, dense_bias, 1, [self.world_size], False)
 
     @staticmethod
     def import_module(
