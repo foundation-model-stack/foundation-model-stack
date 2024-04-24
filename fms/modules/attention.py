@@ -1,5 +1,5 @@
 import abc
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 import torch
 import torch.distributed
@@ -28,7 +28,7 @@ class QKV(nn.Module, metaclass=abc.ABCMeta):
         emb_v_per_head: int,
         use_bias: bool,
         *args,
-        **kwargs
+        **kwargs,
     ):
         super().__init__(*args, **kwargs)
         self.emb_dim = emb_dim
@@ -83,7 +83,7 @@ class UnfusedQKV(QKV):
         emb_v_per_head: int,
         use_bias: bool,
         *args,
-        **kwargs
+        **kwargs,
     ):
         super().__init__(
             emb_dim,
@@ -93,7 +93,7 @@ class UnfusedQKV(QKV):
             emb_v_per_head,
             use_bias,
             *args,
-            **kwargs
+            **kwargs,
         )
         self.query = nn.Linear(
             self.emb_dim, self.nheads * self.emb_kq_per_head, bias=use_bias
@@ -144,7 +144,7 @@ class FusedQKV(QKV):
         emb_v_per_head: int,
         use_bias: bool,
         *args,
-        **kwargs
+        **kwargs,
     ):
         super().__init__(
             emb_dim,
@@ -154,7 +154,7 @@ class FusedQKV(QKV):
             emb_v_per_head,
             use_bias,
             *args,
-            **kwargs
+            **kwargs,
         )
         self.splits = [
             self.nheads * self.emb_kq_per_head,
@@ -427,9 +427,12 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
         assert torch.distributed.is_initialized()
 
         rank, world_size = distributed.rank_and_world(group)
-        assert nheads % world_size == 0 and (
-            kvheads % world_size == 0 or world_size % kvheads == 0
-        ), "The number of heads must be divisible by world size or the world size must be a multiple of kv heads"
+        assert (
+            nheads % world_size == 0
+        ), "The number of heads must be divisible by world size"
+        assert (kvheads >= world_size and kvheads % world_size == 0) or (
+            kvheads < world_size and world_size % kvheads == 0
+        ), "the kv heads must be divisible by the world size or the world size must be divisible by kv heads"
         MultiHeadAttention.__init__(
             self,
             emb_dim,
@@ -446,26 +449,104 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
         self.pre_tp_kvheads = kvheads
         self.setup_tp(rank, world_size)
 
-    def colwise_params(self) -> Dict[str, List[int]]:
-        if self.fused:
-            return {
-                "qkv_fused": [
-                    self.pre_tp_nheads,
-                    self.pre_tp_kvheads,
-                    self.pre_tp_kvheads,
-                ]
-            }
-        else:
-            return {
-                "query": [
-                    self.pre_tp_nheads
-                ],  # this number will signify the largest world size til we need to duplicate. For instance if we have nheads=16 and world_size=32, then first 2 ranks will get first 1/16th of query
-                "key": [self.pre_tp_kvheads],
-                "value": [self.pre_tp_kvheads],
-            }
+    def load_weights(
+        self,
+        tensor_values: Dict[str, torch.Tensor],
+    ):
+        used_keys: Set[str] = set()
+        dense_weight = self._get_sd_weight(
+            tensor_values, used_keys, ["dense", "weight"]
+        )
+        if self.use_bias:
+            dense_bias = self._get_sd_weight(
+                tensor_values, used_keys, ["dense", "bias"]
+            )
 
-    def rowwise_params(self) -> Dict[str, List[int]]:
-        return {"dense": [self.world_size]}
+        # 1. Grab the weights from tensor_values
+        if self.fused:
+            qkv_weight = self._get_sd_weight(
+                tensor_values, used_keys, ["qkv_fused", "weight"]
+            )
+            if self.use_bias:
+                qkv_bias = self._get_sd_weight(
+                    tensor_values, used_keys, ["qkv_fused", "bias"]
+                )
+
+            # 2. Raise exceptions
+            if len(tensor_values) > (4 if self.use_bias else 2):
+                unused_keys = set(tensor_values.keys()).difference(used_keys)
+                raise AttributeError(f"Unused weight(s): {', '.join(unused_keys)}")
+
+            # 3. Load and shard the weights
+            # The number in max_partition_sizes will signify the largest world size
+            # til we need to duplicate.  For instance if we have nheads=16 and
+            # world_size=32, then first 2 ranks will get first 1/16th of query
+            self.copy_colwise(
+                self.in_proj.qkv_fused.weight,
+                qkv_weight,
+                [self.pre_tp_nheads, self.pre_tp_kvheads, self.pre_tp_kvheads],
+            )
+            self.copy_rowwise(self.dense.weight, dense_weight, [self.world_size])
+            if self.use_bias:
+                self.copy_colwise(
+                    self.in_proj.qkv_fused.bias,
+                    qkv_bias,
+                    [self.pre_tp_nheads, self.pre_tp_kvheads, self.pre_tp_kvheads],
+                )
+                self.copy_rowwise(self.dense.bias, dense_bias, [self.world_size], False)
+
+        else:
+            query_weight = self._get_sd_weight(
+                tensor_values, used_keys, ["query", "weight"]
+            )
+            key_weight = self._get_sd_weight(
+                tensor_values, used_keys, ["key", "weight"]
+            )
+            value_weight = self._get_sd_weight(
+                tensor_values, used_keys, ["value", "weight"]
+            )
+
+            if self.use_bias:
+                query_bias = self._get_sd_weight(
+                    tensor_values, used_keys, ["query", "bias"]
+                )
+                key_bias = self._get_sd_weight(
+                    tensor_values, used_keys, ["key", "bias"]
+                )
+                value_bias = self._get_sd_weight(
+                    tensor_values, used_keys, ["value", "bias"]
+                )
+
+            # 2. Raise exceptions
+            if len(tensor_values) > (8 if self.use_bias else 4):
+                unused_keys = set(tensor_values.keys()).difference(used_keys)
+                raise AttributeError(f"Unused weight(s): {', '.join(unused_keys)}")
+
+            # 3. Load and shard the weights
+            # The number in max_partition_sizes will signify the largest world size
+            # til we need to duplicate.  For instance if we have nheads=16 and
+            # world_size=32, then first 2 ranks will get first 1/16th of query
+            self.copy_colwise(
+                self.in_proj.query.weight, query_weight, [self.pre_tp_nheads]
+            )
+            self.copy_colwise(
+                self.in_proj.key.weight, key_weight, [self.pre_tp_kvheads]
+            )
+            self.copy_colwise(
+                self.in_proj.value.weight, value_weight, [self.pre_tp_kvheads]
+            )
+            self.copy_rowwise(self.dense.weight, dense_weight, [self.world_size])
+            if self.use_bias:
+                self.copy_colwise(
+                    self.in_proj.query.bias, query_bias, [self.pre_tp_nheads]
+                )
+                self.copy_colwise(
+                    self.in_proj.key.bias, key_bias, [self.pre_tp_kvheads]
+                )
+                self.copy_colwise(
+                    self.in_proj.value.bias, value_bias, [self.pre_tp_kvheads]
+                )
+                self.copy_rowwise(self.dense.bias, dense_bias, [self.world_size], False)
 
     @staticmethod
     def import_module(

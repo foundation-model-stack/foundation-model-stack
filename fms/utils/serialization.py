@@ -346,20 +346,28 @@ def _load_safetensors_state_dict(
 def _find_key_neighbors(key: str, sd_keys: Set[str]):
     # For loading most models that concern us, a good partition is the
     # one used for FSDP units: everything that is in a layer can
-    # go together and memory usage will be keep in control
+    # go together, everything else can also go together and memory usage
+    # will be keep in control.
     key_steps = key.split(".")
     prefix = ""
     # Navigate the model tree to find a layer index. If not found,
-    # grab that weight alone
+    # grab everything that is not numerical
+    has_number = False
     for idx, step in enumerate(key_steps):
         prefix = ".".join(key_steps[: idx + 1])
         if step.isnumeric():
             prefix += "."
+            has_number = True
             break
     prefix_neighbors = set()
-    for key_in_sd in sd_keys:
-        if prefix in key_in_sd:
-            prefix_neighbors.add(key_in_sd)
+    if has_number:
+        for key_in_sd in sd_keys:
+            if prefix in key_in_sd:
+                prefix_neighbors.add(key_in_sd)
+    else:
+        for key_in_sd in sd_keys:
+            if not bool(re.search(r"\.\d+\.", key_in_sd)):
+                prefix_neighbors.add(key_in_sd)
     return list(prefix_neighbors)
 
 
@@ -444,6 +452,7 @@ def _load_partial_state_dict(
     needs_tp_sharding: bool,
 ):
     unused_params = []
+    seen_tp_modules = set()
     for key, tensor_value in state_dict.items():
         target_module = model
         # Find where to put the weight and decide whether it needs TP'ing
@@ -451,6 +460,7 @@ def _load_partial_state_dict(
         prefix = ""
         key_step = 0
         tp_module = None
+        tp_prefix = ""
         # Navigate the model tree to find the module where the parameter is
         # located and whether there is a TPModule in the way in case the
         # parameter requires sharding
@@ -467,21 +477,21 @@ def _load_partial_state_dict(
                     key_step += 1
                 if isinstance(target_module, TPModule):
                     tp_module = target_module
+                    tp_prefix = prefix
             except AttributeError:
                 unused_params.append(key)
                 break
 
         # Check if target_module has the Parameter/buffer
         try:
-            param = getattr(target_module, key_steps[-1])
-
             # If TP sharding is not needed, copy the parameter
             # into the model
             if not needs_tp_sharding or tp_module is None:
+                param = getattr(target_module, key_steps[-1])
                 param.copy_(tensor_value, non_blocking=True)
-            elif tp_module is not None:
-                tp_module.load(
-                    param, tensor_value, key_steps[-2], key_steps[-1] == "bias"
-                )
+            elif tp_module is not None and tp_module not in seen_tp_modules:
+                seen_tp_modules.add(tp_module)
+                tensor_values = {k: v for k, v in state_dict.items() if tp_prefix in k}
+                tp_module.load_weights(tensor_values)
         except AttributeError:
             unused_params.append(key)
