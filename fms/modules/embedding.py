@@ -1,5 +1,5 @@
 import math
-from typing import List, Optional, Tuple, Union
+from typing import Dict, List, Optional, Set, Tuple, Union
 
 import torch
 import torch.distributed
@@ -213,16 +213,41 @@ class TPWordEmbedding(WordEmbedding, TPModule):
         )
         return tp_we
 
-    def colwise_param_names(self) -> List[str]:
-        if self.reversible and not self.tie_weights:
-            return ["head"]
-        return []
-
-    def embedding_param_names(self) -> List[str]:
-        emb_weights = ["emb"]
+    def load_weights(
+        self,
+        tensor_values: Dict[str, torch.Tensor],
+    ):
+        # 1. Grab the weights from tensor_values
+        used_keys: Set[str] = set()
+        weight_count = 1
+        emb_weight = self._get_sd_weight(tensor_values, used_keys, ["emb"])
         if self.abs_pos:
-            emb_weights.append("pos_emb")
-        return emb_weights
+            pos_emb_weight = self._get_sd_weight(tensor_values, used_keys, ["pos_emb"])
+            weight_count += 1
+        if self.reversible and not self.tie_weights:
+            head_weight = self._get_sd_weight(
+                tensor_values, used_keys, ["head", "weight"]
+            )
+            weight_count += 1
+            if self.bias:
+                head_bias = self._get_sd_weight(
+                    tensor_values, used_keys, ["head", "bias"]
+                )
+                weight_count += 1
+
+        # 2. Raise exceptions
+        if len(tensor_values) > weight_count:
+            unused_keys = set(tensor_values.keys()).difference(used_keys)
+            raise AttributeError(f"Unused weight(s): {', '.join(unused_keys)}")
+
+        # 3. Load and shard the weights
+        self.sharded_copy(self.emb.weight, emb_weight, 1, [self.world_size])
+        if self.abs_pos:
+            self.sharded_copy(self.pos_emb.weight, pos_emb_weight, 1, [self.world_size])
+        if self.reversible and not self.tie_weights:
+            self.sharded_copy(self.head.weight, head_weight, 0, [self.world_size])
+            if self.bias:
+                self.sharded_copy(self.head.bias, head_bias, 0, [self.world_size])
 
     def forward(self, inp, reverse=False):
         # If reverse is False, compute input embeddings. If reverse is True, compute output logits.
@@ -286,8 +311,21 @@ class TPEmbedding(nn.Embedding, TPModule):
         )
         return tp_e
 
-    def embedding_param_names(self) -> List[str]:
-        return ["self"]
+    def load_weights(
+        self,
+        tensor_values: Dict[str, torch.Tensor],
+    ):
+        # 1. Grab the weights from tensor_values
+        used_keys: Set[str] = set()
+        emb_weight = self._get_sd_weight(tensor_values, used_keys, ["weight"])
+
+        # 2. Raise exceptions
+        if len(tensor_values) > 1:
+            unused_keys = set(tensor_values.keys()).difference(used_keys)
+            raise AttributeError(f"Unused weight(s): {', '.join(unused_keys)}")
+
+        # 3. Load and shard the weights
+        self.sharded_copy(self.weight, emb_weight, 1, [self.world_size])
 
     def forward(self, inp: torch.Tensor):
         # vocab_idx: b n d if reverse, else b n
