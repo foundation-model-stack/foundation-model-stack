@@ -92,7 +92,7 @@ def generate(
 
     global past_key_value_states_g
 
-    token_times = []
+    token_times: List[float] = []
     rank, _ = distributed.rank_and_world()
     # with torch.profiler.profile(
     #     activities=[
@@ -136,7 +136,7 @@ def generate(
                 #         for tensor_idx, kv_tensor in enumerate(cache_layer):
                 #             kv_tensor.copy_(past_key_value_states[layer_idx][tensor_idx])
                 #     past_key_value_states = past_key_value_states_g
-                
+
             # TODO: this should go away when reduce-overhead issues are fixed, or
             # maybe could be moved into model code to be more portable.
             # if contiguous_cache:
@@ -169,7 +169,7 @@ def generate(
             next_input = result
         kwargs["position_ids"] = kwargs["position_ids"][:, -1:] + 1
         # if i == 0:
-            # torch._dynamo.mark_static_address(kwargs["position_ids"])
+        # torch._dynamo.mark_static_address(kwargs["position_ids"])
         # itl_end = time.time()
         # token_times.append((itl_end - itl_start) * 1000)
         # prof.step()
@@ -177,10 +177,8 @@ def generate(
     torch.cuda.synchronize()
     # torch.distributed.barrier()
     total_time = time.time() - total_start
-    
-    print(
-        f"Total time: {total_time}"
-    )
+
+    print(f"Total time: {total_time}")
     if not batched:
         result = result[0]
     return result

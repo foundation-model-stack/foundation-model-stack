@@ -1,7 +1,6 @@
 import math
 import re
 from dataclasses import dataclass
-from tkinter import X
 from typing import List, Mapping, Optional, Tuple
 
 import torch
@@ -20,7 +19,6 @@ from fms.modules.layernorm import LayerNormParameterized
 from fms.modules.positions import RotaryEmbedding
 from fms.utils import serialization
 from fms.utils.config import ModelConfig
-from fms.utils.serialization import FusableWeightsMissingError
 
 
 @dataclass
@@ -396,7 +394,7 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
                     name.replace("gate", "w2")[:-7],
                     name.replace("gate", "w3")[:-7],
                 ]
-                raise FusableWeightsMissingError(missing_weights)
+                raise ValueError(f"Missing {missing_weights}")
 
         if "w1" in new_name or "w2" in new_name or "w3" in new_name:
             gate_name = re.sub(r"w\d", "gate", name) + ".weight"
@@ -408,7 +406,7 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
                     re.sub(r"w\d", "w3", name),
                 ]
                 missing_weights = [w for w in missing_weights if w != name]
-                raise FusableWeightsMissingError(missing_weights)
+                raise ValueError(f"Missing {missing_weights}")
             num_experts = hf_sd[gate_name].size(0)
             temp = new_sd[new_name]
             new_sd[new_name] = temp.reshape(
