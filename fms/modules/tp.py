@@ -101,7 +101,7 @@ class TPModule(nn.Module, metaclass=ABCMeta):
         )
         if not is_bias:
             tp_slices = self.__get_tp_slices(
-                tensor_value.shape[1], output_size_per_partition, max_partition_sizes, 1
+                tensor_value.shape[1], output_size_per_partition, max_partition_sizes
             )
             tensors_to_cat = [tensor_value[:, tp_slice] for tp_slice in tp_slices]
             tensor = torch.cat(tensors_to_cat, dim=1)
