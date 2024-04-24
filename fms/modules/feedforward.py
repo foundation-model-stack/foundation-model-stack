@@ -138,10 +138,10 @@ class TPFeedForwardBlock(FeedForwardBlock, TPModule):
 
         # 3. Load and shard the weights
         self.copy_colwise(self.w1.weight, w1_weight, [self.world_size])
-        self.copy_rowwise(self.w2.weight, w2_weight, True, [self.world_size])
+        self.copy_rowwise(self.w2.weight, w2_weight, [self.world_size])
         if self.use_bias:
             self.copy_colwise(self.w1.bias, w1_bias, [self.world_size])
-            self.copy_rowwise(self.w2.bias, w2_bias, False, [self.world_size])
+            self.copy_rowwise(self.w2.bias, w2_bias, [self.world_size], False)
 
     @staticmethod
     def import_module(
@@ -297,11 +297,11 @@ class TPGatedLinearUnit(GatedLinearUnit, TPModule):
         # 3. Load and shard the weights
         self.copy_colwise(self.w1.weight, w1_weight, [self.world_size])
         self.copy_colwise(self.wg.weight, wg_weight, [self.world_size])
-        self.copy_rowwise(self.w2.weight, w2_weight, True, [self.world_size])
+        self.copy_rowwise(self.w2.weight, w2_weight, [self.world_size])
         if self.use_bias:
             self.copy_colwise(self.w1.bias, w1_bias, [self.world_size])
             self.copy_colwise(self.wg.bias, wg_bias, [self.world_size])
-            self.copy_rowwise(self.w2.bias, w2_bias, False, [self.world_size])
+            self.copy_rowwise(self.w2.bias, w2_bias, [self.world_size], False)
 
     @staticmethod
     def import_module(glu: GatedLinearUnit, group: ProcessGroup) -> "TPGatedLinearUnit":

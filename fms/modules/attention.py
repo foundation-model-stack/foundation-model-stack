@@ -323,12 +323,12 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
         self.copy_colwise(self.query.weight, query_weight, [self.pre_tp_nheads])
         self.copy_colwise(self.key.weight, key_weight, [self.pre_tp_kvheads])
         self.copy_colwise(self.value.weight, value_weight, [self.pre_tp_kvheads])
-        self.copy_rowwise(self.dense.weight, dense_weight, True, [self.world_size])
+        self.copy_rowwise(self.dense.weight, dense_weight, [self.world_size])
         if self.use_bias:
             self.copy_colwise(self.query.bias, query_bias, [self.pre_tp_nheads])
             self.copy_colwise(self.key.bias, key_bias, [self.pre_tp_kvheads])
             self.copy_colwise(self.value.bias, value_bias, [self.pre_tp_kvheads])
-            self.copy_rowwise(self.dense.bias, dense_bias, False, [self.world_size])
+            self.copy_rowwise(self.dense.bias, dense_bias, [self.world_size], False)
 
     @staticmethod
     def import_module(

@@ -241,11 +241,9 @@ class TPWordEmbedding(WordEmbedding, TPModule):
             raise AttributeError(f"Unused weight(s): {', '.join(unused_keys)}")
 
         # 3. Load and shard the weights
-        self.copy_rowwise(self.emb.weight, emb_weight, True, [self.world_size])
+        self.copy_rowwise(self.emb.weight, emb_weight, [self.world_size])
         if self.abs_pos:
-            self.copy_rowwise(
-                self.pos_emb.weight, pos_emb_weight, True, [self.world_size]
-            )
+            self.copy_rowwise(self.pos_emb.weight, pos_emb_weight, [self.world_size])
         if self.reversible and not self.tie_weights:
             self.copy_colwise(self.head.weight, head_weight, [self.world_size])
             if self.bias:

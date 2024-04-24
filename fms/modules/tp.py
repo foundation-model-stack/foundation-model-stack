@@ -60,8 +60,8 @@ class TPModule(nn.Module, metaclass=ABCMeta):
         self,
         param: Union[torch.nn.Parameter, torch.Tensor],
         tensor_value: torch.Tensor,
-        is_sharded: bool,
         max_partition_sizes: List[int],
+        is_sharded: bool = True,
     ):
         """
         This function copies the correct shard of the weights for a rowwise-TP'd module
