@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import Dict, List, Optional, Set
 
 import torch
 import torch.distributed
@@ -142,8 +142,25 @@ class TPLMHead(LMHead, TPModule):
         )
         return tp_lmh
 
-    def colwise_param_names(self) -> List[str]:
-        return ["self"]
+    def load_weights(
+        self,
+        tensor_values: Dict[str, torch.Tensor],
+    ):
+        # 1. Grab the weights from tensor_values
+        used_keys: Set[str] = set()
+        head_weight = self._get_sd_weight(tensor_values, used_keys, ["weight"])
+        if self.bias != None:
+            head_bias = self._get_sd_weight(tensor_values, used_keys, ["bias"])
+
+        # 2. Raise exceptions
+        if len(tensor_values) > (2 if self.bias != None else 1):
+            unused_keys = set(tensor_values.keys()).difference(used_keys)
+            raise AttributeError(f"Unused weight(s): {', '.join(unused_keys)}")
+
+        # 3. Load and shard the weights
+        self.sharded_copy(self.weight, head_weight, 0, [self.world_size])
+        if self.bias != None:
+            self.sharded_copy(self.bias, head_bias, 0, [self.world_size])
 
     def forward(self, inp):
         # vocab_idx: b n d if reverse, else b n

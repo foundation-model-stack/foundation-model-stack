@@ -1,9 +1,10 @@
 import collections
 import os
+import re
 from collections import ChainMap
 from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Callable, List, Mapping, MutableMapping, Optional, Union
+from typing import Any, Callable, List, Mapping, MutableMapping, Optional, Set, Union
 
 import torch
 
@@ -239,12 +240,32 @@ def _load_safetensors_state_dict(
     return sd
 
 
-class FusableWeightsMissingError(Exception):
-    missing_weights: List[str] = []
-
-    def __init__(self, missing_weights):
-        self.missing_weights = missing_weights
-        super().__init__()
+def _find_key_neighbors(key: str, sd_keys: Set[str]):
+    # For loading most models that concern us, a good partition is the
+    # one used for FSDP units: everything that is in a layer can
+    # go together, everything else can also go together and memory usage
+    # will be keep in control.
+    key_steps = key.split(".")
+    prefix = ""
+    # Navigate the model tree to find a layer index. If not found,
+    # grab everything that is not numerical
+    has_number = False
+    for idx, step in enumerate(key_steps):
+        prefix = ".".join(key_steps[: idx + 1])
+        if step.isnumeric():
+            prefix += "."
+            has_number = True
+            break
+    prefix_neighbors = set()
+    if has_number:
+        for key_in_sd in sd_keys:
+            if prefix in key_in_sd:
+                prefix_neighbors.add(key_in_sd)
+    else:
+        for key_in_sd in sd_keys:
+            if not bool(re.search(r"\.\d+\.", key_in_sd)):
+                prefix_neighbors.add(key_in_sd)
+    return list(prefix_neighbors)
 
 
 def load_state_dict_into_model(
@@ -255,8 +276,6 @@ def load_state_dict_into_model(
     distributed_strategy: Optional[str] = None,
     checkpoint_sharding: Optional[str] = None,
     initial_device: torch.device = torch.device("cpu"),
-    rank: int = 0,
-    world_size: int = 0,
 ) -> None:
     """
     This function loads state_dict into model in the most efficient way possible,
@@ -288,29 +307,28 @@ def load_state_dict_into_model(
 
     # 3. Iterate over the weights and load them into the model
     used_keys = set()
-    sd_keys = list(state_dict.keys())
+    sd_keys = set(state_dict.keys())
+
     with torch.no_grad():
         for key in sd_keys:
             if key in used_keys:
                 continue
             used_keys.add(key)
-            try:
-                partial_sd = {key: state_dict[key]}
-                if partial_sd[key].device != initial_device:
-                    partial_sd[key] = partial_sd[key].to(device=initial_device)
-                fms_partial_sd = adapter(partial_sd)
-            except FusableWeightsMissingError as e:
-                for weight in e.missing_weights:
-                    used_keys.add(weight)
-                    partial_sd[weight] = state_dict[weight]
-                    if partial_sd[weight].device != initial_device:
-                        partial_sd[weight] = partial_sd[weight].to(
-                            device=initial_device
-                        )
-                fms_partial_sd = adapter(partial_sd)
-            _load_partial_state_dict(
-                model, fms_partial_sd, needs_tp_sharding, rank, world_size
-            )
+
+            partial_sd = {key: state_dict[key]}
+            # Find neighbors to the key. If the adapter requires a neighbor and
+            # this function doesn't find it, it will crash.
+            remaining_keys = sd_keys.difference(used_keys)
+            neighbors = _find_key_neighbors(key, remaining_keys)
+            for neighbor in neighbors:
+                partial_sd[neighbor] = state_dict[neighbor]
+                used_keys.add(neighbor)
+            for psd_key in partial_sd.keys():
+                if partial_sd[psd_key].device != initial_device:
+                    partial_sd[psd_key] = partial_sd[psd_key].to(device=initial_device)
+            fms_partial_sd = adapter(partial_sd)
+            _load_partial_state_dict(model, fms_partial_sd, needs_tp_sharding)
+            # Be aggressive in removing weights to save as much memory as possible
             for p_key in partial_sd.keys():
                 if isinstance(state_dict, ChainMap):
                     for child_sd in state_dict.maps:
@@ -321,132 +339,6 @@ def load_state_dict_into_model(
             del fms_partial_sd
 
 
-def _copy_colwise(param: torch.nn.Parameter, tensor_value, is_bias, rank, world_size):
-    """
-    This function copies the correct shard of the weights for a colwise-TP'd module
-    according to the rank of the process and the world_size.
-
-    Args
-    ====
-    param: torch.nn.Parameter
-        Parameter that has had TP applied
-    tensor_value: torch.Tensor
-        tensor that needs sharding
-    rank: int
-        Rank of the current process
-    world_size: int
-        Total number of TP processes
-    """
-    # Divide the weight matrix along the first dimension.
-    output_size_per_partition = param.shape[0]
-    if not is_bias:
-        tensor = tensor_value[
-            (rank * output_size_per_partition) : (
-                (rank + 1) * output_size_per_partition
-            ),
-            :,
-        ]
-    else:
-        tensor = tensor_value[
-            (rank * output_size_per_partition) : (
-                (rank + 1) * output_size_per_partition
-            )
-        ]
-    param.copy_(tensor, non_blocking=True)
-
-
-def _copy_rowwise(param: torch.nn.Parameter, tensor_value, is_bias, rank, world_size):
-    """
-    This function copies the correct shard of the weights for a rowwise-TP'd module
-    according to the rank of the process and the world_size.
-
-    Args
-    ====
-    param: torch.nn.Parameter
-        Parameter that has had TP applied
-    tensor_value: torch.Tensor
-        tensor that needs sharding
-    rank: int
-        Rank of the current process
-    world_size: int
-        Total number of TP processes
-    """
-    # Divide the weight matrix along the last dimension.
-    if not is_bias:
-        output_size_per_partition = param.shape[1]
-        tensor = tensor_value[
-            :,
-            (rank * output_size_per_partition) : (
-                (rank + 1) * output_size_per_partition
-            ),
-        ]
-        param.copy_(tensor, non_blocking=True)
-    else:
-        if rank == 0:
-            _copy_if_present(param, tensor_value)
-        else:
-            param.zero_()
-
-
-def _copy_embedding(param: torch.nn.Parameter, tensor_value, rank, world_size):
-    """
-    This function copies the correct shard of the weights for a TP'd embedding module
-    according to the rank of the process and the world_size.
-
-    Args
-    ====
-    param: torch.nn.Parameter
-        Parameter that has had TP applied
-    tensor_value: torch.Tensor
-        tensor that needs sharding
-    rank: int
-        Rank of the current process
-    world_size: int
-        Total number of TP processes
-    """
-    # Divide the weight matrix along the last dimension.
-    output_size_per_partition = param.shape[1]
-    tensor = tensor_value[
-        :,
-        (rank * output_size_per_partition) : ((rank + 1) * output_size_per_partition),
-    ]
-    param.copy_(tensor, non_blocking=True)
-
-
-def _copy_moe(param: torch.nn.Parameter, tensor_value, rank, world_size, fused=False):
-    # Divide the weight matrix along the TP'd dimension.
-    if fused:
-        output_size_per_partition = param.shape[1]
-        tensor = torch.cat(
-            [
-                tensor_value[
-                    :,
-                    (
-                        (rank + w * world_size)
-                        * output_size_per_partition
-                        // world_size
-                    ) : (
-                        (rank + 1 + w * world_size)
-                        * output_size_per_partition
-                        // world_size
-                    ),
-                ]
-                for w in range(2)
-            ],
-            dim=1,
-        )
-    else:
-        output_size_per_partition = param.shape[2]
-        tensor = tensor_value[
-            :,
-            :,
-            (rank * output_size_per_partition) : (
-                (rank + 1) * output_size_per_partition
-            ),
-        ]
-    param.copy_(tensor, non_blocking=True)
-
-
 def _copy_if_present(parameter, tensor_value):
     parameter.copy_(tensor_value, non_blocking=True)
 
@@ -455,10 +347,9 @@ def _load_partial_state_dict(
     model: torch.nn.Module,
     state_dict,
     needs_tp_sharding: bool,
-    rank=0,
-    world_size=1,
 ):
     unused_params = []
+    seen_tp_modules = set()
     for key, tensor_value in state_dict.items():
         target_module = model
         # Find where to put the weight and decide whether it needs TP'ing
@@ -466,6 +357,7 @@ def _load_partial_state_dict(
         prefix = ""
         key_step = 0
         tp_module = None
+        tp_prefix = ""
         # Navigate the model tree to find the module where the parameter is
         # located and whether there is a TPModule in the way in case the
         # parameter requires sharding
@@ -482,55 +374,21 @@ def _load_partial_state_dict(
                     key_step += 1
                 if isinstance(target_module, TPModule):
                     tp_module = target_module
+                    tp_prefix = prefix
             except AttributeError:
                 unused_params.append(key)
                 break
 
         # Check if target_module has the Parameter/buffer
         try:
-            param = getattr(target_module, key_steps[-1])
-
             # If TP sharding is not needed, copy the parameter
             # into the model
             if not needs_tp_sharding or tp_module is None:
-                _copy_if_present(param, tensor_value)
-            elif tp_module is not None:
-                # Handle TP sharding
-                if (
-                    key_steps[-2] in tp_module.colwise_param_names()
-                    or "self" in tp_module.colwise_param_names()
-                ):
-                    _copy_colwise(
-                        param,
-                        tensor_value,
-                        key_steps[-1] == "bias",
-                        rank,
-                        world_size,
-                    )
-                if (
-                    key_steps[-2] in tp_module.rowwise_param_names()
-                    or "self" in tp_module.rowwise_param_names()
-                ):
-                    _copy_rowwise(
-                        param,
-                        tensor_value,
-                        key_steps[-1] == "bias",
-                        rank,
-                        world_size,
-                    )
-                if (
-                    key_steps[-2] in tp_module.embedding_param_names()
-                    or "self" in tp_module.embedding_param_names()
-                ):
-                    _copy_embedding(
-                        param,
-                        tensor_value,
-                        rank,
-                        world_size,
-                    )
-                if key_steps[-1] in tp_module.moe_param_names():
-                    _copy_moe(
-                        param, tensor_value, rank, world_size, "w13" == key_steps[-1]
-                    )
+                param = getattr(target_module, key_steps[-1])
+                param.copy_(tensor_value, non_blocking=True)
+            elif tp_module is not None and tp_module not in seen_tp_modules:
+                seen_tp_modules.add(tp_module)
+                tensor_values = {k: v for k, v in state_dict.items() if tp_prefix in k}
+                tp_module.load_weights(tensor_values)
         except AttributeError:
             unused_params.append(key)

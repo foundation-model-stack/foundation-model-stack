@@ -8,58 +8,6 @@ import torch.distributed._functional_collectives as funcol
 from torch import nn
 
 
-def apply_colwise_tp(par_mod: nn.Linear, mod: nn.Linear, rank: int, world_size: int):
-    # Divide the weight matrix along the last dimension.
-    output_size_per_partition = mod.out_features // world_size
-    with torch.no_grad():
-        par_mod.weight.copy_(
-            torch.split(mod.weight, output_size_per_partition, dim=0)[rank]
-        )
-        if par_mod.bias is not None:
-            par_mod.bias.copy_(torch.split(mod.bias, output_size_per_partition)[rank])
-    # print(f"For rank {rank}, we have the following weights: Base weight {mod.weight} bias {mod.bias}; Par weight {par_mod.weight}, bias {par_mod.bias}")
-
-
-def apply_rowwise_tp(par_mod: nn.Linear, mod: nn.Linear, rank: int, world_size: int):
-    # Divide the weight matrix along the last dimension.
-    output_size_per_partition = mod.in_features // world_size
-    with torch.no_grad():
-        par_mod.weight.copy_(
-            torch.split(mod.weight, output_size_per_partition, dim=1)[rank]
-        )
-        if par_mod.bias is not None:
-            if rank == 0:
-                par_mod.bias.copy_(mod.bias)
-            else:
-                par_mod.bias.zero_()
-    # print(f"For rank {rank}, we have the following weights: Base weight {mod.weight}, bias {mod.bias}; Par weight {par_mod.weight}, bias {par_mod.bias}")
-
-
-def apply_embedding_tp(
-    par_mod: nn.Embedding, mod: nn.Embedding, rank: int, world_size: int
-):
-    # Divide the weight matrix along the last dimension.
-    output_size_per_partition = mod.embedding_dim // world_size
-    with torch.no_grad():
-        par_mod.weight.copy_(
-            torch.split(mod.weight, output_size_per_partition, dim=1)[rank]
-        )
-    # print(f"For rank {rank}, we have the following weights: Base weight {mod.weight} bias {mod.bias}; Par weight {par_mod.weight}, bias {par_mod.bias}")
-
-
-def apply_moe_tp(
-    par_mod: nn.Module, mod: nn.Module, param_names, rank: int, world_size: int
-):
-    with torch.no_grad():
-        for param in param_names:
-            par_param = getattr(par_mod, param)
-            par_param.copy_(
-                torch.split(
-                    getattr(mod, param), par_param.shape[1] // world_size, dim=1
-                )[rank]
-            )
-
-
 ## Fixes for PT 2.2 collectives until PT 2.3 is released
 
 
