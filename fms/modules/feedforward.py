@@ -1,8 +1,9 @@
-from typing import List, Optional
+from typing import Dict, List, Optional, Set
 
 import torch
 import torch.distributed
 import torch.nn as nn
+from sympy import N
 from torch.distributed.distributed_c10d import ProcessGroup
 
 from fms import distributed
@@ -118,11 +119,29 @@ class TPFeedForwardBlock(FeedForwardBlock, TPModule):
         )
         self.setup_tp(rank, world_size)
 
-    def colwise_param_names(self) -> List[str]:
-        return ["w1"]
+    def load_weights(
+        self,
+        tensor_values: Dict[str, torch.Tensor],
+    ):
+        # 1. Grab the weights from tensor_values
+        used_keys: Set[str] = set()
+        w1_weight = self._get_sd_weight(tensor_values, used_keys, ["w1", "weight"])
+        w2_weight = self._get_sd_weight(tensor_values, used_keys, ["w2", "weight"])
+        if self.use_bias:
+            w1_bias = self._get_sd_weight(tensor_values, used_keys, ["w1", "bias"])
+            w2_bias = self._get_sd_weight(tensor_values, used_keys, ["w2", "bias"])
 
-    def rowwise_param_names(self) -> List[str]:
-        return ["w2"]
+        # 2. Raise exceptions for extra weights in tensor_values
+        if len(tensor_values) > (4 if self.use_bias else 2):
+            unused_keys = set(tensor_values.keys()).difference(used_keys)
+            raise AttributeError(f"Unused weight(s): {', '.join(unused_keys)}")
+
+        # 3. Load and shard the weights
+        self.copy_colwise(self.w1.weight, w1_weight, [self.world_size])
+        self.copy_rowwise(self.w2.weight, w2_weight, [self.world_size])
+        if self.use_bias:
+            self.copy_colwise(self.w1.bias, w1_bias, [self.world_size])
+            self.copy_rowwise(self.w2.bias, w2_bias, [self.world_size], False)
 
     @staticmethod
     def import_module(
@@ -256,11 +275,33 @@ class TPGatedLinearUnit(GatedLinearUnit, TPModule):
         )
         self.setup_tp(rank, world_size)
 
-    def colwise_param_names(self) -> List[str]:
-        return ["w1", "wg"]
+    def load_weights(
+        self,
+        tensor_values: Dict[str, torch.Tensor],
+    ):
+        # 1. Grab the weights from tensor_values
+        used_keys: Set[str] = set()
+        w1_weight = self._get_sd_weight(tensor_values, used_keys, ["w1", "weight"])
+        wg_weight = self._get_sd_weight(tensor_values, used_keys, ["wg", "weight"])
+        w2_weight = self._get_sd_weight(tensor_values, used_keys, ["w2", "weight"])
+        if self.use_bias:
+            w1_bias = self._get_sd_weight(tensor_values, used_keys, ["w1", "bias"])
+            wg_bias = self._get_sd_weight(tensor_values, used_keys, ["wg", "bias"])
+            w2_bias = self._get_sd_weight(tensor_values, used_keys, ["w2", "bias"])
 
-    def rowwise_param_names(self) -> List[str]:
-        return ["w2"]
+        # 2. Raise exceptions
+        if len(tensor_values) > (6 if self.use_bias else 3):
+            unused_keys = set(tensor_values.keys()).difference(used_keys)
+            raise AttributeError(f"Unused weight(s): {', '.join(unused_keys)}")
+
+        # 3. Load and shard the weights
+        self.copy_colwise(self.w1.weight, w1_weight, [self.world_size])
+        self.copy_colwise(self.wg.weight, wg_weight, [self.world_size])
+        self.copy_rowwise(self.w2.weight, w2_weight, [self.world_size])
+        if self.use_bias:
+            self.copy_colwise(self.w1.bias, w1_bias, [self.world_size])
+            self.copy_colwise(self.wg.bias, wg_bias, [self.world_size])
+            self.copy_rowwise(self.w2.bias, w2_bias, [self.world_size], False)
 
     @staticmethod
     def import_module(glu: GatedLinearUnit, group: ProcessGroup) -> "TPGatedLinearUnit":
