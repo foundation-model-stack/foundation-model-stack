@@ -27,7 +27,7 @@ class TPModule(nn.Module, metaclass=ABCMeta):
 
     def __get_tp_slices(
         self,
-        tensor_value,
+        input_size,
         output_size_per_partition,
         max_partition_sizes,
     ):
@@ -39,27 +39,21 @@ class TPModule(nn.Module, metaclass=ABCMeta):
             )
 
         for weight_i, replication in enumerate(max_partition_sizes):
+            # The shard to copy based on the process rank and the replication threshold
+            sharding_rank = self.rank // max(1, self.world_size // replication)
+            # The number of elements to shard out of the tensor
+            tensor_shard_size = output_size_per_partition * (
+                max_partition_sizes[weight_i] // min_partition_size
+            )
+            # For fused weights, where to start extracting the shard
+            tensor_shard_offset = (
+                cusum_max_partition_sizes[weight_i]
+                * input_size
+                // cusum_max_partition_sizes[-1]
+            )
             yield slice(
-                (self.rank // max(1, self.world_size // replication))
-                * (
-                    output_size_per_partition
-                    * (max_partition_sizes[weight_i] // min_partition_size)
-                )
-                + (
-                    cusum_max_partition_sizes[weight_i]
-                    * tensor_value.shape[0]
-                    // cusum_max_partition_sizes[-1]
-                ),
-                ((self.rank // max(1, self.world_size // replication)) + 1)
-                * (
-                    output_size_per_partition
-                    * (max_partition_sizes[weight_i] // min_partition_size)
-                )
-                + (
-                    cusum_max_partition_sizes[weight_i]
-                    * tensor_value.shape[0]
-                    // cusum_max_partition_sizes[-1]
-                ),
+                sharding_rank * tensor_shard_size + tensor_shard_offset,
+                (sharding_rank + 1) * tensor_shard_size + tensor_shard_offset,
             )
 
     def copy_rowwise(
@@ -106,18 +100,11 @@ class TPModule(nn.Module, metaclass=ABCMeta):
             sum(max_partition_sizes) // min(max_partition_sizes)
         )
         if not is_bias:
-            tensor = torch.cat(
-                [
-                    tensor_value[
-                        :,
-                        tp_slice,
-                    ]
-                    for tp_slice in self.__get_tp_slices(
-                        tensor_value, output_size_per_partition, max_partition_sizes
-                    )
-                ],
-                dim=1,
+            tp_slices = self.__get_tp_slices(
+                tensor_value.shape[1], output_size_per_partition, max_partition_sizes, 1
             )
+            tensors_to_cat = [tensor_value[:, tp_slice] for tp_slice in tp_slices]
+            tensor = torch.cat(tensors_to_cat, dim=1)
             param.copy_(tensor, non_blocking=True)
         else:
             if self.rank == 0:
@@ -169,28 +156,17 @@ class TPModule(nn.Module, metaclass=ABCMeta):
             sum(max_partition_sizes) // min(max_partition_sizes)
         )
         if not is_bias:
-            tensor = torch.cat(
-                [
-                    tensor_value[
-                        tp_slice,
-                        :,
-                    ]
-                    for tp_slice in self.__get_tp_slices(
-                        tensor_value, output_size_per_partition, max_partition_sizes
-                    )
-                ],
-                dim=0,
+            tp_slices = self.__get_tp_slices(
+                tensor_value.shape[0], output_size_per_partition, max_partition_sizes
             )
+            tensors_to_cat = [tensor_value[tp_slice, :] for tp_slice in tp_slices]
+            tensor = torch.cat(tensors_to_cat, dim=0)
         else:
-            tensor = torch.cat(
-                [
-                    tensor_value[tp_slice]
-                    for tp_slice in self.__get_tp_slices(
-                        tensor_value, output_size_per_partition, max_partition_sizes
-                    )
-                ],
-                dim=0,
+            tp_slices = self.__get_tp_slices(
+                tensor_value.shape[0], output_size_per_partition, max_partition_sizes
             )
+            tensors_to_cat = [tensor_value[tp_slice] for tp_slice in tp_slices]
+            tensor = torch.cat(tensors_to_cat, dim=0)
         param.copy_(tensor, non_blocking=True)
 
     def _get_sd_weight(
