@@ -1,6 +1,6 @@
 import itertools
 from abc import ABCMeta, abstractmethod
-from typing import Dict, List, Type, Union
+from typing import Dict, List, Set, Type, Union
 
 import torch
 import torch.nn as nn
@@ -60,7 +60,7 @@ class TPModule(nn.Module, metaclass=ABCMeta):
         self,
         param: Union[torch.nn.Parameter, torch.Tensor],
         tensor_value: torch.Tensor,
-        is_bias: bool,
+        is_sharded: bool,
         max_partition_sizes: List[int],
     ):
         """
@@ -73,8 +73,8 @@ class TPModule(nn.Module, metaclass=ABCMeta):
             Parameter that has had TP applied
         tensor_value: torch.Tensor
             tensor that needs sharding
-        is_bias: bool
-            if True is bias, else is weight
+        is_sharded: bool
+            For additive terms (like bias), is_sharded must be False. Otherwise True.
         max_partition_sizes: List[int]
             for each number in the list, if world_size is smaller than or equal to that number, the tensor will get
             partitioned in worldsize parts, else if world size is larger than the number then you will get world size parts
@@ -99,7 +99,7 @@ class TPModule(nn.Module, metaclass=ABCMeta):
         output_size_per_partition = param.shape[1] // (
             sum(max_partition_sizes) // min(max_partition_sizes)
         )
-        if not is_bias:
+        if is_sharded:
             tp_slices = self.__get_tp_slices(
                 tensor_value.shape[1], output_size_per_partition, max_partition_sizes
             )
@@ -116,7 +116,6 @@ class TPModule(nn.Module, metaclass=ABCMeta):
         self,
         param: Union[torch.nn.Parameter, torch.Tensor],
         tensor_value: torch.Tensor,
-        is_bias: bool,
         max_partition_sizes: List[int],
     ):
         """
@@ -129,8 +128,6 @@ class TPModule(nn.Module, metaclass=ABCMeta):
             Parameter that has had TP applied
         tensor_value: torch.Tensor
             tensor that needs sharding
-        is_bias: bool
-            if True is bias, else is weight
         max_partition_sizes: List[int]
             for each number in the list, if world_size is smaller than or equal to that number, the tensor will get
             partitioned in worldsize parts, else if world size is larger than the number then you will get world size parts
@@ -155,30 +152,27 @@ class TPModule(nn.Module, metaclass=ABCMeta):
         output_size_per_partition = param.shape[0] // (
             sum(max_partition_sizes) // min(max_partition_sizes)
         )
-        if not is_bias:
-            tp_slices = self.__get_tp_slices(
-                tensor_value.shape[0], output_size_per_partition, max_partition_sizes
-            )
-            tensors_to_cat = [tensor_value[tp_slice, :] for tp_slice in tp_slices]
-            tensor = torch.cat(tensors_to_cat, dim=0)
-        else:
-            tp_slices = self.__get_tp_slices(
-                tensor_value.shape[0], output_size_per_partition, max_partition_sizes
-            )
-            tensors_to_cat = [tensor_value[tp_slice] for tp_slice in tp_slices]
-            tensor = torch.cat(tensors_to_cat, dim=0)
+        tp_slices = self.__get_tp_slices(
+            tensor_value.shape[0], output_size_per_partition, max_partition_sizes
+        )
+        tensors_to_cat = [tensor_value[tp_slice,] for tp_slice in tp_slices]
+        tensor = torch.cat(tensors_to_cat, dim=0)
         param.copy_(tensor, non_blocking=True)
 
     def _get_sd_weight(
-        self, state_dict: Dict[str, torch.Tensor], conditions: List[str]
+        self,
+        state_dict: Dict[str, torch.Tensor],
+        used_keys: Set[str],
+        substr_matches: List[str],
     ):
         results = []
         for k in state_dict:
-            all_conds = True
-            for cond in conditions:
-                if cond not in k:
-                    all_conds = False
-            if all_conds:
+            all_matches = True
+            for substr_match in substr_matches:
+                if substr_match not in k:
+                    all_matches = False
+            if all_matches:
+                used_keys.add(k)
                 results.append(state_dict[k])
         if len(results) == 1:
             return results[0]

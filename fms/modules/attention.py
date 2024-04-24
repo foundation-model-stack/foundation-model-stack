@@ -1,4 +1,4 @@
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 import torch
 import torch.distributed
@@ -288,33 +288,47 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
         tensor_values: Dict[str, torch.Tensor],
     ):
         # 1. Grab the weights from tensor_values
-        query_weight = self._get_sd_weight(tensor_values, ["query", "weight"])
-        key_weight = self._get_sd_weight(tensor_values, ["key", "weight"])
-        value_weight = self._get_sd_weight(tensor_values, ["value", "weight"])
-        dense_weight = self._get_sd_weight(tensor_values, ["dense", "weight"])
+        used_keys: Set[str] = set()
+        query_weight = self._get_sd_weight(
+            tensor_values, used_keys, ["query", "weight"]
+        )
+        key_weight = self._get_sd_weight(tensor_values, used_keys, ["key", "weight"])
+        value_weight = self._get_sd_weight(
+            tensor_values, used_keys, ["value", "weight"]
+        )
+        dense_weight = self._get_sd_weight(
+            tensor_values, used_keys, ["dense", "weight"]
+        )
         if self.use_bias:
-            query_bias = self._get_sd_weight(tensor_values, ["query", "bias"])
-            key_bias = self._get_sd_weight(tensor_values, ["key", "bias"])
-            value_bias = self._get_sd_weight(tensor_values, ["value", "bias"])
-            dense_bias = self._get_sd_weight(tensor_values, ["dense", "bias"])
+            query_bias = self._get_sd_weight(
+                tensor_values, used_keys, ["query", "bias"]
+            )
+            key_bias = self._get_sd_weight(tensor_values, used_keys, ["key", "bias"])
+            value_bias = self._get_sd_weight(
+                tensor_values, used_keys, ["value", "bias"]
+            )
+            dense_bias = self._get_sd_weight(
+                tensor_values, used_keys, ["dense", "bias"]
+            )
 
         # 2. Raise exceptions
         if len(tensor_values) > (8 if self.use_bias else 4):
-            raise AttributeError("Unused weight(s)")
+            unused_keys = set(tensor_values.keys()).difference(used_keys)
+            raise AttributeError(f"Unused weight(s): {', '.join(unused_keys)}")
 
         # 3. Load and shard the weights
         # The number in max_partition_sizes will signify the largest world size
         # til we need to duplicate.  For instance if we have nheads=16 and
         # world_size=32, then first 2 ranks will get first 1/16th of query
-        self.copy_colwise(self.query.weight, query_weight, False, [self.pre_tp_nheads])
-        self.copy_colwise(self.key.weight, key_weight, False, [self.pre_tp_kvheads])
-        self.copy_colwise(self.value.weight, value_weight, False, [self.pre_tp_kvheads])
-        self.copy_rowwise(self.dense.weight, dense_weight, False, [self.world_size])
+        self.copy_colwise(self.query.weight, query_weight, [self.pre_tp_nheads])
+        self.copy_colwise(self.key.weight, key_weight, [self.pre_tp_kvheads])
+        self.copy_colwise(self.value.weight, value_weight, [self.pre_tp_kvheads])
+        self.copy_rowwise(self.dense.weight, dense_weight, True, [self.world_size])
         if self.use_bias:
-            self.copy_colwise(self.query.bias, query_bias, True, [self.pre_tp_nheads])
-            self.copy_colwise(self.key.bias, key_bias, True, [self.pre_tp_kvheads])
-            self.copy_colwise(self.value.bias, value_bias, True, [self.pre_tp_kvheads])
-            self.copy_rowwise(self.dense.bias, dense_bias, True, [self.world_size])
+            self.copy_colwise(self.query.bias, query_bias, [self.pre_tp_nheads])
+            self.copy_colwise(self.key.bias, key_bias, [self.pre_tp_kvheads])
+            self.copy_colwise(self.value.bias, value_bias, [self.pre_tp_kvheads])
+            self.copy_rowwise(self.dense.bias, dense_bias, False, [self.world_size])
 
     @staticmethod
     def import_module(

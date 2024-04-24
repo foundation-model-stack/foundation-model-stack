@@ -1,5 +1,5 @@
 import math
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Dict, List, Optional, Set, Tuple, Union
 
 import torch
 import torch.distributed
@@ -218,32 +218,38 @@ class TPWordEmbedding(WordEmbedding, TPModule):
         tensor_values: Dict[str, torch.Tensor],
     ):
         # 1. Grab the weights from tensor_values
+        used_keys: Set[str] = set()
         weight_count = 1
-        emb_weight = self._get_sd_weight(tensor_values, ["emb"])
+        emb_weight = self._get_sd_weight(tensor_values, used_keys, ["emb"])
         if self.abs_pos:
-            pos_emb_weight = self._get_sd_weight(tensor_values, ["pos_emb"])
+            pos_emb_weight = self._get_sd_weight(tensor_values, used_keys, ["pos_emb"])
             weight_count += 1
         if self.reversible and not self.tie_weights:
-            head_weight = self._get_sd_weight(tensor_values, ["head", "weight"])
+            head_weight = self._get_sd_weight(
+                tensor_values, used_keys, ["head", "weight"]
+            )
             weight_count += 1
             if self.bias:
-                head_bias = self._get_sd_weight(tensor_values, ["head", "bias"])
+                head_bias = self._get_sd_weight(
+                    tensor_values, used_keys, ["head", "bias"]
+                )
                 weight_count += 1
 
         # 2. Raise exceptions
         if len(tensor_values) > weight_count:
-            raise AttributeError("Unused weight(s)")
+            unused_keys = set(tensor_values.keys()).difference(used_keys)
+            raise AttributeError(f"Unused weight(s): {', '.join(unused_keys)}")
 
         # 3. Load and shard the weights
-        self.copy_rowwise(self.emb.weight, emb_weight, False, [self.world_size])
+        self.copy_rowwise(self.emb.weight, emb_weight, True, [self.world_size])
         if self.abs_pos:
             self.copy_rowwise(
-                self.pos_emb.weight, pos_emb_weight, False, [self.world_size]
+                self.pos_emb.weight, pos_emb_weight, True, [self.world_size]
             )
         if self.reversible and not self.tie_weights:
-            self.copy_colwise(self.head.weight, head_weight, False, [self.world_size])
+            self.copy_colwise(self.head.weight, head_weight, [self.world_size])
             if self.bias:
-                self.copy_colwise(self.head.bias, head_bias, True, [self.world_size])
+                self.copy_colwise(self.head.bias, head_bias, [self.world_size])
 
     def forward(self, inp, reverse=False):
         # If reverse is False, compute input embeddings. If reverse is True, compute output logits.
