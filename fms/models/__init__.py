@@ -310,8 +310,6 @@ def get_model(
             distributed_strategy,
             checkpoint_sharding,
             initial_device,
-            local_rank if distributed_strategy == "hsdp" else rank,
-            world_size,
         )
     elif hasattr(fms_model, "reset_parameters"):
         fms_model.reset_parameters()
