@@ -403,7 +403,7 @@ models.register_model(_architecture_name, "7b", _llama_factory_factory(_7b_confi
 models.register_model(_architecture_name, "13b", _llama_factory_factory(_13b_config))
 models.register_model(_architecture_name, "70b", _llama_factory_factory(_70b_config))
 
-_convert_fused_qkv_0_0_4 = serialization.simple_mapping_adapter(
+_convert_fused_qkv_0_0_5 = serialization.simple_mapping_adapter(
     [serialization._legacy_attn_unfused_to_fused_weight_conversion]
 )
 
@@ -432,7 +432,7 @@ def _rename_weights_to_fms(orig_sd):
             new_name = re.sub(pattern, repl, new_name)
         new_sd[new_name] = param
 
-    fused_sd = _convert_fused_qkv_0_0_4(new_sd)
+    fused_sd = _convert_fused_qkv_0_0_5(new_sd)
 
     return fused_sd
 
@@ -478,14 +478,14 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
 
             new_sd[new_name] = temp
 
-    fused_sd = _convert_fused_qkv_0_0_4(new_sd)
+    fused_sd = _convert_fused_qkv_0_0_5(new_sd)
 
     return fused_sd
 
 
 serialization.register_adapter("llama", "meta", _rename_weights_to_fms)
 serialization.register_adapter("llama", "hf", _hf_sd_to_fms_sd)
-serialization.register_adapter("llama", "fms.v0.0.4", _convert_fused_qkv_0_0_4)
+serialization.register_adapter("llama", "fms.v0.0.1", _convert_fused_qkv_0_0_5)
 
 
 def convert_hf_llama(hf_model: "LlamaForCausalLM") -> LLaMA:  # type: ignore

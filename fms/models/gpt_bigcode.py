@@ -397,7 +397,7 @@ models.register_model(
     _architecture_name, "ibm.20b", _gpt_bigcode_factory_factory(_20b_config)
 )
 
-_convert_fused_qkv_0_0_4 = serialization.simple_mapping_adapter(
+_convert_fused_qkv_0_0_5 = serialization.simple_mapping_adapter(
     [serialization._legacy_attn_unfused_to_fused_weight_conversion]
 )
 
@@ -433,5 +433,5 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
 
 serialization.register_adapter(_architecture_name, "hf", _hf_sd_to_fms_sd)
 serialization.register_adapter(
-    _architecture_name, "fms.v0.0.4", _convert_fused_qkv_0_0_4
+    _architecture_name, "fms.v0.0.1", _convert_fused_qkv_0_0_5
 )
