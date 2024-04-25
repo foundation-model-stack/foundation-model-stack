@@ -118,6 +118,7 @@ def generate(
             )
         model_input_lengths = [input_ids.size(0)]
         input_ids = input_ids.unsqueeze(0)
+        is_batch = False
     else:
         bsize = len(input_ids)
         max_len = max([seq.size(0) for seq in input_ids])
@@ -128,6 +129,7 @@ def generate(
                 for i in range(bsize)
             ]
         )
+        is_batch = True
 
     result = input_ids
     next_input = input_ids
@@ -185,6 +187,8 @@ def generate(
         else:
             next_input = result
 
+    if not is_batch:
+        result = result[0]
     return result
 
 

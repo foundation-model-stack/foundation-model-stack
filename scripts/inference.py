@@ -224,6 +224,9 @@ def infer(use_cache, do_sample):
         do_sample=do_sample,
         max_seq_len=max_seq_len,
     )
+    if len(result.shape) == 1:
+        result = result.unsqueeze(0)
+
     for i in range(result.shape[0]):
         print_result(result[i])
 

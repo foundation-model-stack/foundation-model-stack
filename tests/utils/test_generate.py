@@ -50,7 +50,7 @@ def test_batched():
     ids = tokenizer.convert_tokens_to_ids(tokenizer.tokenize("ABCDE"))
     first = torch.tensor(ids)
     second = torch.tensor(ids)
-    ids = torch.stack((first, second), dim=0)
+    ids = [first, second]
     result = generate(_model_mock, ids, max_new_tokens=5, do_sample=False)
     assert torch.allclose(result[0], result[1])
     result = tokenizer.convert_tokens_to_string(
