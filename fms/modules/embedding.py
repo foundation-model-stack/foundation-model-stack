@@ -97,6 +97,9 @@ class WordEmbedding(nn.Module):
         if self.padding_idx is not None:
             self.emb.weight.data[self.padding_idx].zero_()
 
+    def to_tp(self, group: ProcessGroup) -> "TPWordEmbedding":
+        return TPWordEmbedding.import_module(self, group)
+
     def forward(self, inp, reverse=False):
         # If reverse is False, compute input embeddings. If reverse is True, compute output logits.
         # vocab_idx: b n d if reverse, else b n
