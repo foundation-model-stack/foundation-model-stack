@@ -86,6 +86,9 @@ class MultiHeadAttention(nn.Module):
                 if self.use_bias:
                     m.bias.data.zero_()
 
+    def to_tp(self, group: ProcessGroup) -> "TPMultiHeadAttention":
+        return TPMultiHeadAttention.import_module(self, group)
+
     def forward(
         self,
         q,
