@@ -71,7 +71,7 @@ def _legacy_attn_unfused_to_fused_weight_conversion(
 ) -> Optional[Tuple[str, torch.Tensor]]:
     """
     function which converts unfused fms weights to fused fms weights in the case the model was using the older unfused
-    weights (version 0.0.3)
+    weights (version 0.0.5)
 
     Args:
         name: str
