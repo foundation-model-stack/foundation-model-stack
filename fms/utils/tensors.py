@@ -1,9 +1,10 @@
 import functools
 import itertools
 import math
-from typing import List, Tuple, TypeAlias, Union
+from typing import Dict, List, Tuple, TypeAlias, Union
 
 import torch
+from torch.utils._python_dispatch import return_and_correct_aliasing
 
 
 _EXPANDABLE_HANDLED_FUNCTIONS = {}
@@ -505,10 +506,21 @@ class PagedTensor(torch.Tensor):
         page_size,
         current_shape,
         dynamic_shape,
-        paged_storage,
+        paged_storage: PagedStorage,
         page_ids,
     ):
-        return super().__new__(cls)
+        underlying_tensor = paged_storage.storage
+        r = torch.Tensor._make_wrapper_subclass(  # type: ignore[attr-defined]
+            cls,
+            size=current_shape,
+            strides=underlying_tensor.stride(),
+            storage_offset=underlying_tensor.storage_offset(),
+            dtype=underlying_tensor.dtype,
+            layout=underlying_tensor.layout,
+            device=underlying_tensor.device,
+        )
+        r._underlying_tensor = underlying_tensor
+        return r
 
     def __del__(self):
         self.paged_storage.decrement_refcounts(self.page_ids)
@@ -516,7 +528,7 @@ class PagedTensor(torch.Tensor):
     def size(self, dim=None):
         # https://github.com/pytorch/pytorch/issues/111944
         if dim is None:
-            return self.current_shape
+            return torch.Size(self.current_shape)
         else:
             return self.current_shape[dim]
 
@@ -623,6 +635,51 @@ class PagedTensor(torch.Tensor):
         self.current_shape[dim] -= 1
         self.dynamic_shape[dim] -= 1
 
+    def __tensor_flatten__(self):
+        ctx = {
+            "refcounts": self.paged_storage.refcounts,
+            "static_shape": self.paged_storage.static_shape,
+            "static_dims": self.static_dims,
+            "dynamic_dims": self.dynamic_dims,
+            "page_size": self.page_size,
+            "current_shape": self.current_shape,
+            "dynamic_shape": self.dynamic_shape,
+            "page_ids": self.page_ids,
+        }
+        tensors = ["_underlying_tensor"]
+        return tensors, ctx
+
+    @staticmethod
+    def __tensor_unflatten__(inner_tensors: Dict, meta, outer_size, outer_stride):
+        storage = inner_tensors["_underlying_tensor"]
+        store = PagedStorage(
+            storage, meta["page_size"], meta["refcounts"], meta["static_shape"]
+        )
+        r = PagedTensor(
+            meta["static_dims"],
+            meta["dynamic_dims"],
+            meta["page_size"],
+            meta["current_shape"],
+            meta["dynamic_shape"],
+            store,
+            meta["page_ids"],
+        )
+        r._underlying_tensor = storage  # type: ignore[attr-defined]
+        return r
+
+    @classmethod
+    def __torch_dispatch__(cls, func, types, args=(), kwargs={}):
+        if func not in _PAGED_HANDLED_FUNCTIONS or not all(
+            issubclass(t, (torch.Tensor, PagedTensor)) for t in types
+        ):
+            parsed_args = tuple(
+                [a._tensor() if type(a) == PagedTensor else a for a in args]
+            )
+            out = func(*parsed_args, **kwargs)
+        else:
+            out = _PAGED_HANDLED_FUNCTIONS[func](*args, **kwargs)
+        return return_and_correct_aliasing(func, args, kwargs, out)
+
     # Most of these return a copy of the original
     # tensor, but it handles pointwise ops with look-through
     # into the underlying storage.
@@ -662,10 +719,8 @@ class PagedTensor(torch.Tensor):
                     first_pt.page_ids,
                 )
                 return new_pt
+        if name in _PAGED_HANDLED_FUNCTIONS:
+            return _PAGED_HANDLED_FUNCTIONS[name](*args, **kwargs)
 
-        if func not in _PAGED_HANDLED_FUNCTIONS or not all(
-            issubclass(t, (torch.Tensor, PagedTensor)) for t in types
-        ):
-            args = [a._tensor() if type(a) == PagedTensor else a for a in args]
+        with torch._C.DisableTorchFunctionSubclass():
             return func(*args, **kwargs)
-        return _PAGED_HANDLED_FUNCTIONS[func](*args, **kwargs)
