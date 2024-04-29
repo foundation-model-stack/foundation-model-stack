@@ -77,14 +77,12 @@ def _legacy_attn_unfused_to_fused_weight_conversion(
         name: str
             current name to convert
         orig_sd: Mapping
-            a mapping from a name to a param, in most cases will be a singleton, however when
+            a mapping from a name to a param, in most cases a grouping of all names to params in a module.
 
     Returns:
     Optional[Tuple[str, torch.Tensor]]
         if query/key/value all exist in the given state dict, a tuple of the new fused name as well as weights will be
         returned from this function
-        if one of query, key, or value exists in state dict (not all together), a FusableWeightsMissingError will be
-        raised with the weights that are missing
         otherwise this function will return None signifying that no preprocessing needed to be done for this name param
     """
     # if we find query/key/value, this means the weights are unfused and therefore need to be fused
