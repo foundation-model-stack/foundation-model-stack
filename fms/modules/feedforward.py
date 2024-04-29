@@ -68,6 +68,9 @@ class FeedForwardBlock(nn.Module):
             if self.use_bias:
                 getattr(self, layer).bias.data.zero_()
 
+    def to_tp(self, group: ProcessGroup) -> "TPFeedForwardBlock":
+        return TPFeedForwardBlock.import_module(self, group)
+
     def forward(self, x):
         out = self.a(self.w1(x))
         if self.p_dropout:
@@ -221,6 +224,9 @@ class GatedLinearUnit(nn.Module):
             )
             if self.use_bias:
                 getattr(self, layer).bias.data.zero_()
+
+    def to_tp(self, group: ProcessGroup) -> "TPGatedLinearUnit":
+        return TPGatedLinearUnit.import_module(self, group)
 
     def forward(self, x):
         out = self.a(self.wg(x)) * self.w1(x)

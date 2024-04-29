@@ -13,7 +13,7 @@ from fms.distributed.tensorparallel import (
 from fms.modules.tp import TPModule
 
 
-class ClassificationHead(nn.Module):
+class MLPClassificationHead(nn.Module):
     """
     A general purpose Classification Head. When applied on the output of a
     Headless model, will project from the embedding space to a space equal to
@@ -32,7 +32,7 @@ class ClassificationHead(nn.Module):
         apply_pooling_fn: bool = False,
     ):
         """
-        Initialize a ClassificationHead
+        Initialize a MLPClassificationHead
 
         Parameters
         ----------
@@ -86,15 +86,18 @@ class ClassificationHead(nn.Module):
         return x
 
 
-class LMHead(nn.Linear):
+class LinearClassificationHead(nn.Linear):
     # To differentiate for TP
     def forward(self, x):
         return super().forward(x)
 
+    def to_tp(self, group: ProcessGroup) -> "TPLinearClassificationHead":
+        return TPLinearClassificationHead.import_module(self, group)
 
-class TPLMHead(LMHead, TPModule):
+
+class TPLinearClassificationHead(LinearClassificationHead, TPModule):
     """
-    Output embedding layer for sequence models.
+    Output embedding layer for language models.
 
     Args
     ----
@@ -120,7 +123,7 @@ class TPLMHead(LMHead, TPModule):
         assert (
             vocab_size % world_size == 0
         ), "The number of tokens must be divisible by world size"
-        LMHead.__init__(
+        LinearClassificationHead.__init__(
             self,
             emb_dim,
             vocab_size // world_size,
@@ -131,8 +134,10 @@ class TPLMHead(LMHead, TPModule):
         self.setup_tp(rank, world_size)
 
     @staticmethod
-    def import_module(head: LMHead, group: ProcessGroup) -> "TPLMHead":
-        tp_lmh = TPLMHead(
+    def import_module(
+        head: LinearClassificationHead, group: ProcessGroup
+    ) -> "TPLinearClassificationHead":
+        tp_lmh = TPLinearClassificationHead(
             vocab_size=head.out_features,
             emb_dim=head.in_features,
             bias=head.bias,
@@ -165,7 +170,7 @@ class TPLMHead(LMHead, TPModule):
     def forward(self, inp):
         # vocab_idx: b n d if reverse, else b n
         inp_par = copy_to_tensor_model_parallel_region(inp)
-        out_par = LMHead.forward(self, inp_par)
+        out_par = LinearClassificationHead.forward(self, inp_par)
         # with ints this wasn't `torch.compile`ing
         rank = torch.tensor(self.rank)
         world_size = torch.tensor(self.world_size)
