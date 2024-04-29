@@ -14,7 +14,7 @@ from fms.distributed.strategy import (
 )
 from fms.modules.attention import MultiHeadAttention
 from fms.modules.feedforward import MOEFeedForward
-from fms.modules.head import LMHead
+from fms.modules.head import LinearClassificationHead
 from fms.modules.layernorm import LayerNormParameterized
 from fms.modules.positions import RotaryEmbedding
 from fms.utils import serialization
@@ -300,7 +300,9 @@ class Mixtral(nn.Module):
         self.distributed_strategy = distributed_strategy
 
         self.base_model = MixtralHeadless(self.config, self.distributed_strategy)
-        head = LMHead(self.config.dim, self.config.src_vocab_size, bias=False)
+        head = LinearClassificationHead(
+            self.config.dim, self.config.src_vocab_size, bias=False
+        )
         self.head = self.distributed_strategy.distribute_module(head)
 
         self.reset_params()
