@@ -1,7 +1,12 @@
+import functools
+import statistics
+import time
 from typing import Any, Callable, List, MutableMapping, Union
 
 import torch
 import torch.nn.functional as F
+
+import fms.distributed as distributed
 
 
 def _make_cache_contiguous(past_key_value_states):
@@ -70,41 +75,73 @@ def generate(
     kwargs["past_key_value_states"] = None
     kwargs["use_cache"] = use_cache
 
-    for _ in range(max_new_tokens):
-        input_ids = next_input[:, -max_seq_len:]
-        output = model(input_ids, **kwargs)
-        if use_cache:
-            logits, past_key_value_states = output
-            # TODO: this should go away when reduce-overhead issues are fixed, or
-            # maybe could be moved into model code to be more portable.
-            if contiguous_cache:
-                kwargs["past_key_value_states"] = _make_cache_contiguous(
-                    past_key_value_states
-                )
+    def trace_handler(p, output_path, extra_name=""):
+        output = p.key_averages().table(sort_by="self_cuda_time_total", row_limit=10)
+        print(output)
+        p.export_chrome_trace(
+            f"{output_path}/trace_step{str(p.step_num)}_{extra_name}.json"
+        )
+
+    token_times = []
+    rank, _ = distributed.rank_and_world()
+    with torch.profiler.profile(
+        activities=[
+            torch.profiler.ProfilerActivity.CPU,
+            torch.profiler.ProfilerActivity.CUDA,
+        ],
+        schedule=torch.profiler.schedule(wait=10, warmup=2, active=2, repeat=1),
+        on_trace_ready=functools.partial(
+            trace_handler,
+            output_path="/lustre/aviros/mixtral_traces",
+            extra_name=str(rank),
+        ),
+        with_stack=True,
+        profile_memory=True,
+        record_shapes=True,
+    ) as prof:
+        for _ in range(max_new_tokens):
+            itl_start = time.time()
+            input_ids = next_input[:, -max_seq_len:]
+            output = model(input_ids, **kwargs)
+            if use_cache:
+                logits, past_key_value_states = output
+                # TODO: this should go away when reduce-overhead issues are fixed, or
+                # maybe could be moved into model code to be more portable.
+                if contiguous_cache:
+                    kwargs["past_key_value_states"] = _make_cache_contiguous(
+                        past_key_value_states
+                    )
+                else:
+                    kwargs["past_key_value_states"] = past_key_value_states
             else:
-                kwargs["past_key_value_states"] = past_key_value_states
-        else:
-            logits = output
-        logits = logits[:, -1, :]
+                logits = output
+            logits = logits[:, -1, :]
 
-        if do_sample:
-            # get logits from last value in sequence nad scale
-            logits = logits / temperature
-            if top_k:
-                v, _ = torch.topk(logits, top_k)
-                logits[logits < v[:, [-1]]] = -float("inf")
+            if do_sample:
+                # get logits from last value in sequence nad scale
+                logits = logits / temperature
+                if top_k:
+                    v, _ = torch.topk(logits, top_k)
+                    logits[logits < v[:, [-1]]] = -float("inf")
 
-            probs = F.softmax(logits, dim=-1)
-            next_val = torch.multinomial(probs, num_samples=1)
-        else:
-            next_val = torch.argmax(logits, dim=-1).unsqueeze(0).t()
+                probs = F.softmax(logits, dim=-1)
+                next_val = torch.multinomial(probs, num_samples=1)
+            else:
+                next_val = torch.argmax(logits, dim=-1).unsqueeze(0).t()
 
-        result = torch.cat((result, next_val), dim=-1)
+            result = torch.cat((result, next_val), dim=-1)
 
-        if use_cache:
-            next_input = next_val
-        else:
-            next_input = result
+            if use_cache:
+                next_input = next_val
+            else:
+                next_input = result
+            itl_end = time.time()
+            token_times.append((itl_end - itl_start) * 1000)
+            prof.step()
+
+    print(
+        f"First token latency: {token_times[0]}, average after: {statistics.fmean(token_times[1:])} {token_times}"
+    )
 
     if not batched:
         result = result[0]
