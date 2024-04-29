@@ -14,7 +14,7 @@ from transformers.modeling_outputs import (
 )
 from transformers.utils import ModelOutput
 
-from fms.modules.head import ClassificationHead
+from fms.modules.head import MLPClassificationHead
 from fms.utils.activation import str_to_activation
 
 
@@ -316,7 +316,7 @@ class SequenceClassificationLMHeadMixin(LMHeadMixin):
         classifier_activation_fn: str,
         classifier_dropout: float,
     ) -> nn.Module:
-        return ClassificationHead(
+        return MLPClassificationHead(
             self.config.hidden_size,
             self.config.num_labels,
             str_to_activation(classifier_activation_fn),
@@ -413,7 +413,7 @@ class MaskedLMHeadMixin(LMHeadMixin):
         return self.lm_head.head
 
     def _get_empty_lm_head(self, activation_fn: str, norm_eps: float) -> nn.Module:
-        return ClassificationHead(
+        return MLPClassificationHead(
             self.config.hidden_size,
             self.config.vocab_size,
             activation_fn=str_to_activation(activation_fn),
