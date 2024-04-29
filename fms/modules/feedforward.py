@@ -1,4 +1,4 @@
-from typing import Dict, List, Optional, Set
+from typing import Dict, Optional, Set
 
 import torch
 import torch.distributed
@@ -6,13 +6,13 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributed.distributed_c10d import ProcessGroup
 
+import fms.triton.moe_kernel as moe_kernel  # registers the PT custom ops
 from fms import distributed
 from fms.distributed.tensorparallel import (
     copy_to_tensor_model_parallel_region,
     reduce_from_tensor_model_parallel_region,
 )
 from fms.modules.tp import TPModule
-from fms.triton import moe_kernel
 
 
 class FeedForwardBlock(nn.Module):
@@ -68,6 +68,9 @@ class FeedForwardBlock(nn.Module):
             )
             if self.use_bias:
                 getattr(self, layer).bias.data.zero_()
+
+    def to_tp(self, group: ProcessGroup) -> "TPFeedForwardBlock":
+        return TPFeedForwardBlock.import_module(self, group)
 
     def forward(self, x):
         out = self.a(self.w1(x))
@@ -223,6 +226,9 @@ class GatedLinearUnit(nn.Module):
             if self.use_bias:
                 getattr(self, layer).bias.data.zero_()
 
+    def to_tp(self, group: ProcessGroup) -> "TPGatedLinearUnit":
+        return TPGatedLinearUnit.import_module(self, group)
+
     def forward(self, x):
         out = self.a(self.wg(x)) * self.w1(x)
         if self.p_dropout:
@@ -347,6 +353,9 @@ class ConditionalFeedForward(nn.Module):
         self.intermediate_size = intermediate_size
         self.w13 = nn.Parameter(torch.empty(num_experts, 2 * intermediate_size, dim))
         self.w2 = nn.Parameter(torch.empty(num_experts, dim, intermediate_size))
+
+    def to_tp(self, group: ProcessGroup) -> "TPConditionalFeedForward":
+        return TPConditionalFeedForward.import_module(self, group)
 
     def forward(self, x: torch.Tensor, expert_indices: torch.Tensor) -> torch.Tensor:
         ## Triton path
