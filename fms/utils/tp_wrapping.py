@@ -1,15 +1,7 @@
 from torch import nn
 from torch.distributed.distributed_c10d import ProcessGroup
 
-from fms.modules.attention import MultiHeadAttention, TPMultiHeadAttention
-from fms.modules.embedding import TPEmbedding, TPWordEmbedding, WordEmbedding
-from fms.modules.feedforward import (
-    FeedForwardBlock,
-    GatedLinearUnit,
-    TPFeedForwardBlock,
-    TPGatedLinearUnit,
-)
-from fms.modules.head import LMHead, TPLMHead
+from fms.modules.embedding import TPEmbedding
 from fms.modules.positions import Alibi
 
 
@@ -18,22 +10,13 @@ from fms.modules.positions import Alibi
 def _tp_wrapped(module: nn.Module, group: ProcessGroup):
     if hasattr(module, "to_tp"):
         return module.to_tp(group)
-    elif isinstance(module, FeedForwardBlock):
-        return TPFeedForwardBlock.import_module(module, group)
-    elif isinstance(module, GatedLinearUnit):
-        return TPGatedLinearUnit.import_module(module, group)
-    elif isinstance(module, MultiHeadAttention):
-        return TPMultiHeadAttention.import_module(module, group)
     elif isinstance(module, Alibi):
         raise NotImplementedError("TODO: implement TP for Alibi")
         # tp_layer = TPAlibi.import_module(layer, world_size, rank, dtype)
         # setattr(model, name, tp_layer)
-    elif isinstance(module, WordEmbedding):
-        return TPWordEmbedding.import_module(module, group)
     elif isinstance(module, nn.Embedding):
+        # We can't directly modify torch.nn modules to add the to_tp function
         return TPEmbedding.import_module(module, group)
-    elif isinstance(module, LMHead):
-        return TPLMHead.import_module(module, group)
     else:
         return module
 
