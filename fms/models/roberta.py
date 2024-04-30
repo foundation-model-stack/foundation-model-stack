@@ -10,7 +10,7 @@ from fms import models
 from fms.distributed.strategy import DistributedStrategy, NoOpStrategy
 from fms.modules.attention import MultiHeadAttention
 from fms.modules.feedforward import FeedForwardBlock
-from fms.modules.head import ClassificationHead
+from fms.modules.head import MLPClassificationHead
 from fms.utils import serialization
 from fms.utils.activation import str_to_activation
 from fms.utils.config import ModelConfig
@@ -218,7 +218,7 @@ class RoBERTa(nn.Module):
 
         # The head does not get TP-Wrapped as in many cases the vocab_size will not be divisible by the world size
         self.classification_head = self.distributed_strategy.distribute_module(
-            ClassificationHead(
+            MLPClassificationHead(
                 self.config.emb_dim,
                 # number of classes is vocab size as this is predicting a masked token
                 num_classes=self.config.src_vocab_size,
