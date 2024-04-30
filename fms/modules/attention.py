@@ -258,6 +258,9 @@ class MultiHeadAttention(nn.Module):
             elif isinstance(m, QKV):
                 m.reset_parameters()
 
+    def to_tp(self, group: ProcessGroup) -> "TPMultiHeadAttention":
+        return TPMultiHeadAttention.import_module(self, group)
+
     def forward(
         self,
         q: torch.Tensor,
