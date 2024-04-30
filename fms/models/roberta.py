@@ -10,7 +10,7 @@ from fms import models
 from fms.distributed.strategy import DistributedStrategy, NoOpStrategy
 from fms.modules.attention import MultiHeadAttention
 from fms.modules.feedforward import FeedForwardBlock
-from fms.modules.head import MLPClassificationHead
+from fms.modules.head import ClassificationHead
 from fms.utils import serialization
 from fms.utils.activation import str_to_activation
 from fms.utils.config import ModelConfig
@@ -218,7 +218,7 @@ class RoBERTa(nn.Module):
 
         # The head does not get TP-Wrapped as in many cases the vocab_size will not be divisible by the world size
         self.classification_head = self.distributed_strategy.distribute_module(
-            MLPClassificationHead(
+            ClassificationHead(
                 self.config.emb_dim,
                 # number of classes is vocab size as this is predicting a masked token
                 num_classes=self.config.src_vocab_size,
@@ -294,7 +294,7 @@ models.register_model(
     _architecture_name, "base", _roberta_factory_factory(_base_config)
 )
 
-_convert_fused_qkv_pre_0_0_6 = serialization.simple_mapping_adapter(
+_convert_to_fused_qkv = serialization.simple_mapping_adapter(
     [serialization._legacy_attn_unfused_to_fused_weight_conversion]
 )
 
@@ -331,10 +331,10 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping[Any, Any]) -> Mapping[Any, Any]:
         if name == "roberta.embeddings.position_embeddings.weight":
             new_sd[new_name] = new_sd[new_name][2:]
 
-    fused_sd = _convert_fused_qkv_pre_0_0_6(new_sd)
+    fused_sd = _convert_to_fused_qkv(new_sd)
 
     return fused_sd
 
 
 serialization.register_adapter("roberta", "hf", _hf_sd_to_fms_sd)
-serialization.register_adapter("roberta", "fms.pre0.0.6", _convert_fused_qkv_pre_0_0_6)
+serialization.register_adapter("roberta", "fms.pre0.0.6", _convert_to_fused_qkv)
