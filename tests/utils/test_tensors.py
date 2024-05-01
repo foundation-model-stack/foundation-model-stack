@@ -211,3 +211,23 @@ def test_remove():
         pt.remove(idx, 1)
     # removes one page per batch-dim
     assert free_pages + pt.shape[0] == pt.paged_storage.free_pages()
+
+
+def test_compile():
+    pt = get_paged_tensor()
+
+    def do_stuff(t: PagedTensor):
+        t = torch.add(t, 4)
+        # t.paged_storage.expand()
+        t = torch.mul(t, 2)
+        return t
+
+    result1 = do_stuff(pt)
+    compiled = torch.compile(do_stuff, fullgraph=True)
+    result2 = compiled(pt)
+
+    assert result1.shape == result2.shape
+    assert isinstance(result1, PagedTensor)
+    assert isinstance(result2, PagedTensor)
+
+    assert torch.allclose(result1._tensor(), result2._tensor())
