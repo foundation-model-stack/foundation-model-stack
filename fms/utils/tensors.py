@@ -650,7 +650,7 @@ class PagedTensor(torch.Tensor):
         return tensors, ctx
 
     @staticmethod
-    def __tensor_unflatten__(inner_tensors: Dict, meta, outer_size, outer_stride):
+    def __tensor_unflatten__(inner_tensors: Dict, meta):
         storage = inner_tensors["_underlying_tensor"]
         store = PagedStorage(
             storage, meta["page_size"], meta["refcounts"], meta["static_shape"]
