@@ -115,7 +115,7 @@ class UnfusedQKV(QKV):
     def forward(
         self, q: torch.Tensor, k: Optional[torch.Tensor], v: Optional[torch.Tensor]
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        if (k is None and v is None) or (k is q and v is q):
+        if k is None and v is None:
             k = q
             v = q
         elif k is None or v is None:

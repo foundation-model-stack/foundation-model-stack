@@ -87,6 +87,7 @@ def _legacy_attn_unfused_to_fused_weight_conversion(
     """
     # if we find query/key/value, this means the weights are unfused and therefore need to be fused
     if "attn.query" in name or "attn.key" in name or "attn.value" in name:
+        # weight_type denotes weight or bias
         weight_type = name.split(".")[-1]
 
         unfused_weights = [
