@@ -203,9 +203,7 @@ def load_state_dict(
     # if there's only one checkpoint for fsdp/hsdp, load it only into rank zero
     # and it will be distributed by the FSDP `sync_module_states` parameter
     if checkpoint_sharding is None and distributed_strategy in {"hsdp", "fsdp"}:
-        if rank == 0:
-            checkpoints = [checkpoints[0]]
-        else:
+        if rank != 0:
             return {}
 
     checkpoint_sds = []
