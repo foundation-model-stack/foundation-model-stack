@@ -429,6 +429,7 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
 
         # qkv fused
         if bool(qkv_weight_pattern.match(name)):
+            new_sd.pop(new_name)
             emb_dim = param.size(1)
             num_heads = emb_dim // 128
             num_key_value_heads = (param.size(0) // 128 - num_heads) // 2
