@@ -56,7 +56,7 @@ class LLaMAConfig(ModelConfig):
 
 
 class LLaMABlock(nn.Module):
-    def __init__(self, config: LLaMAConfig, rotary_emb: RotaryEmbedding):
+    def __init__(self, config: LLaMAConfig, rotary_emb: RotaryEmbedding, use_fp8_kvcache=False):
         super(LLaMABlock, self).__init__()
         self.config = config
         emb_kq = self.config.emb_dim // self.config.nheads
@@ -94,6 +94,7 @@ class LLaMABlock(nn.Module):
             p_dropout=self.config.p_dropout,
             use_bias=self.config.attn_bias,
             position_encoder=rotary_emb,
+            use_fp8_kvcache=use_fp8_kvcache,
         )
         self.ff_sub_layer = GatedLinearUnit(
             self.config.emb_dim,
@@ -127,7 +128,7 @@ class LLaMABlock(nn.Module):
 
         # first we do MHA and Add&Norm
         residual = x
-        x = self.ln(x)
+        x = self.ln(x, inplace=True)
         x = self.attn(
             q=x,
             mask=mask,
@@ -148,7 +149,7 @@ class LLaMABlock(nn.Module):
 
         # then we do FF and Add&Norm
         residual = x
-        x = self.ff_ln(x)
+        x = self.ff_ln(x, inplace=True)
         x = self.ff_sub_layer(x)
         if self.config.p_dropout != 0:
             x = self.dropout(x)
@@ -209,7 +210,7 @@ class LLaMA(nn.Module):
 
         layers = []
         for i in range(self.config.nlayers):
-            block: nn.Module = LLaMABlock(self.config, self.rot_emb)
+            block: nn.Module = LLaMABlock(self.config, self.rot_emb, use_fp8_kvcache=True)
             block = self.distributed_strategy.distribute_layer(block, i)
             layers.append(block)
         self.layers = nn.ModuleList(layers)
