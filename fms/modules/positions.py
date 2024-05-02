@@ -29,6 +29,7 @@ class PositionEncoder:
         position_ids: Optional[torch.LongTensor],
         past_kv_state: Optional[Tuple[torch.Tensor, torch.Tensor]],
         use_cache=False,
+        inplace=False,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         return q, k
 
@@ -217,6 +218,7 @@ class RotaryEmbedding(PositionEncoder):
         position_ids: Optional[torch.Tensor] = None,
         past_kv_state: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
         use_cache=False,
+        inplace=False,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Args
@@ -249,25 +251,36 @@ class RotaryEmbedding(PositionEncoder):
         freqs = self.cached_freqs[q.device.index][alpha][position_ids]
 
         freqs = freqs.float()  # 1 L D/2 2 2
-        q_out = (
-            (
+        if inplace:
+            q.copy_(
                 freqs[:, -q.size(1) :, None, :, :, :]
                 .mul(q.float().view(*q.size()[:-1], -1, 2).unsqueeze(-2))
                 .sum(5)
                 .flatten(3)
+                .view_as(q)
             )
-            .type_as(q)
-            .view_as(q)
-        )
-        k_out = (
-            (
+            k.copy_(
                 freqs[:, -k.size(1) :, None, :, :, :]
                 .mul(k.float().view(*k.size()[:-1], -1, 2).unsqueeze(-2))
                 .sum(5)
                 .flatten(3)
+                .view_as(k)
             )
-            .type_as(k)
-            .view_as(k)
-        )
+            q_out = q
+            k_out = k
+        else:
+            q_out = (
+                freqs[:, -q.size(1) :, None, :, :, :]
+                .mul(q.float().view(*q.size()[:-1], -1, 2).unsqueeze(-2))
+                .sum(5)
+                .flatten(3)
+            ).type_as(q).view_as(q)
+            k_out = (
+                freqs[:, -k.size(1) :, None, :, :, :]
+                .mul(k.float().view(*k.size()[:-1], -1, 2).unsqueeze(-2))
+                .sum(5)
+                .flatten(3)
+            ).type_as(k).view_as(k)
+            
 
-        return q_out.view_as(q), k_out.view_as(k)
+        return q_out, k_out
