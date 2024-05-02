@@ -95,11 +95,11 @@ class TPModule(nn.Module, metaclass=ABCMeta):
             world_size = 4, max_partition_sizes = [4, 1], tensor = [0 1 2 3 4 5 6 7 8 9]
             [0 1 8 9] [2 3 8 9] [4 5 8 9] [6 7 8 9]
         """
-        # Divide the weight matrix along the second dimension.
-        output_size_per_partition = param.shape[1] // (
-            sum(max_partition_sizes) // min(max_partition_sizes)
-        )
         if is_sharded:
+            # Divide the weight matrix along the second dimension.
+            output_size_per_partition = param.shape[1] // (
+                sum(max_partition_sizes) // min(max_partition_sizes)
+            )
             tp_slices = self.__get_tp_slices(
                 tensor_value.shape[1], output_size_per_partition, max_partition_sizes
             )
