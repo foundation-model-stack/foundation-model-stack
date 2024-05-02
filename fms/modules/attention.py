@@ -154,15 +154,15 @@ class MultiHeadAttention(nn.Module):
                     queries, keys, position_ids, past_key_value_state, use_cache
                 )
 
-        queries = queries.transpose(2, 1)  # / (self.emb_kq_per_head**(1/4))
-        keys = keys.transpose(2, 1)  # / (self.emb_kq_per_head**(1/4))
-        values = values.transpose(2, 1)  # compatible with QK.T
-
         # if you want to use caching and past_key_value_state is not None meaning you have values in your cache
-        if use_cache and past_key_value_state is not None:
+        if (
+            use_cache
+            and past_key_value_state is not None
+            and past_key_value_state[0].numel() > 0
+        ):
             if is_self:
-                keys = torch.cat((past_key_value_state[0], keys), dim=2)
-                values = torch.cat((past_key_value_state[1], values), dim=2)
+                keys = torch.cat((past_key_value_state[0], keys), dim=1)
+                values = torch.cat((past_key_value_state[1], values), dim=1)
             else:
                 keys = past_key_value_state[0]
                 values = past_key_value_state[1]
@@ -181,17 +181,20 @@ class MultiHeadAttention(nn.Module):
         else:
             attn_mask = mask
 
+        queries_sdpa = queries.transpose(2, 1)  # / (self.emb_kq_per_head**(1/4))
+        keys_sdpa = keys.transpose(2, 1)  # / (self.emb_kq_per_head**(1/4))
+        values_sdpa = values.transpose(2, 1)  # compatible with QK.T
+
         # Expand kv so black-box attn will work
         expansion = self.nheads // self.kvheads
         # k/v: b h l d
         if expansion != 1:
-            keys_e = keys.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
-            values_e = (
-                values.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
+            keys_sdpa = (
+                keys_sdpa.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
             )
-        else:
-            keys_e = keys
-            values_e = values
+            values_sdpa = (
+                values_sdpa.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
+            )
 
         if attn_algorithm:
             # Pick which fused attn kernels will run.
@@ -204,9 +207,9 @@ class MultiHeadAttention(nn.Module):
             torch.backends.cuda.enable_math_sdp(use_math)
 
         attn = F.scaled_dot_product_attention(
-            queries,
-            keys_e,
-            values_e,
+            queries_sdpa,
+            keys_sdpa,
+            values_sdpa,
             attn_mask=attn_mask,
             dropout_p=self.p_dropout if self.training else 0.0,
             is_causal=is_causal_mask,
@@ -323,15 +326,15 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
         # The number in max_partition_sizes will signify the largest world size
         # til we need to duplicate.  For instance if we have nheads=16 and
         # world_size=32, then first 2 ranks will get first 1/16th of query
-        self.copy_colwise(self.query.weight, query_weight, [self.pre_tp_nheads])
-        self.copy_colwise(self.key.weight, key_weight, [self.pre_tp_kvheads])
-        self.copy_colwise(self.value.weight, value_weight, [self.pre_tp_kvheads])
-        self.copy_rowwise(self.dense.weight, dense_weight, [self.world_size])
+        self.sharded_copy(self.query.weight, query_weight, 0, [self.pre_tp_nheads])
+        self.sharded_copy(self.key.weight, key_weight, 0, [self.pre_tp_kvheads])
+        self.sharded_copy(self.value.weight, value_weight, 0, [self.pre_tp_kvheads])
+        self.sharded_copy(self.dense.weight, dense_weight, 1, [self.world_size])
         if self.use_bias:
-            self.copy_colwise(self.query.bias, query_bias, [self.pre_tp_nheads])
-            self.copy_colwise(self.key.bias, key_bias, [self.pre_tp_kvheads])
-            self.copy_colwise(self.value.bias, value_bias, [self.pre_tp_kvheads])
-            self.copy_rowwise(self.dense.bias, dense_bias, [self.world_size], False)
+            self.sharded_copy(self.query.bias, query_bias, 0, [self.pre_tp_nheads])
+            self.sharded_copy(self.key.bias, key_bias, 0, [self.pre_tp_kvheads])
+            self.sharded_copy(self.value.bias, value_bias, 0, [self.pre_tp_kvheads])
+            self.sharded_copy(self.dense.bias, dense_bias, 1, [self.world_size], False)
 
     @staticmethod
     def import_module(
