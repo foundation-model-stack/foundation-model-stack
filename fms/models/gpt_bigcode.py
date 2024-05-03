@@ -339,6 +339,10 @@ class GPTBigCode(nn.Module):
             return preds
 
 
+_micro_char_config = GPTBigCodeConfig(
+    emb_dim=192, nheads=4, nlayers=5, max_expected_seq_len=1024, src_vocab_size=256
+)
+
 # Register common GPT Bigcode variants with the model registration API
 _santacoder_config = GPTBigCodeConfig(
     src_vocab_size=49280,
@@ -389,6 +393,9 @@ def _gpt_bigcode_factory_factory(config):
     return factory
 
 
+models.register_model(
+    _architecture_name, "micro", _gpt_bigcode_factory_factory(_micro_char_config)
+)
 models.register_model(
     _architecture_name, "santacoder", _gpt_bigcode_factory_factory(_santacoder_config)
 )

@@ -7,7 +7,7 @@ import torch.nn.functional as F
 def __create_prefill_mask(
     prompt_lengths: List[int], device: Union[str, torch.device]
 ) -> torch.Tensor:
-    """Create a prefill mask based on
+    """Create a prefill mask based on prompt_lengths
 
     Args:
         prompt_lengths: List[int]
@@ -58,6 +58,32 @@ def __create_decode_mask(
     is_not_pad = torch.stack(is_not_pad_list)
     mask = is_not_pad.unsqueeze(-2)
     return mask
+
+
+def __create_prefill_position_ids(
+    prompt_lengths: List[int], device: Union[str, torch.device]
+) -> torch.Tensor:
+    """Create the prefill position_ids based on prompt lengths. This is most important for models that utilize absolute
+    positional embeddings such as gpt_bigcode
+
+    Args:
+        prompt_lengths: List[int]
+            list of prompt lengths
+        device: Union[str, torch.device]
+            device to put mask on
+
+    Returns:
+    torch.Tensor
+        the position ids
+    """
+    max_len = max(prompt_lengths)
+    position_ids = []
+    for prompt_length in prompt_lengths:
+        position_ids_i = [0] * (max_len - prompt_length) + [
+            i for i in range(prompt_length)
+        ]
+        position_ids.append(position_ids_i)
+    return torch.tensor(position_ids, device=device, dtype=torch.long)
 
 
 def _make_cache_contiguous(past_key_value_states):
@@ -111,24 +137,31 @@ def generate(
     if num_beams != 1:
         raise NotImplementedError("generate() does yet not support beam search")
 
-    if isinstance(input_ids, torch.Tensor):
-        if len(input_ids.shape) > 1:
-            raise ValueError(
-                "input ids should only have one dimension if given as a tensor"
-            )
+    if isinstance(input_ids, torch.Tensor) and len(input_ids.shape) == 1:
         model_input_lengths = [input_ids.size(0)]
         input_ids = input_ids.unsqueeze(0)
         is_batch = False
+        position_ids = None
     else:
         bsize = len(input_ids)
-        max_len = max([seq.size(0) for seq in input_ids])
-        model_input_lengths = [seq.size(0) for seq in input_ids]
-        input_ids = torch.stack(
-            [
-                F.pad(input_ids[i], (max_len - model_input_lengths[i], 0))
-                for i in range(bsize)
-            ]
-        )
+        if isinstance(input_ids, torch.Tensor):
+            max_len = input_ids.size(1)
+            model_input_lengths = [max_len for _ in range(bsize)]
+            position_ids = None
+        else:
+            max_len = max([seq.size(0) for seq in input_ids])
+            model_input_lengths = [seq.size(0) for seq in input_ids]
+            # Setting this to 0, however if 0 is the eos, we will end up truncating the output if using truncate_after_eos
+            # once this workflow works for nested tensor, this can probably be removed
+            input_ids = torch.stack(
+                [
+                    F.pad(input_ids[i], (max_len - model_input_lengths[i], 0))
+                    for i in range(bsize)
+                ]
+            )
+            position_ids = __create_prefill_position_ids(
+                model_input_lengths, input_ids.device
+            )
         is_batch = True
 
     result = input_ids
@@ -136,6 +169,7 @@ def generate(
     kwargs: MutableMapping[str, Any] = dict()
     kwargs["past_key_value_states"] = None
     kwargs["use_cache"] = use_cache
+    kwargs["position_ids"] = position_ids
 
     for i in range(max_new_tokens):
         input_ids = next_input[:, -max_seq_len:]
@@ -152,6 +186,15 @@ def generate(
                 model_input_lengths + 1 for model_input_lengths in model_input_lengths
             ]
             kwargs["mask"] = __create_decode_mask(model_input_lengths, input_ids.device)
+            # update the position ids
+            if kwargs["position_ids"] is not None:
+                if use_cache:
+                    kwargs["position_ids"] = kwargs["position_ids"][:, -1:] + 1
+                else:
+                    kwargs["position_ids"] = torch.cat(
+                        (kwargs["position_ids"], kwargs["position_ids"][:, -1:] + 1),
+                        dim=1,
+                    )
 
         output = model(input_ids, **kwargs)
         if use_cache:

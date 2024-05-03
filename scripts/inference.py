@@ -150,16 +150,6 @@ def ids_for_prompt(prompt):
     return ids
 
 
-def pad_prompt(prompt, pad_len, pad_token="<unk>"):
-    to_pad = pad_len - len(prompt)
-    if to_pad == 0:
-        return prompt
-
-    pad_id = tokenizer.convert_tokens_to_ids(pad_token)
-    pad_ids = [pad_id] * to_pad
-    return torch.cat((torch.tensor(pad_ids, device=device), prompt))
-
-
 if args.context_file is not None:
     # during testing, the context_file used was a copy/paste of the text of:
     # https://arxiv.org/pdf/2306.15595.pdf
