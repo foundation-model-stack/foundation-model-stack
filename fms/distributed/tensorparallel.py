@@ -8,43 +8,6 @@ import torch.distributed._functional_collectives as funcol
 from torch import nn
 
 
-def apply_colwise_tp(par_mod: nn.Linear, mod: nn.Linear, world_size, rank):
-    # Divide the weight matrix along the last dimension.
-    output_size_per_partition = mod.out_features // world_size
-    with torch.no_grad():
-        par_mod.weight.copy_(
-            torch.split(mod.weight, output_size_per_partition, dim=0)[rank]
-        )
-        if par_mod.bias is not None:
-            par_mod.bias.copy_(torch.split(mod.bias, output_size_per_partition)[rank])
-    # print(f"For rank {rank}, we have the following weights: Base weight {mod.weight} bias {mod.bias}; Par weight {par_mod.weight}, bias {par_mod.bias}")
-
-
-def apply_rowwise_tp(par_mod: nn.Linear, mod: nn.Linear, world_size, rank):
-    # Divide the weight matrix along the last dimension.
-    output_size_per_partition = mod.in_features // world_size
-    with torch.no_grad():
-        par_mod.weight.copy_(
-            torch.split(mod.weight, output_size_per_partition, dim=1)[rank]
-        )
-        if par_mod.bias is not None:
-            if rank == 0:
-                par_mod.bias.copy_(mod.bias)
-            else:
-                par_mod.bias.zero_()
-    # print(f"For rank {rank}, we have the following weights: Base weight {mod.weight}, bias {mod.bias}; Par weight {par_mod.weight}, bias {par_mod.bias}")
-
-
-def apply_embedding_tp(par_mod: nn.Embedding, mod: nn.Embedding, world_size, rank):
-    # Divide the weight matrix along the last dimension.
-    output_size_per_partition = mod.embedding_dim // world_size
-    with torch.no_grad():
-        par_mod.weight.copy_(
-            torch.split(mod.weight, output_size_per_partition, dim=1)[rank]
-        )
-    # print(f"For rank {rank}, we have the following weights: Base weight {mod.weight} bias {mod.bias}; Par weight {par_mod.weight}, bias {par_mod.bias}")
-
-
 ## Fixes for PT 2.2 collectives until PT 2.3 is released
 
 

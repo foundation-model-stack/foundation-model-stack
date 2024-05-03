@@ -7,6 +7,12 @@ import torch.nn as nn
 from torch.distributed.distributed_c10d import ProcessGroup
 
 
+def _get_tpd_module(module: nn.Module, attr_name: str):
+    if attr_name == "self":
+        return module
+    return getattr(module, attr_name)
+
+
 class TPModule(nn.Module, metaclass=ABCMeta):
     """
     This is an abstract class that any nn.Module can implement to enable
@@ -56,10 +62,11 @@ class TPModule(nn.Module, metaclass=ABCMeta):
                 (sharding_rank + 1) * tensor_shard_size + tensor_shard_offset,
             )
 
-    def copy_rowwise(
+    def sharded_copy(
         self,
         param: Union[torch.nn.Parameter, torch.Tensor],
         tensor_value: torch.Tensor,
+        dim: int,
         max_partition_sizes: List[int],
         is_sharded: bool = True,
     ):
@@ -73,8 +80,10 @@ class TPModule(nn.Module, metaclass=ABCMeta):
             Parameter that has had TP applied
         tensor_value: torch.Tensor
             tensor that needs sharding
+        dim: int
+            Dimension on which to shard
         is_sharded: bool
-            For additive terms (like bias), is_sharded must be False. Otherwise True.
+            For additive terms (like bias), is_sharded might be False. Otherwise True.
         max_partition_sizes: List[int]
             for each number in the list, if world_size is smaller than or equal to that number, the tensor will get
             partitioned in worldsize parts, else if world size is larger than the number then you will get world size parts
@@ -96,68 +105,27 @@ class TPModule(nn.Module, metaclass=ABCMeta):
             [0 1 8 9] [2 3 8 9] [4 5 8 9] [6 7 8 9]
         """
         # Divide the weight matrix along the second dimension.
-        output_size_per_partition = param.shape[1] // (
+        output_size_per_partition = param.shape[dim] // (
             sum(max_partition_sizes) // min(max_partition_sizes)
         )
         if is_sharded:
             tp_slices = self.__get_tp_slices(
-                tensor_value.shape[1], output_size_per_partition, max_partition_sizes
+                tensor_value.shape[dim], output_size_per_partition, max_partition_sizes
             )
-            tensors_to_cat = [tensor_value[:, tp_slice] for tp_slice in tp_slices]
-            tensor = torch.cat(tensors_to_cat, dim=1)
+            tp_shard_indices = [
+                tuple([slice(None) for _ in range(dim)] + [tp_slice])
+                for tp_slice in tp_slices
+            ]
+            tensors_to_cat = [
+                tensor_value[tp_shard_index] for tp_shard_index in tp_shard_indices
+            ]
+            tensor = torch.cat(tensors_to_cat, dim=dim)
             param.copy_(tensor, non_blocking=True)
         else:
             if self.rank == 0:
                 param.copy_(tensor_value, non_blocking=True)
             else:
                 param.zero_()
-
-    def copy_colwise(
-        self,
-        param: Union[torch.nn.Parameter, torch.Tensor],
-        tensor_value: torch.Tensor,
-        max_partition_sizes: List[int],
-    ):
-        """
-        This function copies the correct shard of the weights for a colwise-TP'd module
-        according to the rank of the process and the world_size.
-
-        Args
-        ====
-        param: torch.nn.Parameter
-            Parameter that has had TP applied
-        tensor_value: torch.Tensor
-            tensor that needs sharding
-        max_partition_sizes: List[int]
-            for each number in the list, if world_size is smaller than or equal to that number, the tensor will get
-            partitioned in worldsize parts, else if world size is larger than the number then you will get world size parts
-            replicated in worldsize / number
-
-            world_size = 4, max_partition_sizes = [8], tensor = [0 1 2 3 4 5 6 7]
-            [0 1] [2 3] [4 5] [6 7]
-
-            world_size = 8, max_partition_sizes = [4], tensor = [0 1 2 3 4 5 6 7]
-            [0 1] [0 1] [2 3] [2 3] [4 5] [4 5] [6 7] [6 7]
-
-            If there are multiple numbers in the max_partition_sizes list, then the param gets filled with non-contiguous
-            slices of the tensor_value. This is useful for fused weight cases (qkv, mlp, moe, etc.)
-
-            world_size = 4, max_partition_sizes = [4, 4], tensor = [0 1 2 3 4 5 6 7]
-            [0 4] [1 5] [2 6] [3 7]
-
-            world_size = 4, max_partition_sizes = [4, 1], tensor = [0 1 2 3 4 5 6 7 8 9]
-            [0 1 8 9] [2 3 8 9] [4 5 8 9] [6 7 8 9]
-        """
-        # Divide the weight matrix along the first dimension.
-        output_size_per_partition = param.shape[0] // (
-            sum(max_partition_sizes) // min(max_partition_sizes)
-        )
-        tp_slices = self.__get_tp_slices(
-            tensor_value.shape[0], output_size_per_partition, max_partition_sizes
-        )
-        tensors_to_cat = [tensor_value[tp_slice,] for tp_slice in tp_slices]
-        tensor = torch.cat(tensors_to_cat, dim=0)
-        param.copy_(tensor, non_blocking=True)
 
     def _get_sd_weight(
         self,
@@ -200,11 +168,9 @@ class TPModule(nn.Module, metaclass=ABCMeta):
         2. Raise exceptions for missing required weights in tensor_values
             (ValueError) or for unused weights in tensor_values
             (AttributeError)
-        3. Use one of the copy_{rowwise,colwise} methods to load and shard
-            each weight correctly into the TP module. All the copy_ methods
-            explain in detail how to call them properly. Pay special attention
-            to the max_partition_sizes parameter for supporting fused weights
-            and MQA/GQA among others.
+        3. Use the sharded_copy method to load and shard each weight correctly
+            into the TP module. Pay special attention to the max_partition_sizes
+            parameter for supporting fused weights and MQA/GQA among others.
 
         PSA: Each weight has a List[int] (max_partition_sizes) associated
         with it where if the list is larger than size 1, this implies the
