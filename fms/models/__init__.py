@@ -1,5 +1,6 @@
 from contextlib import nullcontext
 from functools import partial
+import time
 from typing import Any, Callable, MutableMapping, Optional
 
 import torch
@@ -179,7 +180,8 @@ def _fsdp_wrap(
         dp_strategy = ShardingStrategy.NO_SHARD
     else:
         raise KeyError("distributed strategy should be one of fsdp, dpp, or hsdp")
-
+    print(f"[rank {distributed.rank_and_world()[0]}] fsdp wrapping...")
+    time_0 = time.time()
     model = FSDP(
         model,
         param_init_fn=init_fn,
@@ -190,6 +192,8 @@ def _fsdp_wrap(
         mixed_precision=mp_policy,
         sharding_strategy=dp_strategy,
     )
+    time_1 = time.time()
+    print(f"[rank {distributed.rank_and_world()[0]}] fsdp wrapped {time_1-time_0:.2f}")
 
     wrapper_fn = partial(
         checkpoint_wrapper, checkpoint_impl=CheckpointImpl.NO_REENTRANT
@@ -286,9 +290,14 @@ def get_model(
             )
 
     # Create the model
+    print(f"[rank {rank}] creating the model")
+    time_0 = time.time()
     fms_model = _get_model_instance(
         architecture, variant, device=initial_device, extra_args=extra_args
     )
+    time_1 = time.time()
+    print(f"[rank {rank}] model created {time_1-time_0:.2f}")
+    
 
     # Choose when to wrap and load the model weights based on the combination
     # distribution strategy and checkpoint sharding
@@ -302,6 +311,7 @@ def get_model(
         return model
 
     if not pre_load:
+        print(f"[rank {rank}] pre-weight wrapping")
         fms_model = model_wrap(fms_model)
 
     if len(lazy_sd):
@@ -318,6 +328,7 @@ def get_model(
         fms_model.reset_parameters()
 
     if pre_load:
+        print(f"[rank {rank}] post-weight wrapping")
         fms_model = model_wrap(fms_model)
 
     return fms_model
