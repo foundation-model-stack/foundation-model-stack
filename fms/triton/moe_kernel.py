@@ -285,7 +285,6 @@ def _autotune(configs, function):
             else:
                 best = t_config
                 best_config = config
-        print(str(config), " :", str(t_config))
     return best, best_config
 
 
@@ -295,7 +294,6 @@ def _load_best_configs():
         import pickle
 
         with open(saved_configs, "rb") as f:
-            print(f"Loading best configs from file {saved_configs}")
             return pickle.load(f)
 
 
@@ -304,7 +302,6 @@ def _save_best_configs(best_configs):
     with open(saved_configs, "wb") as f:
         import pickle
 
-        print(f"Saving best configs to file {saved_configs}")
         pickle.dump(best_configs, f)
 
 
@@ -361,7 +358,6 @@ def moe_mm(
         BEST_MOE_CONFIGS = {}
     key = _create_best_configs_key(input, moe_matrix, token_expert_mapping)
     if key not in BEST_MOE_CONFIGS:
-        print("key ", key, " not found. Running autotune. This might take a while.")
         import functools
 
         # TODO: Add more configs?
@@ -379,7 +375,6 @@ def moe_mm(
         ]
 
         configs = [config for config in configs if config["block_m"] == padding_size]
-        print("all configs len: ", len(configs))
         best, best_config = _autotune(
             configs,
             functools.partial(
@@ -395,7 +390,6 @@ def moe_mm(
             ),
         )
         BEST_MOE_CONFIGS[key] = best_config
-        print("Found best_config ", best_config, " with time ", best, " for key ", key)
         _save_best_configs(BEST_MOE_CONFIGS)
     best_config = BEST_MOE_CONFIGS[key]
     if best_config is None:
