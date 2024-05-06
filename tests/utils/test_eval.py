@@ -1,11 +1,10 @@
 import torch
 import torch.nn.functional as F
+from lm_eval.api.instance import Instance
 from torch import nn
 
 from fms.utils import evaluation
 from fms.utils.tokenizers import get_tokenizer
-
-from lm_eval.api.instance import Instance
 
 
 class ModelMock(nn.Module):
