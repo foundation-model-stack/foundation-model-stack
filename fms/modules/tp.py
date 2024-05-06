@@ -81,7 +81,7 @@ class TPModule(nn.Module, metaclass=ABCMeta):
         tensor_value: torch.Tensor
             tensor that needs sharding
         dim: int
-            Dimension on which to shard
+            Dimension on which to shard. colwise sharding is usually dim 0, rowwise is usually dim 1
         is_sharded: bool
             For additive terms (like bias), is_sharded might be False. Otherwise True.
         max_partition_sizes: List[int]
