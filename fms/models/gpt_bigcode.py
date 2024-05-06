@@ -351,6 +351,19 @@ _santacoder_config = GPTBigCodeConfig(
     emb_dropout=0.1,
 )
 
+_3b_config = GPTBigCodeConfig(
+    src_vocab_size=49152,
+    emb_dim=3072,
+    nheads=32,
+    nlayers=32,
+    pad_id=0,
+    max_expected_seq_len=2048,
+    hidden_grow_factor=4.0,
+    activation_fn="gelu",
+    multiquery_attn=True,
+    ln_eps=1e-5,
+)
+
 # https://www.ibm.com/docs/en/cloud-paks/cp-data/4.8.x?topic=models-granite-13b-instruct-v2-model-card
 _13b_config = GPTBigCodeConfig(
     src_vocab_size=50304,
@@ -393,6 +406,10 @@ models.register_model(
     _architecture_name, "santacoder", _gpt_bigcode_factory_factory(_santacoder_config)
 )
 models.register_model(
+    _architecture_name, "ibm.3b", _gpt_bigcode_factory_factory(_3b_config)
+)
+
+models.register_model(
     _architecture_name, "ibm.13b", _gpt_bigcode_factory_factory(_13b_config)
 )
 models.register_model(
@@ -429,13 +446,19 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
 
         # qkv fused
         if bool(qkv_weight_pattern.match(name)):
+            new_sd.pop(new_name)
             emb_dim = param.size(1)
-            num_heads = emb_dim // 128
-            num_key_value_heads = (param.size(0) // 128 - num_heads) // 2
+            if emb_dim == 3072:
+                head_size = 96
+            else:
+                head_size = 128
+
+            num_heads = emb_dim // head_size
+            num_key_value_heads = (param.size(0) // head_size - num_heads) // 2
             attn_splits = [
-                (num_heads * 128) // num_key_value_heads,
-                (num_key_value_heads * 128) // num_key_value_heads,
-                (num_key_value_heads * 128) // num_key_value_heads,
+                (num_heads * head_size) // num_key_value_heads,
+                (num_key_value_heads * head_size) // num_key_value_heads,
+                (num_key_value_heads * head_size) // num_key_value_heads,
             ]
 
             prefix = new_name.replace("c_attn.weight", "")
@@ -447,14 +470,18 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
         elif bool(qkv_bias_pattern.match(name)):
             weight_name = name.replace("bias", "weight")
             new_sd.pop(new_name)
-
             emb_dim = hf_sd[weight_name].size(1)
-            num_heads = emb_dim // 128
-            num_key_value_heads = (param.size(0) // 128 - num_heads) // 2
+            if emb_dim == 3072:
+                head_size = 96
+            else:
+                head_size = 128
+
+            num_heads = emb_dim // head_size
+            num_key_value_heads = (param.size(0) // head_size - num_heads) // 2
             attn_splits = [
-                (num_heads * 128) // num_key_value_heads,
-                (num_key_value_heads * 128) // num_key_value_heads,
-                (num_key_value_heads * 128) // num_key_value_heads,
+                (num_heads * head_size) // num_key_value_heads,
+                (num_key_value_heads * head_size) // num_key_value_heads,
+                (num_key_value_heads * head_size) // num_key_value_heads,
             ]
 
             prefix = new_name.replace("c_attn.bias", "")
