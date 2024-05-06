@@ -70,4 +70,11 @@ def test_fused_moe(
     )
 
     torch_base = torch_moe(a, w1, topk_ids)
-    torch.testing.assert_close(triton_out.view(2 * m, -1), torch_base)
+
+    # Given the difference in scheduling the internal matmuls
+    # and the low precision of FP16/BF16, there are some cases
+    # in which the biggest matrices accumulate up to 1e-2 abs
+    # error. This only happens for around ~0.03% of all outputs
+    torch.testing.assert_close(
+        triton_out.view(2 * m, -1), torch_base, atol=1e-2, rtol=1e-2
+    )
