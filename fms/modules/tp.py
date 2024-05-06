@@ -106,7 +106,7 @@ class TPModule(nn.Module, metaclass=ABCMeta):
         """
         if is_sharded:
             # Divide the weight matrix along the second dimension.
-            output_size_per_partition = param.shape[1] // (
+            output_size_per_partition = param.shape[dim] // (
                 sum(max_partition_sizes) // min(max_partition_sizes)
             )
             tp_slices = self.__get_tp_slices(
