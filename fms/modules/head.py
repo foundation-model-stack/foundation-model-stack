@@ -163,9 +163,9 @@ class TPLinearClassificationHead(LinearClassificationHead, TPModule):
             raise AttributeError(f"Unused weight(s): {', '.join(unused_keys)}")
 
         # 3. Load and shard the weights
-        self.copy_colwise(self.weight, head_weight, [self.world_size])
+        self.sharded_copy(self.weight, head_weight, 0, [self.world_size])
         if self.bias != None:
-            self.copy_colwise(self.bias, head_bias, [self.world_size])
+            self.sharded_copy(self.bias, head_bias, 0, [self.world_size])
 
     def forward(self, inp):
         # vocab_idx: b n d if reverse, else b n

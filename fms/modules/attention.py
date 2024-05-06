@@ -323,15 +323,15 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
         # The number in max_partition_sizes will signify the largest world size
         # til we need to duplicate.  For instance if we have nheads=16 and
         # world_size=32, then first 2 ranks will get first 1/16th of query
-        self.copy_colwise(self.query.weight, query_weight, [self.pre_tp_nheads])
-        self.copy_colwise(self.key.weight, key_weight, [self.pre_tp_kvheads])
-        self.copy_colwise(self.value.weight, value_weight, [self.pre_tp_kvheads])
-        self.copy_rowwise(self.dense.weight, dense_weight, [self.world_size])
+        self.sharded_copy(self.query.weight, query_weight, 0, [self.pre_tp_nheads])
+        self.sharded_copy(self.key.weight, key_weight, 0, [self.pre_tp_kvheads])
+        self.sharded_copy(self.value.weight, value_weight, 0, [self.pre_tp_kvheads])
+        self.sharded_copy(self.dense.weight, dense_weight, 1, [self.world_size])
         if self.use_bias:
-            self.copy_colwise(self.query.bias, query_bias, [self.pre_tp_nheads])
-            self.copy_colwise(self.key.bias, key_bias, [self.pre_tp_kvheads])
-            self.copy_colwise(self.value.bias, value_bias, [self.pre_tp_kvheads])
-            self.copy_rowwise(self.dense.bias, dense_bias, [self.world_size], False)
+            self.sharded_copy(self.query.bias, query_bias, 0, [self.pre_tp_nheads])
+            self.sharded_copy(self.key.bias, key_bias, 0, [self.pre_tp_kvheads])
+            self.sharded_copy(self.value.bias, value_bias, 0, [self.pre_tp_kvheads])
+            self.sharded_copy(self.dense.bias, dense_bias, 1, [self.world_size], False)
 
     @staticmethod
     def import_module(
