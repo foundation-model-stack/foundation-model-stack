@@ -13,11 +13,8 @@ import triton.language as tl  # type: ignore[import-untyped]
 @triton.jit()
 def col_major(pid, m, n, block_m: tl.constexpr, block_n: tl.constexpr):
     grid_m = tl.cdiv(m, block_m)
-    grid_n = tl.cdiv(n, block_n)
-
-    pid_m = (pid % grid_n) % grid_m
+    pid_m = pid % grid_m
     pid_n = pid // grid_m
-
     return pid_m, pid_n
 
 
