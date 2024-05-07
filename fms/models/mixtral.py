@@ -29,8 +29,7 @@ class MixtralConfig(ModelConfig):
     nheads: int = 32
     kvheads: int = 8
     nlayers: int = 32
-    pad_id: int = -1
-    hidden_dim = 14336
+    hidden_dim: int = 14336
     p_dropout: float = 0.0
     num_experts: int = 8
     top_k_experts: int = 2
@@ -102,10 +101,6 @@ class MixtralBlock(nn.Module):
     ):
         # if the cache is not empty, we need to get the kv cache for self and cross attention
         self_attn_past_key_value = past_key_value_state
-        # if past_key_value_state is not None:
-        #     self_attn_past_key_value = past_key_value_state[:2]
-        # else:
-        #     self_attn_past_key_value = None
 
         # first we do MHA and Add&Norm
         residual = x
@@ -161,12 +156,9 @@ class MixtralHeadless(nn.Module):
         self.distributed_strategy = distributed_strategy
 
         self.width = self.config.dim
-        self.pad_id = self.config.pad_id
         self.max_expected_seq_len = self.config.max_expected_seq_len
 
-        embedding = nn.Embedding(
-            self.config.src_vocab_size, self.config.dim, padding_idx=self.config.pad_id
-        )
+        embedding = nn.Embedding(self.config.src_vocab_size, self.config.dim)
         self.embedding = self.distributed_strategy.distribute_module(embedding)
 
         self.rot_emb = RotaryEmbedding(
@@ -175,15 +167,6 @@ class MixtralHeadless(nn.Module):
             ntk_scaling=self.config.ntk_scaling,
             max_seq_len=self.config.max_expected_seq_len,
         )
-        if isinstance(self.distributed_strategy, UniformModelParallelStrategy):
-            for dev_idx in set(self.distributed_strategy.layer_to_device):
-                self.rot_emb.compute_freqs_cis(
-                    torch.device("cuda", dev_idx), self.config.max_expected_seq_len
-                )
-        else:
-            self.rot_emb.compute_freqs_cis(
-                self.embedding.weight.device, self.config.max_expected_seq_len
-            )
 
         layers = []
         for i in range(self.config.nlayers):
@@ -207,15 +190,30 @@ class MixtralHeadless(nn.Module):
         if self.config.p_dropout:
             self.dropout = nn.Dropout(self.config.p_dropout)
 
-        self.reset_params()
-
-    def reset_params(self):
+    def reset_parameters(self):
         nn.init.trunc_normal_(
             self.embedding.weight, mean=0.0, std=self.config.dim**-0.5
         )
-        # Preserve pad index dummy-hood
-        if self.config.pad_id is not None:
-            self.embedding.weight.data[self.config.pad_id].zero_()
+
+        # RoPE init
+        if isinstance(self.distributed_strategy, UniformModelParallelStrategy):
+            for dev_idx in set(self.distributed_strategy.layer_to_device):
+                self.rot_emb.compute_freqs_cis(
+                    torch.device("cuda", dev_idx), self.config.max_expected_seq_len
+                )
+        else:
+            self.rot_emb.compute_freqs_cis(
+                self.embedding.weight.device, self.config.max_expected_seq_len
+            )
+
+        # Call reset_parameters for relevant sub-layers
+        for m in self.modules():
+            if (
+                isinstance(m, MultiHeadAttention)
+                or isinstance(m, MOEFeedForward)
+                or isinstance(m, LayerNormParameterized)
+            ):
+                m.reset_parameters()
 
     def forward(
         self,
@@ -305,8 +303,6 @@ class Mixtral(nn.Module):
         )
         self.head = self.distributed_strategy.distribute_module(head)
 
-        self.reset_params()
-
     def get_config(self) -> MixtralConfig:
         return self.config
 
@@ -314,12 +310,15 @@ class Mixtral(nn.Module):
     def from_config(cls, config: MixtralConfig) -> "Mixtral":
         return cls(config)
 
-    def reset_params(self):
-        # Modules are self-initializing, we're just going to down-scale the final prediction head to be
+    def reset_parameters(self):
+        # We're just going to down-scale the final prediction head to be
         # mixed-fan (inputs and gradients scale to the same inverse factors) if it isn't tied
         self.head.weight.data.normal_(
             0, 1 / math.sqrt(math.sqrt(self.config.dim * self.config.src_vocab_size))
         )
+
+        # Call reset_parameters for relevant sub-layers
+        self.base_model.reset_parameters()
 
     def forward(
         self,

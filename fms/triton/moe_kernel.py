@@ -1,4 +1,3 @@
-import math
 import pathlib
 from typing import Tuple
 
@@ -235,6 +234,8 @@ def invoke_fused_moe_kernel(
     )
 
     compute_type = tl.float16 if A.dtype == torch.float16 else tl.bfloat16
+    if A.device.type == "cpu":
+        compute_type = tl.float32
     fused_moe_kernel_v3[grid](
         A,
         B,
@@ -395,9 +396,6 @@ def moe_mm(
     if best_config is None:
         return torch.tensor([])
 
-    grid = math.ceil(
-        padded_token_ids_per_block.shape[0] / best_config["block_m"]
-    ) * math.ceil(moe_matrix.shape[1] / best_config["block_n"])
     invoke_fused_moe_kernel(
         input,
         moe_matrix,
@@ -411,3 +409,31 @@ def moe_mm(
     )
 
     return output
+
+
+@torch.library.impl(lib, "moe_mm", "CPU")
+def moe_mm_cpu(
+    input: torch.Tensor,
+    moe_matrix: torch.Tensor,
+    token_expert_mapping: torch.Tensor,
+    padded_token_ids_per_block: torch.Tensor,
+    expert_block_mapping: torch.Tensor,
+    total_padded_tokens: torch.Tensor,
+    topk: int,
+    padding_size,
+):
+    T, D = input.shape
+    M, A = token_expert_mapping.shape
+
+    a = input.view(T, -1, D).repeat(1, topk, 1).reshape(-1, D)
+    out = torch.zeros(T * topk, moe_matrix.shape[1], dtype=a.dtype, device=a.device)
+
+    token_expert_mapping = token_expert_mapping.view(-1)
+    for i in range(moe_matrix.shape[0]):
+        mask = token_expert_mapping == i
+        if mask.sum():
+            out[mask] = a[mask] @ moe_matrix[i].transpose(0, 1)
+    return out.view(M, A, moe_matrix.shape[1])
+
+
+# TODO: Add a Backward kernel for Mixtral training in the future
