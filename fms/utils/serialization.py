@@ -1,14 +1,14 @@
 import collections
-from torch.multiprocessing import Pool
 import os
 import re
+import time
 from collections import ChainMap
 from collections.abc import Iterable
 from pathlib import Path
-import time
 from typing import Any, Callable, List, Mapping, MutableMapping, Optional, Set, Union
 
 import torch
+from torch.multiprocessing import Pool
 
 from fms.modules.tp import TPModule
 
@@ -282,11 +282,6 @@ def worker_f(partial_sd, model, architecture, source, needs_tp_sharding):
         print(f"adapter: {(time_2-time_1):.2f}; loader: {(time_3-time_2):.2f}")
         return True
 
-def worker_tf(model, fms_partial_sd, needs_tp_sharding):
-    with torch.no_grad():
-        time_1 = time.time()
-        _load_partial_state_dict(model, fms_partial_sd, needs_tp_sharding)
-        
 
 def load_state_dict_into_model(
     model: torch.nn.Module,
@@ -361,8 +356,15 @@ def load_state_dict_into_model(
                         state_dict.pop(neighbor)
                 for psd_key in partial_sd.keys():
                     if partial_sd[psd_key].device != initial_device:
-                        partial_sd[psd_key] = partial_sd[psd_key].to(device=initial_device)
-                processed_sds.append(pool.apply_async(worker_f, (partial_sd, model, architecture, source, needs_tp_sharding)))
+                        partial_sd[psd_key] = partial_sd[psd_key].to(
+                            device=initial_device
+                        )
+                processed_sds.append(
+                    pool.apply_async(
+                        worker_f,
+                        (partial_sd, model, architecture, source, needs_tp_sharding),
+                    )
+                )
             del partial_sd
 
             time1 = time.time()
@@ -383,7 +385,9 @@ def load_state_dict_into_model(
             #         final_sd.result()
 
     time2 = time.time()
-    print(f"loading ckp to model: {(time2-time1)*1000:.2f}; mp setup: {(time1-time0)*1000:.2f}")
+    print(
+        f"loading ckp to model: {(time2-time1)*1000:.2f}; mp setup: {(time1-time0)*1000:.2f}"
+    )
 
 
 def _copy_if_present(parameter, tensor_value):
