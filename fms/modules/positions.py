@@ -243,9 +243,6 @@ class RotaryEmbedding(PositionEncoder):
             if use_cache and past_kv_state is not None and past_kv_state[0].numel() > 0:
                 position_ids += past_kv_state[0].size(1)
 
-        q_ = q.float().view(*q.size()[:-1], -1, 2)  # B L H D/2 2
-        k_ = k.float().view(*k.size()[:-1], -1, 2)  # B L H D/2 2
-
         # the max start position should be based on the max first position of each sequence
         max_start_pos = torch.max(position_ids[:, 0])
         alpha = self.compute_freqs_cis(q.device, max_start_pos + seq_len)
@@ -253,16 +250,24 @@ class RotaryEmbedding(PositionEncoder):
 
         freqs = freqs.float()  # 1 L D/2 2 2
         q_out = (
-            freqs[:, -q.size(1) :, None, :, :, :]
-            .mul(q_.unsqueeze(-2))
-            .sum(5)
-            .flatten(3)
-        ).type_as(q)
+            (
+                freqs[:, -q.size(1) :, None, :, :, :]
+                .mul(q.float().view(*q.size()[:-1], -1, 2).unsqueeze(-2))
+                .sum(5)
+                .flatten(3)
+            )
+            .type_as(q)
+            .view_as(q)
+        )
         k_out = (
-            freqs[:, -k.size(1) :, None, :, :, :]
-            .mul(k_.unsqueeze(-2))
-            .sum(5)
-            .flatten(3)
-        ).type_as(k)
+            (
+                freqs[:, -k.size(1) :, None, :, :, :]
+                .mul(k.float().view(*k.size()[:-1], -1, 2).unsqueeze(-2))
+                .sum(5)
+                .flatten(3)
+            )
+            .type_as(k)
+            .view_as(k)
+        )
 
         return q_out.view_as(q), k_out.view_as(k)
