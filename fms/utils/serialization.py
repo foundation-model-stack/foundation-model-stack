@@ -108,13 +108,15 @@ def _legacy_attn_unfused_to_fused_weight_conversion(
             ),
         ]
 
+
         result = (
             re.sub(
                 rf"attn.(query|key|value).{weight_type}",
                 f"attn.in_proj.qkv_fused.{weight_type}",
                 name,
             ),
-            torch.cat([orig_sd[w] for w in unfused_weights], dim=0),
+            torch.cat([orig_sd.pop(w) for w in unfused_weights], dim=0),
+            unfused_weights,
         )
 
         return result
@@ -143,15 +145,21 @@ def simple_mapping_adapter(
 
     def mapping_adapter_func(orig_sd):
         new_sd = {}
-        for name, param in orig_sd.items():
+        sd_keys = set(orig_sd.keys())
+        dead_keys_set = set()
+        for key in sd_keys:
+            if key in dead_keys_set:
+                continue
+            param = orig_sd[key]
             for mapper in mappers:
-                mapper_out = mapper(name, orig_sd)
+                mapper_out = mapper(key, orig_sd)
 
                 if mapper_out is not None:
-                    name, param = mapper_out
+                    key, param, dead_keys = mapper_out
+                    dead_keys_set.update(dead_keys)
                     break
 
-            new_sd[name] = param
+            new_sd[key] = param
 
         return new_sd
 

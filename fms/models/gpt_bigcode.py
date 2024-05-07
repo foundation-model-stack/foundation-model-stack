@@ -349,6 +349,19 @@ _santacoder_config = GPTBigCodeConfig(
     emb_dropout=0.1,
 )
 
+_3b_config = GPTBigCodeConfig(
+    src_vocab_size=49152,
+    emb_dim=3072,
+    nheads=32,
+    nlayers=32,
+    pad_id=0,
+    max_expected_seq_len=2048,
+    hidden_grow_factor=4.0,
+    activation_fn="gelu",
+    multiquery_attn=True,
+    ln_eps=1e-5,
+)
+
 # https://www.ibm.com/docs/en/cloud-paks/cp-data/4.8.x?topic=models-granite-13b-instruct-v2-model-card
 _13b_config = GPTBigCodeConfig(
     src_vocab_size=50304,
@@ -390,6 +403,10 @@ def _gpt_bigcode_factory_factory(config):
 models.register_model(
     _architecture_name, "santacoder", _gpt_bigcode_factory_factory(_santacoder_config)
 )
+models.register_model(
+    _architecture_name, "ibm.3b", _gpt_bigcode_factory_factory(_3b_config)
+)
+
 models.register_model(
     _architecture_name, "ibm.13b", _gpt_bigcode_factory_factory(_13b_config)
 )
