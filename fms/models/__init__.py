@@ -1,6 +1,6 @@
+import time
 from contextlib import nullcontext
 from functools import partial
-import time
 from typing import Any, Callable, MutableMapping, Optional
 
 import torch
@@ -297,7 +297,6 @@ def get_model(
     )
     time_1 = time.time()
     print(f"[rank {rank}] model created {time_1-time_0:.2f}")
-    
 
     # Choose when to wrap and load the model weights based on the combination
     # distribution strategy and checkpoint sharding
