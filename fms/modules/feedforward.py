@@ -354,19 +354,30 @@ class ConditionalFeedForward(nn.Module):
         self.w13 = nn.Parameter(torch.empty(num_experts, 2 * intermediate_size, dim))
         self.w2 = nn.Parameter(torch.empty(num_experts, dim, intermediate_size))
 
+    def reset_parameters(self):
+        for param in ["w13", "w2"]:
+            nn.init.trunc_normal_(
+                getattr(self, param),
+                mean=0.0,
+                std=0.02,
+            )
+
     def to_tp(self, group: ProcessGroup) -> "TPConditionalFeedForward":
         return TPConditionalFeedForward.import_module(self, group)
 
     def forward(self, x: torch.Tensor, expert_indices: torch.Tensor) -> torch.Tensor:
-        ## Triton path
         # Check constraints.
         assert x.shape[1] == self.w13.shape[2], "Hidden size mismatch"
         assert x.is_contiguous(), "Hidden_states must be contiguous"
         assert self.w13.is_contiguous(), "Expert weights 1 must be contiguous"
         assert self.w2.is_contiguous(), "Expert weights 2 must be contiguous"
 
-        M, _ = x.shape
+        M, D = x.shape
         E, N, _ = self.w13.shape
+        _, A = expert_indices.shape
+
+        #  if x.device.type == "cuda":
+        ## Triton path
 
         if expert_indices.numel() <= E:
             padding_size = 16
@@ -511,6 +522,15 @@ class MOEFeedForward(nn.Module):
         self.cond_ffn = ConditionalFeedForward(num_experts, dim, intermediate_size)
         self.dim = dim
         self.num_activated_experts = num_activated_experts
+
+    def reset_parameters(self):
+        nn.init.trunc_normal_(
+            self.gate.weight,
+            mean=0.0,
+            std=0.02,
+        )
+
+        self.cond_ffn.reset_parameters()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         B, S = x.shape[:2]
