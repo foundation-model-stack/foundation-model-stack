@@ -324,6 +324,7 @@ def load_state_dict_into_model(
 
     print(torch.multiprocessing.get_all_sharing_strategies())
     model.share_memory()
+    torch.multiprocessing.set_start_method("spawn")
 
     # 2. Decide if model needs sharding and how (for now only TP)
     needs_tp_sharding = checkpoint_sharding != "tp" and distributed_strategy == "tp"
