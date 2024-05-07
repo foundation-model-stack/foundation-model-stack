@@ -137,7 +137,7 @@ class TPModule(nn.Module, metaclass=ABCMeta):
         for k in state_dict:
             all_matches = True
             for substr_match in substr_matches:
-                if substr_match not in k:
+                if substr_match not in k.split("."):
                     all_matches = False
             if all_matches:
                 used_keys.add(k)
