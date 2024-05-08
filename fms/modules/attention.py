@@ -189,9 +189,9 @@ class MultiHeadAttention(nn.Module):
         expansion = self.nheads // self.kvheads
         # k/v: b h l d
         if expansion != 1:
-            keys_e = keys_e.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
+            keys_e = keys.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
             values_e = (
-                values_e.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
+                values.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
             )
         else:
             keys_e = keys
