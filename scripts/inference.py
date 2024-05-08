@@ -1,11 +1,13 @@
 import argparse
 import itertools
+import logging
 import os
 import random
 
 import numpy as np
 import torch
 import torch._inductor.config
+import torch._dynamo.config
 from torch import distributed as dist
 
 from fms.models import get_model
@@ -67,7 +69,7 @@ parser.add_argument(
     type=str,
     help="Mode for compilation",
     default="default",
-    choices=["default", "reduce-overhead"],
+    choices=["default", "reduce-overhead", "max-autotune"],
 )
 parser.add_argument(
     "--deterministic",
@@ -114,11 +116,10 @@ else:
         distr_param = "mp"
     else:
         distr_param = None
-
 model = get_model(
     args.architecture,
     args.variant,
-    model_path=args.model_path,
+    # model_path=args.model_path,
     device_type=args.device_type,
     source=args.model_source,
     distributed_strategy=distr_param,
@@ -129,11 +130,17 @@ model.eval()
 torch.set_grad_enabled(False)
 print("loading complete on rank", local_rank)
 
+prefill_model = model
+decode_model = model
+
 if args.compile:
     print("compiling model")
     # compiling can make first inference pass slow
-    model = torch.compile(model, mode=args.compile_mode)
-
+    # torch._inductor.config.allow_buffer_reuse = False
+    torch._inductor.config.fx_graph_cache = True
+    torch._inductor.config.coordinate_descent_tuning = True
+    prefill_model = torch.compile(model, fullgraph=True)
+    decode_model = torch.compile(model, mode=args.compile_mode, fullgraph=True)
 
 def ids_for_prompt(prompt):
     tokens = tokenizer.tokenize(prompt)
@@ -182,8 +189,8 @@ max_len = max([len(prompt) for prompt in [prompt1, prompt2]])
 # prompt2 = pad_prompt(prompt2, max_len)
 # ids = torch.stack((prompt2, prompt1), dim=0)
 
-ids = prompt1.unsqueeze(0)
-
+# ids = prompt1.unsqueeze(0)
+ids = torch.randint(0, 32000, (384, 128), device=device)
 
 def print_result(result):
     if local_rank != 0:
@@ -212,9 +219,10 @@ def infer(use_cache, do_sample):
         max_seq_len = model.config.max_expected_seq_len
 
     result = generate(
-        model,
+        prefill_model,
+        decode_model,
         ids,
-        max_new_tokens=100,
+        max_new_tokens=128,
         use_cache=use_cache,
         do_sample=do_sample,
         max_seq_len=max_seq_len,
@@ -229,4 +237,6 @@ use_cache = [
     args.no_use_cache
 ]  # True/False are identical with greedy iff `torch.use_deterministic_algorithms(True)`
 for sample, cache in itertools.product(do_sample, use_cache):
+    infer(cache, sample)
+    infer(cache, sample)
     infer(cache, sample)
