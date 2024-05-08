@@ -1,12 +1,14 @@
 import collections
 import os
 import re
+import time
 from collections import ChainMap
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any, Callable, List, Mapping, MutableMapping, Optional, Set, Union
 
 import torch
+from torch.multiprocessing import Pool
 
 from fms.modules.tp import TPModule
 
@@ -158,6 +160,8 @@ def load_state_dict(
     if checkpoint_sharding == "tp" and distributed_strategy != "tp":
         raise ValueError("TP checkpoints can only be loaded into a TP model")
 
+    print(f"[rank {rank}] loading checkpoint")
+
     # Before creating the Path object, check if model_path has a glob pattern
     if isinstance(model_path, str):
         model_path, sep, glob_pattern = model_path.partition("*")
@@ -220,6 +224,7 @@ def load_state_dict(
             checkpoint_sds = [
                 torch.load(str(ckpt_path), mmap=True) for ckpt_path in checkpoints
             ]
+    print(f"[rank {rank}] checkpoint loaded")
     return ChainMap(*checkpoint_sds)
 
 
@@ -266,6 +271,18 @@ def _find_key_neighbors(key: str, sd_keys: Set[str]):
     return list(prefix_neighbors)
 
 
+def worker_f(partial_sd, model, architecture, source, needs_tp_sharding):
+    with torch.no_grad():
+        adapter = _get_adapter(architecture, source)
+        time_1 = time.time()
+        fms_partial_sd = adapter(partial_sd)
+        time_2 = time.time()
+        _load_partial_state_dict(model, fms_partial_sd, needs_tp_sharding)
+        time_3 = time.time()
+        print(f"adapter: {(time_2-time_1):.2f}; loader: {(time_3-time_2):.2f}")
+        return True
+
+
 def load_state_dict_into_model(
     model: torch.nn.Module,
     state_dict: MutableMapping[str, Any],
@@ -300,41 +317,77 @@ def load_state_dict_into_model(
     # 1. Get the adapter from checkpoint sd to fms sd
     adapter = _get_adapter(architecture, source)
 
+    print(torch.multiprocessing.get_all_sharing_strategies())
+    model.share_memory()
+    torch.multiprocessing.set_start_method("spawn")
+
     # 2. Decide if model needs sharding and how (for now only TP)
     needs_tp_sharding = checkpoint_sharding != "tp" and distributed_strategy == "tp"
 
     # 3. Iterate over the weights and load them into the model
     used_keys = set()
     sd_keys = set(state_dict.keys())
-
+    time0 = time.time()
     with torch.no_grad():
-        for key in sd_keys:
-            if key in used_keys:
-                continue
-            used_keys.add(key)
+        with Pool(16) as pool:
+            processed_sds = []
+            for key in sd_keys:
+                if key in used_keys:
+                    continue
+                used_keys.add(key)
 
-            partial_sd = {key: state_dict[key]}
-            # Find neighbors to the key. If the adapter requires a neighbor and
-            # this function doesn't find it, it will crash.
-            remaining_keys = sd_keys.difference(used_keys)
-            neighbors = _find_key_neighbors(key, remaining_keys)
-            for neighbor in neighbors:
-                partial_sd[neighbor] = state_dict[neighbor]
-                used_keys.add(neighbor)
-            for psd_key in partial_sd.keys():
-                if partial_sd[psd_key].device != initial_device:
-                    partial_sd[psd_key] = partial_sd[psd_key].to(device=initial_device)
-            fms_partial_sd = adapter(partial_sd)
-            _load_partial_state_dict(model, fms_partial_sd, needs_tp_sharding)
-            # Be aggressive in removing weights to save as much memory as possible
-            for p_key in partial_sd.keys():
+                partial_sd = {key: state_dict[key]}
                 if isinstance(state_dict, ChainMap):
                     for child_sd in state_dict.maps:
-                        child_sd.pop(p_key, None)
+                        child_sd.pop(key, None)
                 else:
-                    state_dict.pop(p_key)
+                    state_dict.pop(key)
+                # Find neighbors to the key. If the adapter requires a neighbor and
+                # this function doesn't find it, it will crash.
+                remaining_keys = sd_keys.difference(used_keys)
+                neighbors = _find_key_neighbors(key, remaining_keys)
+                for neighbor in neighbors:
+                    partial_sd[neighbor] = state_dict[neighbor]
+                    used_keys.add(neighbor)
+                    if isinstance(state_dict, ChainMap):
+                        for child_sd in state_dict.maps:
+                            child_sd.pop(neighbor, None)
+                    else:
+                        state_dict.pop(neighbor)
+                for psd_key in partial_sd.keys():
+                    if partial_sd[psd_key].device != initial_device:
+                        partial_sd[psd_key] = partial_sd[psd_key].to(
+                            device=initial_device
+                        )
+                processed_sds.append(
+                    pool.apply_async(
+                        worker_f,
+                        (partial_sd, model, architecture, source, needs_tp_sharding),
+                    )
+                )
             del partial_sd
-            del fms_partial_sd
+
+            time1 = time.time()
+
+            for processed_sd in processed_sds:
+                processed_sd.get()
+
+            # # Loading
+            # with concurrent.futures.ThreadPoolExecutor(max_workers=16) as executor:
+            #     final_sds = []
+            #     for processed_sd in processed_sds:
+            #         fms_partial_sd = processed_sd.get()
+            #         final_sds.append(executor.submit(worker_tf, model, fms_partial_sd, needs_tp_sharding))
+            #     # Be aggressive in removing weights to save as much memory as possible
+            #     del fms_partial_sd
+
+            #     for final_sd in final_sds:
+            #         final_sd.result()
+
+    time2 = time.time()
+    print(
+        f"loading ckp to model: {(time2-time1)*1000:.2f}; mp setup: {(time1-time0)*1000:.2f}"
+    )
 
 
 def _copy_if_present(parameter, tensor_value):
