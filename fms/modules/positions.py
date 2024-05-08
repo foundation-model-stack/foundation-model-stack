@@ -241,7 +241,7 @@ class RotaryEmbedding(PositionEncoder):
                 0, seq_len, dtype=torch.long, device=q.device
             ).repeat(k.size(0), 1)
             if use_cache and past_kv_state is not None and past_kv_state[0].numel() > 0:
-                position_ids += past_kv_state[0].size(1)
+                position_ids += past_kv_state[0].size(2)
 
         # the max start position should be based on the max first position of each sequence
         max_start_pos = torch.max(position_ids[:, 0])
