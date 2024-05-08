@@ -154,6 +154,10 @@ class MultiHeadAttention(nn.Module):
                     queries, keys, position_ids, past_key_value_state, use_cache
                 )
 
+        queries = queries.transpose(2, 1)  # / (self.emb_kq_per_head**(1/4))
+        keys = keys.transpose(2, 1)  # / (self.emb_kq_per_head**(1/4))
+        values = values.transpose(2, 1)  # compatible with QK.T
+
         # if you want to use caching and past_key_value_state is not None meaning you have values in your cache
         if (
             use_cache
@@ -161,8 +165,8 @@ class MultiHeadAttention(nn.Module):
             and past_key_value_state[0].numel() > 0
         ):
             if is_self:
-                keys = torch.cat((past_key_value_state[0], keys), dim=1)
-                values = torch.cat((past_key_value_state[1], values), dim=1)
+                keys = torch.cat((past_key_value_state[0], keys), dim=2)
+                values = torch.cat((past_key_value_state[1], values), dim=2)
             else:
                 keys = past_key_value_state[0]
                 values = past_key_value_state[1]
@@ -181,20 +185,17 @@ class MultiHeadAttention(nn.Module):
         else:
             attn_mask = mask
 
-        queries_sdpa = queries.transpose(2, 1)  # / (self.emb_kq_per_head**(1/4))
-        keys_sdpa = keys.transpose(2, 1)  # / (self.emb_kq_per_head**(1/4))
-        values_sdpa = values.transpose(2, 1)  # compatible with QK.T
-
         # Expand kv so black-box attn will work
         expansion = self.nheads // self.kvheads
         # k/v: b h l d
         if expansion != 1:
-            keys_sdpa = (
-                keys_sdpa.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
+            keys_e = keys_e.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
+            values_e = (
+                values_e.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
             )
-            values_sdpa = (
-                values_sdpa.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
-            )
+        else:
+            keys_e = keys
+            values_e = values
 
         if attn_algorithm:
             # Pick which fused attn kernels will run.
@@ -207,9 +208,9 @@ class MultiHeadAttention(nn.Module):
             torch.backends.cuda.enable_math_sdp(use_math)
 
         attn = F.scaled_dot_product_attention(
-            queries_sdpa,
-            keys_sdpa,
-            values_sdpa,
+            queries,
+            keys_e,
+            values_e,
             attn_mask=attn_mask,
             dropout_p=self.p_dropout if self.training else 0.0,
             is_causal=is_causal_mask,
