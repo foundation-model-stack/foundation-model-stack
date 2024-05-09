@@ -218,8 +218,10 @@ class MultiHeadAttention(nn.Module):
         kv_len = k.size(1)
 
         # if kv_len mismatch, build new scan plan
-        with torch.no_grad():
-            self.plan = get_scan_plan(k, self.fmap, self.cache_size)
+        if kv_len != self.inp_len:
+            self.inp_len = kv_len
+            with torch.no_grad():
+                self.plan = get_scan_plan(k, self.fmap, self.cache_size)
 
         # split emb_dim as nheads*emb_dim_per_head
         # b x h x qlen x ds
