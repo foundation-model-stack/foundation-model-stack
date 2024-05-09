@@ -11,8 +11,92 @@ from fms.distributed.tensorparallel import (
     copy_to_tensor_model_parallel_region,
     reduce_from_tensor_model_parallel_region,
 )
+from fms.modules.layernorm import LayerNormParameterized
 from fms.modules.positions import PositionEncoder
 from fms.modules.tp import TPModule
+
+
+def get_scan_plan(x, fmap, h):
+    # x: b n d
+    # plan: for each level, which entries to avg from previous level ([l] n' 2)
+    # inds: which level and entry to pull from in populating heads (n h 2) -> (n h)
+    b, n, d = x.size()
+    # Form ruler-tick progression sequence
+    levels = sum(
+        [
+            torch.arange(n, device=x.device)
+            .remainder(2**i)
+            .sub(2**i - 1)
+            .sign()
+            .add(1)
+            for i in range(n.bit_length())
+        ]
+    ).roll(1, 0)
+    plan = [
+        torch.zeros(0, 2, device=x.device, dtype=torch.int)
+        for _ in range(len(fmap) + 2)
+    ]  # [l] 0 2
+    plan[1] = (
+        torch.arange(x.size(1) + 1, device=x.device, dtype=torch.int)
+        .unsqueeze(1)
+        .expand(-1, 2)
+    )
+    inds = torch.zeros(n, h, 2, device=x.device, dtype=torch.long)  # n h 2
+    inds[:, 0, 1] = torch.arange(n, device=inds.device, dtype=inds.dtype) + 1
+    inds[:, :, 0] = 1
+    ilist = list(range(1, n))
+    for i in ilist:
+        m = fmap.get(levels[i].item(), h)
+        inds[i, 1:m] = inds[i - 1, : m - 1]
+        if m < h:
+            inds[i, m + 1 :] = inds[i - 1, m + 1 :]
+            prev = inds[i - 1, m - 1 : m + 1].flip([0])  # 2 2
+            assert prev[0, 0] == min(levels[i], len(fmap) + 1) or prev[0, 1] == 0, (
+                levels[i],
+                prev[0, 0],
+            )
+            assert prev[1, 0] == min(levels[i], len(fmap) + 1) or prev[1, 1] == 0, (
+                levels[i],
+                prev[1, 0],
+            )
+            level = plan[levels[i] + 1]
+            inds[i, m, 0] = levels[i] + 1
+            inds[i, m, 1] = level.size(0)
+            plan[levels[i] + 1] = torch.cat(
+                [plan[levels[i] + 1], prev[:, 1][None]], dim=0
+            )
+    # Flatten inds (indexing into flattened plan/cache) (n h)
+    ls = [p.size(0) for p in plan]
+    ls = [0] + ls[:-1]
+    offset = torch.tensor(ls, device=inds.device).cumsum(0)
+    offset = offset[inds[:, :, 0]]
+    inds = offset + inds[:, :, 1]
+    return plan + [inds]
+
+
+def scan(x, plan):
+    # x: b n d
+    b, n, d = x.size()
+    inds = plan[-1]
+    plan = plan[:-1]
+
+    # Plan and inds are formed, construct cache via recursive sums
+    cache = [torch.empty_like(x[:, :0]) for _ in plan]  # [l] b 0 d
+    cache[1] = nn.functional.pad(x, (0, 0, 1, 0))  # b n d
+    for i in range(2, len(cache)):
+        cache[i] = (
+            cache[i - 1]
+            .index_select(1, plan[i].view(-1))
+            .view(b, -1, 2, d)
+            .sum(2)
+            .div(2**0.5)
+        )
+
+    cache = (
+        torch.cat(cache, dim=1).unsqueeze(3).expand(-1, -1, -1, inds.size(-1))
+    )  # b n' d h
+    out = cache.gather(1, inds[None, :, None].expand(b, -1, d, -1))  # b n d h
+    return out
 
 
 class MultiHeadAttention(nn.Module):
@@ -72,12 +156,17 @@ class MultiHeadAttention(nn.Module):
         if self.p_dropout:
             self.attn_dropout = nn.Dropout(self.p_dropout)
         self.position_encoder = position_encoder
-        # Avoiding graph breaks
-        self.previous_flash: bool = torch.backends.cuda.flash_sdp_enabled()
-        self.previous_mem_efficient: bool = (
-            torch.backends.cuda.mem_efficient_sdp_enabled()
-        )
-        self.previous_math: bool = torch.backends.cuda.math_sdp_enabled()
+        self.ln_k = LayerNormParameterized(emb_kq, use_high_precision_pow=True)
+        self.ln_v = LayerNormParameterized(emb_v, use_high_precision_pow=True)
+
+        self.inp_len = 0
+        self.plan = None
+
+        fmap = {8 - i: 64 - (i) ** 2 for i in range(8)}
+        fmap.pop(8)
+        fmap.pop(7)
+        self.fmap = fmap
+        self.cache_size = 64
 
     def reset_parameters(self):
         for m in self.modules():
@@ -85,6 +174,8 @@ class MultiHeadAttention(nn.Module):
                 nn.init.trunc_normal_(m.weight, mean=0.0, std=0.02)
                 if self.use_bias:
                     m.bias.data.zero_()
+            elif isinstance(m, LayerNormParameterized):
+                m.reset_parameters()
 
     def to_tp(self, group: ProcessGroup) -> "TPMultiHeadAttention":
         return TPMultiHeadAttention.import_module(self, group)
@@ -126,6 +217,10 @@ class MultiHeadAttention(nn.Module):
         batch_size, q_len, _ = q.size()
         kv_len = k.size(1)
 
+        # if kv_len mismatch, build new scan plan
+        with torch.no_grad():
+            self.plan = get_scan_plan(k, self.fmap, self.cache_size)
+
         # split emb_dim as nheads*emb_dim_per_head
         # b x h x qlen x ds
         queries = self.query(q).view(
@@ -154,9 +249,20 @@ class MultiHeadAttention(nn.Module):
                     queries, keys, position_ids, past_key_value_state, use_cache
                 )
 
-        queries = queries.transpose(2, 1)  # / (self.emb_kq_per_head**(1/4))
-        keys = keys.transpose(2, 1)  # / (self.emb_kq_per_head**(1/4))
-        values = values.transpose(2, 1)  # compatible with QK.T
+        queries = queries / (self.emb_kq_per_head**0.5)  # b l h d
+
+        # Build telescoping cache
+        # k/v: b l h d
+        keys = keys.view(batch_size, kv_len, -1)
+        keys = scan(keys, self.plan).unflatten(
+            2, (self.kvheads, self.emb_kq_per_head)
+        )  # b l h d 64
+        keys = self.ln_k(keys.transpose(3, 4))  # b l h 64 d
+        values = values.view(batch_size, kv_len, -1)
+        values = scan(values, self.plan).unflatten(
+            2, (self.kvheads, self.emb_v_per_head)
+        )  # b l h d 64
+        values = self.ln_v(values.transpose(3, 4))  # b l h 64 d
 
         # if you want to use caching and past_key_value_state is not None meaning you have values in your cache
         if (
@@ -189,47 +295,25 @@ class MultiHeadAttention(nn.Module):
         expansion = self.nheads // self.kvheads
         # k/v: b h l d
         if expansion != 1:
-            keys_e = keys.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
+            keys_e = (
+                keys.unsqueeze(3).expand(-1, -1, -1, expansion, -1, -1).flatten(2, 3)
+            )
             values_e = (
-                values.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
+                values.unsqueeze(3).expand(-1, -1, -1, expansion, -1, -1).flatten(2, 3)
             )
         else:
             keys_e = keys
             values_e = values
 
-        if attn_algorithm:
-            # Pick which fused attn kernels will run.
-            use_flash = attn_algorithm == "flash"
-            use_mem_efficient = attn_algorithm == "mem"
-            use_math = attn_algorithm == "math"
-
-            torch.backends.cuda.enable_flash_sdp(use_flash)
-            torch.backends.cuda.enable_mem_efficient_sdp(use_mem_efficient)
-            torch.backends.cuda.enable_math_sdp(use_math)
-
-        attn = F.scaled_dot_product_attention(
-            queries,
-            keys_e,
-            values_e,
-            attn_mask=attn_mask,
-            dropout_p=self.p_dropout if self.training else 0.0,
-            is_causal=is_causal_mask,
-        )
-
-        if attn_algorithm:
-            torch.backends.cuda.enable_flash_sdp(self.previous_flash)
-            torch.backends.cuda.enable_mem_efficient_sdp(self.previous_mem_efficient)
-            torch.backends.cuda.enable_math_sdp(self.previous_math)
+        attn = torch.einsum("blhd,blhed->blhe", queries, keys_e)  # b l h 64
+        attn = attn.softmax(3)
+        attn = torch.einsum("blhe,blhed->blhd", attn, values_e)  # b l h d
 
         # attn: bs x seq_len x nheads*emb_v_per_head
         # attn: b x h x qlen x ds
         # attn after permute: b x qlen x h x ds
         # b x qlen x (d)
-        attn = (
-            attn.transpose(2, 1)
-            .contiguous()
-            .view(batch_size, q_len, self.nheads * self.emb_v_per_head)
-        )
+        attn = attn.reshape(batch_size, q_len, self.nheads * self.emb_v_per_head)
         out = self.dense(attn)
 
         # if use_cache=True, we return the hidden_state as well as the kv cache
