@@ -45,7 +45,7 @@ class HFAdaptedMixtralConfig(PretrainedConfig):
         **kwargs,
     ):
         self.src_vocab_size = src_vocab_size
-        self.emb_dim = dim
+        self.dim = dim
         self.hidden_dim = hidden_dim
         self.norm_eps = norm_eps
         self.nheads = nheads

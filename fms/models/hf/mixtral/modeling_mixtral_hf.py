@@ -31,7 +31,7 @@ class HFAdaptedMixtralDecoder(HFDecoder):
         **kwargs,
     ) -> BaseModelOutputWithPastAndCrossAttentions:
         output = self.model(
-            x_in=input_ids,
+            x=input_ids,
             mask=attention_mask,
             position_ids=position_ids,
             past_key_value_states=past_key_values,
@@ -53,6 +53,9 @@ class HFAdaptedMixtralHeadless(HFDecoderModelArchitecture):
     # attributes required by HF
     config_class = HFAdaptedMixtralConfig
     base_model_prefix = "hf_adapted_mixtral"
+
+    _tied_weights_keys = ["decoder.model.embedding.weight", "embedding.weight"]
+    _keys_to_ignore_on_save = ["embedding.weight"]
 
     def __init__(
         self,
