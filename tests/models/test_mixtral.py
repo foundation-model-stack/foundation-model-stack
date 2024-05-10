@@ -27,7 +27,7 @@ class MixtralFixtures(ConfigFixtureMixin, ModelFixtureMixin):
     @pytest.fixture(scope="class", autouse=True)
     def config(self) -> ModelConfig:
         return MixtralConfig(
-            src_vocab_size=512,
+            src_vocab_size=384,
             dim=16,
             norm_eps=1e-05,
             nheads=4,
