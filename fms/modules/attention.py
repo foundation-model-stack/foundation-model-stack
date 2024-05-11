@@ -156,8 +156,8 @@ class MultiHeadAttention(nn.Module):
         if self.p_dropout:
             self.attn_dropout = nn.Dropout(self.p_dropout)
         self.position_encoder = position_encoder
-        self.ln_k = LayerNormParameterized(emb_kq, use_high_precision_pow=True)
-        self.ln_v = LayerNormParameterized(emb_v, use_high_precision_pow=True)
+        # self.ln_k = LayerNormParameterized(emb_kq, use_high_precision_pow=True)
+        # self.ln_v = LayerNormParameterized(emb_v, use_high_precision_pow=True)
 
         self.inp_len = 0
         self.plan = None
@@ -259,12 +259,12 @@ class MultiHeadAttention(nn.Module):
         keys = scan(keys, self.plan).unflatten(
             2, (self.kvheads, self.emb_kq_per_head)
         )  # b l h d 64
-        keys = self.ln_k(keys.transpose(3, 4))  # b l h 64 d
+        # keys = self.ln_k(keys.transpose(3, 4))  # b l h 64 d
         values = values.view(batch_size, kv_len, -1)
         values = scan(values, self.plan).unflatten(
             2, (self.kvheads, self.emb_v_per_head)
         )  # b l h d 64
-        values = self.ln_v(values.transpose(3, 4))  # b l h 64 d
+        # values = self.ln_v(values.transpose(3, 4))  # b l h 64 d
 
         # if you want to use caching and past_key_value_state is not None meaning you have values in your cache
         if (
@@ -295,21 +295,25 @@ class MultiHeadAttention(nn.Module):
 
         # Expand kv so black-box attn will work
         expansion = self.nheads // self.kvheads
-        # k/v: b h l d
+        # k/v: b l h d 64
+        # q: b l he d
         if expansion != 1:
-            keys_e = (
-                keys.unsqueeze(3).expand(-1, -1, -1, expansion, -1, -1).flatten(2, 3)
-            )
-            values_e = (
-                values.unsqueeze(3).expand(-1, -1, -1, expansion, -1, -1).flatten(2, 3)
-            )
-        else:
-            keys_e = keys
-            values_e = values
+            queries = queries.unflatten(2, (self.kvheads, expansion))
+        #     keys_e = (
+        #         keys.unsqueeze(3).expand(-1, -1, -1, expansion, -1, -1).flatten(2, 3)
+        #     )
+        #     values_e = (
+        #         values.unsqueeze(3).expand(-1, -1, -1, expansion, -1, -1).flatten(2, 3)
+        #     )
+        # else:
+        #     keys_e = keys
+        #     values_e = values
 
-        attn = torch.einsum("blhd,blhed->blhe", queries, keys_e)  # b l h 64
-        attn = attn.softmax(3)
-        attn = torch.einsum("blhe,blhed->blhd", attn, values_e)  # b l h d
+        attn = queries.matmul(keys)  # b l h e 64
+        # attn = torch.einsum("blhed,blhdc->blhec", queries, keys_e)
+        attn = attn.softmax(4)
+        attn = attn.matmul(values.transpose(3, 4))  # b l h e d
+        # attn = torch.einsum("blhec,blhdc->blhed", attn, values_e)
 
         # attn: bs x seq_len x nheads*emb_v_per_head
         # attn: b x h x qlen x ds
