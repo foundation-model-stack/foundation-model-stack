@@ -297,8 +297,7 @@ class MultiHeadAttention(nn.Module):
         expansion = self.nheads // self.kvheads
         # k/v: b l h d 64
         # q: b l he d
-        if expansion != 1:
-            queries = queries.unflatten(2, (self.kvheads, expansion))
+        queries = queries.unflatten(2, (self.kvheads, expansion))
         #     keys_e = (
         #         keys.unsqueeze(3).expand(-1, -1, -1, expansion, -1, -1).flatten(2, 3)
         #     )
