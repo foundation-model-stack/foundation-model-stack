@@ -215,21 +215,23 @@ class MultiHeadAttention(nn.Module):
         else:
             attn_mask = mask
 
+        keys_sdpa = keys_c
+        values_sdpa = values_c
         if self.use_fp8_kvcache:
-            keys_sdpa = keys_sdpa.to_original_precision()
-            values_sdpa = values_sdpa.to_original_precision()
+            keys_sdpa = keys_c.to_original_precision()
+            values_sdpa = values_c.to_original_precision()
 
         # Expand kv so black-box attn will work
         expansion = self.nheads // self.kvheads
         # k/v: b h l d
         if expansion != 1:
-            keys_e = keys_c.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
+            keys_e = keys_sdpa.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
             values_e = (
-                values_c.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
+                values_sdpa.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
             )
         else:
-            keys_e = keys_c
-            values_e = values_c
+            keys_e = keys_sdpa
+            values_e = values_sdpa
 
         if attn_algorithm:
             # Pick which fused attn kernels will run.
