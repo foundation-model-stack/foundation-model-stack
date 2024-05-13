@@ -74,31 +74,6 @@ def get_scan_plan(x, fmap, h):
     return plan + [inds]
 
 
-def scan(x, plan):
-    # x: b n d
-    b, n, d = x.size()
-    inds = plan[-1]
-    plan = plan[:-1]
-
-    # Plan and inds are formed, construct cache via recursive sums
-    cache = [torch.empty_like(x[:, :0]) for _ in plan]  # [l] b 0 d
-    cache[1] = nn.functional.pad(x, (0, 0, 1, 0))  # b n d
-    for i in range(2, len(cache)):
-        cache[i] = (
-            cache[i - 1]
-            .index_select(1, plan[i].view(-1))
-            .view(b, -1, 2, d)
-            .sum(2)
-            .div(2**0.5)
-        )
-
-    cache = (
-        torch.cat(cache, dim=1).unsqueeze(2).expand(-1, -1, inds.size(-1), -1)
-    )  # b n' h d
-    out = cache.gather(1, inds[None, :, :, None].expand(b, -1, -1, d))  # b n h d
-    return out
-
-
 class MultiHeadAttention(nn.Module):
     """
     Performs multi-headed self- or cross-attention, with optional attention masking.
@@ -156,8 +131,8 @@ class MultiHeadAttention(nn.Module):
         if self.p_dropout:
             self.attn_dropout = nn.Dropout(self.p_dropout)
         self.position_encoder = position_encoder
-        self.ln_k = LayerNormParameterized(emb_kq, use_high_precision_pow=True)
-        # self.ln_v = LayerNormParameterized(emb_v, use_high_precision_pow=True)
+        self.ln_k = LayerNormParameterized(kvheads * emb_kq, use_high_precision_pow=True)
+        self.ln_v = LayerNormParameterized(kvheads * emb_v, use_high_precision_pow=True)
 
         self.inp_len = 0
         self.plan = None
@@ -179,6 +154,31 @@ class MultiHeadAttention(nn.Module):
 
     def to_tp(self, group: ProcessGroup) -> "TPMultiHeadAttention":
         return TPMultiHeadAttention.import_module(self, group)
+    
+    def scan(self, x, plan, ln):
+        # x: b n d
+        b, n, d = x.size()
+        inds = plan[-1]
+        plan = plan[:-1]
+        # Plan and inds are formed, construct cache via recursive sums
+        cache = [torch.empty_like(x[:, :0]) for _ in plan]  # [l] b 0 d
+        cache[1] = nn.functional.pad(x, (0, 0, 1, 0))  # b n d
+        for i in range(2, len(cache)):
+            cache[i] = (
+                cache[i - 1]
+                .index_select(1, plan[i].view(-1))
+                .view(b, -1, 2, d)
+                .sum(2)
+                .div(2**0.5)
+            )
+        cache = (
+            torch.cat(cache, dim=1)
+        )  # b n' d
+        if ln is not None:
+            cache = ln(cache)
+        cache = cache.unsqueeze(2).expand(-1, -1, inds.size(-1), -1)  # b n' h d
+        out = cache.gather(1, inds[None, :, :, None].expand(b, -1, -1, d))  # b n h d
+        return out
 
     def forward(
         self,
@@ -256,15 +256,13 @@ class MultiHeadAttention(nn.Module):
         # Build telescoping cache
         # k/v: b l h d
         keys = keys.view(batch_size, kv_len, -1)
-        keys = scan(keys, self.plan).unflatten(
+        keys = self.scan(keys, self.plan, self.ln_k).unflatten(
             3, (self.kvheads, self.emb_kq_per_head)
         )  # b l 64 h d
-        keys = self.ln_k(keys)  # b l 64 h d
         values = values.view(batch_size, kv_len, -1)
-        values = scan(values, self.plan).unflatten(
+        values = self.scan(values, self.plan, self.ln_v).unflatten(
             3, (self.kvheads, self.emb_v_per_head)
         )  # b l 64 h d
-        # values = self.ln_v(values.transpose(3, 4))  # b l h 64 d
 
         # if you want to use caching and past_key_value_state is not None meaning you have values in your cache
         if (
