@@ -131,7 +131,9 @@ class MultiHeadAttention(nn.Module):
         if self.p_dropout:
             self.attn_dropout = nn.Dropout(self.p_dropout)
         self.position_encoder = position_encoder
-        self.ln_k = LayerNormParameterized(kvheads * emb_kq, use_high_precision_pow=True)
+        self.ln_k = LayerNormParameterized(
+            kvheads * emb_kq, use_high_precision_pow=True
+        )
         self.ln_v = LayerNormParameterized(kvheads * emb_v, use_high_precision_pow=True)
 
         self.inp_len = 0
@@ -154,7 +156,7 @@ class MultiHeadAttention(nn.Module):
 
     def to_tp(self, group: ProcessGroup) -> "TPMultiHeadAttention":
         return TPMultiHeadAttention.import_module(self, group)
-    
+
     def scan(self, x, plan, ln):
         # x: b n d
         b, n, d = x.size()
@@ -171,11 +173,8 @@ class MultiHeadAttention(nn.Module):
                 .sum(2)
                 .div(2**0.5)
             )
-        cache = (
-            torch.cat(cache, dim=1)
-        )  # b n' d
-        if ln is not None:
-            cache = ln(cache)
+        cache = torch.cat(cache, dim=1)  # b n' d
+        cache = ln(cache)
         cache = cache.unsqueeze(2).expand(-1, -1, inds.size(-1), -1)  # b n' h d
         out = cache.gather(1, inds[None, :, :, None].expand(b, -1, -1, d))  # b n h d
         return out
@@ -306,7 +305,7 @@ class MultiHeadAttention(nn.Module):
         #     keys_e = keys
         #     values_e = values
 
-        attn = queries.matmul(keys.permute(0,1,3,4,2))  # b l h e 64
+        attn = queries.matmul(keys.permute(0, 1, 3, 4, 2))  # b l h e 64
         # attn = torch.einsum("blhed,blhdc->blhec", queries, keys_e)
         attn = attn.softmax(4)
         attn = attn.matmul(values.transpose(3, 2))  # b l h e d
