@@ -134,7 +134,7 @@ class MultiHeadAttention(nn.Module):
         self.ln_k = LayerNormParameterized(
             kvheads * emb_kq, use_high_precision_pow=True
         )
-        self.ln_v = LayerNormParameterized(kvheads * emb_v, use_high_precision_pow=True)
+        self.ln_v = LayerNormParameterized(emb_v, use_high_precision_pow=True)
 
         self.inp_len = 0
         self.plan = None
@@ -157,27 +157,40 @@ class MultiHeadAttention(nn.Module):
     def to_tp(self, group: ProcessGroup) -> "TPMultiHeadAttention":
         return TPMultiHeadAttention.import_module(self, group)
 
-    def scan(self, x, plan, ln):
-        # x: b n d
-        b, n, d = x.size()
-        inds = plan[-1]
+    def scan(self, x, plan, ln, i):
+        """
+        Takes input x of shape [b n ...] and scan plan, computes recursive sums, and
+        extracts cache values into the dimension specified by i > 1.
+        Final output shape is therefore [b n ... c ...] with c the cache size.
+        Applies specified LN to cache, so LN size should match x.size(-1).
+        """
+        assert i > 1, "Output must maintain batch and seqlen in first two dimensions"
+        s = x.size()
+        inds = plan[-1]  # n h
         plan = plan[:-1]
         # Plan and inds are formed, construct cache via recursive sums
-        cache = [torch.empty_like(x[:, :0]) for _ in plan]  # [l] b 0 d
-        cache[1] = nn.functional.pad(x, (0, 0, 1, 0))  # b n d
-        for i in range(2, len(cache)):
-            cache[i] = (
-                cache[i - 1]
-                .index_select(1, plan[i].view(-1))
-                .view(b, -1, 2, d)
+        cache = [None for _ in plan]
+        cache[1] = nn.functional.pad(x.view(s[0], s[1], -1), (0, 0, 1, 0)).view(
+            s[0], s[1] + 1, *s[2:]
+        )  # b n ... d
+        for j in range(2, len(cache)):
+            cache[j] = (
+                cache[j - 1]
+                .index_select(1, plan[j].view(-1))
+                .view(s[0], -1, 2, *s[2:])
                 .sum(2)
                 .div(2**0.5)
             )
-        cache = torch.cat(cache, dim=1)  # b n' d
+        cache = torch.cat(cache[1:], dim=1)  # b n' ...d
         cache = ln(cache)
-        cache = cache.unsqueeze(2).expand(-1, -1, inds.size(-1), -1)  # b n' h d
-        out = cache.gather(1, inds[None, :, :, None].expand(b, -1, -1, d))  # b n h d
-        return out
+        cache = cache.unsqueeze(i).expand(
+            *[-1] * i, inds.size(-1), *[-1] * (len(s) - i)
+        )  # b n' ... h ...
+        inds = inds.view(
+            1, inds.size(0), *[1] * (i - 2), inds.size(1), *[1] * (len(s) - i)
+        )  # b n 111 h 111
+        inds = inds.expand(s[0], -1, *s[2:i], -1, *s[i:])  # b n ... h ...
+        return cache.gather(1, inds)  # b n ... h ...
 
     def forward(
         self,
@@ -255,13 +268,10 @@ class MultiHeadAttention(nn.Module):
         # Build telescoping cache
         # k/v: b l h d
         keys = keys.view(batch_size, kv_len, -1)
-        keys = self.scan(keys, self.plan, self.ln_k).unflatten(
-            3, (self.kvheads, self.emb_kq_per_head)
-        )  # b l 64 h d
-        values = values.view(batch_size, kv_len, -1)
-        values = self.scan(values, self.plan, self.ln_v).unflatten(
-            3, (self.kvheads, self.emb_v_per_head)
-        )  # b l 64 h d
+        keys = self.scan(keys, self.plan, self.ln_k, 3).unflatten(
+            2, (self.kvheads, self.emb_kq_per_head)
+        )  # b l h d 64
+        values = self.scan(values, self.plan, self.ln_v, 3)  # b l h 64 d
 
         # if you want to use caching and past_key_value_state is not None meaning you have values in your cache
         if (
@@ -292,29 +302,14 @@ class MultiHeadAttention(nn.Module):
 
         # Expand kv so black-box attn will work
         expansion = self.nheads // self.kvheads
-        # k/v: b l 64 h d
-        # q: b l he d
-        queries = queries.unflatten(2, (self.kvheads, expansion))
-        #     keys_e = (
-        #         keys.unsqueeze(3).expand(-1, -1, -1, expansion, -1, -1).flatten(2, 3)
-        #     )
-        #     values_e = (
-        #         values.unsqueeze(3).expand(-1, -1, -1, expansion, -1, -1).flatten(2, 3)
-        #     )
-        # else:
-        #     keys_e = keys
-        #     values_e = values
+        queries = queries.unflatten(2, (self.kvheads, expansion))  # b l h e d
 
-        attn = queries.matmul(keys.permute(0, 1, 3, 4, 2))  # b l h e 64
-        # attn = torch.einsum("blhed,blhdc->blhec", queries, keys_e)
+        # b l h e d, b l h d 64
+        attn = queries.matmul(keys)  # b l h e 64
         attn = attn.softmax(4)
-        attn = attn.matmul(values.transpose(3, 2))  # b l h e d
-        # attn = torch.einsum("blhec,blhdc->blhed", attn, values_e)
+        # b l h e 64, b l h 64 d
+        attn = attn.matmul(values)  # b l h e d
 
-        # attn: bs x seq_len x nheads*emb_v_per_head
-        # attn: b x h x qlen x ds
-        # attn after permute: b x qlen x h x ds
-        # b x qlen x (d)
         attn = attn.reshape(batch_size, q_len, self.nheads * self.emb_v_per_head)
         out = self.dense(attn)
 
