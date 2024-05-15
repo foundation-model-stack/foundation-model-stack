@@ -50,6 +50,9 @@ class LLaMAConfig(ModelConfig):
     p_dropout: float = 0.0
     max_expected_seq_len: int = 4096
     ntk_scaling: bool = False
+    attn_bias: bool = False
+    mlp_bias: bool = False
+    tie_heads: bool = False
 
 
 class LLaMABlock(nn.Module):
@@ -89,7 +92,7 @@ class LLaMABlock(nn.Module):
             self.config.nheads,
             kvheads,
             p_dropout=self.config.p_dropout,
-            use_bias=False,
+            use_bias=self.config.attn_bias,
             position_encoder=rotary_emb,
         )
         self.ff_sub_layer = GatedLinearUnit(
@@ -98,7 +101,7 @@ class LLaMABlock(nn.Module):
             multiple_of=self.config.multiple_of,
             activation_fn=str_to_activation(self.config.activation_fn),
             p_dropout=self.config.p_dropout,
-            use_bias=False,
+            use_bias=self.config.mlp_bias,
         )
 
         if self.config.p_dropout != 0:
@@ -183,7 +186,7 @@ class LLaMA(nn.Module):
             padding_idx=self.config.pad_id,
             abs_pos=False,
             reversible=True,
-            tie_weights=False,
+            tie_weights=self.config.tie_heads,
             bias=False,
         )
         self.shared = self.distributed_strategy.distribute_module(shared)
@@ -403,9 +406,7 @@ models.register_model(_architecture_name, "7b", _llama_factory_factory(_7b_confi
 models.register_model(_architecture_name, "13b", _llama_factory_factory(_13b_config))
 models.register_model(_architecture_name, "70b", _llama_factory_factory(_70b_config))
 
-_convert_to_fused_qkv = serialization.simple_mapping_adapter(
-    [serialization._legacy_attn_unfused_to_fused_weight_conversion]
-)
+_convert_to_fused_qkv = serialization._legacy_attn_unfused_to_fused_adapter
 
 
 def _rename_weights_to_fms(orig_sd):

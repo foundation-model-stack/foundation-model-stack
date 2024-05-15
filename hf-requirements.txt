@@ -4,4 +4,4 @@
 
 -r requirements.txt
 
-transformers==4.35.0
+transformers==4.40.2

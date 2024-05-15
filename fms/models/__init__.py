@@ -251,8 +251,11 @@ def get_model(
     hsdp = distributed_strategy == "hsdp"
     fsdp = distributed_strategy == "fsdp"
     ddp = distributed_strategy == "ddp"
-    if (hsdp and local_rank != 0) or ((fsdp or ddp) and rank != 0):
-        initial_device = torch.device("meta")
+    if hsdp or fsdp or ddp:
+        if (hsdp and local_rank != 0) or ((fsdp or ddp) and rank != 0):
+            initial_device = torch.device("meta")
+        else:
+            initial_device = torch.device("cpu")
     elif distributed_strategy == "mp":
         initial_device = torch.device("cpu")
     else:
@@ -320,4 +323,4 @@ def get_model(
     return fms_model
 
 
-from fms.models import gpt_bigcode, llama, roberta
+from fms.models import gpt_bigcode, llama, mixtral, roberta

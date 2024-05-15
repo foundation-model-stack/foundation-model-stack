@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import (
     Any,
     Callable,
+    Dict,
     List,
     Mapping,
     MutableMapping,
@@ -66,104 +67,51 @@ def list_sources(architecture: str):
     return list(__adapters[architecture].keys())
 
 
-def _legacy_attn_unfused_to_fused_weight_conversion(
-    name: str, orig_sd: Mapping
-) -> Optional[Tuple[str, torch.Tensor]]:
+def _legacy_attn_unfused_to_fused_adapter(orig_sd):
     """
-    function which converts unfused fms weights to fused fms weights in the case the model was using the older unfused
-    weights (version 0.0.5)
-
-    Args:
-        name: str
-            current name to convert
-        orig_sd: Mapping
-            a mapping from a name to a param, in most cases a grouping of all names to params in a module.
-
-    Returns:
-    Optional[Tuple[str, torch.Tensor]]
-        if query/key/value all exist in the given state dict, a tuple of the new fused name as well as weights will be
-        returned from this function
-        otherwise this function will return None signifying that no preprocessing needed to be done for this name param
+    Legacy adapter for converting pre 0.0.6 unfused attn weights to fused attn weights
     """
-    # if we find query/key/value, this means the weights are unfused and therefore need to be fused
-    if "attn.query" in name or "attn.key" in name or "attn.value" in name:
-        # weight_type denotes weight or bias
-        weight_type = name.split(".")[-1]
+    new_sd = {}
+    removed_params = set()
+    orig_keys = set(orig_sd.keys())
+    for name in orig_keys:
+        # this keys been popped and we dont need to process it
+        if name in removed_params:
+            continue
 
-        unfused_weights = [
-            re.sub(
-                rf"attn.(query|key|value).{weight_type}",
-                f"attn.query.{weight_type}",
-                name,
-            ),
-            re.sub(
-                rf"attn.(query|key|value).{weight_type}",
-                f"attn.key.{weight_type}",
-                name,
-            ),
-            re.sub(
-                rf"attn.(query|key|value).{weight_type}",
-                f"attn.value.{weight_type}",
-                name,
-            ),
-        ]
+        if "attn.query" in name or "attn.key" in name or "attn.value" in name:
+            # weight_type denotes weight or bias
+            weight_type = name.split(".")[-1]
 
-
-        result = (
-            re.sub(
+            unfused_weights = [
+                re.sub(
+                    rf"attn.(query|key|value).{weight_type}",
+                    f"attn.query.{weight_type}",
+                    name,
+                ),
+                re.sub(
+                    rf"attn.(query|key|value).{weight_type}",
+                    f"attn.key.{weight_type}",
+                    name,
+                ),
+                re.sub(
+                    rf"attn.(query|key|value).{weight_type}",
+                    f"attn.value.{weight_type}",
+                    name,
+                ),
+            ]
+            removed_params.update(unfused_weights)
+            new_name = re.sub(
                 rf"attn.(query|key|value).{weight_type}",
                 f"attn.in_proj.qkv_fused.{weight_type}",
                 name,
-            ),
-            torch.cat([orig_sd.pop(w) for w in unfused_weights], dim=0),
-            unfused_weights,
-        )
-
-        return result
-    return None
-
-
-def simple_mapping_adapter(
-    mappers: List[Callable[[str, Mapping], Optional[Tuple[str, torch.Tensor]]]],
-) -> Callable[[Mapping], Mapping]:
-    """
-    Create a simple adapter mapping using a mapper function. This function will iterate through the items in a
-    state_dict and execute the mapper on each key. This function could be used for versioning, where each version
-    requires a new mapping from the previous version.
-
-    Parameters
-    ----------
-    mappers: List[Callable[[str, Mapping], Optional[Tuple[str, torch.Tensor]]]]
-        a list of function which given a param key and the original state dict, will optionally return the new name and param
-        to be set in the new state dict. If None is returned, no change will be made in the current iteration
-
-    Returns
-    -------
-    Callable[[Mapping], Mapping]
-        the adapter function which gets the new state dict with the items re-mapped
-    """
-
-    def mapping_adapter_func(orig_sd):
-        new_sd = {}
-        sd_keys = set(orig_sd.keys())
-        dead_keys_set = set()
-        for key in sd_keys:
-            if key in dead_keys_set:
-                continue
-            param = orig_sd[key]
-            for mapper in mappers:
-                mapper_out = mapper(key, orig_sd)
-
-                if mapper_out is not None:
-                    key, param, dead_keys = mapper_out
-                    dead_keys_set.update(dead_keys)
-                    break
-
-            new_sd[key] = param
-
-        return new_sd
-
-    return mapping_adapter_func
+            )
+            new_sd[new_name] = torch.cat(
+                [orig_sd.pop(w) for w in unfused_weights], dim=0
+            )
+        else:
+            new_sd[name] = orig_sd.pop(name)
+    return new_sd
 
 
 def _get_adapter(
@@ -313,9 +261,7 @@ def load_state_dict(
     # if there's only one checkpoint for fsdp/hsdp, load it only into rank zero
     # and it will be distributed by the FSDP `sync_module_states` parameter
     if checkpoint_sharding is None and distributed_strategy in {"hsdp", "fsdp"}:
-        if rank == 0:
-            checkpoints = [checkpoints[0]]
-        else:
+        if rank != 0:
             return {}
 
     checkpoint_sds = []

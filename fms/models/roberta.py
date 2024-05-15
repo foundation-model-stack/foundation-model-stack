@@ -294,9 +294,7 @@ models.register_model(
     _architecture_name, "base", _roberta_factory_factory(_base_config)
 )
 
-_convert_to_fused_qkv = serialization.simple_mapping_adapter(
-    [serialization._legacy_attn_unfused_to_fused_weight_conversion]
-)
+_convert_to_fused_qkv = serialization._legacy_attn_unfused_to_fused_adapter
 
 
 def _hf_sd_to_fms_sd(hf_sd: Mapping[Any, Any]) -> Mapping[Any, Any]:
