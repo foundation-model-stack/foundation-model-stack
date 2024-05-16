@@ -115,7 +115,7 @@ class UnfusedQKV(QKV):
     def forward(
         self, q: torch.Tensor, k: Optional[torch.Tensor], v: Optional[torch.Tensor]
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        if (k is None and v is None) or (k is q and v is q):
+        if k is None and v is None:
             k = q
             v = q
         elif k is None or v is None:
@@ -258,6 +258,9 @@ class MultiHeadAttention(nn.Module):
             elif isinstance(m, QKV):
                 m.reset_parameters()
 
+    def to_tp(self, group: ProcessGroup) -> "TPMultiHeadAttention":
+        return TPMultiHeadAttention.import_module(self, group)
+
     def forward(
         self,
         q: torch.Tensor,
@@ -320,7 +323,11 @@ class MultiHeadAttention(nn.Module):
         values = values.transpose(2, 1)  # compatible with QK.T
 
         # if you want to use caching and past_key_value_state is not None meaning you have values in your cache
-        if use_cache and past_key_value_state is not None:
+        if (
+            use_cache
+            and past_key_value_state is not None
+            and past_key_value_state[0].numel() > 0
+        ):
             if is_self:
                 keys = torch.cat((past_key_value_state[0], keys), dim=2)
                 values = torch.cat((past_key_value_state[1], values), dim=2)
@@ -481,19 +488,23 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
             # The number in max_partition_sizes will signify the largest world size
             # til we need to duplicate.  For instance if we have nheads=16 and
             # world_size=32, then first 2 ranks will get first 1/16th of query
-            self.copy_colwise(
+            self.sharded_copy(
                 self.in_proj.qkv_fused.weight,
                 qkv_weight,
+                0,
                 [self.pre_tp_nheads, self.pre_tp_kvheads, self.pre_tp_kvheads],
             )
-            self.copy_rowwise(self.dense.weight, dense_weight, [self.world_size])
+            self.sharded_copy(self.dense.weight, dense_weight, 1, [self.world_size])
             if self.use_bias:
-                self.copy_colwise(
+                self.sharded_copy(
                     self.in_proj.qkv_fused.bias,
                     qkv_bias,
+                    0,
                     [self.pre_tp_nheads, self.pre_tp_kvheads, self.pre_tp_kvheads],
                 )
-                self.copy_rowwise(self.dense.bias, dense_bias, [self.world_size], False)
+                self.sharded_copy(
+                    self.dense.bias, dense_bias, 1, [self.world_size], False
+                )
 
         else:
             query_weight = self._get_sd_weight(
@@ -526,27 +537,29 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
             # The number in max_partition_sizes will signify the largest world size
             # til we need to duplicate.  For instance if we have nheads=16 and
             # world_size=32, then first 2 ranks will get first 1/16th of query
-            self.copy_colwise(
-                self.in_proj.query.weight, query_weight, [self.pre_tp_nheads]
+            self.sharded_copy(
+                self.in_proj.query.weight, query_weight, 0, [self.pre_tp_nheads]
             )
-            self.copy_colwise(
-                self.in_proj.key.weight, key_weight, [self.pre_tp_kvheads]
+            self.sharded_copy(
+                self.in_proj.key.weight, key_weight, 0, [self.pre_tp_kvheads]
             )
-            self.copy_colwise(
-                self.in_proj.value.weight, value_weight, [self.pre_tp_kvheads]
+            self.sharded_copy(
+                self.in_proj.value.weight, value_weight, 0, [self.pre_tp_kvheads]
             )
-            self.copy_rowwise(self.dense.weight, dense_weight, [self.world_size])
+            self.sharded_copy(self.dense.weight, dense_weight, 1, [self.world_size])
             if self.use_bias:
-                self.copy_colwise(
-                    self.in_proj.query.bias, query_bias, [self.pre_tp_nheads]
+                self.sharded_copy(
+                    self.in_proj.query.bias, query_bias, 0, [self.pre_tp_nheads]
                 )
-                self.copy_colwise(
-                    self.in_proj.key.bias, key_bias, [self.pre_tp_kvheads]
+                self.sharded_copy(
+                    self.in_proj.key.bias, key_bias, 0, [self.pre_tp_kvheads]
                 )
-                self.copy_colwise(
-                    self.in_proj.value.bias, value_bias, [self.pre_tp_kvheads]
+                self.sharded_copy(
+                    self.in_proj.value.bias, value_bias, 0, [self.pre_tp_kvheads]
                 )
-                self.copy_rowwise(self.dense.bias, dense_bias, [self.world_size], False)
+                self.sharded_copy(
+                    self.dense.bias, dense_bias, 1, [self.world_size], False
+                )
 
     @staticmethod
     def import_module(
