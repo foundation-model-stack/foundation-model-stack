@@ -391,6 +391,18 @@ _70b_config = LLaMAConfig(
     hidden_grow_factor=(1.3 * 8 / 3),
 )
 
+_8b_llama3_config = LLaMAConfig(
+    src_vocab_size=128256,
+    emb_dim=4096,
+    norm_eps=1e-5,
+    nheads=32,
+    kvheads=8,
+    nlayers=32,
+    hidden_grow_factor=3.5,
+    multiple_of=1024,
+    max_expected_seq_len=8192,
+)
+
 _architecture_name = "llama"
 
 
@@ -407,6 +419,9 @@ models.register_model(
 models.register_model(_architecture_name, "7b", _llama_factory_factory(_7b_config))
 models.register_model(_architecture_name, "13b", _llama_factory_factory(_13b_config))
 models.register_model(_architecture_name, "70b", _llama_factory_factory(_70b_config))
+models.register_model(
+    _architecture_name, "llama3.8b", _llama_factory_factory((_8b_llama3_config))
+)
 
 _convert_to_fused_qkv = serialization._legacy_attn_unfused_to_fused_adapter
 
