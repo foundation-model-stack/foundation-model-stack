@@ -1,4 +1,4 @@
-from typing import Any, Callable, List, MutableMapping, Union
+from typing import Any, Callable, List, MutableMapping, Optional, Union
 
 import torch
 import torch.nn.functional as F
@@ -23,7 +23,7 @@ def _make_cache_contiguous(past_key_value_states):
 def generate(
     model: Union[Callable, torch.nn.Module],
     input_ids: torch.Tensor,
-    max_seq_len: int = 2048,
+    max_seq_len: int = 4096,
     max_new_tokens: int = 256,
     temperature: float = 1.0,
     top_k: int = 10,
@@ -31,6 +31,7 @@ def generate(
     num_beams: int = 1,
     use_cache: bool = False,
     contiguous_cache: bool = False,
+    eos_token_id: Optional[int] = None,
 ):
     """
     A trivial generate function that can be used for validation/testing in
@@ -63,6 +64,10 @@ def generate(
 
     if not batched:
         input_ids = input_ids.unsqueeze(0)
+
+    eos_found = torch.zeros(
+        input_ids.shape[0], dtype=torch.bool, device=input_ids.device
+    )
 
     result = input_ids
     next_input = input_ids
@@ -100,6 +105,12 @@ def generate(
             next_val = torch.argmax(logits, dim=-1).unsqueeze(0).t()
 
         result = torch.cat((result, next_val), dim=-1)
+
+        # avoid continuing to generate if all have reached EOS
+        if eos_token_id is not None:
+            eos_found = torch.logical_or(eos_found, next_val == eos_token_id)
+            if torch.sum(eos_found) == input_ids.shape[0]:
+                break
 
         if use_cache:
             next_input = next_val
