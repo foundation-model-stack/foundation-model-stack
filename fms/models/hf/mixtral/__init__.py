@@ -55,14 +55,12 @@ def convert_to_hf(
             )
 
             # self attn (+ HF RoPE transpose)
-            hf_q = hf_q
             hf_q = (
                 hf_q.view(hf_config.nheads, 2, -1, hf_q.size(1))
                 .transpose(1, 2)
                 .reshape(*hf_q.size())
             )
             oss_hf_layer.self_attn.q_proj.weight.copy_(hf_q)
-            hf_k = hf_k
             hf_k = (
                 hf_k.view(hf_config.kvheads, 2, -1, hf_k.size(1))
                 .transpose(1, 2)
