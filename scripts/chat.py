@@ -18,7 +18,7 @@ from fms.utils.generation import generate
 # Simple interactive chat with LLaMa model.
 #
 # Example usage:
-# (newfms) [bv-5976k 16th 19:45:01 ~/repos/newfms]$ python scripts/chat.py --device_type=cuda --model_path=/gpfs/models/llama/7B-F/consolidated.00.pth --model_source=meta --tokenizer=/gpfs/models/llama/tokenizer.model
+# (newfms) [bv-5976k 16th 19:45:01 ~/repos/newfms]$ python scripts/chat.py --device_type=cuda --model_path=/gpfs/models/llama/7B-F/consolidated.00.pth --model_source=meta --tokenizer=/gpfs/models/llama/tokenizer.model --system_message=
 # loading model
 # loading complete on rank 0
 # Enter your prompts/questions or "/help" for usage instructions.
@@ -97,6 +97,21 @@ parser.add_argument(
     help="Maximum number of new tokens to generate for each prompt",
 )
 
+DEFAULT_SYSTEM_PROMPT = """You are a helpful, respectful and honest assistant. Always answer as helpfully as possible, while being safe. Your \
+answers should not include any harmful, unethical, racist, sexist, toxic, dangerous, or illegal content. Please ensure\
+ that your responses are socially unbiased and positive in nature.
+
+If a question does not make any sense, or is not factually coherent, explain why instead of answering something not \
+correct. If you don't know the answer to a question, please don't share false information."""
+
+
+parser.add_argument(
+    "--system_message",
+    type=str,
+    default=DEFAULT_SYSTEM_PROMPT,
+    help="Optional system message telling the chat how to behave. Default llama system message requests that the model to be safe and helpful. Empty string for no system message.",
+)
+
 args = parser.parse_args()
 
 local_rank = int(os.getenv("LOCAL_RANK", 0))
@@ -147,8 +162,6 @@ print("loading complete on rank", local_rank)
 
 if args.compile:
     print("compiling model")
-    # Bug with kv-cache in PT2.1
-    torch._inductor.config.joint_graph_constant_folding = False
     # compiling can make first inference pass slow
     model = torch.compile(model, mode=args.compile_mode)
 
@@ -181,9 +194,9 @@ class ChatREPL(cmd.Cmd):
 
         self.buffer = []
         self.buffer.append(tokenizer.bos_token_id)
-        if system_message:
+        if system_message is not None and len(system_message):
             msg = self.B_SYS + system_message + self.E_SYS
-            self.buffer.extend(tokenizer.convert_tokens_to_ids(msg))
+            self.buffer.extend(tokenizer.convert_tokens_to_ids(tokenizer.tokenize(msg)))
 
     def onecmd(self, line):
         # Check if the line starts with a special command prefix
@@ -270,7 +283,7 @@ class ChatREPL(cmd.Cmd):
 
 if __name__ == "__main__":
     try:
-        ChatREPL(args.max_new_tokens).cmdloop()
+        ChatREPL(args.max_new_tokens, args.system_message).cmdloop()
     except KeyboardInterrupt:
         # ctrl-C isn't handled by cmd.Cmd
         print("keyboard interrupt, exiting.")
