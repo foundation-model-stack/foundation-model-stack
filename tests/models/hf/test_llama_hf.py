@@ -103,8 +103,6 @@ class LLaMA2HFFixtures(ModelFixtureMixin, HFConfigFixtureMixin, HFModelFixtureMi
                 # mlp
                 wg_fused = fms_hf_layer.ff_sub_layer.wg_fused.weight
                 wg_splits = [wg_fused.size(0) // 2, wg_fused.size(0) // 2]
-                print(wg_fused.shape)
-                print(oss_hf_layer.mlp.gate_proj.weight.shape)
                 w1, wg = torch.split(
                     fms_hf_layer.ff_sub_layer.wg_fused.weight, wg_splits, dim=0
                 )
