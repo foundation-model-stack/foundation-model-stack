@@ -4,7 +4,18 @@ import re
 from collections import ChainMap
 from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Callable, List, Mapping, MutableMapping, Optional, Set, Union
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    List,
+    Mapping,
+    MutableMapping,
+    Optional,
+    Set,
+    Tuple,
+    Union,
+)
 
 import torch
 
@@ -54,6 +65,53 @@ def list_sources(architecture: str):
     if architecture not in __adapters:
         return []
     return list(__adapters[architecture].keys())
+
+
+def _legacy_attn_unfused_to_fused_adapter(orig_sd):
+    """
+    Legacy adapter for converting pre 0.0.6 unfused attn weights to fused attn weights
+    """
+    new_sd = {}
+    removed_params = set()
+    orig_keys = set(orig_sd.keys())
+    for name in orig_keys:
+        # this keys been popped and we dont need to process it
+        if name in removed_params:
+            continue
+
+        if "attn.query" in name or "attn.key" in name or "attn.value" in name:
+            # weight_type denotes weight or bias
+            weight_type = name.split(".")[-1]
+
+            unfused_weights = [
+                re.sub(
+                    rf"attn.(query|key|value).{weight_type}",
+                    f"attn.query.{weight_type}",
+                    name,
+                ),
+                re.sub(
+                    rf"attn.(query|key|value).{weight_type}",
+                    f"attn.key.{weight_type}",
+                    name,
+                ),
+                re.sub(
+                    rf"attn.(query|key|value).{weight_type}",
+                    f"attn.value.{weight_type}",
+                    name,
+                ),
+            ]
+            removed_params.update(unfused_weights)
+            new_name = re.sub(
+                rf"attn.(query|key|value).{weight_type}",
+                f"attn.in_proj.qkv_fused.{weight_type}",
+                name,
+            )
+            new_sd[new_name] = torch.cat(
+                [orig_sd.pop(w) for w in unfused_weights], dim=0
+            )
+        else:
+            new_sd[name] = orig_sd.pop(name)
+    return new_sd
 
 
 def _get_adapter(
