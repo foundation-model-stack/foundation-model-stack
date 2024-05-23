@@ -122,7 +122,7 @@ def _legacy_mlp_glu_unfused_to_fused_adapter(orig_sd):
     removed_params = set()
     orig_keys = set(orig_sd.keys())
     for name in orig_keys:
-        # this keys been popped and we dont need to process it
+        # if the name is part of removed_params, we no longer want to process it
         if name in removed_params:
             continue
 
