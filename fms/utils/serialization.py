@@ -126,10 +126,8 @@ def _legacy_mlp_glu_unfused_to_fused_adapter(orig_sd):
         if name in removed_params:
             continue
 
-        if (
-            "ff_sub_layer.wg1_fused" not in name
-            and "ff_sub_layer.wg" in name
-            or "ff_sub_layer.w1" in name
+        if "ff_sub_layer.wg1_fused" not in name and (
+            "ff_sub_layer.wg" in name or "ff_sub_layer.w1" in name
         ):
             weight_type = name.split(".")[-1]
 
