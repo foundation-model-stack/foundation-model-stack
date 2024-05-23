@@ -118,7 +118,6 @@ def _guess_num_layers(state_dict):
         layerid = re.sub("[^.]*\\.([0-9]+)\\..*", "\\1", key)
         if layerid != key:
             layers.add(layerid)
-    print(len(layers))
     return len(layers)
 
 
