@@ -75,7 +75,7 @@ def _legacy_attn_unfused_to_fused_adapter(orig_sd):
     removed_params = set()
     orig_keys = set(orig_sd.keys())
     for name in orig_keys:
-        # this keys been popped and we dont need to process it
+        # if the name is part of removed_params, we no longer want to process it
         if name in removed_params:
             continue
 
@@ -127,7 +127,7 @@ def _legacy_mlp_glu_unfused_to_fused_adapter(orig_sd):
             continue
 
         if (
-            "ff_sub_layer.wg_fused" not in name
+            "ff_sub_layer.wg1_fused" not in name
             and "ff_sub_layer.wg" in name
             or "ff_sub_layer.w1" in name
         ):
@@ -148,7 +148,7 @@ def _legacy_mlp_glu_unfused_to_fused_adapter(orig_sd):
             removed_params.update(unfused_weights)
             new_name = re.sub(
                 rf"ff_sub_layer.(w1|wg).{weight_type}",
-                f"ff_sub_layer.wg_fused.{weight_type}",
+                f"ff_sub_layer.wg1_fused.{weight_type}",
                 name,
             )
             new_sd[new_name] = torch.cat(

@@ -101,10 +101,10 @@ class LLaMA2HFFixtures(ModelFixtureMixin, HFConfigFixtureMixin, HFModelFixtureMi
                 oss_hf_layer.self_attn.rotary_emb.inv_freqs = freqs
 
                 # mlp
-                wg_fused = fms_hf_layer.ff_sub_layer.wg_fused.weight
-                wg_splits = [wg_fused.size(0) // 2, wg_fused.size(0) // 2]
+                wg1_fused = fms_hf_layer.ff_sub_layer.wg1_fused.weight
+                wg_splits = [wg1_fused.size(0) // 2, wg1_fused.size(0) // 2]
                 w1, wg = torch.split(
-                    fms_hf_layer.ff_sub_layer.wg_fused.weight, wg_splits, dim=0
+                    fms_hf_layer.ff_sub_layer.wg1_fused.weight, wg_splits, dim=0
                 )
                 oss_hf_layer.mlp.gate_proj.weight.copy_(wg)
                 oss_hf_layer.mlp.up_proj.weight.copy_(w1)

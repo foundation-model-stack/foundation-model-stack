@@ -205,7 +205,7 @@ class GatedLinearUnit(nn.Module):
             self.hidden_dim = multiple_of * (
                 (self.hidden_dim + multiple_of - 1) // multiple_of
             )
-        self.wg_fused = nn.Linear(emb_dim, 2 * self.hidden_dim, bias=use_bias)
+        self.wg1_fused = nn.Linear(emb_dim, 2 * self.hidden_dim, bias=use_bias)
         self.a = activation_fn
         self.p_dropout = p_dropout
         if p_dropout:
@@ -216,7 +216,7 @@ class GatedLinearUnit(nn.Module):
         self.grow_factor = hidden_grow_factor
 
     def reset_parameters(self):
-        for layer in ["wg_fused", "w2"]:
+        for layer in ["wg1_fused", "w2"]:
             nn.init.trunc_normal_(
                 getattr(self, layer).weight,
                 mean=0.0,
@@ -229,7 +229,7 @@ class GatedLinearUnit(nn.Module):
         return TPGatedLinearUnit.import_module(self, group)
 
     def forward(self, x):
-        out_fused = self.wg_fused(x)
+        out_fused = self.wg1_fused(x)
         wg, w1 = torch.split(out_fused, [self.hidden_dim, self.hidden_dim], dim=2)
         out = self.a(wg) * w1
         if self.p_dropout:
@@ -290,12 +290,12 @@ class TPGatedLinearUnit(GatedLinearUnit, TPModule):
         # 1. Grab the weights from tensor_values
         used_keys: Set[str] = set()
         wg_weight = self._get_sd_weight(
-            tensor_values, used_keys, ["wg_fused", "weight"]
+            tensor_values, used_keys, ["wg1_fused", "weight"]
         )
         w2_weight = self._get_sd_weight(tensor_values, used_keys, ["w2", "weight"])
         if self.use_bias:
             wg_bias = self._get_sd_weight(
-                tensor_values, used_keys, ["wg_fused", "bias"]
+                tensor_values, used_keys, ["wg1_fused", "bias"]
             )
             w2_bias = self._get_sd_weight(tensor_values, used_keys, ["w2", "bias"])
 
@@ -306,12 +306,12 @@ class TPGatedLinearUnit(GatedLinearUnit, TPModule):
 
         # 3. Load and shard the weights
         self.sharded_copy(
-            self.wg_fused.weight, wg_weight, 0, [self.world_size, self.world_size]
+            self.wg1_fused.weight, wg_weight, 0, [self.world_size, self.world_size]
         )
         self.sharded_copy(self.w2.weight, w2_weight, 1, [self.world_size])
         if self.use_bias:
             self.sharded_copy(
-                self.wg_fused.bias, wg_bias, 0, [self.world_size, self.world_size]
+                self.wg1_fused.bias, wg_bias, 0, [self.world_size, self.world_size]
             )
             self.sharded_copy(self.w2.bias, w2_bias, 1, [self.world_size], False)
 

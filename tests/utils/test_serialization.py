@@ -20,7 +20,7 @@ def test_adapt():
     sd = {"feed_forward.w1.weight": w1, "feed_forward.w3.weight": w3}
     adapted = serialization.get_adapted("llama", "meta", sd)
 
-    newkey = "ff_sub_layer.wg_fused.weight"
+    newkey = "ff_sub_layer.wg1_fused.weight"
     assert newkey in adapted
     torch.testing.assert_close(adapted[newkey][:5], w1)
     torch.testing.assert_close(adapted[newkey][-5:], w3)
