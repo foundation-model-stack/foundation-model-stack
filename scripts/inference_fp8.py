@@ -1,4 +1,5 @@
 import argparse
+import functools
 import itertools
 import logging
 import os
@@ -266,7 +267,28 @@ do_sample = [False]
 use_cache = [
     args.no_use_cache
 ]  # True/False are identical with greedy iff `torch.use_deterministic_algorithms(True)`
-torch.cuda.profiler.start()
+# torch.cuda.profiler.start()
+def trace_handler(p, output_path, extra_name=""):
+    output = p.key_averages().table(sort_by="self_cuda_time_total", row_limit=30)
+    print(output)
+    p.export_chrome_trace(
+        f"{output_path}/trace_step{str(p.step_num)}_{extra_name}.json"
+    )
+# with torch.profiler.profile(
+#         activities=[
+#             torch.profiler.ProfilerActivity.CPU,
+#             torch.profiler.ProfilerActivity.CUDA,
+#         ],
+#         on_trace_ready=functools.partial(
+#             trace_handler,
+#             output_path="/net/storage149/mnt/md0/aviros/foundation-model-stack",
+#             extra_name=str(local_rank),
+#         ),
+#         with_stack=True,
+#         profile_memory=True,
+#         record_shapes=True,
+#         schedule=torch.profiler.schedule(skip_first=2, active=1, wait=0, warmup=1)
+#     ) as prof:
 
 try:
     with torch.no_grad():
@@ -301,6 +323,8 @@ try:
 except torch.cuda.OutOfMemoryError as e:
     print(e)
 finally:
-    torch.cuda.profiler.stop()
+    # prof.step()
+    pass
+    # torch.cuda.profiler.stop()
 
-    torch.cuda.memory._dump_snapshot("./fp8_memory.pickle")
+        # torch.cuda.memory._dump_snapshot("./fp8_memory.pickle")

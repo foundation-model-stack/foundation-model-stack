@@ -16,6 +16,39 @@ from fms.modules.positions import PositionEncoder
 from fms.modules.tp import TPModule
 
 
+HAS_FLASHINFER = False
+try:
+    from flashinfer import single_decode_with_kv_cache, batch_decode_with_padded_kv_cache
+    HAS_FLASHINFER = True
+
+    torch.library.define("fp8_fast::batch_decode_with_padded_kv_cache", "(Tensor q, Tensor k, Tensor v) -> Tensor")
+
+    @torch.library.impl("fp8_fast::batch_decode_with_padded_kv_cache", "CUDA")
+    def flashinfer_compile(queries, keys, values):
+        queries = torch.squeeze(queries)
+        # if USE_FP8_DECODE:
+        queries = queries.to(torch.float8_e5m2)
+        # attn: b x h x ds
+        attn = batch_decode_with_padded_kv_cache(
+            queries,
+            keys,
+            values,
+            kv_layout='HND',
+        )
+        attn = attn.unsqueeze(2)
+        return attn
+
+    @torch.library.impl_abstract("fp8_fast::batch_decode_with_padded_kv_cache")
+    def flashinfer_meta(queries, keys, values):
+        return queries
+
+except:
+    pass
+USE_FLASHINFER_FP8_DECODE=True and HAS_FLASHINFER
+USE_FP8_FUSED_ATTN=True # turn this on if testing fp8 attn kernels
+
+
+
 class MultiHeadAttention(nn.Module):
     """
     Performs multi-headed self- or cross-attention, with optional attention masking.
@@ -171,8 +204,8 @@ class MultiHeadAttention(nn.Module):
         ):
             if is_self:
                 if self.use_fp8_kvcache:
-                    keys = Float8Tensor.to_float8(keys, self.fp8_kv_scale, torch.float8_e4m3fn)
-                    values = Float8Tensor.to_float8(values, self.fp8_kv_scale, torch.float8_e4m3fn)
+                    keys = Float8Tensor.to_float8(keys, self.fp8_kv_scale, torch.float8_e5m2)
+                    values = Float8Tensor.to_float8(values, self.fp8_kv_scale, torch.float8_e5m2)
                 past_key_value_state[0][:, :, position_ids[0]] = keys
                 past_key_value_state[1][:, :, position_ids[0]] = values
                 keys_c = past_key_value_state[0]
@@ -183,16 +216,17 @@ class MultiHeadAttention(nn.Module):
         else:
             B, H, _, E = keys.shape
             if self.use_fp8_kvcache:
+                max_fp8_value = 57344.0
                 self.fp8_kv_scale = torch.max(
-                    torch.max(torch.max(torch.abs(keys)), self.fp8_kv_scale),
-                    torch.max(torch.max(torch.abs(values)), self.fp8_kv_scale),
+                    torch.max(torch.max(torch.abs(keys))/max_fp8_value, self.fp8_kv_scale),
+                    torch.max(torch.max(torch.abs(values))/max_fp8_value, self.fp8_kv_scale),
                 )
-                keys_c = Float8Tensor.to_float8(torch.zeros((B, H, 256, E), device=keys.device, dtype=keys.dtype), self.fp8_kv_scale, torch.float8_e4m3fn)
+                keys_c = Float8Tensor.to_float8(torch.zeros((B, H, 256, E), device=keys.device, dtype=keys.dtype), self.fp8_kv_scale, torch.float8_e5m2)
                 values_c = Float8Tensor.to_float8(torch.zeros(
                     (B, H, 256, E), device=keys.device, dtype=values.dtype
-                ), self.fp8_kv_scale, torch.float8_e4m3fn)
-                keys_c[:, :, position_ids[0]] = Float8Tensor.to_float8(keys, self.fp8_kv_scale, torch.float8_e4m3fn)
-                values_c[:, :, position_ids[0]] = Float8Tensor.to_float8(values, self.fp8_kv_scale, torch.float8_e4m3fn)
+                ), self.fp8_kv_scale, torch.float8_e5m2)
+                keys_c[:, :, position_ids[0]] = Float8Tensor.to_float8(keys, self.fp8_kv_scale, torch.float8_e5m2)
+                values_c[:, :, position_ids[0]] = Float8Tensor.to_float8(values, self.fp8_kv_scale, torch.float8_e5m2)
             else:
                 keys_c = torch.zeros((B, H, 256, E), device=keys.device, dtype=keys.dtype)
                 values_c = torch.zeros(
@@ -215,47 +249,63 @@ class MultiHeadAttention(nn.Module):
         else:
             attn_mask = mask
 
-        keys_sdpa = keys_c
-        values_sdpa = values_c
-        if self.use_fp8_kvcache:
-            keys_sdpa = keys_c.to_original_precision()
-            values_sdpa = values_c.to_original_precision()
+        if not USE_FLASHINFER_FP8_DECODE or q_len > 1: # Use flash attn for prefill only
+            keys_sdpa = keys_c
+            values_sdpa = values_c
+            if self.use_fp8_kvcache:
+                keys_sdpa = keys_c.to_original_precision()
+                values_sdpa = values_c.to_original_precision()
 
-        # Expand kv so black-box attn will work
-        expansion = self.nheads // self.kvheads
-        # k/v: b h l d
-        if expansion != 1:
-            keys_e = keys_sdpa.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
-            values_e = (
-                values_sdpa.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
+            # Expand kv so black-box attn will work
+            expansion = self.nheads // self.kvheads
+            # k/v: b h l d
+            if expansion != 1:
+                keys_e = keys_sdpa.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
+                values_e = (
+                    values_sdpa.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
+                )
+            else:
+                keys_e = keys_sdpa
+                values_e = values_sdpa
+
+            if attn_algorithm:
+                # Pick which fused attn kernels will run.
+                use_flash = attn_algorithm == "flash"
+                use_mem_efficient = attn_algorithm == "mem"
+                use_math = attn_algorithm == "math"
+
+                torch.backends.cuda.enable_flash_sdp(use_flash)
+                torch.backends.cuda.enable_mem_efficient_sdp(use_mem_efficient)
+                torch.backends.cuda.enable_math_sdp(use_math)
+
+            attn = F.scaled_dot_product_attention(
+                queries,
+                keys_e,
+                values_e,
+                attn_mask=attn_mask,
+                dropout_p=self.p_dropout if self.training else 0.0,
+                is_causal=is_causal_mask,
             )
-        else:
-            keys_e = keys_sdpa
-            values_e = values_sdpa
 
-        if attn_algorithm:
-            # Pick which fused attn kernels will run.
-            use_flash = attn_algorithm == "flash"
-            use_mem_efficient = attn_algorithm == "mem"
-            use_math = attn_algorithm == "math"
+            if attn_algorithm:
+                torch.backends.cuda.enable_flash_sdp(self.previous_flash)
+                torch.backends.cuda.enable_mem_efficient_sdp(self.previous_mem_efficient)
+                torch.backends.cuda.enable_math_sdp(self.previous_math)
 
-            torch.backends.cuda.enable_flash_sdp(use_flash)
-            torch.backends.cuda.enable_mem_efficient_sdp(use_mem_efficient)
-            torch.backends.cuda.enable_math_sdp(use_math)
-
-        attn = F.scaled_dot_product_attention(
-            queries,
-            keys_e,
-            values_e,
-            attn_mask=attn_mask,
-            dropout_p=self.p_dropout if self.training else 0.0,
-            is_causal=is_causal_mask,
-        )
-
-        if attn_algorithm:
-            torch.backends.cuda.enable_flash_sdp(self.previous_flash)
-            torch.backends.cuda.enable_mem_efficient_sdp(self.previous_mem_efficient)
-            torch.backends.cuda.enable_math_sdp(self.previous_math)
+        else:  # Use flashinfer for decode
+            attn = torch.ops.fp8_fast.batch_decode_with_padded_kv_cache(queries, keys_c._data, values_c._data)
+            # # remove seq_len dimension from queries
+            # queries = torch.squeeze(queries)
+            # # if USE_FP8_DECODE:
+            # queries = queries.to(torch.float8_e5m2)
+            # # attn: b x h x ds
+            # attn = batch_decode_with_padded_kv_cache(
+            #     queries,
+            #     keys_c._data,
+            #     values_c._data,
+            #     kv_layout='HND',
+            # )
+            # attn = attn.unsqueeze(2)
 
         # attn: bs x seq_len x nheads*emb_v_per_head
         # attn: b x h x qlen x ds

@@ -6,6 +6,7 @@ from typing import Any, Callable, List, MutableMapping, Union
 import torch
 import torch.distributed
 import torch.nn.functional as F
+import torch.profiler
 
 from fms import distributed
 
@@ -83,31 +84,10 @@ def generate(
         0, input_ids.shape[1], device=input_ids.device, dtype=torch.int64
     ).repeat(input_ids.shape[0], 1)
 
-    def trace_handler(p, output_path, extra_name=""):
-        output = p.key_averages().table(sort_by="self_cuda_time_total", row_limit=30)
-        print(output)
-        p.export_chrome_trace(
-            f"{output_path}/trace_step{str(p.step_num)}_{extra_name}.json"
-        )
-
     global past_key_value_states_g
 
     token_times: List[float] = []
     rank, _ = distributed.rank_and_world()
-    # with torch.profiler.profile(
-    #     activities=[
-    #         torch.profiler.ProfilerActivity.CPU,
-    #         torch.profiler.ProfilerActivity.CUDA,
-    #     ],
-    #     on_trace_ready=functools.partial(
-    #         trace_handler,
-    #         output_path="/net/storage149/mnt/md0/aviros/foundation-model-stack",
-    #         extra_name=str(rank),
-    #     ),
-    #     with_stack=True,
-    #     profile_memory=True,
-    #     record_shapes=True,
-    # ) as prof:
     if past_key_value_states_g is not None:
         for layer_idx, cache_layer in enumerate(past_key_value_states_g):
             for tensor_idx, kv_tensor in enumerate(cache_layer):
