@@ -412,7 +412,7 @@ _convert_to_fused = lambda sd: serialization._legacy_mlp_glu_unfused_to_fused_ad
 )
 
 
-def _rename_weights_to_fms(orig_sd):
+def _rename_meta_weights_to_fms(orig_sd):
     replacements = [
         (r"^tok_embeddings", "shared.emb"),
         (r"^norm", "dec_norm"),
@@ -487,7 +487,7 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
     return fused_sd
 
 
-serialization.register_adapter("llama", "meta", _rename_weights_to_fms)
+serialization.register_adapter("llama", "meta", _rename_meta_weights_to_fms)
 serialization.register_adapter("llama", "hf", _hf_sd_to_fms_sd)
 serialization.register_adapter("llama", "fms.pre0.0.6", _convert_to_fused)
 
