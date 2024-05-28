@@ -36,12 +36,12 @@ class QuantizedHadRotLinear(QuantizedLinear):
     
 class QuantizedRandRotLinear(QuantizedLinear):
     def get_rotation_and_inv(self, size):
-
         return random_rotation_almost_hadamard(size, use_hardcoded=False, run_full_orthogonality_tests=False, check_inv_max=False)
     
 class QuantizedRandRotInvTLinear(QuantizedLinear):
     def get_rotation_and_inv(self, size):
-        return random_rotation_almost_hadamard(size, use_hardcoded=False, run_full_orthogonality_tests=False, check_inv_max=False)
+        q, _ = random_rotation_almost_hadamard(size, use_hardcoded=False, run_full_orthogonality_tests=False, check_inv_max=False)
+        return q, q.T
 
 m, k, n = 2048, 2048, 2048 # 16, 16, 16
 use_bias = True
