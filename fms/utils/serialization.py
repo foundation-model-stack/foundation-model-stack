@@ -178,7 +178,7 @@ def load_state_dict(
         elif source == "hf":
             glob_pattern_list = ["*.bin", "*.safetensors"]
         else:
-            glob_pattern_list = ["*.safetensors", "*.pth", "*.bin"]
+            glob_pattern_list = ["*.safetensors", "*.pth", "*.bin", "*.distcp"]
         for glob_pattern_possibility in glob_pattern_list:
             file_list = list(model_path.glob(glob_pattern_possibility))
             if len(file_list) > 0:

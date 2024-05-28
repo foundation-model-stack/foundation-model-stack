@@ -323,4 +323,4 @@ def get_model(
     return fms_model
 
 
-from fms.models import gpt_bigcode, llama, mixtral, roberta
+from fms.models import gpt_bigcode, llama, roberta
