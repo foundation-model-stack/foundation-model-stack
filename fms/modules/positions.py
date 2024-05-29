@@ -270,17 +270,24 @@ class RotaryEmbedding(PositionEncoder):
             k_out = k
         else:
             q_out = (
-                freqs[:, -q.size(1) :, None, :, :, :]
-                .mul(q.float().view(*q.size()[:-1], -1, 2).unsqueeze(-2))
-                .sum(5)
-                .flatten(3)
-            ).type_as(q).view_as(q)
+                (
+                    freqs[:, -q.size(1) :, None, :, :, :]
+                    .mul(q.float().view(*q.size()[:-1], -1, 2).unsqueeze(-2))
+                    .sum(5)
+                    .flatten(3)
+                )
+                .type_as(q)
+                .view_as(q)
+            )
             k_out = (
-                freqs[:, -k.size(1) :, None, :, :, :]
-                .mul(k.float().view(*k.size()[:-1], -1, 2).unsqueeze(-2))
-                .sum(5)
-                .flatten(3)
-            ).type_as(k).view_as(k)
-            
+                (
+                    freqs[:, -k.size(1) :, None, :, :, :]
+                    .mul(k.float().view(*k.size()[:-1], -1, 2).unsqueeze(-2))
+                    .sum(5)
+                    .flatten(3)
+                )
+                .type_as(k)
+                .view_as(k)
+            )
 
         return q_out, k_out

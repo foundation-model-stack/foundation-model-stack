@@ -71,7 +71,7 @@ class LayerNormParameterized(nn.Module):
             if self.elementwise_shift:
                 x = x + self.bias
             return x
-    
+
         if self.use_mean:
             x.copy_(x - x.mean(-1, keepdim=True))
             # x = F.normalize(x, dim=-1)*math.sqrt(x.size(-1))

@@ -56,7 +56,9 @@ class LLaMAConfig(ModelConfig):
 
 
 class LLaMABlock(nn.Module):
-    def __init__(self, config: LLaMAConfig, rotary_emb: RotaryEmbedding, use_fp8_kvcache=False):
+    def __init__(
+        self, config: LLaMAConfig, rotary_emb: RotaryEmbedding, use_fp8_kvcache=False
+    ):
         super(LLaMABlock, self).__init__()
         self.config = config
         emb_kq = self.config.emb_dim // self.config.nheads
@@ -212,7 +214,9 @@ class LLaMA(nn.Module):
 
         layers = []
         for i in range(self.config.nlayers):
-            block: nn.Module = LLaMABlock(self.config, self.rot_emb, use_fp8_kvcache=True)
+            block: nn.Module = LLaMABlock(
+                self.config, self.rot_emb, use_fp8_kvcache=True
+            )
             block = self.distributed_strategy.distribute_layer(block, i)
             layers.append(block)
         self.layers = nn.ModuleList(layers)
