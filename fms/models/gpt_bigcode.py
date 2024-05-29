@@ -80,8 +80,6 @@ class GPTBigCodeBlock(nn.Module):
         # self attention
         x = self.attn(
             q=x,
-            k=x,
-            v=x,
             mask=mask,
             position_ids=position_ids,
             attn_algorithm=attn_algorithm,
@@ -416,6 +414,8 @@ models.register_model(
     _architecture_name, "ibm.20b", _gpt_bigcode_factory_factory(_20b_config)
 )
 
+_convert_to_fused_qkv = serialization._legacy_attn_unfused_to_fused_adapter
+
 
 def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
     import re
@@ -427,14 +427,13 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
         (r"^transformer.ln_f", "base_model.dec_norm"),
         (r"^transformer.h", "base_model.layers"),
         # need to do kqv manually
+        (r"attn\.c_attn", "attn.in_proj.qkv_fused"),
         (r"attn\.c_proj", "attn.dense"),
         (r"mlp\.c_fc", "ff_sub_layer.w1"),
         (r"mlp\.c_proj", "ff_sub_layer.w2"),
         (r"ln_1", "ln"),
         (r"ln_2", "ff_ln"),
     ]
-    qkv_weight_pattern = re.compile("transformer.h.[0-9]+.attn.c_attn.weight")
-    qkv_bias_pattern = re.compile("transformer.h.[0-9]+.attn.c_attn.bias")
 
     new_sd = {}
     for name, param in hf_sd.items():
@@ -444,54 +443,10 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
 
         new_sd[new_name] = param
 
-        # qkv fused
-        if bool(qkv_weight_pattern.match(name)):
-            new_sd.pop(new_name)
-            emb_dim = param.size(1)
-            if emb_dim == 3072:
-                head_size = 96
-            else:
-                head_size = 128
-
-            num_heads = emb_dim // head_size
-            num_key_value_heads = (param.size(0) // head_size - num_heads) // 2
-            attn_splits = [
-                (num_heads * head_size) // num_key_value_heads,
-                (num_key_value_heads * head_size) // num_key_value_heads,
-                (num_key_value_heads * head_size) // num_key_value_heads,
-            ]
-
-            prefix = new_name.replace("c_attn.weight", "")
-            q, k, v = param.split(attn_splits, dim=0)
-
-            new_sd[f"{prefix}query.weight"] = q
-            new_sd[f"{prefix}key.weight"] = k
-            new_sd[f"{prefix}value.weight"] = v
-        elif bool(qkv_bias_pattern.match(name)):
-            weight_name = name.replace("bias", "weight")
-            new_sd.pop(new_name)
-            emb_dim = hf_sd[weight_name].size(1)
-            if emb_dim == 3072:
-                head_size = 96
-            else:
-                head_size = 128
-
-            num_heads = emb_dim // head_size
-            num_key_value_heads = (param.size(0) // head_size - num_heads) // 2
-            attn_splits = [
-                (num_heads * head_size) // num_key_value_heads,
-                (num_key_value_heads * head_size) // num_key_value_heads,
-                (num_key_value_heads * head_size) // num_key_value_heads,
-            ]
-
-            prefix = new_name.replace("c_attn.bias", "")
-            q, k, v = param.split(attn_splits, dim=0)
-
-            new_sd[f"{prefix}query.bias"] = q
-            new_sd[f"{prefix}key.bias"] = k
-            new_sd[f"{prefix}value.bias"] = v
-
     return new_sd
 
 
 serialization.register_adapter(_architecture_name, "hf", _hf_sd_to_fms_sd)
+serialization.register_adapter(
+    _architecture_name, "fms.pre0.0.6", _convert_to_fused_qkv
+)

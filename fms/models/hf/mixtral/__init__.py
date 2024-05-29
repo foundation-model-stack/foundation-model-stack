@@ -49,23 +49,25 @@ def convert_to_hf(
         )
         for i, oss_hf_layer in enumerate(oss_hf_model.model.layers):
             fms_hf_layer = fms_hf_model.decoder.model.layers[i]
+            hf_q, hf_k, hf_v = torch.split(
+                fms_hf_layer.attn.in_proj.qkv_fused.weight,
+                fms_hf_layer.attn.in_proj.splits,
+            )
 
             # self attn (+ HF RoPE transpose)
-            hf_q = fms_hf_layer.attn.query.weight
             hf_q = (
                 hf_q.view(hf_config.nheads, 2, -1, hf_q.size(1))
                 .transpose(1, 2)
                 .reshape(*hf_q.size())
             )
             oss_hf_layer.self_attn.q_proj.weight.copy_(hf_q)
-            hf_k = fms_hf_layer.attn.key.weight
             hf_k = (
                 hf_k.view(hf_config.kvheads, 2, -1, hf_k.size(1))
                 .transpose(1, 2)
                 .reshape(*hf_k.size())
             )
             oss_hf_layer.self_attn.k_proj.weight.copy_(hf_k)
-            oss_hf_layer.self_attn.v_proj.weight.copy_(fms_hf_layer.attn.value.weight)
+            oss_hf_layer.self_attn.v_proj.weight.copy_(hf_v)
             oss_hf_layer.self_attn.o_proj.weight.copy_(fms_hf_layer.attn.dense.weight)
 
             # MoE SwiGLU

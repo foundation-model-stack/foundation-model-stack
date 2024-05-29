@@ -1,12 +1,17 @@
 import functools
 import statistics
 import time
-from typing import Any, Callable, List, MutableMapping, Union
+from typing import Any, Callable, List, MutableMapping, Optional, Union
 
 import torch
 import torch.distributed
 import torch.nn.functional as F
 import torch.profiler
+
+from fms import distributed
+
+
+past_key_value_states_g = None
 
 from fms import distributed
 
@@ -34,7 +39,7 @@ def generate(
     prefill_model: Union[Callable, torch.nn.Module],
     decode_model: Union[Callable, torch.nn.Module],
     input_ids: torch.Tensor,
-    max_seq_len: int = 2048,
+    max_seq_len: int = 4096,
     max_new_tokens: int = 256,
     temperature: float = 1.0,
     top_k: int = 10,
@@ -42,6 +47,7 @@ def generate(
     num_beams: int = 1,
     use_cache: bool = False,
     contiguous_cache: bool = False,
+    eos_token_id: Optional[int] = None,
 ):
     """
     A trivial generate function that can be used for validation/testing in
@@ -75,6 +81,10 @@ def generate(
     if not batched:
         input_ids = input_ids.unsqueeze(0)
 
+    eos_found = torch.zeros(
+        input_ids.shape[0], dtype=torch.bool, device=input_ids.device
+    )
+
     result = input_ids
     next_input = input_ids
     kwargs: MutableMapping[str, Any] = dict()
@@ -84,10 +94,31 @@ def generate(
         0, input_ids.shape[1], device=input_ids.device, dtype=torch.int64
     ).repeat(input_ids.shape[0], 1)
 
+    def trace_handler(p, output_path, extra_name=""):
+        output = p.key_averages().table(sort_by="self_cuda_time_total", row_limit=30)
+        print(output)
+        p.export_chrome_trace(
+            f"{output_path}/trace_step{str(p.step_num)}_{extra_name}.json"
+        )
+
     global past_key_value_states_g
 
     token_times: List[float] = []
     rank, _ = distributed.rank_and_world()
+    # with torch.profiler.profile(
+    #     activities=[
+    #         torch.profiler.ProfilerActivity.CPU,
+    #         torch.profiler.ProfilerActivity.CUDA,
+    #     ],
+    #     on_trace_ready=functools.partial(
+    #         trace_handler,
+    #         output_path="/net/storage149/mnt/md0/aviros/foundation-model-stack",
+    #         extra_name=str(rank),
+    #     ),
+    #     with_stack=True,
+    #     profile_memory=True,
+    #     record_shapes=True,
+    # ) as prof:
     if past_key_value_states_g is not None:
         for layer_idx, cache_layer in enumerate(past_key_value_states_g):
             for tensor_idx, kv_tensor in enumerate(cache_layer):
@@ -141,6 +172,12 @@ def generate(
             next_val = torch.argmax(logits, dim=-1).unsqueeze(0).t()
 
         result = torch.cat((result, next_val), dim=-1)
+
+        # avoid continuing to generate if all have reached EOS
+        if eos_token_id is not None:
+            eos_found = torch.logical_or(eos_found, next_val == eos_token_id)
+            if torch.sum(eos_found) == input_ids.shape[0]:
+                break
 
         if use_cache:
             next_input = next_val
