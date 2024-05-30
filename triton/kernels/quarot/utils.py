@@ -5,32 +5,36 @@ import random
 int8_mag_max = 127
 
 def quantize(x: torch.Tensor):
-    quantize_scale = int8_mag_max / torch.max(torch.abs(x))
+    quantize_scale = int8_mag_max / torch.max(torch.abs(x.type(torch.float64)))
     return (x.type(torch.float64) * quantize_scale).type(torch.int8), quantize_scale.type(torch.float64)
 
 def dequantize(x: torch.Tensor, quantize_scale):
     return (x.type(torch.float64) / quantize_scale).type(torch.float16)
 
 num_test_hadamards = 1
-num_orthogonality_tests = 0
-max_allowed_inv_value = 100
+num_orthogonality_tests = 100 # 1000
+max_allowed_inv_value = 1000 # 1000050
+dot_threshold = 0.5 # 0.15
+
+fail_print_interval = 10
 
 def random_rotation_almost_hadamard(size: int, use_hardcoded, run_full_orthogonality_tests, check_inv_max):
     if use_hardcoded:
         m = torch.tensor(hadamard(size), dtype=torch.float32) / torch.sqrt(torch.tensor(size))
     else:
+        fail_count = 0
         potential = []
         while len(potential) < num_test_hadamards:
             try:
                 m = torch.where(torch.rand((size, size)) >= 0.5, -1, 1).type(torch.float32) / torch.sqrt(torch.tensor(size))
-                
+
                 avg_row_dot_prod = 0
                 tests_passed = True
                 if run_full_orthogonality_tests:
                     for i in range(size):
                         for j in range(i + 1, size):
-                            dot_prod = torch.abs(torch.dot(m[i], m[j]))
-                            if dot_prod > 0.5:
+                            dot_prod = torch.abs(torch.nn.functional.cosine_similarity(m[i], m[j], dim=0))
+                            if dot_prod > dot_threshold:
                                 tests_passed = False
                                 break
                             avg_row_dot_prod += dot_prod
@@ -41,13 +45,16 @@ def random_rotation_almost_hadamard(size: int, use_hardcoded, run_full_orthogona
                         i, j = 0, 0
                         while i == j:
                             i, j = random.randrange(size), random.randrange(size)
-                        dot_prod = torch.abs(torch.dot(m[i], m[j]))
-                        if dot_prod > 0.5:
+                        dot_prod = torch.abs(torch.nn.functional.cosine_similarity(m[i], m[j], dim=0))
+                        if dot_prod > dot_threshold:
                             tests_passed = False
                             break
                         avg_row_dot_prod += dot_prod
                 
                 if not tests_passed:
+                    fail_count += 1
+                    if fail_count % fail_print_interval == 0:
+                        print(f"failed {fail_count} times")
                     continue
                 avg_row_dot_prod /= (size - 1) * (size - 2)
 
@@ -57,8 +64,12 @@ def random_rotation_almost_hadamard(size: int, use_hardcoded, run_full_orthogona
                 # rotation matrix, which is ideal
                 m_inv = torch.inverse(m).type(torch.float16)
                 # TODO: determine what max value is acceptable
-                if not check_inv_max or torch.max(torch.square(m_inv).sum(dim=1)) < max_allowed_inv_value:
+                if not check_inv_max or torch.max(torch.square(m_inv).sum(dim=1).sqrt()) < max_allowed_inv_value:
                     potential.append((m, avg_row_dot_prod))
+                else:
+                    fail_count += 1
+                    if fail_count % fail_print_interval == 0:
+                        print(f"failed {fail_count} times")
                 
             except Exception as e:
                 print(e)
@@ -93,7 +104,7 @@ def print_test_results(results, test_name='test'):
     print("==========================")
     print(test_name)
     for stat_name, stat_val in zip(stat_names, stat_vals):
-        print(f"avg {stat_name}: {float(stat_val):0.5f}")
+        print(f"avg {stat_name}: {float(stat_val):0.10f}")
     print("==========================")
 
     # try:
