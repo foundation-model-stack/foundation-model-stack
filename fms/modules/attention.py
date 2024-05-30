@@ -34,7 +34,7 @@ try:
     @torch.library.impl("fp8_fast::batch_decode_with_padded_kv_cache", "CUDA")
     def flashinfer_compile(queries, keys, values):
         B, H, S, E = queries.shape
-        queries = torch.view(B, H, E).clone(memory_format=torch.contiguous_format)
+        queries = queries.view(B, H, E).clone(memory_format=torch.contiguous_format)
         # if USE_FP8_DECODE:
         queries = queries.to(torch.float8_e5m2)
         # attn: b x h x ds
