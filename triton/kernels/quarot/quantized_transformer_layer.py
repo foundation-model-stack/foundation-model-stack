@@ -191,6 +191,15 @@ class QuantizedRandRotInvTATTN(QuantizedATTNLayer):
 
 
 
+class TransformerBlock(Module):
+    def __init__(self, attn_layer: ATTNLayer, ffn_layer: FFNLayer) -> None:
+        super().__init__()
+        self.attn_layer = attn_layer
+        self.ffn_layer = ffn_layer
+    
+    def forward(self, input: Tensor) -> Tensor:
+        attn_out = input + self.attn_layer(input)
+        return attn_out + self.ffn_layer(attn_out)
 
 
 # context_size, hidden_size, intermediate_size = 512, 1024, 2048 # 2048, 4096, 8192
@@ -201,50 +210,40 @@ context_size, embedding_size, intermediate_size = 256, 512, 1024 # 512, 1024
 
 runs_per_test = 1
 
-results_basic = []
-results_rot_rand = []
-results_rot_rand_transp = []
-results_rot_hard = []
+method_names = ["basic quantization", "hadamard", "rand rot", "rand rot transp"]
+results = [[] for _ in method_names]
+attn_layer_type: list[type[ATTNLayer]] = [QuantizedATTNLayer, QuantizedHadRotATTN, QuantizedRandRotATTN, QuantizedRandRotInvTATTN]
+ffn_layer_types: list[type[FFNLayer]] = [QuantizedFFNLayer, QuantizedHadRotFFN, QuantizedRandRotFFN, QuantizedRandRotInvTFFN]
 
 for i in range(0, runs_per_test):
     x = torch.randn((context_size, embedding_size), dtype=torch.float16).uniform_(-0.1, 0.1)
     for i in range(context_size * embedding_size // 100):
         i, j = random.randrange(0, context_size), random.randrange(0, embedding_size)
         x[i, j] = random.uniform(-0.4, 0.4)
-
     
-    w_q =   torch.tensor(np.random.uniform(-0.1, 0.1, (embedding_size, d_k * num_heads)), dtype=torch.float16)
+    w_q = torch.tensor(np.random.uniform(-0.1, 0.1, (embedding_size, d_k * num_heads)), dtype=torch.float16)
     w_k = torch.tensor(np.random.uniform(-0.1, 0.1, (embedding_size, d_k * num_heads)), dtype=torch.float16)
     w_v = torch.tensor(np.random.uniform(-0.1, 0.1, (embedding_size, d_v * num_heads)), dtype=torch.float16)
     w_out = torch.tensor(np.random.uniform(-0.1, 0.1, (d_v * num_heads, embedding_size)), dtype=torch.float16)
     scaling_factor_attn = torch.tensor(np.random.uniform(-0.1, 0.1, (1, embedding_size)), dtype=torch.float16)
-
-    model_attn = ATTNLayer(embedding_size, d_v * num_heads, d_k * num_heads, w_q, w_k, w_v, w_out, scaling_factor_attn, num_heads)
-    model_q_attn = QuantizedATTNLayer(embedding_size, d_v * num_heads, d_k * num_heads, w_q, w_k, w_v, w_out, scaling_factor_attn, num_heads)
-    model_qh_attn = QuantizedHadRotATTN(embedding_size, d_v * num_heads, d_k * num_heads, w_q, w_k, w_v, w_out, scaling_factor_attn, num_heads)
-    model_qr_attn = QuantizedRandRotATTN(embedding_size, d_v * num_heads, d_k * num_heads, w_q, w_k, w_v, w_out, scaling_factor_attn, num_heads)
-    model_qrt_attn = QuantizedRandRotInvTATTN(embedding_size, d_v * num_heads, d_k * num_heads, w_q, w_k, w_v, w_out, scaling_factor_attn, num_heads)
 
     w_up =   torch.tensor(np.random.uniform(-0.1, 0.1, (embedding_size, intermediate_size)), dtype=torch.float16)
     w_gate = torch.tensor(np.random.uniform(-0.1, 0.1, (embedding_size, intermediate_size)), dtype=torch.float16)
     w_down = torch.tensor(np.random.uniform(-0.1, 0.1, (intermediate_size, embedding_size)), dtype=torch.float16)
     scaling_factor_ffn = torch.tensor(np.random.uniform(-0.1, 0.1, (1, embedding_size)), dtype=torch.float16)
 
-    model_ffn = FFNLayer(embedding_size, intermediate_size, w_gate, w_up, w_down, scaling_factor_ffn)
-    model_q_ffn = QuantizedFFNLayer(embedding_size, intermediate_size, w_gate, w_up, w_down, scaling_factor_ffn)
-    model_qh_ffn = QuantizedHadRotFFN(embedding_size, intermediate_size, w_gate, w_up, w_down, scaling_factor_ffn)
-    model_qr_ffn = QuantizedRandRotFFN(embedding_size, intermediate_size, w_gate, w_up, w_down, scaling_factor_ffn)
-    model_qrt_ffn = QuantizedRandRotInvTFFN(embedding_size, intermediate_size, w_gate, w_up, w_down, scaling_factor_ffn)
+    truth_attn = ATTNLayer(embedding_size, d_v * num_heads, d_k * num_heads, w_q, w_k, w_v, w_out, scaling_factor_attn, num_heads)
+    truth_ffn = FFNLayer(embedding_size, intermediate_size, w_gate, w_up, w_down, scaling_factor_ffn)
+    truth_model = TransformerBlock(truth_attn, truth_ffn)
+    truth = truth_model(x)
 
-    truth = model_ffn(model_attn(x))
+    for i, (attn_type, ffn_type) in enumerate(zip(attn_layer_type, ffn_layer_types)):
+        model_attn = attn_type(embedding_size, d_v * num_heads, d_k * num_heads, w_q, w_k, w_v, w_out, scaling_factor_attn, num_heads)
+        model_ffn = ffn_type(embedding_size, intermediate_size, w_gate, w_up, w_down, scaling_factor_ffn)
+        model = TransformerBlock(model_attn, model_ffn)
+        results[i].append((truth, model(x)))
 
-    results_basic.append((truth, model_q_ffn(model_q_attn(x))))
-    results_rot_hard.append((truth, model_qh_ffn(model_qh_attn(x))))
-    results_rot_rand.append((truth, model_qr_ffn(model_qr_attn(x))))
-    results_rot_rand_transp.append((truth, model_qrt_ffn(model_qrt_attn(x))))
+for method_name, result_list in zip(method_names, results):
+    print_test_results(result_list, method_name)
 
-print_test_results(results_basic, 'basic quantization')
-print_test_results(results_rot_hard, 'rotated quantization (hadamard hardcoded)')
-print_test_results(results_rot_rand, 'rotated quantization (random)')
-print_test_results(results_rot_rand_transp, 'rotated quantization (random, transpose)')
 print("done")
