@@ -30,6 +30,7 @@ class TPModule(nn.Module, metaclass=ABCMeta):
     def setup_tp(self, rank: int, world_size: int) -> None:
         self.rank = rank
         self.world_size = world_size
+        #print(f"setup_tp(): {rank}, {world_size}")
 
     def __get_tp_slices(
         self,
