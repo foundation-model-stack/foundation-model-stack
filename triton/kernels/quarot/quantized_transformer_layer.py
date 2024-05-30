@@ -198,15 +198,15 @@ class TransformerBlock(Module):
         self.ffn_layer = ffn_layer
     
     def forward(self, input: Tensor) -> Tensor:
-        attn_out = input + self.attn_layer(input)
-        return attn_out + self.ffn_layer(attn_out)
+        attn_out = input.type(torch.float16) + self.attn_layer(input).type(torch.float16)
+        return attn_out.type(torch.float16) + self.ffn_layer(attn_out).type(torch.float16)
 
 
 # context_size, hidden_size, intermediate_size = 512, 1024, 2048 # 2048, 4096, 8192
 num_heads = 32
-d_v = 16 # 32
-d_k = 16 # 32
-context_size, embedding_size, intermediate_size = 256, 512, 1024 # 512, 1024
+d_v = 128
+d_k = 128
+context_size, embedding_size, intermediate_size = 1, 4096, 4096 # 512, 1024
 
 runs_per_test = 1
 
@@ -216,10 +216,10 @@ attn_layer_type: list[type[ATTNLayer]] = [QuantizedATTNLayer, QuantizedHadRotATT
 ffn_layer_types: list[type[FFNLayer]] = [QuantizedFFNLayer, QuantizedHadRotFFN, QuantizedRandRotFFN, QuantizedRandRotInvTFFN]
 
 for i in range(0, runs_per_test):
-    x = torch.randn((context_size, embedding_size), dtype=torch.float16).uniform_(-0.1, 0.1)
-    for i in range(context_size * embedding_size // 100):
+    x = torch.randn((context_size, embedding_size), dtype=torch.float16).normal_(0, 0.02 / 0.67)
+    for i in range(math.ceil(context_size * embedding_size / 25000)):
         i, j = random.randrange(0, context_size), random.randrange(0, embedding_size)
-        x[i, j] = random.uniform(-0.4, 0.4)
+        x[i, j] = random.uniform(0.3, 0.7) * (-1 + 2 * random.randint(0, 1))
     
     w_q = torch.tensor(np.random.uniform(-0.1, 0.1, (embedding_size, d_k * num_heads)), dtype=torch.float16)
     w_k = torch.tensor(np.random.uniform(-0.1, 0.1, (embedding_size, d_k * num_heads)), dtype=torch.float16)

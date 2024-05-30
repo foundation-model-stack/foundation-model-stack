@@ -82,13 +82,14 @@ def random_rotation_almost_hadamard(size: int, use_hardcoded, run_full_orthogona
     return m, m_inv
 
 def print_test_results(results, test_name='test'):
-    stat_names = ["mean abs diff", "mean rel diff", "cossim", "max abs diff", "max rel diff"]
+    stat_names = ["mean abs diff", "mean rel diff", "cossim", "max abs diff", "max rel diff", "mean sq err x10^6"]
     stat_formulas = [
         lambda x, x_q, abs_diff, rel_diff: torch.mean(abs_diff, dim=(0, 1)),
         lambda x, x_q, abs_diff, rel_diff: torch.mean(rel_diff, dim=(0, 1)),
         lambda x, x_q, abs_diff, rel_diff: torch.nn.functional.cosine_similarity(x.reshape(-1), x_q.reshape(-1), dim=0),
         lambda x, x_q, abs_diff, rel_diff: torch.max(abs_diff),
         lambda x, x_q, abs_diff, rel_diff: torch.max(rel_diff),
+        lambda x, x_q, abs_diff, rel_diff: torch.nn.functional.mse_loss(x_q, x) * 1000000,
     ]
     stat_vals = [0] * len(stat_names)
     for result in results:
