@@ -6,7 +6,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributed.distributed_c10d import ProcessGroup
 
-import fms.triton.moe_kernel as moe_kernel  # registers the PT custom ops
+import fms.triton.pytorch_ops as triton_ops  # registers the PT custom ops
 from fms import distributed
 from fms.distributed.tensorparallel import (
     copy_to_tensor_model_parallel_region,
@@ -393,7 +393,7 @@ class ConditionalFeedForward(nn.Module):
             padded_token_ids_per_block,
             expert_block_mapping,
             total_padded_tokens,
-        ) = moe_kernel.moe_align_block_size(expert_indices, padding_size, E)
+        ) = triton_ops.moe_align_block_size(expert_indices, padding_size, E)
 
         x1, x3 = (
             torch.ops.moe.moe_mm(
