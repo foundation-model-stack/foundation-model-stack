@@ -376,30 +376,8 @@ class MultiHeadAttention(nn.Module):
         keys = keys.transpose(2, 1)  # / (self.emb_kq_per_head**(1/4))
         values = values.transpose(2, 1)  # compatible with QK.T
 
-        # if you want to use caching and past_key_value_state is not None meaning you have values in your cache
-        if (
-            use_cache
-            and past_key_value_state is not None
-            and past_key_value_state[0].numel() > 0
-        ):
-            if is_self:
-                if self.use_fp8_kvcache:
-                    keys = Float8Tensor.to_float8(
-                        keys, self.fp8_kv_scale, torch.float8_e5m2
-                    )
-                    values = Float8Tensor.to_float8(
-                        values, self.fp8_kv_scale, torch.float8_e5m2
-                    )
-                past_key_value_state[0][:, :, position_ids[0]] = keys
-                past_key_value_state[1][:, :, position_ids[0]] = values
-                keys_c = past_key_value_state[0]
-                values_c = past_key_value_state[1]
-            else:
-                keys_c = past_key_value_state[0]
-                values_c = past_key_value_state[1]
-        else:
-            B, H, _, E = keys.shape
-            if self.use_fp8_kvcache:
+        if self.use_fp8_kvcache:
+            if use_cache and past_key_value_state is None:
                 max_fp8_value = 57344.0
                 self.fp8_kv_scale.copy_(torch.max(
                     torch.max(
@@ -409,31 +387,28 @@ class MultiHeadAttention(nn.Module):
                         torch.max(torch.abs(values)) / max_fp8_value, self.fp8_kv_scale
                     ),
                 ))
-                keys_c = Float8Tensor.to_float8(
-                    torch.zeros((B, H, 256, E), device=keys.device, dtype=keys.dtype),
-                    self.fp8_kv_scale,
-                    torch.float8_e5m2,
-                )
-                values_c = Float8Tensor.to_float8(
-                    torch.zeros((B, H, 256, E), device=keys.device, dtype=values.dtype),
-                    self.fp8_kv_scale,
-                    torch.float8_e5m2,
-                )
-                keys_c[:, :, position_ids[0]] = Float8Tensor.to_float8(
-                    keys, self.fp8_kv_scale, torch.float8_e5m2
-                )
-                values_c[:, :, position_ids[0]] = Float8Tensor.to_float8(
-                    values, self.fp8_kv_scale, torch.float8_e5m2
-                )
+            keys = Float8Tensor.to_float8(
+                keys, self.fp8_kv_scale, torch.float8_e5m2
+            )
+            values = Float8Tensor.to_float8(
+                values, self.fp8_kv_scale, torch.float8_e5m2
+            )
+
+        # if you want to use caching and past_key_value_state is not None meaning you have values in your cache
+        if (
+            use_cache
+            and past_key_value_state is not None
+            and past_key_value_state[0].numel() > 0
+        ):
+            if is_self:
+                keys_c = torch.cat((past_key_value_state[0], keys), dim=2)
+                values_c = torch.cat((past_key_value_state[1], values), dim=2)
             else:
-                keys_c = torch.zeros(
-                    (B, H, 256, E), device=keys.device, dtype=keys.dtype
-                )
-                values_c = torch.zeros(
-                    (B, H, 256, E), device=keys.device, dtype=values.dtype
-                )
-                keys_c[:, :, position_ids[0]] = keys
-                values_c[:, :, position_ids[0]] = values
+                keys_c = past_key_value_state[0]
+                values_c = past_key_value_state[1]
+        else:
+            keys_c = keys
+            values_c = values
 
         # Merge rel pos bias and mask into single float mask
         if mask is not None:
@@ -506,18 +481,6 @@ class MultiHeadAttention(nn.Module):
             attn = torch.ops.fp8_fast.batch_decode_with_padded_kv_cache(
                 queries, keys_c._data, values_c._data
             )
-            # # remove seq_len dimension from queries
-            # queries = torch.squeeze(queries)
-            # # if USE_FP8_DECODE:
-            # queries = queries.to(torch.float8_e5m2)
-            # # attn: b x h x ds
-            # attn = batch_decode_with_padded_kv_cache(
-            #     queries,
-            #     keys_c._data,
-            #     values_c._data,
-            #     kv_layout='HND',
-            # )
-            # attn = attn.unsqueeze(2)
 
         # attn: bs x seq_len x nheads*emb_v_per_head
         # attn: b x h x qlen x ds

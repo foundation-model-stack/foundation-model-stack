@@ -11,30 +11,6 @@ import torch.profiler
 from fms import distributed
 
 
-past_key_value_states_g = None
-
-from fms import distributed
-
-
-past_key_value_states_g = None
-
-
-def _make_cache_contiguous(past_key_value_states):
-    # kv updates are required for torch.compile with
-    # mode='reduce-overhead'
-    n_kv_s: List[List[torch.Tensor]] = []
-    for layer_idx in range(len(past_key_value_states)):
-        n_kv_s.append([])
-        for tensor_idx in range(len(past_key_value_states[layer_idx])):
-            n_kv_s[layer_idx].append(
-                past_key_value_states[layer_idx][tensor_idx]
-                .clone(memory_format=torch.contiguous_format)
-                .detach()
-            )
-            # torch._dynamo.mark_dynamic(n_kv_s[layer_idx][tensor_idx], 2)
-    return n_kv_s
-
-
 def generate(
     prefill_model: Union[Callable, torch.nn.Module],
     decode_model: Union[Callable, torch.nn.Module],
@@ -94,37 +70,6 @@ def generate(
         0, input_ids.shape[1], device=input_ids.device, dtype=torch.int64
     ).repeat(input_ids.shape[0], 1)
 
-    def trace_handler(p, output_path, extra_name=""):
-        output = p.key_averages().table(sort_by="self_cuda_time_total", row_limit=30)
-        print(output)
-        p.export_chrome_trace(
-            f"{output_path}/trace_step{str(p.step_num)}_{extra_name}.json"
-        )
-
-    global past_key_value_states_g
-
-    token_times: List[float] = []
-    rank, _ = distributed.rank_and_world()
-    # with torch.profiler.profile(
-    #     activities=[
-    #         torch.profiler.ProfilerActivity.CPU,
-    #         torch.profiler.ProfilerActivity.CUDA,
-    #     ],
-    #     on_trace_ready=functools.partial(
-    #         trace_handler,
-    #         output_path="/net/storage149/mnt/md0/aviros/foundation-model-stack",
-    #         extra_name=str(rank),
-    #     ),
-    #     with_stack=True,
-    #     profile_memory=True,
-    #     record_shapes=True,
-    # ) as prof:
-    # if past_key_value_states_g is not None:
-    #     for layer_idx, cache_layer in enumerate(past_key_value_states_g):
-    #         for tensor_idx, kv_tensor in enumerate(cache_layer):
-    #             kv_tensor.fill_(0)
-    #     kwargs["past_key_value_states"] = past_key_value_states_g
-
     total_start = time.time()
     for i in range(max_new_tokens):
         # itl_start = time.time()
@@ -135,25 +80,6 @@ def generate(
             output = decode_model(input_ids, **kwargs)
         if use_cache:
             logits, past_key_value_states = output
-            # if i == 0:
-                # if past_key_value_states_g is None:
-                #     past_key_value_states_g = past_key_value_states
-                #     for cache_layer in past_key_value_states_g:
-                #         for kv_tensor in cache_layer:
-                #             torch._dynamo.mark_static_address(kv_tensor)
-                # else:
-                #     for layer_idx, cache_layer in enumerate(past_key_value_states_g):
-                #         for tensor_idx, kv_tensor in enumerate(cache_layer):
-                #             kv_tensor.copy_(past_key_value_states[layer_idx][tensor_idx])
-                #     past_key_value_states = past_key_value_states_g
-
-            # TODO: this should go away when reduce-overhead issues are fixed, or
-            # maybe could be moved into model code to be more portable.
-            # if contiguous_cache:
-            #     kwargs["past_key_value_states"] = _make_cache_contiguous(
-            #         past_key_value_states
-            #     )
-            # else:
             kwargs["past_key_value_states"] = past_key_value_states
         else:
             logits = output
@@ -184,11 +110,6 @@ def generate(
         else:
             next_input = result
         kwargs["position_ids"] = kwargs["position_ids"][:, -1:] + 1
-        # if i == 0:
-        # torch._dynamo.mark_static_address(kwargs["position_ids"])
-        # itl_end = time.time()
-        # token_times.append((itl_end - itl_start) * 1000)
-        # prof.step()
 
     torch.cuda.synchronize()
 
