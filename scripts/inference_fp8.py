@@ -79,7 +79,7 @@ parser.add_argument(
     type=str,
     help="Mode for compilation",
     default="default",
-    choices=["default", "reduce-overhead", "max-autotune"],
+    choices=["default", "reduce-overhead", "max-autotune", "max-autotune-no-cudagraphs"],
 )
 parser.add_argument(
     "--deterministic",
@@ -129,7 +129,7 @@ else:
     else:
         distr_param = None
 
-torch.cuda.memory._record_memory_history(max_entries=100000)
+# torch.cuda.memory._record_memory_history(max_entries=500000)
 
 model = get_model(
     args.architecture,
@@ -166,6 +166,7 @@ if args.compile:
     print("compiling model")
     # compiling can make first inference pass slow
     # torch._inductor.config.allow_buffer_reuse = False
+    torch._inductor.config.fx_graph_cache = True
     prefill_model = torch.compile(model, fullgraph=True)
     decode_model = torch.compile(model, mode=args.compile_mode, fullgraph=True)
 
@@ -326,4 +327,4 @@ finally:
     pass
     # torch.cuda.profiler.stop()
 
-        # torch.cuda.memory._dump_snapshot("./fp8_memory.pickle")
+    # torch.cuda.memory._dump_snapshot("./fp8_memory.pickle")

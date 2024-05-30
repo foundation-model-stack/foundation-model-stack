@@ -119,11 +119,11 @@ def generate(
     #     profile_memory=True,
     #     record_shapes=True,
     # ) as prof:
-    if past_key_value_states_g is not None:
-        for layer_idx, cache_layer in enumerate(past_key_value_states_g):
-            for tensor_idx, kv_tensor in enumerate(cache_layer):
-                kv_tensor.fill_(0)
-        kwargs["past_key_value_states"] = past_key_value_states_g
+    # if past_key_value_states_g is not None:
+    #     for layer_idx, cache_layer in enumerate(past_key_value_states_g):
+    #         for tensor_idx, kv_tensor in enumerate(cache_layer):
+    #             kv_tensor.fill_(0)
+    #     kwargs["past_key_value_states"] = past_key_value_states_g
 
     total_start = time.time()
     for i in range(max_new_tokens):
@@ -135,12 +135,12 @@ def generate(
             output = decode_model(input_ids, **kwargs)
         if use_cache:
             logits, past_key_value_states = output
-            if i == 0:
-                if past_key_value_states_g is None:
-                    past_key_value_states_g = past_key_value_states
-                    for cache_layer in past_key_value_states_g:
-                        for kv_tensor in cache_layer:
-                            torch._dynamo.mark_static_address(kv_tensor)
+            # if i == 0:
+                # if past_key_value_states_g is None:
+                #     past_key_value_states_g = past_key_value_states
+                #     for cache_layer in past_key_value_states_g:
+                #         for kv_tensor in cache_layer:
+                #             torch._dynamo.mark_static_address(kv_tensor)
                 # else:
                 #     for layer_idx, cache_layer in enumerate(past_key_value_states_g):
                 #         for tensor_idx, kv_tensor in enumerate(cache_layer):
@@ -191,6 +191,7 @@ def generate(
         # prof.step()
 
     torch.cuda.synchronize()
+
     # torch.distributed.barrier()
     total_time = time.time() - total_start
 
