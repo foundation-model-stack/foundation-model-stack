@@ -1,6 +1,7 @@
 import torch
 from scipy.linalg import hadamard
 import random
+import sentencepiece as spm
 
 int8_mag_max = 127
 
@@ -18,10 +19,33 @@ dot_threshold = 0.5 # 0.15
 
 fail_print_interval = 10
 
+def diag_tile_block(block, reps):
+    assert block.shape[-1] == block.shape[-2]
+    row = torch.nn.functional.pad(block, (0, block.shape[-1] * (reps - 1), 0, 0))
+    return torch.concat(
+        [torch.roll(row, block.shape[-1] * i, 1) for i in range(0, reps)]
+    )
+
+cached_rotations = {}
 def random_rotation_almost_hadamard(size: int, use_hardcoded, run_full_orthogonality_tests, check_inv_max):
     if use_hardcoded:
-        m = torch.tensor(hadamard(size), dtype=torch.float32) / torch.sqrt(torch.tensor(size))
+        tile_size = 1
+        while size % tile_size == 0:
+            tile_size *= 2
+        tile_size //= 2
+        tile_count = size // tile_size
+
+        temp = torch.tensor(hadamard(tile_size), dtype=torch.float32) / torch.sqrt(torch.tensor(tile_size))
+        m = diag_tile_block(temp, tile_count)
+
+        m_inv = m.T
+        m = m.type(torch.float16)
+        m_inv = m_inv.type(torch.float16)
+        return m, m_inv
     else:
+        if size in cached_rotations:
+            return cached_rotations[size]
+
         fail_count = 0
         potential = []
         while len(potential) < num_test_hadamards:
@@ -76,17 +100,25 @@ def random_rotation_almost_hadamard(size: int, use_hardcoded, run_full_orthogona
                 pass
         m, _ = min(potential, key=lambda x: x[1])
 
-    m_inv = torch.inverse(m)
-    m = m.type(torch.float16)
-    m_inv = m_inv.type(torch.float16)
-    return m, m_inv
+        m_inv = torch.inverse(m)
+        m = m.type(torch.float16)
+        m_inv = m_inv.type(torch.float16)
 
-def print_test_results(results, test_name='test'):
-    stat_names = ["mean abs diff", "mean rel diff", "cossim", "max abs diff", "max rel diff", "mean sq err x10^6"]
+        cached_rotations[size] = (m, m_inv)
+        
+        return m, m_inv
+    
+def unembed(x, embedding_weights, tokenizer: spm.SentencePieceProcessor):
+    x_token_dots = x[-1].type(torch.float16) @ embedding_weights.T.type(torch.float16)
+    token_id = torch.argmax(x_token_dots)
+    return tokenizer.Decode([int(token_id)])
+
+def print_test_results(results, test_name, embedding_weights, tokenizer):
+    stat_names = ["mean abs diff", "mean rel diff", "1-cossim", "max abs diff", "max rel diff", "mean sq err x10^6"]
     stat_formulas = [
         lambda x, x_q, abs_diff, rel_diff: torch.mean(abs_diff, dim=(0, 1)),
         lambda x, x_q, abs_diff, rel_diff: torch.mean(rel_diff, dim=(0, 1)),
-        lambda x, x_q, abs_diff, rel_diff: torch.nn.functional.cosine_similarity(x.reshape(-1), x_q.reshape(-1), dim=0),
+        lambda x, x_q, abs_diff, rel_diff: 1 - torch.nn.functional.cosine_similarity(x.reshape(-1), x_q.reshape(-1), dim=0),
         lambda x, x_q, abs_diff, rel_diff: torch.max(abs_diff),
         lambda x, x_q, abs_diff, rel_diff: torch.max(rel_diff),
         lambda x, x_q, abs_diff, rel_diff: torch.nn.functional.mse_loss(x_q, x) * 1000000,
@@ -106,6 +138,7 @@ def print_test_results(results, test_name='test'):
     print(test_name)
     for stat_name, stat_val in zip(stat_names, stat_vals):
         print(f"avg {stat_name}: {float(stat_val):0.10f}")
+    print(f"token: {unembed(x_q, embedding_weights, tokenizer)}, correct token: {unembed(x, embedding_weights, tokenizer)}")
     print("==========================")
 
     # try:
