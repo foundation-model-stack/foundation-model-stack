@@ -128,6 +128,7 @@ def moe_mm(
     padding_size,
 ):
     from fms.triton.moe_kernel import (
+        BEST_MOE_CONFIGS,
         _autotune,
         _create_best_configs_key,
         _load_best_configs,
@@ -139,7 +140,6 @@ def moe_mm(
     E, N, _ = moe_matrix.shape
     output = torch.zeros((M, A, N), device=input.device, dtype=input.dtype)
 
-    global BEST_MOE_CONFIGS
     if BEST_MOE_CONFIGS is None:
         BEST_MOE_CONFIGS = _load_best_configs()
     # Loading must have not been successful. Let's create a new dictionary.
