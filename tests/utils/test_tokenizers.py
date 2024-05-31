@@ -67,13 +67,14 @@ def test_out_of_range_ascii():
     assert tokens[0] == 0
     assert tokens[1] == 0
 
+
 def test_single_token():
     """
     checks if convert_tokens_to_ids handles both single strings and lists. single tokens
     should all be converted into a list of one id.
     """
     # testing character tokenizer
-    char_tokenizer = get_tokenizer('char_tokenizer')
+    char_tokenizer = get_tokenizer("char_tokenizer")
     assert char_tokenizer.convert_tokens_to_ids("h") == [104]
     assert char_tokenizer.convert_tokens_to_ids("e") == [101]
     assert char_tokenizer.convert_tokens_to_ids(["h", "e", "l", "l", "o"]) == [
@@ -85,21 +86,24 @@ def test_single_token():
     ]
     # testing sentencePiece tokenizer
     with tempfile.TemporaryDirectory() as workdir:
-        training_data = os.path.join(workdir, 'training_data.txt')
-        with open(training_data, 'w', encoding='utf-8') as f:
-            f.write('This is a test.\n')
-            f.write('Please say hello world.')
-        model = os.path.join(workdir, 'mymodel')
-        spm.SentencePieceTrainer.train(f'--input={training_data} --model_prefix={model} --vocab_size=76, --model_type=bpe --character_coverage=1.0')
+        training_data = os.path.join(workdir, "training_data.txt")
+        with open(training_data, "w", encoding="utf-8") as f:
+            f.write("This is a test.\n")
+            f.write("Please say hello world.")
+        model = os.path.join(workdir, "mymodel")
+        spm.SentencePieceTrainer.train(
+            f"--input={training_data} --model_prefix={model} --vocab_size=76, --model_type=bpe --character_coverage=1.0"
+        )
         sp = spm.SentencePieceProcessor()
-        sp.load(f'{model}.model')
-        sp_tokenizer = get_tokenizer(name=f'{model}.model', style='sentencepiece')
+        sp.load(f"{model}.model")
+        sp_tokenizer = get_tokenizer(name=f"{model}.model", style="sentencepiece")
         assert sp_tokenizer.convert_tokens_to_ids("h") == [66]
-        assert sp_tokenizer.convert_tokens_to_ids("e") == [62]
-        assert sp_tokenizer.convert_tokens_to_ids(["h", "e", "l", "l", "o"]) == [
+        assert sp_tokenizer.convert_tokens_to_ids("le") == [35]
+        assert sp_tokenizer.convert_tokens_to_ids(["h", "e", "l", "l", "o", "le"]) == [
             66,
             62,
             63,
             63,
             68,
+            35,
         ]
