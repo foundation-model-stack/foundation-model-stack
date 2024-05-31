@@ -1,0 +1,14 @@
+Metadata-Version: 2.1
+Name: ibm-fms
+Version: 0.0.6
+Summary: IBM Foundation Model Stack
+Home-page: https://github.com/foundation-model-stack/foundation-model-stack
+Author: Brian Vaughan, Joshua Rosenkranz, Antoni Viros i Martin, Davis Wertheimer, Supriyo Chakraborty, Raghu Kiran Ganti
+Author-email: bvaughan@ibm.com, jmrosenk@us.ibm.com, aviros@ibm.com, Davis.Wertheimer@ibm.com, supriyo@us.ibm.com, rganti@us.ibm.com
+License: Apache License 2.0
+Classifier: Programming Language :: Python :: 3
+Classifier: License :: OSI Approved :: Apache Software License
+License-File: LICENSE
+Requires-Dist: torch>=2.2
+Provides-Extra: hf
+Requires-Dist: transformers>=4.40.2; extra == "hf"

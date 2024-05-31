@@ -95,6 +95,8 @@ class _SentencePieceTokenizer(BaseTokenizer):
         return self.sp_model.id_to_piece(ids)
 
     def convert_tokens_to_ids(self, tokens: list[str]):
+        if isinstance(tokens, str):
+            tokens = [tokens]
         return self.sp_model.piece_to_id(tokens)
 
     def convert_tokens_to_string(self, tokens: list[str]):

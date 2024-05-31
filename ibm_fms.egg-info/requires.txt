@@ -1,0 +1,4 @@
+torch>=2.2
+
+[hf]
+transformers>=4.40.2
