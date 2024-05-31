@@ -4,9 +4,7 @@ import torch
 
 
 def test_triton_import():
-    pre_import_fms_triton_modules = [k for k in sys.modules.keys() if "fms.triton" in k]
-    [sys.modules.pop(k) for k in pre_import_fms_triton_modules]
-    from fms.models import get_model
+    import fms.models
 
     fms_triton_modules = [k for k in sys.modules.keys() if "fms.triton." in k]
 
