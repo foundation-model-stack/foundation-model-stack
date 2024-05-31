@@ -107,7 +107,14 @@ def random_rotation_almost_hadamard(size: int, use_hardcoded, run_full_orthogona
         cached_rotations[size] = (m, m_inv)
         
         return m, m_inv
-    
+
+def rms_norm(x: torch.Tensor, scaling_factor=None):
+    dim1 = x.shape[1]
+    if scaling_factor is None:
+        scaling_factor = torch.ones(dim1)
+    scaling_factor = scaling_factor.view((1, -1))
+    return x * scaling_factor * (x.square().mean(dim=1, keepdim=True) + 1e-05).rsqrt()
+
 def unembed(x, embedding_weights, tokenizer: spm.SentencePieceProcessor):
     x_token_dots = x[-1].type(torch.float16) @ embedding_weights.T.type(torch.float16)
     token_id = torch.argmax(x_token_dots)

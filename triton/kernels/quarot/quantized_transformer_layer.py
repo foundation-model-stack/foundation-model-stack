@@ -21,7 +21,7 @@ class FFNLayer(Module):
 
     def forward(self, input: Tensor) -> Tensor:
         input = input @ self.q
-        input = input / input.square().sum(dim=1, keepdim=True).sqrt()
+        input = utils.rms_norm(input)
         input_q, input_q_s = self.quantize(input)
 
         gate_out, gate_out_s = input_q.type(self.acc_t()) @ self.w_gate.type(self.acc_t()), input_q_s * self.w_gate_s
@@ -110,7 +110,7 @@ class ATTNLayer(Module):
 
     def forward(self, input: Tensor) -> Tensor:
         input = input @ self.q
-        input = input / input.square().sum(dim=1, keepdim=True).sqrt()
+        input = utils.rms_norm(input)
         input_q, input_q_s = self.quantize(input)
 
         query_vals, query_vals_s = input_q.type(self.acc_t()) @ self.w_q.type(self.acc_t()), input_q_s * self.w_q_s
@@ -135,6 +135,8 @@ class ATTNLayer(Module):
         temp, temp_s = query_vals.type(self.acc_t()) @ key_vals.T.type(self.acc_t()), query_vals_s * key_vals_s
         temp = self.dequantize(temp, temp_s)
         temp /= math.sqrt(self.w_q.shape[-1])
+        triu = torch.triu(torch.ones(temp.shape[0], temp.shape[0], dtype=torch.half), diagonal=1)
+        temp[triu == 1] = -torch.inf
         temp = torch.softmax(temp, dim=1)
 
         # TODO: althout QuaRot doesn't seem to, we could quantize this by not dequantizing val_vals and by re-quantizing temp
