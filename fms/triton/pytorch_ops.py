@@ -93,14 +93,14 @@ def moe_align_block_size(
     return padded_token_ids_per_block, expert_block_mapping, total_padded_tokens
 
 
-lib = torch.library.Library("moe", "FRAGMENT")
-lib.define(
-    "moe_mm(Tensor input, Tensor moe_matrix, Tensor token_expert_mapping, Tensor padded_token_ids_per_block, Tensor expert_block_mapping, Tensor total_padded_tokens, int topk, int padding_size) -> Tensor"
+torch.library.define(
+    "moe::moe_mm",
+    "(Tensor input, Tensor moe_matrix, Tensor token_expert_mapping, Tensor padded_token_ids_per_block, Tensor expert_block_mapping, Tensor total_padded_tokens, int topk, int padding_size) -> Tensor",
 )
 
 
 # All that's needed for torch.compile support
-@torch.library.impl(lib, "moe_mm", "Meta")
+@torch.library.impl_abstract("moe::moe_mm")
 def moe_mm_meta(
     input: torch.Tensor,
     moe_matrix: torch.Tensor,
@@ -116,7 +116,7 @@ def moe_mm_meta(
     return torch.empty((M, A, N), device=input.device, dtype=input.dtype)
 
 
-@torch.library.impl(lib, "moe_mm", "CUDA")
+@torch.library.impl("moe::moe_mm", "CUDA")
 def moe_mm(
     input: torch.Tensor,
     moe_matrix: torch.Tensor,
@@ -199,7 +199,7 @@ def moe_mm(
     return output
 
 
-@torch.library.impl(lib, "moe_mm", "CPU")
+@torch.library.impl("moe::moe_mm", ["CPU", "MPS"])
 def moe_mm_cpu(
     input: torch.Tensor,
     moe_matrix: torch.Tensor,
