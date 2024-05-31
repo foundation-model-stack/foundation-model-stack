@@ -267,7 +267,7 @@ do_sample = [False]
 use_cache = [
     args.no_use_cache
 ]  # True/False are identical with greedy iff `torch.use_deterministic_algorithms(True)`
-# torch.cuda.profiler.start()
+torch.cuda.profiler.start()
 def trace_handler(p, output_path, extra_name=""):
     output = p.key_averages().table(sort_by="self_cuda_time_total", row_limit=30)
     print(output)
@@ -324,7 +324,6 @@ except torch.cuda.OutOfMemoryError as e:
     print(e)
 finally:
     # prof.step()
-    pass
-    # torch.cuda.profiler.stop()
+    torch.cuda.profiler.stop()
 
     # torch.cuda.memory._dump_snapshot("./fp8_memory.pickle")
