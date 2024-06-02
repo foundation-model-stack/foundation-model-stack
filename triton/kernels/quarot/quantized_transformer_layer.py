@@ -15,8 +15,8 @@ class FFNLayer(Module):
         self.activation = activation
         self.q, q_inv = self.get_rotation_and_inv(hidden_size)
         self.h, h_inv = self.get_rotation_and_inv(intermediate_size)
-        self.w_up, self.w_up_s = self.quantize((q_inv.type(torch.float32) * scaling_factor.type(torch.float32)) @ w_up.type(torch.float32))
-        self.w_gate, self.w_gate_s = self.quantize((q_inv.type(torch.float32) * scaling_factor.type(torch.float32)) @ w_gate.type(torch.float32))
+        self.w_up, self.w_up_s = self.quantize((q_inv.type(torch.float32) * scaling_factor.view(1, -1).type(torch.float32)) @ w_up.type(torch.float32))
+        self.w_gate, self.w_gate_s = self.quantize((q_inv.type(torch.float32) * scaling_factor.view(1, -1).type(torch.float32)) @ w_gate.type(torch.float32))
         self.w_down, self.w_down_s = self.quantize(h_inv.type(torch.float32) @ w_down.type(torch.float32))
 
     def forward(self, input: Tensor) -> Tensor:
@@ -81,8 +81,8 @@ def rope(pos, size, base_theta=10000.0):
         theta = pos / pow(base_theta, 2 * i / size)
         rope_m[i * 2 + 0, i * 2 + 0] = math.cos(theta)
         rope_m[i * 2 + 0, i * 2 + 1] = -math.sin(theta)
-        rope_m[i * 2 + 1, i * 2 + 0] = math.cos(theta)
-        rope_m[i * 2 + 1, i * 2 + 1] = math.sin(theta)
+        rope_m[i * 2 + 1, i * 2 + 0] = math.sin(theta)
+        rope_m[i * 2 + 1, i * 2 + 1] = math.cos(theta)
     return rope_m
 
 
@@ -91,8 +91,8 @@ class ATTNLayer(Module):
     def __init__(self, embedding_size, d_v_all, d_k_all, w_q, w_k, w_v, w_out, scaling_factor, num_heads) -> None:
         super().__init__()
         self.q, q_inv = self.get_rotation_and_inv(embedding_size)
-        self.w_q, self.w_q_s = self.quantize((q_inv.type(torch.float32) * scaling_factor.type(torch.float32)) @ w_q.type(torch.float32))
-        self.w_k, self.w_k_s = self.quantize((q_inv.type(torch.float32) * scaling_factor.type(torch.float32)) @ w_k.type(torch.float32))
+        self.w_q, self.w_q_s = self.quantize((q_inv.type(torch.float32) * scaling_factor.view(1, -1).type(torch.float32)) @ w_q.type(torch.float32))
+        self.w_k, self.w_k_s = self.quantize((q_inv.type(torch.float32) * scaling_factor.view(1, -1).type(torch.float32)) @ w_k.type(torch.float32))
 
         self.d_v = d_v_all // num_heads
         self.rot_head, self.rot_head_inv = self.get_rotation_and_inv(self.d_v)
@@ -103,7 +103,7 @@ class ATTNLayer(Module):
         self.rot_head_tiled = diag_tile_block(self.rot_head, num_heads)
         self.rot_head_k_tiled = diag_tile_block(self.rot_head_k, num_heads)
         
-        self.w_v, self.w_v_s = self.quantize((q_inv.type(torch.float32) * scaling_factor.type(torch.float32)) @ w_v.type(torch.float32) @ self.rot_head_tiled.type(torch.float32))
+        self.w_v, self.w_v_s = self.quantize((q_inv.type(torch.float32) * scaling_factor.view(1, -1).type(torch.float32)) @ w_v.type(torch.float32) @ self.rot_head_tiled.type(torch.float32))
 
         self.w_out, self.w_out_s = self.quantize(self.rot_head_tiled.type(torch.float32).inverse() @ w_out.type(torch.float32))
 

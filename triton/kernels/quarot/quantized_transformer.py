@@ -8,6 +8,7 @@ from utils import print_test_results
 from safetensors.torch import load_file
 import sentencepiece as spm
 import utils
+import numpy as np
 
 num_heads = 32
 d_v = 128
@@ -41,6 +42,7 @@ class Transformer(Module):
         x = input
         for i, block in enumerate(self.blocks):
             x = block.forward(x)
+            np.savetxt(f"block_no_rope_{i:02d}_out.txt", x.numpy())
             print(f"ran layer {i}", flush=True)
         return utils.rms_norm(x, self.final_norm_weight)
 
@@ -71,6 +73,9 @@ all_test = embedding_weights[seq].type(torch.float16)
 truth_model = Transformer(weights, ATTNLayer, FFNLayer)
 test_models = [Transformer(weights, attn_type, ffn_type) for attn_type, ffn_type in zip(attn_layer_type, ffn_layer_types)]
 
+statistics = {stat : {method_name : [] for method_name in method_names} for stat in utils.stat_names}
+test_lens = []
+
 test_len = 1
 while test_len <= 32:
     test_val = all_test[:test_len]
@@ -86,8 +91,15 @@ while test_len <= 32:
     temp_std_out = sys.stdout
     with open(f"results_seq_{test_len}.txt", "w") as sys.stdout:
         for method_name, result_list in zip(method_names, results):
-            print_test_results(result_list, method_name, embedding_weights, sp)
+            stats = print_test_results(result_list, method_name, embedding_weights, sp)
+            for stat_name, value in stats.items():
+                statistics[stat_name][method_name].append((test_len, value))
         print("done")
     sys.stdout = temp_std_out
-            
+
+    test_lens.append(test_len)
     test_len *= 2
+
+import pickle
+with open("data", "wb") as f:
+    pickle.dump(statistics, f, protocol=pickle.HIGHEST_PROTOCOL)

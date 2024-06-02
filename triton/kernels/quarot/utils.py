@@ -109,27 +109,29 @@ def random_rotation_almost_hadamard(size: int, use_hardcoded, run_full_orthogona
         return m, m_inv
 
 def rms_norm(x: torch.Tensor, scaling_factor=None):
+    x = x.type(torch.float64)
     dim1 = x.shape[1]
     if scaling_factor is None:
         scaling_factor = torch.ones(dim1)
-    scaling_factor = scaling_factor.view((1, -1))
-    return x * scaling_factor * (x.square().mean(dim=1, keepdim=True) + 1e-05).rsqrt()
+    scaling_factor = scaling_factor.view(1, -1).type(torch.float64)
+    return (x * scaling_factor * (x.square().sum(dim=1, keepdim=True) / dim1 + 1e-05).rsqrt()).type(torch.float16)
 
 def unembed(x, embedding_weights, tokenizer: spm.SentencePieceProcessor):
     x_token_dots = x[-1].type(torch.float16) @ embedding_weights.T.type(torch.float16)
     token_id = torch.argmax(x_token_dots)
     return tokenizer.Decode([int(token_id)])
 
+stat_names = ["mean abs diff", "mean rel diff", "1-cossim", "max abs diff", "max rel diff", "mean sq err x10^6"]
+stat_formulas = [
+    lambda x, x_q, abs_diff, rel_diff: torch.mean(abs_diff, dim=(0, 1)),
+    lambda x, x_q, abs_diff, rel_diff: torch.mean(rel_diff, dim=(0, 1)),
+    lambda x, x_q, abs_diff, rel_diff: 1 - torch.nn.functional.cosine_similarity(x.reshape(-1), x_q.reshape(-1), dim=0),
+    lambda x, x_q, abs_diff, rel_diff: torch.max(abs_diff),
+    lambda x, x_q, abs_diff, rel_diff: torch.max(rel_diff),
+    lambda x, x_q, abs_diff, rel_diff: torch.nn.functional.mse_loss(x_q, x) * 1000000,
+]
+
 def print_test_results(results, test_name, embedding_weights, tokenizer):
-    stat_names = ["mean abs diff", "mean rel diff", "1-cossim", "max abs diff", "max rel diff", "mean sq err x10^6"]
-    stat_formulas = [
-        lambda x, x_q, abs_diff, rel_diff: torch.mean(abs_diff, dim=(0, 1)),
-        lambda x, x_q, abs_diff, rel_diff: torch.mean(rel_diff, dim=(0, 1)),
-        lambda x, x_q, abs_diff, rel_diff: 1 - torch.nn.functional.cosine_similarity(x.reshape(-1), x_q.reshape(-1), dim=0),
-        lambda x, x_q, abs_diff, rel_diff: torch.max(abs_diff),
-        lambda x, x_q, abs_diff, rel_diff: torch.max(rel_diff),
-        lambda x, x_q, abs_diff, rel_diff: torch.nn.functional.mse_loss(x_q, x) * 1000000,
-    ]
     stat_vals = [0] * len(stat_names)
     for result in results:
         x, x_q = result
@@ -143,8 +145,10 @@ def print_test_results(results, test_name, embedding_weights, tokenizer):
         stat_vals[i] /= len(results)
     print("==========================")
     print(test_name)
+    stat_dict = {}
     for stat_name, stat_val in zip(stat_names, stat_vals):
         print(f"avg {stat_name}: {float(stat_val):0.10f}")
+        stat_dict[stat_name] = stat_val
     print(f"token: {unembed(x_q, embedding_weights, tokenizer)}, correct token: {unembed(x, embedding_weights, tokenizer)}")
     print("==========================")
 
@@ -154,3 +158,5 @@ def print_test_results(results, test_name, embedding_weights, tokenizer):
     #     print(e)
 
     # assert diff_avg != torch.inf
+
+    return stat_dict
