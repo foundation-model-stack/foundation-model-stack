@@ -1,10 +1,7 @@
-import time
-
 import pytest
 import torch
-from torch.nn import functional as F
 
-import fms.triton.moe_kernel as moe_kernel
+import fms.triton.pytorch_ops as pt_ops
 
 
 def torch_moe(a: torch.Tensor, w1: torch.Tensor, topk_ids: torch.Tensor):
@@ -56,7 +53,7 @@ def test_fused_moe(
         padded_token_ids_per_block,
         expert_block_mapping,
         total_padded_tokens,
-    ) = moe_kernel.moe_align_block_size(topk_ids, padding_size, e)
+    ) = pt_ops.moe_align_block_size(topk_ids, padding_size, e)
 
     triton_out = torch.ops.moe.moe_mm(
         a,
