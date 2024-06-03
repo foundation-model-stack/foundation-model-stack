@@ -39,7 +39,8 @@ class BaseTokenizer:
     def convert_ids_to_tokens(self, ids: torch.LongTensor):
         raise NotImplementedError
 
-    def convert_tokens_to_ids(self, tokens: list[str]):
+    def convert_tokens_to_ids(self, tokens: Union[str, list[str]]):
+        """a str parameter will be interpreted as a single token"""
         raise NotImplementedError
 
     def convert_tokens_to_string(self, tokens: list[str]):
@@ -65,7 +66,7 @@ class CharTokenizer(BaseTokenizer):
     def convert_ids_to_tokens(self, ids: torch.LongTensor):
         return [chr(i) for i in ids]
 
-    def convert_tokens_to_ids(self, tokens: list[str]):
+    def convert_tokens_to_ids(self, tokens: Union[str, list[str]]):
         return [ord(t) if ord(t) < 256 else 0 for t in tokens]
 
     def convert_tokens_to_string(self, tokens: list[str]):
@@ -94,7 +95,9 @@ class _SentencePieceTokenizer(BaseTokenizer):
             ids = ids.tolist()
         return self.sp_model.id_to_piece(ids)
 
-    def convert_tokens_to_ids(self, tokens: list[str]):
+    def convert_tokens_to_ids(self, tokens: Union[str, list[str]]):
+        if isinstance(tokens, str):
+            tokens = [tokens]
         return self.sp_model.piece_to_id(tokens)
 
     def convert_tokens_to_string(self, tokens: list[str]):
@@ -121,7 +124,7 @@ class _HFTokenizer(BaseTokenizer):
     def convert_ids_to_tokens(self, ids: torch.LongTensor):
         return self.tokenizer.convert_ids_to_tokens(ids)
 
-    def convert_tokens_to_ids(self, tokens: list[str]):
+    def convert_tokens_to_ids(self, tokens: Union[str, list[str]]):
         return self.tokenizer.convert_tokens_to_ids(tokens)
 
     def convert_tokens_to_string(self, tokens: list[str]):
