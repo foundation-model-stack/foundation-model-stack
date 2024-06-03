@@ -68,6 +68,8 @@ seq = sp.encode('Hello, this is a test of predicting the next token with a set o
 assert len(seq) >= 32
 
 embedding_weights = weights[f"model.embed_tokens.weight"].type(torch.float16)
+lm_head = weights[f"lm_head.weight"].type(torch.float16)
+
 all_test = embedding_weights[seq].type(torch.float16)
 
 truth_model = Transformer(weights, ATTNLayer, FFNLayer)
@@ -78,13 +80,13 @@ test_lens = []
 
 test_len = 1
 while test_len <= 32:
-    test_val = all_test[:test_len]
+    test_val = all_test#[:test_len]
     results = [[] for _ in method_names]
     
     for i in range(0, runs_per_test):
         x = test_val
         truth = truth_model(x)
-        print(utils.unembed(truth, embedding_weights, sp))
+        print(utils.unembed(truth, lm_head, sp))
         for i, model in enumerate(test_models):
             results[i].append((truth, model(x)))
     

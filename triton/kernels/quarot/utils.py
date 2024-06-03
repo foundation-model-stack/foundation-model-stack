@@ -116,9 +116,9 @@ def rms_norm(x: torch.Tensor, scaling_factor=None):
     scaling_factor = scaling_factor.view(1, -1).type(torch.float64)
     return (x * scaling_factor * (x.square().sum(dim=1, keepdim=True) / dim1 + 1e-05).rsqrt()).type(torch.float16)
 
-def unembed(x, embedding_weights, tokenizer: spm.SentencePieceProcessor):
-    x_token_dots = x[-1].type(torch.float16) @ embedding_weights.T.type(torch.float16)
-    token_id = torch.argmax(x_token_dots)
+def unembed(x, lm_head: torch.Tensor, tokenizer: spm.SentencePieceProcessor):
+    x = x[-1].type(torch.float16) @ lm_head.T.type(torch.float16)
+    token_id = torch.argmax(x)
     return tokenizer.Decode([int(token_id)])
 
 stat_names = ["mean abs diff", "mean rel diff", "1-cossim", "max abs diff", "max rel diff", "mean sq err x10^6"]

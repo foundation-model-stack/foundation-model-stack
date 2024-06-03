@@ -78,11 +78,13 @@ class QuantizedRandRotInvTFFN(QuantizedFFNLayer):
 def rope(pos, size, base_theta=10000.0):
     rope_m = torch.zeros((size, size), dtype=torch.float16)
     for i in range(0, size // 2):
-        theta = pos / pow(base_theta, 2 * i / size)
-        rope_m[i * 2 + 0, i * 2 + 0] = math.cos(theta)
-        rope_m[i * 2 + 0, i * 2 + 1] = -math.sin(theta)
-        rope_m[i * 2 + 1, i * 2 + 0] = math.sin(theta)
-        rope_m[i * 2 + 1, i * 2 + 1] = math.cos(theta)
+        theta = torch.tensor(pos / pow(base_theta, 2 * i / size), dtype=torch.float16)
+        cos_theta = torch.cos(theta)
+        sin_theta = torch.sin(theta)
+        rope_m[i * 2 + 0, i * 2 + 0] = cos_theta
+        rope_m[i * 2 + 0, i * 2 + 1] = -sin_theta
+        rope_m[i * 2 + 1, i * 2 + 0] = sin_theta
+        rope_m[i * 2 + 1, i * 2 + 1] = cos_theta
     return rope_m
 
 
