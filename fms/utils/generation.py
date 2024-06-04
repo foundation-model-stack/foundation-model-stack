@@ -72,6 +72,7 @@ def generate(
 
     total_start = time.time()
     for i in range(max_new_tokens):
+        print(kwargs["position_ids"])
         # itl_start = time.time()
         input_ids = next_input[:, -max_seq_len:]
         if i == 0:

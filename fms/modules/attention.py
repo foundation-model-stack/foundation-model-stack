@@ -367,7 +367,7 @@ class MultiHeadAttention(nn.Module):
                     position_ids,
                     past_key_value_state,
                     use_cache,
-                    inplace=True,
+                    inplace=False,
                 )
 
         queries = queries.transpose(2, 1)  # / (self.emb_kq_per_head**(1/4))

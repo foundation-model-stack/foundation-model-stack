@@ -130,7 +130,7 @@ class LLaMABlock(nn.Module):
 
         # first we do MHA and Add&Norm
         residual = x
-        x = self.ln(x, inplace=True)
+        x = self.ln(x, inplace=False)
         x = self.attn(
             q=x,
             mask=mask,
@@ -151,7 +151,7 @@ class LLaMABlock(nn.Module):
 
         # then we do FF and Add&Norm
         residual = x
-        x = self.ff_ln(x, inplace=True)
+        x = self.ff_ln(x, inplace=False)
         x = self.ff_sub_layer(x)
         if self.config.p_dropout != 0:
             x = self.dropout(x)
