@@ -314,8 +314,8 @@ def get_model(
             checkpoint_sharding,
             initial_device,
         )
-    # elif hasattr(fms_model, "reset_parameters"):
-    #     fms_model.reset_parameters()
+    elif hasattr(fms_model, "reset_parameters"):
+        fms_model.reset_parameters()
 
     if pre_load:
         fms_model = model_wrap(fms_model)

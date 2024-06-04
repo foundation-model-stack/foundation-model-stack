@@ -32,11 +32,9 @@ try:
     )
 
     @torch.library.impl("fp8_fast::batch_decode_with_padded_kv_cache", "CUDA")
-    def flashinfer_compile(queries, keys, values):
+    def flashinfer_compile(queries: torch.Tensor, keys: torch.Tensor, values: torch.Tensor):
         B, H, S, E = queries.shape
         queries = queries.view(B, H, E).clone(memory_format=torch.contiguous_format)
-        # if USE_FP8_DECODE:
-        queries = queries.to(torch.float8_e5m2)
         # attn: b x h x ds
         attn = batch_decode_with_padded_kv_cache(
             queries,
@@ -54,9 +52,8 @@ try:
 except:
     pass
 
-USE_FLASHINFER_FP8_DECODE = True and HAS_FLASHINFER
-USE_FP8_FUSED_ATTN = True  # turn this on if testing fp8 attn kernels
-
+USE_FLASHINFER_DECODE = False and HAS_FLASHINFER
+USE_FP8_ATTENTION = False
 
 class QKV(nn.Module, metaclass=abc.ABCMeta):
     """Simple module for applying qkv in attention"""
@@ -426,7 +423,7 @@ class MultiHeadAttention(nn.Module):
             attn_mask = mask
 
         if (
-            not USE_FLASHINFER_FP8_DECODE or q_len > 1
+            not USE_FLASHINFER_DECODE or q_len > 1
         ):  # Use flash attn for prefill only
             keys_sdpa = keys_c
             values_sdpa = values_c
@@ -479,14 +476,26 @@ class MultiHeadAttention(nn.Module):
                 torch.backends.cuda.enable_math_sdp(self.previous_math)
 
         else:  # Use flashinfer for decode
+            print("running flashinfer")
             keys_fi = keys_c
             values_fi = values_c
-            if self.use_fp8_kvcache:
-                keys_fi = keys_c._data
-                values_fi = values_c._data
+            if USE_FP8_ATTENTION:
+                queries_fi = queries.to(dtype=torch.float8_e5m2)
+                if self.use_fp8_kvcache:
+                    keys_fi = keys_c._data
+                    values_fi = values_c._data
+                else:
+                    keys_fi = keys_c.to(dtype=torch.float8_e5m2)
+                    values_fi = values_c.to(dtype=torch.float8_e5m2)
+            else:
+                queries_fi = queries
+                if self.use_fp8_kvcache:
+                    keys_fi = keys_c.to_original_precision()
+                    values_fi = values_c.to_original_precision()
+                
             attn = torch.ops.fp8_fast.batch_decode_with_padded_kv_cache(
-                queries, keys_fi, values_fi
-            )
+                queries_fi, keys_fi, values_fi
+            ).to(dtype=queries.dtype)
 
         # attn: bs x seq_len x nheads*emb_v_per_head
         # attn: b x h x qlen x ds

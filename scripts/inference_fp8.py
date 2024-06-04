@@ -3,6 +3,7 @@ import itertools
 import logging
 import os
 from re import M
+import traceback
 
 import torch
 import torch._inductor.config
@@ -134,7 +135,7 @@ else:
 model = get_model(
     args.architecture,
     args.variant,
-    # model_path=args.model_path,
+    model_path=args.model_path,
     device_type=args.device_type,
     source=args.model_source,
     distributed_strategy=distr_param,
@@ -217,10 +218,10 @@ max_len = max([len(prompt) for prompt in [prompt1, prompt2]])
 # prompt2 = pad_prompt(prompt2, max_len)
 # ids = torch.stack((prompt2, prompt1), dim=0)
 
-# ids = prompt1.unsqueeze(0)
+ids = prompt1.unsqueeze(0)
 # ids = torch.randint(0, 32000, (1, 1024), device=device)
 # ids = torch.randint(0, 32000, (256, 128), device=device)
-ids = torch.randint(0, 32000, (args.batch_size, args.max_seq_len), device=device)
+# ids = torch.randint(0, 32000, (args.batch_size, args.max_seq_len), device=device)
 
 def print_result(result):
     if local_rank != 0:
@@ -257,8 +258,8 @@ def infer(use_cache, do_sample):
         do_sample=do_sample,
         max_seq_len=max_seq_len,
     )
-    #for i in range(result.shape[0]):
-    #    print_result(result[i])
+    for i in range(result.shape[0]):
+       print_result(result[i])
 
 # input("Press Enter to continue...")
 import time
@@ -274,6 +275,20 @@ def trace_handler(p, output_path, extra_name=""):
     p.export_chrome_trace(
         f"{output_path}/trace_step{str(p.step_num)}_{extra_name}.json"
     )
+class PrintingMode(torch.utils._python_dispatch.TorchDispatchMode):
+    def __torch_dispatch__(self, func, types, args=(), kwargs=None):
+        out = func(*args, **kwargs)
+        if any(s in str(func) for s in ["mm", "matmul", "_to_copy", "attention", "silu", "fp8_fast"]):
+            print(f"{func.__module__}.{func.__name__}({args}, {kwargs}) = {out}")
+            if isinstance(out, tuple):
+                debug_out = out[0]
+            else:
+                debug_out = out
+            if isinstance(out, torch.Tensor):
+                if torch.any(torch.isnan(out)):
+                    print(f"This op produced {torch.sum(torch.isnan(out))} NaNs!!")
+                    traceback.print_stack()
+        return out
 # with torch.profiler.profile(
 #         activities=[
 #             torch.profiler.ProfilerActivity.CPU,
@@ -305,6 +320,7 @@ try:
             #     #        active=1,
             #     #        repeat=1),
             #) as prof:
+            # with PrintingMode():
                 for _ in range(args.reps):
                 #for _ in [1]:
                     # input("Press Enter to continue...")

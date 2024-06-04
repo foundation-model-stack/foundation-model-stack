@@ -213,7 +213,7 @@ class LLaMA(nn.Module):
         layers = []
         for i in range(self.config.nlayers):
             block: nn.Module = LLaMABlock(
-                self.config, self.rot_emb, use_fp8_kvcache=True
+                self.config, self.rot_emb, use_fp8_kvcache=False
             )
             block = self.distributed_strategy.distribute_layer(block, i)
             layers.append(block)
