@@ -74,12 +74,11 @@ class LayerNormParameterized(nn.Module):
 
         if self.use_mean:
             x.copy_(x - x.mean(-1, keepdim=True))
-            # x = F.normalize(x, dim=-1)*math.sqrt(x.size(-1))
         xf = x
         if self.use_high_precision_pow:
             xf = x.float()
         xf.copy_(xf * torch.rsqrt(xf.pow(2).mean(-1, keepdim=True) + self.eps))
-        x.copy_(xf)
+        x = xf.type_as(x)
         if self.elementwise_scale:
             x.copy_(self.weight * x)
         if self.elementwise_shift:

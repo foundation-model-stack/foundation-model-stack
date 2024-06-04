@@ -130,7 +130,7 @@ class LLaMABlock(nn.Module):
 
         # first we do MHA and Add&Norm
         residual = x
-        x = self.ln(x, inplace=False)
+        x = self.ln(x, inplace=True)
         x = self.attn(
             q=x,
             mask=mask,
@@ -151,7 +151,7 @@ class LLaMABlock(nn.Module):
 
         # then we do FF and Add&Norm
         residual = x
-        x = self.ff_ln(x, inplace=False)
+        x = self.ff_ln(x, inplace=True)
         x = self.ff_sub_layer(x)
         if self.config.p_dropout != 0:
             x = self.dropout(x)
@@ -213,7 +213,7 @@ class LLaMA(nn.Module):
         layers = []
         for i in range(self.config.nlayers):
             block: nn.Module = LLaMABlock(
-                self.config, self.rot_emb, use_fp8_kvcache=False
+                self.config, self.rot_emb, use_fp8_kvcache=True
             )
             block = self.distributed_strategy.distribute_layer(block, i)
             layers.append(block)

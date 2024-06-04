@@ -52,8 +52,8 @@ try:
 except:
     pass
 
-USE_FLASHINFER_DECODE = False and HAS_FLASHINFER
-USE_FP8_ATTENTION = False
+USE_FLASHINFER_DECODE = True and HAS_FLASHINFER
+USE_FP8_ATTENTION = True
 
 class QKV(nn.Module, metaclass=abc.ABCMeta):
     """Simple module for applying qkv in attention"""
@@ -367,7 +367,7 @@ class MultiHeadAttention(nn.Module):
                     position_ids,
                     past_key_value_state,
                     use_cache,
-                    inplace=False,
+                    inplace=True,
                 )
 
         queries = queries.transpose(2, 1)  # / (self.emb_kq_per_head**(1/4))
@@ -476,11 +476,11 @@ class MultiHeadAttention(nn.Module):
                 torch.backends.cuda.enable_math_sdp(self.previous_math)
 
         else:  # Use flashinfer for decode
-            print("running flashinfer")
+            queries_fi = queries
             keys_fi = keys_c
             values_fi = values_c
             if USE_FP8_ATTENTION:
-                queries_fi = queries.to(dtype=torch.float8_e5m2)
+                queries_fi = queries_fi.to(dtype=torch.float8_e5m2)
                 if self.use_fp8_kvcache:
                     keys_fi = keys_c._data
                     values_fi = values_c._data
@@ -488,7 +488,6 @@ class MultiHeadAttention(nn.Module):
                     keys_fi = keys_c.to(dtype=torch.float8_e5m2)
                     values_fi = values_c.to(dtype=torch.float8_e5m2)
             else:
-                queries_fi = queries
                 if self.use_fp8_kvcache:
                     keys_fi = keys_c.to_original_precision()
                     values_fi = values_c.to_original_precision()

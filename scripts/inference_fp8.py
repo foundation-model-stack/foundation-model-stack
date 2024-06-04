@@ -161,7 +161,8 @@ if args.fp8:
         'ns':   None,
     }
     print("casting the model weights to FP8")
-    model = swap_linear_with_float8_linear(model, fp8LinearDict[args.fp8_linear_type])
+    skip_fqn_list = [f"layers.{i}.ff_sub_layer.w2" for i in [1, 30]] + ["shared.head"]
+    model = swap_linear_with_float8_linear(model, fp8LinearDict[args.fp8_linear_type], skip_fqn_list=skip_fqn_list)
 
 if args.compile:
     print("compiling model")
