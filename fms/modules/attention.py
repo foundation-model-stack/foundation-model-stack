@@ -40,10 +40,6 @@ try:
             queries_fi = queries.to(dtype=torch.float8_e4m3fn)
         queries_fi = queries_fi.view(B, H, E).clone(memory_format=torch.contiguous_format)
         # attn: b x h x ds
-        print("q", queries.shape, queries.stride(), queries.dtype, 
-              "q_fi", queries_fi.shape, queries_fi.stride(), queries_fi.dtype, 
-              "k", keys.shape, keys.stride(), keys.dtype, 
-              "v", values.shape, values.stride(), values.dtype)
         attn = batch_decode_with_padded_kv_cache(
             queries_fi,
             keys,
