@@ -32,13 +32,17 @@ try:
     )
 
     @torch.library.impl("fp8_fast::batch_decode_with_padded_kv_cache", "CUDA")
-    def flashinfer_compile(queries: torch.Tensor, keys: torch.Tensor, values: torch.Tensor):
+    def flashinfer_compile(
+        queries: torch.Tensor, keys: torch.Tensor, values: torch.Tensor
+    ):
         B, H, S, E = queries.shape
         if keys.dtype == torch.float8_e5m2:
             queries_fi = queries.to(dtype=torch.float8_e5m2)
         elif keys.dtype == torch.float8_e4m3fn:
             queries_fi = queries.to(dtype=torch.float8_e4m3fn)
-        queries_fi = queries_fi.view(B, H, E).clone(memory_format=torch.contiguous_format)
+        queries_fi = queries_fi.view(B, H, E).clone(
+            memory_format=torch.contiguous_format
+        )
         # attn: b x h x ds
         attn = batch_decode_with_padded_kv_cache(
             queries_fi,
@@ -46,12 +50,13 @@ try:
             values,
             kv_layout="HND",
         )
-        print(attn.shape, attn.stride(), attn.dtype)
         attn = attn.unsqueeze(2).to(dtype=queries.dtype)
         return attn
 
     @torch.library.impl_abstract("fp8_fast::batch_decode_with_padded_kv_cache")
-    def flashinfer_meta(queries: torch.Tensor, keys: torch.Tensor, values: torch.Tensor):
+    def flashinfer_meta(
+        queries: torch.Tensor, keys: torch.Tensor, values: torch.Tensor
+    ):
         return torch.empty_like(queries)
 
 except:
@@ -59,6 +64,7 @@ except:
 
 USE_FLASHINFER_DECODE = True and HAS_FLASHINFER
 USE_FP8_ATTENTION = True
+
 
 class QKV(nn.Module, metaclass=abc.ABCMeta):
     """Simple module for applying qkv in attention"""
@@ -382,17 +388,19 @@ class MultiHeadAttention(nn.Module):
         if self.use_fp8_kvcache:
             if use_cache and past_key_value_state is None:
                 max_fp8_value = 57344.0
-                self.fp8_kv_scale.copy_(torch.max(
+                self.fp8_kv_scale.copy_(
                     torch.max(
-                        torch.max(torch.abs(keys)) / max_fp8_value, self.fp8_kv_scale
-                    ),
-                    torch.max(
-                        torch.max(torch.abs(values)) / max_fp8_value, self.fp8_kv_scale
-                    ),
-                ))
-            keys = Float8Tensor.to_float8(
-                keys, self.fp8_kv_scale, torch.float8_e5m2
-            )
+                        torch.max(
+                            torch.max(torch.abs(keys)) / max_fp8_value,
+                            self.fp8_kv_scale,
+                        ),
+                        torch.max(
+                            torch.max(torch.abs(values)) / max_fp8_value,
+                            self.fp8_kv_scale,
+                        ),
+                    )
+                )
+            keys = Float8Tensor.to_float8(keys, self.fp8_kv_scale, torch.float8_e5m2)
             values = Float8Tensor.to_float8(
                 values, self.fp8_kv_scale, torch.float8_e5m2
             )
@@ -427,9 +435,7 @@ class MultiHeadAttention(nn.Module):
         else:
             attn_mask = mask
 
-        if (
-            not USE_FLASHINFER_DECODE or q_len > 1
-        ):  # Use flash attn for prefill only
+        if not USE_FLASHINFER_DECODE or q_len > 1:  # Use flash attn for prefill only
             keys_sdpa = keys_c
             values_sdpa = values_c
             if self.use_fp8_kvcache:
@@ -494,7 +500,7 @@ class MultiHeadAttention(nn.Module):
                 if self.use_fp8_kvcache:
                     keys_fi = keys_c.to_original_precision()
                     values_fi = values_c.to_original_precision()
-                
+
             attn = torch.ops.fp8_fast.batch_decode_with_padded_kv_cache(
                 queries, keys_fi, values_fi
             )
