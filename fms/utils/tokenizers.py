@@ -40,7 +40,10 @@ class BaseTokenizer:
         raise NotImplementedError
 
     def convert_tokens_to_ids(self, tokens: Union[str, list[str]]):
-        """a str parameter will be interpreted as a single token"""
+        """
+        for all tokenizers, a str parameter will be interpreted as a single token,
+        and its output will be a single integer that represents the id.
+        """
         raise NotImplementedError
 
     def convert_tokens_to_string(self, tokens: list[str]):
@@ -67,6 +70,9 @@ class CharTokenizer(BaseTokenizer):
         return [chr(i) for i in ids]
 
     def convert_tokens_to_ids(self, tokens: Union[str, list[str]]):
+        if isinstance(tokens, str):
+            # returning a single integer to be compatible with other tokenizers
+            return [ord(t) if ord(t) < 256 else 0 for t in tokens][0]
         return [ord(t) if ord(t) < 256 else 0 for t in tokens]
 
     def convert_tokens_to_string(self, tokens: list[str]):
@@ -96,8 +102,6 @@ class _SentencePieceTokenizer(BaseTokenizer):
         return self.sp_model.id_to_piece(ids)
 
     def convert_tokens_to_ids(self, tokens: Union[str, list[str]]):
-        if isinstance(tokens, str):
-            tokens = [tokens]
         return self.sp_model.piece_to_id(tokens)
 
     def convert_tokens_to_string(self, tokens: list[str]):

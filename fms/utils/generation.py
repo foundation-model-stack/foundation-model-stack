@@ -127,11 +127,13 @@ def truncate_after_eos(result, eos_token_id):
     Helper function to return a truncated sequence of token IDs stopping at
     (and including) the 'end of sentence' token.
     Currently only handles unbatched sequences.
+
+    Args:
+        result: tensor
+        eos_token_id: integer
     """
     if eos_token_id is None:
         return result
-    if isinstance(eos_token_id, list) and len(eos_token_id) == 1:
-        eos_token_id = eos_token_id[0]
     eos_idx = torch.where(result == eos_token_id)
     eos_idx = eos_idx[0]
     if eos_idx.shape[0] >= 1:

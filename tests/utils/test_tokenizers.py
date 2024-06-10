@@ -71,12 +71,12 @@ def test_out_of_range_ascii():
 def test_single_token():
     """
     checks if convert_tokens_to_ids handles both single strings and lists. single tokens
-    should all be converted into a list of one id.
+    should all be converted into a single integer that represents the id.
     """
     # testing character tokenizer
     char_tokenizer = get_tokenizer("char_tokenizer")
-    assert char_tokenizer.convert_tokens_to_ids("h") == [104]
-    assert char_tokenizer.convert_tokens_to_ids("e") == [101]
+    assert char_tokenizer.convert_tokens_to_ids("h") == 104
+    assert char_tokenizer.convert_tokens_to_ids("e") == 101
     assert char_tokenizer.convert_tokens_to_ids(["h", "e", "l", "l", "o"]) == [
         104,
         101,
@@ -97,13 +97,23 @@ def test_single_token():
         sp = spm.SentencePieceProcessor()
         sp.load(f"{model}.model")
         sp_tokenizer = get_tokenizer(name=f"{model}.model", style="sentencepiece")
-        assert sp_tokenizer.convert_tokens_to_ids("h") == [66]
-        assert sp_tokenizer.convert_tokens_to_ids("le") == [35]
-        assert sp_tokenizer.convert_tokens_to_ids(["h", "e", "l", "l", "o", "le"]) == [
+        assert sp_tokenizer.convert_tokens_to_ids("h") == 66
+        assert sp_tokenizer.convert_tokens_to_ids("le") == 35
+        assert sp_tokenizer.convert_tokens_to_ids(["h", "e", "l", "l", "o"]) == [
             66,
             62,
             63,
             63,
             68,
-            35,
         ]
+    # testing HuggingFace tokenizer
+    hf_tokenizer = get_tokenizer("EleutherAI/gpt-neo-125M", style="hf")
+    assert hf_tokenizer.convert_tokens_to_ids("h") == 71
+    assert hf_tokenizer.convert_tokens_to_ids("le") == 293
+    assert hf_tokenizer.convert_tokens_to_ids(["h", "e", "l", "l", "o"]) == [
+        71,
+        68,
+        75,
+        75,
+        78,
+    ]
