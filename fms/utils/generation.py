@@ -123,6 +123,7 @@ def generate(
 
 
 def truncate_after_eos(result: torch.Tensor, eos_token_id: int) -> torch.Tensor:
+    #def truncate_after_eos(result, eos_token_id):
     """
     Helper function to return a truncated sequence of token IDs stopping at
     (and including) the 'end of sentence' token.
@@ -131,8 +132,8 @@ def truncate_after_eos(result: torch.Tensor, eos_token_id: int) -> torch.Tensor:
     if eos_token_id is None:
         return result
     eos_idx = torch.where(result == eos_token_id)
-    eos_idx = eos_idx[0]
-    if eos_idx.shape[0] >= 1:
-        eos_idx = eos_idx[0].item()
-        result = result[: eos_idx + 1]
+    eos_index = eos_idx[0]
+    if eos_index.shape[0] >= 1:
+        index = eos_index[0]
+        result = result[: index + 1]
     return result
