@@ -70,9 +70,10 @@ class CharTokenizer(BaseTokenizer):
         return [chr(i) for i in ids]
 
     def convert_tokens_to_ids(self, tokens: Union[str, list[str]]):
-        if isinstance(tokens, str):
+        if isinstance(tokens, str) and len(tokens) == 1:
             # returning a single integer to be compatible with other tokenizers
-            return [ord(t) if ord(t) < 256 else 0 for t in tokens][0]
+            token_id = ord(tokens)
+            return token_id if token_id < 256 else 0
         return [ord(t) if ord(t) < 256 else 0 for t in tokens]
 
     def convert_tokens_to_string(self, tokens: list[str]):
