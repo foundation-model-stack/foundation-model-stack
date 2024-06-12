@@ -123,6 +123,7 @@ model = get_model(
     source=args.model_source,
     distributed_strategy=distr_param,
     group=dist.group.WORLD,
+    nlayers=4,
 )
 tokenizer = tokenizers.get_tokenizer(args.tokenizer)
 model.eval()
@@ -132,6 +133,7 @@ print("loading complete on rank", local_rank)
 if args.compile:
     print("compiling model")
     # compiling can make first inference pass slow
+    torch._dynamo.config.capture_dynamic_output_shape_ops = True
     model = torch.compile(model, mode=args.compile_mode)
 
 

@@ -377,48 +377,11 @@ class ConditionalFeedForward(nn.Module):
         assert self.w13.is_contiguous(), "Expert weights 1 must be contiguous"
         assert self.w2.is_contiguous(), "Expert weights 2 must be contiguous"
 
-        M, D = x.shape
-        E, N, _ = self.w13.shape
-        _, A = expert_indices.shape
-
-        #  if x.device.type == "cuda":
-        ## Triton path
-
-        if expert_indices.numel() <= E:
-            padding_size = 16
-        else:
-            padding_size = 64
-
-        (
-            padded_token_ids_per_block,
-            expert_block_mapping,
-            total_padded_tokens,
-        ) = triton_ops.moe_align_block_size(expert_indices, padding_size, E)
-
-        x1, x3 = (
-            torch.ops.moe.moe_mm(
-                x,
-                self.w13,
-                expert_indices,
-                padded_token_ids_per_block,
-                expert_block_mapping,
-                total_padded_tokens,
-                expert_indices.shape[1],
-                padding_size,
-            )
-            .view(-1, N)
-            .chunk(2, dim=1)
-        )
-        return torch.ops.moe.moe_mm(
-            F.silu(x1) * x3,
-            self.w2,
-            expert_indices,
-            padded_token_ids_per_block,
-            expert_block_mapping,
-            total_padded_tokens,
-            1,
-            padding_size,
-        )
+        w13_weights = self.w13[expert_indices] # [T, A, D, D]
+        w2_weights = self.w2[expert_indices]  # [T, A, D, D]
+        x1, x3 = torch.einsum('ti, taoi -> tao', x, w13_weights).chunk(2, 2)
+        expert_outs =  torch.einsum('tao, taio -> tai', (F.silu(x1) * x3), w2_weights)
+        return expert_outs
 
 
 class TPConditionalFeedForward(ConditionalFeedForward, TPModule):
