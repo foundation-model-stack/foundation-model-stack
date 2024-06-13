@@ -76,12 +76,13 @@ def test_single_token():
     # testing character tokenizer
     char_tokenizer = get_tokenizer("char_tokenizer")
     assert char_tokenizer.convert_tokens_to_ids("h") == 104
+    # multi-char strings should error with CharTokenizer
     with pytest.raises(RuntimeError):
         char_tokenizer.convert_tokens_to_ids("le")
-    assert char_tokenizer.convert_tokens_to_ids(["h", "e", "l", "l", "o"]) == [
+    assert char_tokenizer.convert_tokens_to_ids(["h", "e", "le", "l", "o"]) == [
         104,
         101,
-        108,
+        0,  # multi-char strings in lists should be output as 0 for the id
         108,
         111,
     ]

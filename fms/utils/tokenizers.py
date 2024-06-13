@@ -78,7 +78,7 @@ class CharTokenizer(BaseTokenizer):
                 )
             token_id = ord(tokens)
             return token_id if token_id < 256 else 0
-        return [ord(t) if ord(t) < 256 else 0 for t in tokens]
+        return [ord(t) if len(t) == 1 and ord(t) < 256 else 0 for t in tokens]
 
     def convert_tokens_to_string(self, tokens: list[str]):
         return "".join(tokens)
