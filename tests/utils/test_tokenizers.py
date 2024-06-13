@@ -76,7 +76,8 @@ def test_single_token():
     # testing character tokenizer
     char_tokenizer = get_tokenizer("char_tokenizer")
     assert char_tokenizer.convert_tokens_to_ids("h") == 104
-    assert char_tokenizer.convert_tokens_to_ids("e") == 101
+    with pytest.raises(RuntimeError):
+        char_tokenizer.convert_tokens_to_ids("le")
     assert char_tokenizer.convert_tokens_to_ids(["h", "e", "l", "l", "o"]) == [
         104,
         101,

@@ -72,6 +72,10 @@ class CharTokenizer(BaseTokenizer):
     def convert_tokens_to_ids(self, tokens: Union[str, list[str]]):
         if isinstance(tokens, str):
             # returning a single integer to be compatible with other tokenizers
+            if len(tokens) != 1:
+                raise RuntimeError(
+                    f"Only single character str tokens can be converted using the CharTokenizer."
+                )
             token_id = ord(tokens)
             return token_id if token_id < 256 else 0
         return [ord(t) if ord(t) < 256 else 0 for t in tokens]
