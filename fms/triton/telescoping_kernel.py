@@ -403,7 +403,8 @@ def invert_mapping_gpu(
 
     # First count how many tokens go to each expert
     cnts = torch.zeros(M.shape[0], num_unique_values, dtype=M.dtype, device=M.device)
-    cnts.scatter_(1, M, 1)
+    ones = torch.ones_like(M, dtype=torch.long)
+    cnts.scatter_add_(1, M, ones)
     indices_per_value = cnts.sum(dim=0)
 
     # Then pad the amount to the block size of work
@@ -422,13 +423,6 @@ def invert_mapping_gpu(
         if M.numel() > num_unique_values
         else (M.numel() + 1) * block_size
     )
-
-    # print(M)
-    # print(cnts)
-    # print(indices_per_value)
-    # print(indices_per_value_block_padded)
-    # print(total_padded_indices)
-    # print(max_total_padded_indices)
 
     # Compute what MoE expert corresponds to each block of work
     # A block of work consists of tokens that all go to the same expert
@@ -449,8 +443,6 @@ def invert_mapping_gpu(
     value_block_mapping.scatter_add_(0, num_blocks_per_value, ones)
     value_block_mapping = value_block_mapping.cumsum(0)
 
-    #  print(value_block_mapping)
-
     # Create the mapping between token idxs in the input tensor and
     # the tokens that will go in each work block
 
@@ -468,21 +460,19 @@ def invert_mapping_gpu(
     padded_indices = padded_indices.cumsum(0)
     padded_indices_per_block = torch.cat([M.view(-1), padded_indices]).argsort()
 
-    #  print(padded_indices_per_block, padded_indices_per_block.shape)
-
     return padded_indices_per_block, value_block_mapping, total_padded_indices
 
 
 b = 1
-l = 4097
+l = 4096
 n = 8192
 h = 2
 e = 16
 c = 128
 d = 128
 
-A = torch.randn(b, l, h, e, d).cuda()
-B = torch.randn(b, n, h, d).cuda()
+A = torch.randn(b, l, h, e, d, requires_grad=True, device="cuda")
+B = torch.randn(b, n, h, d, requires_grad=True, device="cuda")
 M = torch.rand(l, c).mul(n).long().cuda()
 
 # A = torch.arange(b*l*h*e*d).div(b*l*h*e*d).view(b,l,h,e,d).cuda()
@@ -525,35 +515,31 @@ def f(A, B, M, b, l, h, d, c):
 # print(torch.allclose(O, O_fused, atol=1e-2, rtol=0))
 # print((O - O_fused).abs().max())
 
+with torch.profiler.profile(
+    activities=[
+        torch.profiler.ProfilerActivity.CUDA,
+        torch.profiler.ProfilerActivity.CPU,
+    ],
+    with_stack=True,
+) as prof:
+    Z = (
+        B.unsqueeze(-1)
+        .expand(-1, -1, -1, -1, c)
+        .gather(1, M.view(1, l, 1, 1, c).expand(b, -1, h, d, -1))
+    )
+    O = A.matmul(Z)
 
-b = 1
-l = 5
-h = 2
-e = 8
-d = 16
-n = 8
-c = 16
-A = torch.randn(b, l, h, e, d, requires_grad=True, device="cuda")
-B = torch.randn(b, n, h, d, requires_grad=True, device="cuda")
-M = torch.rand(l, c).mul(n).long().cuda()
-z_b = 2  # b//2
-z_m = 20  # d*2
+    loss = O.pow(2).sum()
+    loss.backward()
 
-Z = (
-    B.unsqueeze(-1)
-    .expand(-1, -1, -1, -1, c)
-    .gather(1, M.view(1, l, 1, 1, c).expand(b, -1, h, d, -1))
-)
-O = A.matmul(Z)
+    G = O.mul(2)
+    config = {
+        "block_size_b": 1,
+        "block_size_m": 32,
+    }
+    G2 = invoke_telescopic_bwd_kernel(A, B, M, G, config)
+prof.export_chrome_trace("./trace.json")
+torch.cuda.memory._dump_snapshot("./memory.pickle")
 
-loss = O.pow(2).sum()
-loss.backward()
-
-G = O.mul(2)
-config = {
-    "block_size_b": 1,
-    "block_size_m": 16,
-}
-G2 = invoke_telescopic_bwd_kernel(A, B, M, G, config)
-
+print(B.grad, G2)
 print(B.grad.sub(G2).abs().mean())
