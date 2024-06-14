@@ -189,9 +189,7 @@ def print_result(result):
     if local_rank != 0:
         return
     # stop at EOS token if present
-    result = generation.truncate_after_eos(
-        result, tokenizer.convert_tokens_to_ids("</s>")
-    )
+    result = generation.truncate_after_eos(result, tokenizer.eos_token_id)
     # print(result)
     # print(tokenizer.convert_ids_to_tokens(result))
     print(tokenizer.convert_tokens_to_string(tokenizer.convert_ids_to_tokens(result)))
