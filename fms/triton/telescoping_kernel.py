@@ -242,6 +242,7 @@ def telescoping_bwd_kernel(
     # Meta-parameters
     block_size_b: tl.constexpr,
     block_size_m: tl.constexpr,
+    block_size_e: tl.constexpr,
 ):
     """ """
 
@@ -251,6 +252,7 @@ def telescoping_bwd_kernel(
 
     pid_b = tl.program_id(axis=0)
     pid_m = tl.program_id(axis=1)
+    pid_e = tl.program_id(axis=2)
 
     total_padded_indices = tl.load(total_padded_indices_ptr)
 
@@ -268,62 +270,70 @@ def telescoping_bwd_kernel(
     offs_b = (pid_b * block_size_b + tl.arange(0, block_size_b)) % B
     offs_l = m_idxs // C
     offs_h = tl.arange(0, H)
-    offs_e = tl.arange(0, E)
+    # offs_e = tl.arange(0, E)
     offs_d = tl.arange(0, D)
     a_ptrs = (
         a_ptr
-        + offs_b[:, None, None, None, None] * stride_ab
-        + offs_l[None, None, :, None, None] * stride_al
-        + offs_h[None, :, None, None, None] * stride_ah
-        + offs_e[None, None, None, :, None] * stride_ae
-        + offs_d[None, None, None, None, :] * stride_ad
+        + offs_b[:, None, None, None] * stride_ab
+        + offs_l[None, None, None, :] * stride_al
+        + offs_h[None, :, None, None] * stride_ah
+        # + offs_e[None, None, None, None, :] * stride_ae
+        + pid_e * block_size_e * stride_ae
+        + offs_d[None, None, :, None] * stride_ad
     )
 
     # Get B slice
     offs_c = m_idxs % C
+    offs_pad = tl.arange(0, 16)
     b_ptrs = (
         b_ptr
         + offs_b[:, None, None, None] * stride_bb
         + offs_l[None, None, :, None] * stride_bl
         + offs_h[None, :, None, None] * stride_bh
-        + offs_e[None, None, None, :] * stride_be
+        # + offs_e[None, None, None, :, None] * stride_be
+        + pid_e * block_size_e * stride_ae
         + offs_c[None, None, :, None] * stride_bc
+        + offs_pad[None, None, None, :]
     )
 
     # Mul/add
     a = tl.reshape(
         tl.load(
             a_ptrs,
-            mask=m_idxs_mask[None, None, :, None, None],
+            mask=m_idxs_mask[None, None, None, :],
             other=0.0,
         ),
-        (block_size_b, H, E * block_size_m, D),
+        (block_size_b*H, D, block_size_m),
     )
+    # tl.static_print(b_ptrs.shape, m_idxs_mask.shape)
     b = tl.reshape(
         tl.load(
             b_ptrs,
-            mask=m_idxs_mask[None, None, :, None],
+            mask=(offs_pad[None, None, None, :] == 0) & m_idxs_mask[None, None, :, None],
             other=0.0,
         ),
-        (block_size_b, H, E * block_size_m),
+        (block_size_b*H, block_size_m, 16),
     )
     # We accumulate along the K dimension.
     # tl.device_print("a", a)
     # tl.device_print("b", b)
-    o_block = tl.sum(a * b[:, :, :, None], 2)  # b' z_h d'
+    # o_block = tl.sum(a * b[:, :, :, None], 2)  # b' z_h d'
+    o_block = tl.dot(a, b)
 
     # Write O block
     value_idx = tl.load(value_block_mapping_ptr + pid_m)
     o_ptrs = (
         o_ptr
         + value_idx * stride_on
-        + offs_b[:, None, None] * stride_ob
-        + offs_h[None, :, None] * stride_oh
-        + offs_d[None, None, :] * stride_od
+        + offs_b[:, None, None, None] * stride_ob
+        + offs_h[None, :, None, None] * stride_oh
+        + offs_d[None, None, :, None] * stride_od
+        + offs_pad
     )
     tl.atomic_add(
         o_ptrs,
-        o_block,
+        o_block.reshape(block_size_b, H, D, 16),
+        mask=(offs_pad[None, None, None, :] == 0)
     )
 
 
@@ -355,6 +365,7 @@ def invoke_telescopic_bwd_kernel(
     grid = lambda META: (
         triton.cdiv(b, META["block_size_b"]),
         triton.cdiv(padded_indices_per_block.shape[0], META["block_size_m"]),
+        triton.cdiv(e, META["block_size_e"]),
     )
 
     telescoping_bwd_kernel[grid](
@@ -535,11 +546,13 @@ with torch.profiler.profile(
     G = O.mul(2)
     config = {
         "block_size_b": 1,
-        "block_size_m": 32,
+        "block_size_m": 16,
+        "block_size_e": 1,
     }
+    torch.cuda.memory._record_memory_history(max_entries=100000)
     G2 = invoke_telescopic_bwd_kernel(A, B, M, G, config)
 prof.export_chrome_trace("./trace.json")
 torch.cuda.memory._dump_snapshot("./memory.pickle")
 
 print(B.grad, G2)
-print(B.grad.sub(G2).abs().mean())
+print(B.grad.sub(G2).abs().mean(), B.grad.sub(G2).abs().mean()/B.grad.abs().mean())
