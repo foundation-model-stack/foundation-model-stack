@@ -149,7 +149,7 @@ def telescoping_kernel(
     )
 
 
-def invoke_telescopic_kernel(
+def invoke_telescoping_kernel(
     A: torch.Tensor,
     B: torch.Tensor,
     M: torch.Tensor,
@@ -206,7 +206,215 @@ def invoke_telescopic_kernel(
 
 
 @triton.jit()
-def telescoping_bwd_kernel(
+def telescoping_bwd_a_kernel(
+    # Pointers to matrices
+    a_ptr,
+    b_ptr,
+    o_ptr,
+    m_ptr,
+    # Matrix dimensions
+    B,  # batch
+    L,  # length
+    H: tl.constexpr,  # kv heads
+    num_groups: tl.constexpr,  # n_heads / kv_heads
+    D,  # head_dim
+    N,  # buffer len
+    C,  # cache size
+    # The stride variables represent how much to increase the ptr by when moving by 1
+    # element in a particular dimension. E.g. `stride_am` is how much to increase `a_ptr`
+    # by to get the element one row down (A has M rows).
+    stride_ab,
+    stride_am,
+    stride_ak,
+    stride_bb,
+    stride_bn,
+    stride_bh,
+    stride_bc,
+    stride_ml,
+    stride_md,
+    stride_ob,
+    stride_om,
+    stride_on,
+    # Meta-parameters
+    block_size_b: tl.constexpr,
+    block_size_m: tl.constexpr,
+    block_size_n: tl.constexpr,
+    block_size_k: tl.constexpr,
+    block_size_l: tl.constexpr,
+):
+    pid_b = tl.program_id(axis=0)
+    pid = tl.program_id(axis=1)
+    pid_k = tl.program_id(axis=2)
+
+    pid_m, pid_n = col_major(
+        pid,
+        L * H * num_groups,
+        C,
+        block_size_m,
+        block_size_n,
+    )
+
+    # A matrix pointers
+    offs_k = pid_k * block_size_k + tl.arange(0, block_size_k)
+    offs_n = tl.arange(0, block_size_n)
+
+    offs_b = (pid_b * block_size_b + tl.arange(0, block_size_b)) % B
+    offs_am = (pid_m * block_size_m + tl.arange(0, block_size_m)) % (L * H * num_groups)
+    a_offs = (
+        offs_b[:, None, None] * stride_ab
+        + offs_am[None, :, None] * stride_am
+        + offs_k[None, None, :] * stride_ak
+    )
+
+    # breakpoint()
+    a_ptrs = a_ptr + a_offs
+    offs_ml = (pid_m * block_size_l + tl.arange(0, block_size_l)) // H
+
+    # offs_mk = tl.arange(0, block_size_k)
+    m_offs = offs_ml[:, None] * stride_ml + offs_k[None, :] * stride_md
+    m_ptrs = m_ptr + m_offs
+
+    # n_idxs = tl.load(m_ptrs, mask=offs_ml[:, None] < L, other=N)  # [2, 64]
+    # n_mask = tl.reshape(n_idxs < N, (1, block_size_l // H, H, block_size_k, 1))
+
+    # B matrix pointers
+    offs_bh = tl.arange(0, H)
+    b_offs = (
+        offs_b[:, None, None, None, None] * stride_bb  # Batch offsets # [64, 64]
+        + offs_bh[None, None, :, None, None] * stride_bh  # Index values
+        + (
+            pid_n * block_size_n + offs_n[None, None, None, None, :] * stride_bc
+        )  # N block
+    )
+    accumulator = tl.zeros(
+        (block_size_b * block_size_l, num_groups, block_size_n), dtype=tl.float32
+    )
+    # for k in range(0, tl.cdiv(D, block_size_k)):
+
+    # Load the next block of A and B, generate a mask by checking the K dimension.
+    a = tl.reshape(
+        tl.load(
+            a_ptrs,
+            mask=offs_k[None, None, :] < D,  # - k * block_size_k,
+            other=0.0,
+        ),
+        (block_size_b * block_size_l, num_groups, block_size_k),
+    )
+
+    # breakpoint()
+    n_idxs = tl.load(m_ptrs, mask=offs_ml[:, None] < L, other=N)  # [2, 64]
+    n_mask = tl.reshape(n_idxs < N, (1, block_size_l // H, H, block_size_k, 1))
+
+    b_ptrs = (
+        b_ptr
+        + b_offs
+        + tl.reshape(n_idxs, (1, block_size_l // H, H, block_size_k, 1)) * stride_bn
+    )  # Index values
+    b = tl.reshape(
+        tl.load(
+            b_ptrs,
+            mask=n_mask
+            & (offs_k[None, None, None, :, None] < D),  # - k * block_size_k),
+            other=0.0,
+        ),
+        (block_size_b * block_size_l, block_size_k, block_size_n),
+    )
+    # We accumulate along the K dimension.
+    accumulator = tl.dot(a, b)
+
+    # Advance the ptrs to the next K block.
+    # a_ptrs += block_size_k * stride_ak
+    # m_ptrs += block_size_k * stride_md
+
+    # -----------------------------------------------------------
+    # Write back the block of the output
+    offs_om = pid_m * block_size_m + tl.arange(0, block_size_m)
+    offs_on = pid_n * block_size_n + tl.arange(0, block_size_n)
+    o_ptrs = (
+        o_ptr
+        + offs_b[:, None, None] * stride_ob
+        + offs_om[None, :, None] * stride_om
+        + offs_on[None, None, :] * stride_on
+    )
+
+    o_mask = (offs_om[None, :, None] < L * H * num_groups) & (
+        offs_on[None, None, :] < C
+    )
+
+    # breakpoint()
+    tl.atomic_add(
+        o_ptrs,
+        tl.reshape(accumulator, (block_size_b, block_size_m, block_size_n)),
+        mask=o_mask,
+    )
+
+
+def invoke_telescoping_bwd_a_kernel(
+    A: torch.Tensor,
+    B: torch.Tensor,
+    M: torch.Tensor,
+    config: dict,
+):
+    assert A.is_contiguous()
+    assert B.is_contiguous()
+    assert M.is_contiguous()
+
+    bs, sl, h, gs, d = A.shape
+    _, n, _, cs = B.shape
+    _, _ = M.shape
+
+    assert gs * h <= config["block_size_m"]
+
+    output = torch.zeros((bs, sl, h, gs, cs), dtype=A.dtype).cuda()
+
+    grid = lambda META: (
+        triton.cdiv(bs, META["block_size_b"]),
+        triton.cdiv(sl * h * gs, META["block_size_m"])
+        * triton.cdiv(cs, META["block_size_n"]),
+        triton.cdiv(d, META["block_size_k"]),
+    )
+
+    total_blocks_bs = triton.cdiv(bs, config["block_size_b"])
+    total_blocks_m = triton.cdiv(sl * h * gs, config["block_size_m"])
+    total_blocks_n = triton.cdiv(cs, config["block_size_n"])
+
+    print(f"{total_blocks_bs=}")
+    print(f"{total_blocks_m=}")
+    print(f"{total_blocks_n=}")
+
+    block_size_l = config["block_size_m"] // gs
+    telescoping_bwd_a_kernel[grid](
+        A,
+        B,
+        output,
+        M,
+        bs,
+        sl,
+        h,
+        gs,
+        d,
+        n,
+        cs,
+        A.stride(0),
+        A.stride(3),
+        A.stride(4),
+        B.stride(0),
+        B.stride(1),
+        B.stride(2),
+        B.stride(3),
+        M.stride(0),
+        M.stride(1),
+        output.stride(0),
+        output.stride(3),
+        output.stride(4),
+        block_size_l=block_size_l,
+        **config,
+    )
+    return output
+
+
+@triton.jit()
+def telescoping_bwd_b_kernel(
     # Pointers to matrices
     a_ptr,
     b_ptr,
@@ -303,16 +511,17 @@ def telescoping_bwd_kernel(
             mask=m_idxs_mask[None, None, None, :],
             other=0.0,
         ),
-        (block_size_b*H, D, block_size_m),
+        (block_size_b * H, D, block_size_m),
     )
     # tl.static_print(b_ptrs.shape, m_idxs_mask.shape)
     b = tl.reshape(
         tl.load(
             b_ptrs,
-            mask=(offs_pad[None, None, None, :] == 0) & m_idxs_mask[None, None, :, None],
+            mask=(offs_pad[None, None, None, :] == 0)
+            & m_idxs_mask[None, None, :, None],
             other=0.0,
         ),
-        (block_size_b*H, block_size_m, 16),
+        (block_size_b * H, block_size_m, 16),
     )
     # We accumulate along the K dimension.
     # tl.device_print("a", a)
@@ -333,11 +542,11 @@ def telescoping_bwd_kernel(
     tl.atomic_add(
         o_ptrs,
         o_block.reshape(block_size_b, H, D, 16),
-        mask=(offs_pad[None, None, None, :] == 0)
+        mask=(offs_pad[None, None, None, :] == 0),
     )
 
 
-def invoke_telescopic_bwd_kernel(
+def invoke_telescoping_bwd_b_kernel(
     A: torch.Tensor,
     B: torch.Tensor,
     M: torch.Tensor,
@@ -368,7 +577,7 @@ def invoke_telescopic_bwd_kernel(
         triton.cdiv(e, META["block_size_e"]),
     )
 
-    telescoping_bwd_kernel[grid](
+    telescoping_bwd_b_kernel[grid](
         A,
         G,
         padded_indices_per_block,
@@ -533,26 +742,54 @@ with torch.profiler.profile(
     ],
     with_stack=True,
 ) as prof:
+    torch.cuda.memory._record_memory_history(max_entries=100000)
+    (
+        padded_indices_per_block,
+        value_block_mapping,
+        total_padded_indices,
+    ) = invert_mapping_gpu(M, n, 16)
+
     Z = (
         B.unsqueeze(-1)
         .expand(-1, -1, -1, -1, c)
         .gather(1, M.view(1, l, 1, 1, c).expand(b, -1, h, d, -1))
     )
     O = A.matmul(Z)
+    config = {
+        "block_size_b": 1,
+        "block_size_m": 64,
+        "block_size_n": 64,
+        "block_size_k": 64,
+    }
+    O_fused = invoke_telescoping_kernel(A, B, M, config)
 
     loss = O.pow(2).sum()
     loss.backward()
 
     G = O.mul(2)
+
+    config = {
+        "block_size_b": 1,
+        "block_size_m": 64,
+        "block_size_n": 64,
+        "block_size_k": 64,
+    }
+
+    G2 = invoke_telescoping_bwd_a_kernel(G, B, M, config)
+    # print(A.grad, G2)
+    print(
+        A.grad.sub(G2).abs().mean(), A.grad.sub(G2).abs().mean() / A.grad.abs().mean()
+    )
+
     config = {
         "block_size_b": 1,
         "block_size_m": 16,
         "block_size_e": 1,
     }
-    torch.cuda.memory._record_memory_history(max_entries=100000)
-    G2 = invoke_telescopic_bwd_kernel(A, B, M, G, config)
+
+    G2 = invoke_telescoping_bwd_b_kernel(A, B, M, G, config)
 prof.export_chrome_trace("./trace.json")
 torch.cuda.memory._dump_snapshot("./memory.pickle")
 
-print(B.grad, G2)
-print(B.grad.sub(G2).abs().mean(), B.grad.sub(G2).abs().mean()/B.grad.abs().mean())
+# print(B.grad, G2)
+print(B.grad.sub(G2).abs().mean(), B.grad.sub(G2).abs().mean() / B.grad.abs().mean())
