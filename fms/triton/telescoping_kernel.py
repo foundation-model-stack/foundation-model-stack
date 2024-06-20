@@ -683,6 +683,44 @@ def invert_mapping_gpu(
     return padded_indices_per_block, value_block_mapping, total_padded_indices
 
 
+class IndLinear(torch.autograd.Function):
+    @staticmethod
+    def forward(A,B,M):
+        config = {
+            "block_size_b": 1,
+            "block_size_m": 64,
+            "block_size_n": 64,
+            "block_size_k": 64,
+        }
+        return invoke_telescoping_kernel(A, B, M, config)
+
+    @staticmethod
+    def setup_context(ctx, inputs, output):
+        A,B,M = inputs
+        ctx.save_for_backward(A,B,M)
+
+    @staticmethod
+    def backward(ctx, G):
+        A,B,M = ctx.saved_tensors
+
+        config_a = {
+            "block_size_b": 1,
+            "block_size_m": 64,
+            "block_size_n": 64,
+            "block_size_k": 64,
+        }
+        A_grad = invoke_telescoping_bwd_a_kernel(G, B, M, config_a)
+
+        config_b = {
+            "block_size_b": 1,
+            "block_size_m": 16,
+            "block_size_e": 1,
+        }
+        B_grad = invoke_telescoping_bwd_b_kernel(A, B, M, G, config_b)
+
+        return A_grad, B_grad, None
+
+
 b = 1
 l = 4096
 n = 8192
@@ -743,53 +781,31 @@ with torch.profiler.profile(
     with_stack=True,
 ) as prof:
     torch.cuda.memory._record_memory_history(max_entries=100000)
-    (
-        padded_indices_per_block,
-        value_block_mapping,
-        total_padded_indices,
-    ) = invert_mapping_gpu(M, n, 16)
-
     Z = (
         B.unsqueeze(-1)
         .expand(-1, -1, -1, -1, c)
         .gather(1, M.view(1, l, 1, 1, c).expand(b, -1, h, d, -1))
     )
     O = A.matmul(Z)
-    config = {
-        "block_size_b": 1,
-        "block_size_m": 64,
-        "block_size_n": 64,
-        "block_size_k": 64,
-    }
-    O_fused = invoke_telescoping_kernel(A, B, M, config)
-
     loss = O.pow(2).sum()
     loss.backward()
 
-    G = O.mul(2)
+    A2 = torch.empty_like(A, requires_grad=True)
+    A2.data = A.data
+    B2 = torch.empty_like(B, requires_grad=True)
+    B2.data = B.data
+    indlinear = IndLinear.apply
+    O2 = inlinear(A2,B2,M)
+    loss2 = O2.pow(2).sum()
+    loss2.backward()
 
-    config = {
-        "block_size_b": 1,
-        "block_size_m": 64,
-        "block_size_n": 64,
-        "block_size_k": 64,
-    }
-
-    G2 = invoke_telescoping_bwd_a_kernel(G, B, M, config)
-    # print(A.grad, G2)
     print(
-        A.grad.sub(G2).abs().mean(), A.grad.sub(G2).abs().mean() / A.grad.abs().mean()
+        A.grad.sub(A2.grad).abs().mean(), A.grad.sub(A2.grad).abs().mean() / A.grad.abs().mean()
+    )
+    print(
+        B.grad.sub(B2.grad).abs().mean(), B.grad.sub(B2.grad).abs().mean() / B.grad.abs().mean()
     )
 
-    config = {
-        "block_size_b": 1,
-        "block_size_m": 16,
-        "block_size_e": 1,
-    }
-
-    G2 = invoke_telescoping_bwd_b_kernel(A, B, M, G, config)
 prof.export_chrome_trace("./trace.json")
 torch.cuda.memory._dump_snapshot("./memory.pickle")
 
-# print(B.grad, G2)
-print(B.grad.sub(G2).abs().mean(), B.grad.sub(G2).abs().mean() / B.grad.abs().mean())
