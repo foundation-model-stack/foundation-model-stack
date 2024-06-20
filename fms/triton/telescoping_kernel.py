@@ -721,6 +721,44 @@ class IndLinear(torch.autograd.Function):
         return A_grad, B_grad, None
 
 
+class IndLinearTransposed(torch.autograd.Function):
+    @staticmethod
+    def forward(A,B,M):
+        config = {
+            "block_size_b": 1,
+            "block_size_m": 64,
+            "block_size_n": 64,
+            "block_size_k": 64,
+        }
+        return invoke_telescoping_bwd_a_kernel(A, B, M, config)
+
+    @staticmethod
+    def setup_context(ctx, inputs, output):
+        A,B,M = inputs
+        ctx.save_for_backward(A,B,M)
+
+    @staticmethod
+    def backward(ctx, G):
+        A,B,M = ctx.saved_tensors
+
+        config_a = {
+            "block_size_b": 1,
+            "block_size_m": 64,
+            "block_size_n": 64,
+            "block_size_k": 64,
+        }
+        A_grad = invoke_telescoping_kernel(G, B, M, config_a)
+
+        config_b = {
+            "block_size_b": 1,
+            "block_size_m": 16,
+            "block_size_e": 1,
+        }
+        B_grad = invoke_telescoping_bwd_b_kernel(G, B, M, A, config_b)
+
+        return A_grad, B_grad, None
+
+
 b = 1
 l = 4096
 n = 8192
@@ -733,11 +771,6 @@ A = torch.randn(b, l, h, e, d, requires_grad=True, device="cuda")
 B = torch.randn(b, n, h, d, requires_grad=True, device="cuda")
 M = torch.rand(l, c).mul(n).long().cuda()
 
-# A = torch.arange(b*l*h*e*d).div(b*l*h*e*d).view(b,l,h,e,d).cuda()
-# B = torch.arange(b*n*h*d).div(b*n*h*d).view(b,n,h,d).cuda()
-# M = (torch.arange(l*c)*5%17).view(l, c).long().cuda()
-
-
 @torch.compile
 def f(A, B, M, b, l, h, d, c):
     Z = (
@@ -747,31 +780,6 @@ def f(A, B, M, b, l, h, d, c):
     )
     O = A.matmul(Z)
     return O
-
-
-# with torch.profiler.profile(
-#     activities=[
-#         torch.profiler.ProfilerActivity.CUDA,
-#         torch.profiler.ProfilerActivity.CPU,
-#     ]
-# ) as prof:
-#     torch.cuda.memory._record_memory_history(max_entries=100000)
-#     O = f(A, B, M, b, l, h, d, c)
-
-#     config = {
-#         "block_size_b": 1,
-#         "block_size_m": 64,
-#         "block_size_n": 64,
-#         "block_size_k": 64,
-#     }
-#     O_fused = invoke_telescopic_kernel(A, B, M, config)
-# prof.export_chrome_trace("./trace.json")
-# torch.cuda.memory._dump_snapshot("./memory.pickle")
-# print(invert_mapping_gpu(M, n, 64))
-# print(O.shape, O_fused.shape)
-# print(O, O_fused)
-# print(torch.allclose(O, O_fused, atol=1e-2, rtol=0))
-# print((O - O_fused).abs().max())
 
 with torch.profiler.profile(
     activities=[
@@ -809,3 +817,45 @@ with torch.profiler.profile(
 prof.export_chrome_trace("./trace.json")
 torch.cuda.memory._dump_snapshot("./memory.pickle")
 
+
+
+# Check correctness of transposed fn
+A = torch.randn(b, l, h, e, c, requires_grad=True, device="cuda")
+B = torch.randn(b, n, h, d, requires_grad=True, device="cuda")
+M = torch.rand(l, c).mul(n).long().cuda()
+
+with torch.profiler.profile(
+    activities=[
+        torch.profiler.ProfilerActivity.CUDA,
+        torch.profiler.ProfilerActivity.CPU,
+    ],
+    with_stack=True,
+) as prof:
+    torch.cuda.memory._record_memory_history(max_entries=100000)
+    Z = (
+        B.unsqueeze(-2)
+        .expand(-1, -1, -1, c, -1)
+        .gather(1, M.view(1, l, 1, c, 1).expand(b, -1, h, -1, d))
+    )
+    O = A.matmul(Z)
+    loss = O.pow(2).sum()
+    loss.backward()
+    
+    A2 = torch.empty_like(A, requires_grad=True)
+    A2.data = A.data
+    B2 = torch.empty_like(B, requires_grad=True)
+    B2.data = B.data
+    indlinear = IndLinearTransposed.apply
+    O2 = inlinear(A2,B2,M)
+    loss2 = O2.pow(2).sum()
+    loss2.backward()
+    
+    print(
+        A.grad.sub(A2.grad).abs().mean(), A.grad.sub(A2.grad).abs().mean() / A.grad.abs().mean()
+    )
+    print(
+        B.grad.sub(B2.grad).abs().mean(), B.grad.sub(B2.grad).abs().mean() / B.grad.abs().mean()
+    )
+
+prof.export_chrome_trace("./trace2.json")
+torch.cuda.memory._dump_snapshot("./memory2.pickle")
