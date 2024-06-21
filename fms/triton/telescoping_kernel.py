@@ -803,7 +803,7 @@ with torch.profiler.profile(
     B2 = torch.empty_like(B, requires_grad=True)
     B2.data = B.data
     indlinear = IndLinear.apply
-    O2 = inlinear(A2,B2,M)
+    O2 = indlinear(A2,B2,M)
     loss2 = O2.pow(2).sum()
     loss2.backward()
 
@@ -846,7 +846,7 @@ with torch.profiler.profile(
     B2 = torch.empty_like(B, requires_grad=True)
     B2.data = B.data
     indlinear = IndLinearTransposed.apply
-    O2 = inlinear(A2,B2,M)
+    O2 = indlinear(A2,B2,M)
     loss2 = O2.pow(2).sum()
     loss2.backward()
     
