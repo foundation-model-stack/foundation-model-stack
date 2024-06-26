@@ -19,8 +19,6 @@ from fms.modules.tp import TPModule
 class QKV(nn.Module, metaclass=abc.ABCMeta):
     """Simple module for applying qkv in attention"""
 
-    _is_fused = True
-
     def __init__(
         self,
         emb_dim: int,
