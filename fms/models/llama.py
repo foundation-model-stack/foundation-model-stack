@@ -1,10 +1,6 @@
-import json
 import math
-import os
 import re
-from collections import OrderedDict
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Mapping, Optional
 
 import torch
@@ -18,14 +14,14 @@ from fms.distributed.strategy import (
     UniformModelParallelStrategy,
 )
 from fms.modules.attention import MultiHeadAttention
-from fms.modules.embedding import WordEmbedding
 from fms.modules.feedforward import GatedLinearUnit
+from fms.modules.head import LinearClassificationHead
 from fms.modules.layernorm import LayerNormParameterized
 from fms.modules.positions import RotaryEmbedding
 from fms.utils import serialization
 from fms.utils.activation import str_to_activation
 from fms.utils.config import ModelConfig
-from fms.utils.tokenizers import _has_hf, get_tokenizer
+from fms.utils.tokenizers import _has_hf
 
 
 # params emb_dim heads layers lr
@@ -53,6 +49,11 @@ class LLaMAConfig(ModelConfig):
     attn_bias: bool = False
     mlp_bias: bool = False
     tie_heads: bool = False
+
+
+@dataclass
+class LLaMAForClassificationConfig(LLaMAConfig):
+    num_classes: int = 2
 
 
 class LLaMABlock(nn.Module):
@@ -161,14 +162,14 @@ class LLaMABlock(nn.Module):
             return x
 
 
-class LLaMA(nn.Module):
+class LLaMAHeadless(nn.Module):
     def __init__(
         self,
         config: Optional[LLaMAConfig] = None,
         distributed_strategy: DistributedStrategy = NoOpStrategy,
         **kwargs,
     ):
-        super(LLaMA, self).__init__()
+        super(LLaMAHeadless, self).__init__()
         if config is not None:
             self.config = config
         else:
@@ -180,32 +181,14 @@ class LLaMA(nn.Module):
         self.pad_id = self.config.pad_id
         self.max_expected_seq_len = self.config.max_expected_seq_len
 
-        shared = WordEmbedding(
-            self.config.src_vocab_size,
-            self.config.emb_dim,
-            padding_idx=self.config.pad_id,
-            abs_pos=False,
-            reversible=True,
-            tie_weights=self.config.tie_heads,
-            bias=False,
-        )
-        self.shared = self.distributed_strategy.distribute_module(shared)
+        embedding = nn.Embedding(self.config.src_vocab_size, self.config.emb_dim)
+        self.embedding = self.distributed_strategy.distribute_module(embedding)
 
         self.rot_emb = RotaryEmbedding(
             dim=self.config.emb_dim // self.config.nheads,
             ntk_scaling=self.config.ntk_scaling,
             max_seq_len=self.config.max_expected_seq_len,
         )
-        # RoPE init
-        if isinstance(self.distributed_strategy, UniformModelParallelStrategy):
-            for dev_idx in set(self.distributed_strategy.layer_to_device):
-                self.rot_emb.compute_freqs_cis(
-                    torch.device("cuda", dev_idx), self.config.max_expected_seq_len
-                )
-        else:
-            self.rot_emb.compute_freqs_cis(
-                self.shared.emb.weight.device, self.config.max_expected_seq_len
-            )
 
         layers = []
         for i in range(self.config.nlayers):
@@ -237,15 +220,29 @@ class LLaMA(nn.Module):
         return cls(config)
 
     def reset_parameters(self):
+        nn.init.trunc_normal_(
+            self.embedding.weight, mean=0.0, std=self.config.dim**-0.5
+        )
+
         # Call reset_parameters for relevant sub-layers
         for m in self.modules():
             if (
                 isinstance(m, MultiHeadAttention)
-                or isinstance(m, WordEmbedding)
                 or isinstance(m, GatedLinearUnit)
                 or isinstance(m, LayerNormParameterized)
             ):
                 m.reset_parameters()
+
+        # RoPE init
+        if isinstance(self.distributed_strategy, UniformModelParallelStrategy):
+            for dev_idx in set(self.distributed_strategy.layer_to_device):
+                self.rot_emb.compute_freqs_cis(
+                    torch.device("cuda", dev_idx), self.config.max_expected_seq_len
+                )
+        else:
+            self.rot_emb.compute_freqs_cis(
+                self.shared.emb.weight.device, self.config.max_expected_seq_len
+            )
 
     def validate_reset_parameters(self):
         # Verifies that the above self.reset_parameters() executed correctly.
@@ -268,9 +265,8 @@ class LLaMA(nn.Module):
                         assert m.weight.sum() == m.weight.numel()
                     if m.elementwise_shift:
                         assert m.bias.add(1).sum() == m.bias.numel()
-                elif isinstance(WordEmbedding):
-                    check_close(m.emb.weight)
-                    check_close(m.head.weight)
+                elif isinstance(nn.Embedding):
+                    check_close(m.weight)
                 elif isinstance(GatedLinearUnit):
                     check_close(m.w1.weight)
                     check_close(m.w2.weight)
@@ -281,9 +277,9 @@ class LLaMA(nn.Module):
                     check_close(m.value.weight)
                     check_close(m.dense.weight)
 
-    def _helper(
+    def forward(
         self,
-        x_in,
+        x,
         mask=None,
         position_ids=None,
         past_key_value_states=None,
@@ -297,8 +293,8 @@ class LLaMA(nn.Module):
         if past_key_value_states is None or len(past_key_value_states) == 0:
             past_key_value_states = [None for _ in range(len(self.layers))]
 
-        qlen = x_in.size(1)
-        klen = x_in.size(1)
+        qlen = x.size(1)
+        klen = x.size(1)
 
         # if we are using the cache, the key length needs to be extended with the past keys length
         if use_cache and past_key_value_states[0] is not None:
@@ -315,7 +311,7 @@ class LLaMA(nn.Module):
         else:
             is_causal_mask = False
 
-        x_in = self.shared(x_in)
+        x_in = self.embedding(x)
 
         # this is the output cache for all the decoder layers
         present_key_value_states = []
@@ -334,7 +330,6 @@ class LLaMA(nn.Module):
             if use_cache:
                 x_in, present_key_value_state = output
                 present_key_value_states.append(present_key_value_state)
-
             else:
                 x_in = output
 
@@ -344,6 +339,63 @@ class LLaMA(nn.Module):
             dec_out = self.dropout(dec_out)
 
         return dec_out, present_key_value_states
+
+
+class LLaMA(nn.Module):
+    def __init__(
+        self,
+        config: Optional[LLaMAConfig] = None,
+        distributed_strategy: DistributedStrategy = NoOpStrategy,
+        **kwargs,
+    ):
+        super(LLaMA, self).__init__()
+        if config is not None:
+            self.config = config
+        else:
+            self.config = LLaMAConfig()
+        self.config = self.config.updated(**kwargs)
+        self.distributed_strategy = distributed_strategy
+
+        self.base_model = LLaMAHeadless(self.config, self.distributed_strategy)
+        head = LinearClassificationHead(
+            self.config.emb_dim, self.config.src_vocab_size, bias=False
+        )
+        if self.config.tie_heads:
+            head.weight = self.base_model.embedding.weight
+        self.head = self.distributed_strategy.distribute_module(head)
+
+    def get_config(self) -> LLaMAConfig:
+        return self.config
+
+    @classmethod
+    def from_config(cls, config: LLaMAConfig) -> "LLaMA":
+        return cls(config)
+
+    def reset_parameters(self):
+        # Call reset_parameters for relevant sub-layers
+        self.head.weight.data.normal_(
+            0,
+            1 / math.sqrt(math.sqrt(self.config.emb_dim * self.config.src_vocab_size)),
+        )
+        self.base_model.reset_parameters()
+
+    def validate_reset_parameters(self):
+        # Verifies that the above self.reset_parameters() executed correctly.
+        # This may not always be the case for distributed settings with sharded tensors,
+        # such as FSDP or TP. Note that performing this check may require unsharding /
+        # re-materializing the full model on a single rank to access the underlying tensors.
+        tolerance = 1e-3
+
+        def check_close(x):
+            assert x.mean().abs() < tolerance
+            assert x.std().sub(0.02).abs() < tolerance
+
+        with torch.no_grad():
+            for p in self.parameters():
+                assert p.isnan().int().sum() == 0
+                assert p.isinf().int().sum() == 0
+            self.base_model.validate_reset_parameters()
+            check_close(self.head.weight)
 
     def forward(
         self,
@@ -355,13 +407,96 @@ class LLaMA(nn.Module):
         only_last_token=False,
         attn_algorithm=None,
     ):
-        output, cache = self._helper(
+        output, cache = self.base_model(
             x, mask, position_ids, past_key_value_states, use_cache, attn_algorithm
         )
 
         if only_last_token:
             output = output[:, -1, :]
-        preds = self.shared(output, reverse=True)
+        preds = self.head(output)
+
+        if use_cache:
+            return preds, cache
+        else:
+            return preds
+
+
+class LLaMAForClassification(nn.Module):
+    def __init__(
+        self,
+        config: Optional[LLaMAForClassificationConfig] = None,
+        distributed_strategy: DistributedStrategy = NoOpStrategy,
+        **kwargs,
+    ):
+        super(LLaMAForClassification, self).__init__()
+        if config is not None:
+            self.config = config
+        else:
+            self.config = LLaMAForClassificationConfig()
+        self.config = self.config.updated(**kwargs)
+        self.distributed_strategy = distributed_strategy
+
+        self.base_model = LLaMAHeadless(self.config, self.distributed_strategy)
+        head = LinearClassificationHead(
+            self.config.emb_dim, self.config.num_classes, bias=False
+        )
+        self.head = self.distributed_strategy.distribute_module(head)
+
+    def get_config(self) -> LLaMAForClassificationConfig:
+        return self.config
+
+    @classmethod
+    def from_config(
+        cls, config: LLaMAForClassificationConfig
+    ) -> "LLaMAForClassification":
+        return cls(config)
+
+    def reset_head(self):
+        self.head.weight.data.normal_(
+            0, 1 / math.sqrt(math.sqrt(self.config.emb_dim * self.config.num_classes))
+        )
+
+    def reset_parameters(self):
+        # Call reset_parameters for relevant sub-layers
+        self.reset_head()
+        self.base_model.reset_parameters()
+
+    def validate_reset_parameters(self):
+        # Verifies that the above self.reset_parameters() executed correctly.
+        # This may not always be the case for distributed settings with sharded tensors,
+        # such as FSDP or TP. Note that performing this check may require unsharding /
+        # re-materializing the full model on a single rank to access the underlying tensors.
+        tolerance = 1e-3
+
+        def check_close(x):
+            assert x.mean().abs() < tolerance
+            assert x.std().sub(0.02).abs() < tolerance
+
+        with torch.no_grad():
+            for p in self.parameters():
+                assert p.isnan().int().sum() == 0
+                assert p.isinf().int().sum() == 0
+            self.base_model.validate_reset_parameters()
+            check_close(self.head.weight)
+
+    def forward(
+        self,
+        x,
+        mask=None,
+        position_ids=None,
+        past_key_value_states=None,
+        use_cache=False,
+        only_last_token=False,
+        attn_algorithm=None,
+    ):
+        output, cache = self.base_model(
+            x, mask, position_ids, past_key_value_states, use_cache, attn_algorithm
+        )
+
+        if only_last_token:
+            output = output[:, -1, :]
+
+        preds = self.head(torch.mean(output, dim=1))
 
         if use_cache:
             return preds, cache
@@ -389,6 +524,43 @@ _70b_config = LLaMAConfig(
     hidden_grow_factor=(1.3 * 8 / 3),
 )
 
+_granite_3b_code_base_config = LLaMAConfig(
+    src_vocab_size=49152,
+    emb_dim=2560,
+    norm_eps=1e-5,
+    nheads=32,
+    kvheads=32,
+    nlayers=32,
+    pad_id=0,
+    hidden_grow_factor=10240 / 2560,
+    multiple_of=1,
+    activation_fn="swish",
+    p_dropout=0.1,
+    max_expected_seq_len=2048,
+    attn_bias=True,
+    mlp_bias=True,
+    tie_heads=True,
+)
+
+_granite_3b_code_base_classification_config = LLaMAForClassificationConfig(
+    src_vocab_size=49152,
+    emb_dim=2560,
+    norm_eps=1e-5,
+    nheads=32,
+    kvheads=32,
+    nlayers=32,
+    pad_id=0,
+    hidden_grow_factor=10240 / 2560,
+    multiple_of=1,
+    activation_fn="swish",
+    p_dropout=0.1,
+    max_expected_seq_len=2048,
+    attn_bias=True,
+    mlp_bias=True,
+    tie_heads=True,
+    num_classes=2,
+)
+
 _architecture_name = "llama"
 
 
@@ -399,12 +571,30 @@ def _llama_factory_factory(config):
     return factory
 
 
+def _llama_classification_factory_factory(config):
+    def factory(**kwargs):
+        return LLaMAForClassification(config, **kwargs)
+
+    return factory
+
+
 models.register_model(
     _architecture_name, "micro", _llama_factory_factory(_micro_char_config)
 )
 models.register_model(_architecture_name, "7b", _llama_factory_factory(_7b_config))
 models.register_model(_architecture_name, "13b", _llama_factory_factory(_13b_config))
 models.register_model(_architecture_name, "70b", _llama_factory_factory(_70b_config))
+models.register_model(
+    _architecture_name,
+    "ibm.granite.3b.code.base",
+    _llama_factory_factory(_granite_3b_code_base_config),
+)
+
+models.register_model(
+    "llama_classifier",
+    "ibm.granite.3b.code.base",
+    _llama_classification_factory_factory(_granite_3b_code_base_classification_config),
+)
 
 
 _convert_to_fused = lambda sd: serialization._legacy_mlp_glu_unfused_to_fused_adapter(
@@ -414,10 +604,10 @@ _convert_to_fused = lambda sd: serialization._legacy_mlp_glu_unfused_to_fused_ad
 
 def _rename_meta_weights_to_fms(orig_sd):
     replacements = [
-        (r"^tok_embeddings", "shared.emb"),
-        (r"^norm", "dec_norm"),
-        (r"^output", "shared.head"),
-        (r"^layers", "layers"),
+        (r"^tok_embeddings", "base_model.embedding"),
+        (r"^norm", "base_model.dec_norm"),
+        (r"^output", "head"),
+        (r"^layers", "base_model.layers"),
         (r"\.attention\.", ".attn."),
         (r"attn\.wq", "attn.query"),
         (r"attn\.wk", "attn.key"),
@@ -443,10 +633,10 @@ def _rename_meta_weights_to_fms(orig_sd):
 
 def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
     replacements = [
-        (r"^lm_head.weight", "shared.head.weight"),
-        (r"^model.embed_tokens.weight", "shared.emb.weight"),
-        (r"^model.norm", "dec_norm"),
-        (r"^model.layers", "layers"),
+        (r"^lm_head.weight", "head.weight"),
+        (r"^model.embed_tokens.weight", "base_model.embedding.weight"),
+        (r"^model.norm", "base_model.dec_norm"),
+        (r"^model.layers", "base_model.layers"),
         (r"self_attn\.k_proj", "attn.key"),
         (r"self_attn\.v_proj", "attn.value"),
         (r"self_attn\.q_proj", "attn.query"),
@@ -489,6 +679,7 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
 
 serialization.register_adapter("llama", "meta", _rename_meta_weights_to_fms)
 serialization.register_adapter("llama", "hf", _hf_sd_to_fms_sd)
+serialization.register_adapter("llama_classifier", "hf", _hf_sd_to_fms_sd)
 serialization.register_adapter("llama", "fms.pre0.0.6", _convert_to_fused)
 
 
@@ -533,9 +724,9 @@ def convert_hf_llama(hf_model: "LlamaForCausalLM") -> LLaMA:  # type: ignore
     hf_sd = hf_model.model.state_dict()
 
     replacements = [
-        (r"^embed_tokens.weight", "shared.emb.weight"),
-        (r"^norm", "dec_norm"),
-        (r"^layers", "layers"),
+        (r"^embed_tokens.weight", "base_model.embedding.weight"),
+        (r"^norm", "base_model.dec_norm"),
+        (r"^layers", "base_model.layers"),
         (r"self_attn\.k_proj", "attn.key"),
         (r"self_attn\.v_proj", "attn.value"),
         (r"self_attn\.q_proj", "attn.query"),
@@ -554,7 +745,7 @@ def convert_hf_llama(hf_model: "LlamaForCausalLM") -> LLaMA:  # type: ignore
         new_sd[new_name] = param
 
     model.load_state_dict(new_sd, strict=False)
-    model.shared.head.weight = hf_model.lm_head.weight
+    model.head.weight = hf_model.lm_head.weight
 
     # model.rot_emb.freqs = hf_model.model.layers[0].self_attn.rotary_emb.inv_freq
     for layer in model.layers:
