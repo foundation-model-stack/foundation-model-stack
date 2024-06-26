@@ -9,6 +9,7 @@ import numpy as np
 import torch
 from torch import distributed as dist
 from torch._dynamo import OptimizedModule
+from torch.export import export, save, load
 
 from fms import models
 from fms.utils import generation, print0, tokenizers
@@ -131,6 +132,18 @@ parser.add_argument(
 )
 parser.add_argument(
     "--skip_e2e_runs", action="store_true", help="Do not run the e2e benchmarks"
+)
+
+parser.add_argument(
+    "--export_model",
+    action="store_true",
+    help="Export the compiled model using torch.export",
+)
+parser.add_argument(
+    "--export_path",
+    type=str,
+    default="optimized_model.pt2",
+    help="Path to save the exported model",
 )
 
 args = parser.parse_args()
@@ -350,3 +363,16 @@ if not args.skip_compile_runs:
             bench_end_to_end(True, e2e_expected_cache)
         if not args.skip_nokvcache_runs:
             bench_end_to_end(False, e2e_expected_nocache)
+
+#Exporting model after compilation
+if args.export_model:
+    print("Exporting the compiled model...")
+    example_inputs = (ids,)
+    exported_program = export(model, args=example_inputs)
+    save(exported_program, args.export_path)
+    loaded_program = load(args.export_path).module()
+    
+    print("Expected input structure for the exported model:")
+    print(loaded_program.graph)
+
+    
