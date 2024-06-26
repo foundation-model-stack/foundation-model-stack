@@ -9,7 +9,7 @@ import torch._inductor.config
 from torch import distributed as dist
 
 from fms.models import get_model
-from fms.utils import generation, tokenizers
+from fms.utils import fusion, generation, tokenizers
 from fms.utils.generation import generate
 
 
@@ -56,6 +56,11 @@ parser.add_argument(
     "--no_use_cache",
     action="store_false",
     help="Disable the kv-cache (on by default)",
+)
+parser.add_argument(
+    "--unfuse_kernels",
+    action="store_true",
+    help="If set to True, this will flip any fused kernels that support the unfuse method into unfused kernels",
 )
 parser.add_argument(
     "--compile",
@@ -124,6 +129,11 @@ model = get_model(
     distributed_strategy=distr_param,
     group=dist.group.WORLD,
 )
+
+if args.unfuse_kernels:
+    print("unfusing kernels")
+    model = fusion.apply_fusion(model, fuse=False)
+
 tokenizer = tokenizers.get_tokenizer(args.tokenizer)
 model.eval()
 torch.set_grad_enabled(False)

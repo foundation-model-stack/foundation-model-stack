@@ -19,6 +19,8 @@ from fms.modules.tp import TPModule
 class QKV(nn.Module, metaclass=abc.ABCMeta):
     """Simple module for applying qkv in attention"""
 
+    _is_fused = True
+
     def __init__(
         self,
         emb_dim: int,
@@ -112,6 +114,26 @@ class UnfusedQKV(QKV):
                 if self.use_bias:
                     m.bias.data.zero_()
 
+    def fuse(self):
+        result = FusedQKV(
+            self.emb_dim,
+            self.nheads,
+            self.kvheads,
+            self.emb_kq_per_head,
+            self.emb_v_per_head,
+            self.use_bias,
+        ).to(self.query.weight.device)
+        fused_weights = torch.cat(
+            (self.query.weight, self.key.weight, self.value.weight), dim=0
+        )
+        result.qkv_fused.weight.copy_(fused_weights)
+        if self.use_bias:
+            fused_bias = torch.cat(
+                (self.query.bias, self.key.bias, self.value.bias), dim=0
+            )
+            result.qkv_fused.bias.copy_(fused_bias)
+        return result
+
     def forward(
         self, q: torch.Tensor, k: Optional[torch.Tensor], v: Optional[torch.Tensor]
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -167,6 +189,28 @@ class FusedQKV(QKV):
             sum(self.splits),
             bias=self.use_bias,
         )
+
+    def unfuse(self):
+        result = UnfusedQKV(
+            self.emb_dim,
+            self.nheads,
+            self.kvheads,
+            self.emb_kq_per_head,
+            self.emb_v_per_head,
+            self.use_bias,
+        ).to(self.qkv_fused.weight.device)
+        query, key, value = torch.split(self.qkv_fused.weight, self.splits, dim=0)
+        result.query.weight.copy_(query)
+        result.key.weight.copy_(key)
+        result.value.weight.copy_(value)
+        if self.use_bias:
+            query_bias, key_bias, value_bias = torch.split(
+                self.qkv_fused.bias, self.splits, dim=0
+            )
+            result.query.bias.copy_(query_bias)
+            result.key.bias.copy_(key_bias)
+            result.value.bias.copy_(value_bias)
+        return result
 
     def reset_parameters(self):
         nn.init.trunc_normal_(self.qkv_fused.weight, mean=0.0, std=0.02)
