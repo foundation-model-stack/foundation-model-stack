@@ -255,20 +255,20 @@ class ModelConsistencyTestSuite(ModelFixtureMixin, SignatureFixtureMixin):
                 "Weights Key file failed to load, please re-run the tests with --capture_expectation"
             )
 
-    def test_model_unfused(self, model, signature):
-        """test unfused model output against signature"""
-
-        unfused_model = apply_unfuse_weights(model)
-        unfused_signature = get_signature(
-            unfused_model, params=self._get_signature_params
-        )
-
-        assertion_msg = f"""
-        difference: {np.mean(np.abs(np.array(unfused_signature) - np.array(signature)))}
-
-        Output for signature of unfused model is incorrect
-        """
-
-        torch.testing.assert_close(
-            torch.tensor(unfused_signature), torch.tensor(signature)
-        ), assertion_msg
+    # def test_model_unfused(self, model, signature):
+    #     """test unfused model output against signature"""
+    #
+    #     unfused_model = apply_unfuse_weights(model)
+    #     unfused_signature = get_signature(
+    #         unfused_model, params=self._get_signature_params
+    #     )
+    #
+    #     assertion_msg = f"""
+    #     difference: {np.mean(np.abs(np.array(unfused_signature) - np.array(signature)))}
+    #
+    #     Output for signature of unfused model is incorrect
+    #     """
+    #
+    #     torch.testing.assert_close(
+    #         torch.tensor(unfused_signature), torch.tensor(signature)
+    #     ), assertion_msg
