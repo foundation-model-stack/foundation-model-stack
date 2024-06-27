@@ -61,6 +61,11 @@ parser.add_argument(
     help="The model variant (configuration) to benchmark. E.g. 7b, 13b, 70b.",
 )
 parser.add_argument(
+    "--model_path",
+    type=str,
+    help="Path to the directory containing LLaMa weights (.pth files sharded by tensor parallel rank, not HF weights)",
+)
+parser.add_argument(
     "--tokenizer",
     type=str,
     required=True,
@@ -100,6 +105,20 @@ parser.add_argument(
     "--distributed",
     action="store_true",
     help="This is a distributed job (multiple instances run with RANK+WORLD_SIZE)",
+)
+parser.add_argument(
+    "--distributed_strategy",
+    type=str,
+    default=None,
+    help="distributed execution mode",
+    choices=["fsdp", "hsdp", "tp", "mp"],
+)
+parser.add_argument(
+    "--checkpoint_sharding",
+    type=str,
+    default=None,
+    help="how the checkpoint files are sharded",
+    choices=["tp", "fsdp", "layer"],
 )
 parser.add_argument(
     "--skip_correctness_check",
@@ -159,7 +178,21 @@ if world_size > 1:
     torch._C._distributed_c10d._register_process_group("default", dist.group.WORLD)
 
 print("loading model")
-model = models.get_model(args.architecture, args.variant, device_type=args.device_type)
+if args.distributed:
+    distr_param = "tp"
+if args.distributed_strategy:
+    # --distributed_strategy option overrides --distributed option
+    distr_param = args.distributed_strategy
+
+model = models.get_model(
+    args.architecture,
+    args.variant,
+    model_path=args.model_path,
+    device_type=args.device_type,
+    source=args.model_source,
+    distributed_strategy=distr_param,
+    checkpoint_sharding=args.checkpoint_sharding,
+)
 tokenizer = tokenizers.get_tokenizer(args.tokenizer)
 
 model.eval()
