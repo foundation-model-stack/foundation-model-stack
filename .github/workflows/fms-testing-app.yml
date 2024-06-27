@@ -46,8 +46,9 @@ jobs:
     - name: Test with pytest
       run: |
         # Install fms from the PR, all dependencies are already
-        # installed in the virtual env
+        # installed in the virtual environment
         pip install .
+
         pytest -vv -rP tests/
 
     - name: Save Virtualenv

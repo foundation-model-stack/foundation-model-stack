@@ -1,5 +1,6 @@
 # Used to install pinned test dependencies
 # Useful for dev/test jobs caches
+numpy==1.26.3
 
 -r hf-requirements.txt
 
