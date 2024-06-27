@@ -771,6 +771,8 @@ A = torch.randn(b, l, h, e, d, requires_grad=True, device="cuda", dtype=torch.fl
 B = torch.randn(b, n, h, d, requires_grad=True, device="cuda", dtype=torch.float16)
 M = torch.rand(l, c).mul(n).long().cuda()
 
+Mp, Mv, Mt = invert_mapping_gpu(M, n, 16)
+
 
 @torch.compile
 def f(A, B, M, b, l, h, d, c):
@@ -805,7 +807,7 @@ with torch.profiler.profile(
     B2 = torch.empty_like(B, requires_grad=True)
     B2.data = B.data
     indlinear = IndLinear.apply
-    O2 = indlinear(A2, B2, M)
+    O2 = indlinear(A2, B2, M, Mp, Mv, Mt)
     loss2 = O2.pow(2).sum()
     loss2.backward()
 
@@ -826,6 +828,8 @@ torch.cuda.memory._dump_snapshot("./memory.pickle")
 A = torch.randn(b, l, h, e, c, requires_grad=True, device="cuda", dtype=torch.float16)
 B = torch.randn(b, n, h, d, requires_grad=True, device="cuda", dtype=torch.float16)
 M = torch.rand(l, c).mul(n).long().cuda()
+
+Mp, Mv, Mt = invert_mapping_gpu(M, n, 16)
 
 with torch.profiler.profile(
     activities=[
@@ -849,7 +853,7 @@ with torch.profiler.profile(
     B2 = torch.empty_like(B, requires_grad=True)
     B2.data = B.data
     indlinear = IndLinearTransposed.apply
-    O2 = indlinear(A2, B2, M)
+    O2 = indlinear(A2, B2, M, Mp, Mv, Mt)
     loss2 = O2.pow(2).sum()
     loss2.backward()
 
