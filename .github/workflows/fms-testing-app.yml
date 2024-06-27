@@ -48,7 +48,6 @@ jobs:
         # Install fms from the PR, all dependencies are already
         # installed in the virtual env
         pip install .
-        pip install numpy --upgrade
         pytest -vv -rP tests/
 
     - name: Save Virtualenv
