@@ -112,26 +112,6 @@ class UnfusedQKV(QKV):
                 if self.use_bias:
                     m.bias.data.zero_()
 
-    def fuse(self):
-        result = FusedQKV(
-            self.emb_dim,
-            self.nheads,
-            self.kvheads,
-            self.emb_kq_per_head,
-            self.emb_v_per_head,
-            self.use_bias,
-        ).to(self.query.weight.device)
-        fused_weights = torch.cat(
-            (self.query.weight, self.key.weight, self.value.weight), dim=0
-        )
-        result.qkv_fused.weight.copy_(fused_weights)
-        if self.use_bias:
-            fused_bias = torch.cat(
-                (self.query.bias, self.key.bias, self.value.bias), dim=0
-            )
-            result.qkv_fused.bias.copy_(fused_bias)
-        return result
-
     def forward(
         self, q: torch.Tensor, k: Optional[torch.Tensor], v: Optional[torch.Tensor]
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -188,7 +168,7 @@ class FusedQKV(QKV):
             bias=self.use_bias,
         )
 
-    def unfuse(self):
+    def unfuse_weights(self):
         result = UnfusedQKV(
             self.emb_dim,
             self.nheads,

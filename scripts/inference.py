@@ -132,7 +132,7 @@ model = get_model(
 
 if args.unfuse_kernels:
     print("unfusing kernels")
-    model = fusion.apply_fusion(model, fuse=False)
+    model = fusion.apply_unfuse_weights(model)
 
 tokenizer = tokenizers.get_tokenizer(args.tokenizer)
 model.eval()

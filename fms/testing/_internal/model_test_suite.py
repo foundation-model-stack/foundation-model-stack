@@ -13,7 +13,7 @@ from torch._dynamo.testing import CompileCounterWithBackend
 
 from fms.testing.comparison import get_signature
 from fms.utils.config import ModelConfig
-from fms.utils.fusion import apply_fusion
+from fms.utils.fusion import apply_unfuse_weights
 
 
 _FAILED_CONFIG_LOAD_MSG = """
@@ -255,25 +255,10 @@ class ModelConsistencyTestSuite(ModelFixtureMixin, SignatureFixtureMixin):
                 "Weights Key file failed to load, please re-run the tests with --capture_expectation"
             )
 
-    def test_model_fused(self, model, signature):
-        """test fused model output against signature"""
-        fused_model = apply_fusion(model, fuse=True)
-        fused_signature = get_signature(fused_model, params=self._get_signature_params)
-
-        assertion_msg = f"""
-        difference: {np.mean(np.abs(np.array(fused_signature) - np.array(signature)))}
-
-        Output for signature of fused model is incorrect
-        """
-
-        torch.testing.assert_close(
-            torch.tensor(fused_signature), torch.tensor(signature)
-        ), assertion_msg
-
-    def test_model_fused_unfused(self, model, signature):
+    def test_model_unfused(self, model, signature):
         """test unfused model output against signature"""
 
-        unfused_model = apply_fusion(model, fuse=False)
+        unfused_model = apply_unfuse_weights(model)
         unfused_signature = get_signature(
             unfused_model, params=self._get_signature_params
         )
