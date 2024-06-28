@@ -1,20 +1,21 @@
 import argparse
 import itertools
 import os
-from pathlib import Path
-import random
+from typing import Mapping
 
-import numpy as np
 import torch
 import torch._inductor.config
 from torch import distributed as dist
-from torch.export import export, Dim, save, load
-import torch._dynamo.config
 
+from fms import models
 from fms.models import get_model
-from fms.utils import generation, tokenizers
+from fms.models.gpt_bigcode import _gpt_bigcode_factory_factory, GPTBigCodeConfig
+from fms.models.hf import to_hf_api
+from fms.utils import generation, tokenizers, serialization
 from fms.utils.generation import generate
-
+from fms_extras.models import calico
+from fms_extras.models.hf import register_fms_models
+register_fms_models()
 
 # This example script validates the LLaMA implementation by running inference on a couple of prompts.
 #
@@ -61,9 +62,9 @@ parser.add_argument(
     help="Disable the kv-cache (on by default)",
 )
 parser.add_argument(
-    "--export",
+    "--compile",
     action="store_true",
-    help="Use torch.export to save compilation time (slow for first inference pass)",
+    help="Use torch.compile (slow for first inference pass)",
 )
 parser.add_argument(
     "--compile_mode",
@@ -93,15 +94,12 @@ if args.device_type == "cuda":
     torch.cuda.set_device(device)
 else:
     device = torch.device(args.device_type)
+print(device)
 
-torch.set_default_dtype(torch.float16)
+# torch.set_default_dtype(torch.half)
 
 # requires setting environment variable: `CUBLAS_WORKSPACE_CONFIG=:4096:8`
 if args.deterministic:
-    SEED = 42
-    random.seed(SEED)
-    torch.manual_seed(SEED)  # pytorch random seed
-    np.random.seed(SEED)  # numpy random seed
     torch.use_deterministic_algorithms(True)
 
 if args.distributed:
@@ -118,30 +116,90 @@ else:
     else:
         distr_param = None
 
-class ToyModel(torch.nn.Module):
-    def __init__(self):
-        super(ToyModel, self).__init__()
-        self.net1 = torch.nn.Embedding(32000, 4096)
-        self.net2 = torch.nn.Linear(4096, 32000)
-        self.nheads = 32
+def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
+    import re
 
-    def forward(self, x, past_key_value_states, use_cache):
-        y = self.net1(x)
-        if use_cache and past_key_value_states is None:
-            past_key_value_states = (2 * torch.ones_like(y)).view(*x.shape, self.nheads, -1)
-        pkvs_s = past_key_value_states.shape
-        y = y * past_key_value_states.view(pkvs_s[0], pkvs_s[1], pkvs_s[2]*pkvs_s[3])
-        z = self.net2(y)
-        if use_cache:
-            return z, past_key_value_states
-        return z
-        
+    replacements = [
+        ("lm_head.weight", "head.weight"),
+        (r"^transformer.wte.weight", "base_model.embedding.weight"),
+        (r"^transformer.wpe.weight", "base_model.position_embedding.weight"),
+        (r"^transformer.ln_f", "base_model.dec_norm"),
+        (r"^transformer.h", "base_model.layers"),
+        # need to do kqv manually
+        (r"attn\.c_proj", "attn.dense"),
+        (r"mlp\.c_fc", "ff_sub_layer.w1"),
+        (r"mlp\.c_proj", "ff_sub_layer.w2"),
+        (r"ln_1", "ln"),
+        (r"ln_2", "ff_ln"),
+    ]
+    qkv_weight_pattern = re.compile("transformer.h.[0-9]+.attn.c_attn.weight")
+    qkv_bias_pattern = re.compile("transformer.h.[0-9]+.attn.c_attn.bias")
 
+    new_sd = {}
+    for name, param in hf_sd.items():
+        new_name = name
+        for pattern, repl in replacements:
+            new_name = re.sub(pattern, repl, new_name)
+
+        new_sd[new_name] = param
+
+        # qkv fused
+        if bool(qkv_weight_pattern.match(name)):
+            new_sd.pop(new_name)
+
+            attn_splits = [
+                3072,
+                96,
+                96
+            ]
+
+            prefix = new_name.replace("c_attn.weight", "")
+            q, k, v = param.split(attn_splits, dim=0)
+
+            new_sd[f"{prefix}query.weight"] = q
+            new_sd[f"{prefix}key.weight"] = k
+            new_sd[f"{prefix}value.weight"] = v
+        elif bool(qkv_bias_pattern.match(name)):
+            new_sd.pop(new_name)
+
+            attn_splits = [
+                3072,
+                96,
+                96
+            ]
+
+            prefix = new_name.replace("c_attn.bias", "")
+            q, k, v = param.split(attn_splits, dim=0)
+
+            new_sd[f"{prefix}query.bias"] = q
+            new_sd[f"{prefix}key.bias"] = k
+            new_sd[f"{prefix}value.bias"] = v
+
+    return new_sd
+
+
+serialization.register_adapter("gpt_bigcode", "hf.96", _hf_sd_to_fms_sd)
+
+# class GPTBigCodeConfig(ModelConfig):
+#     # This param default is based on https://huggingface.co/bigcode/gpt_bigcode-santacoder
+#     src_vocab_size: int = 49157
+#     # This param default is based on https://huggingface.co/bigcode/gpt_bigcode-santacoder
+#     emb_dim: int = 2048
+#     nheads: int = 12
+#     nlayers: int = 12
+#     pad_id: int = 0
+#     max_expected_seq_len: int = 512
+#     hidden_grow_factor: float = 4.0
+#     activation_fn: str = "gelu-tanh"
+#     p_dropout: float = 0.0
+#     emb_dropout: float = 0.0
+#     multiquery_attn: bool = True
+#     ln_eps: float = 1e-5
 
 model = get_model(
     args.architecture,
     args.variant,
-    # model_path=args.model_path,
+    model_path=args.model_path,
     device_type=args.device_type,
     source=args.model_source,
     distributed_strategy=distr_param,
@@ -152,41 +210,17 @@ model.eval()
 torch.set_grad_enabled(False)
 print("loading complete on rank", local_rank)
 
-toy_model = ToyModel().cuda()
-
-prefill_model = model
-decode_model = model
-
-if args.export:
-    torch._inductor.config.fx_graph_cache = True
-    print("exporting and compiling model")
-    prefill_file = Path("prefill_llama.pt2")
-    decode_file = Path("decode_llama.pt2")
-    print(model.config)
-    if not prefill_file.is_file() or not decode_file.is_file():
-        seqlen = Dim("seqlen")
-        exported_prefill_model = export(
-            model,
-            (torch.randint(0, tokenizer.vocab_size(), (1, 16), device=device),),
-            {"past_key_value_states": None, "use_cache": True, },
-            dynamic_shapes={"x": {1: seqlen}, "use_cache": None, "past_key_value_states": None})
-        save(exported_prefill_model, prefill_file)
-        exported_decode_model = export(
-            model,
-            (torch.randint(0, tokenizer.vocab_size(), (1, 1), device=device),),
-            {"past_key_value_states": torch.randn((1, 16, model.config.nheads, model.config.emb_dim//model.config.nheads), device=device), "use_cache": True,},
-            dynamic_shapes={"x": {}, "use_cache": None, "past_key_value_states": {1: seqlen}})
-        save(exported_prefill_model, decode_file)
+if args.compile:
+    print("compiling model")
+    # Bug with kv-cache in PT2.1
+    torch._inductor.config.joint_graph_constant_folding = False
     # compiling can make first inference pass slow
-    loaded_prefill_model = load(prefill_file)
-    loaded_decode_model = load(decode_file)
-    prefill_model = torch.compile(loaded_prefill_model.module(), mode=args.compile_mode, backend="inductor")
-    decode_model = torch.compile(loaded_decode_model.module(), mode=args.compile_mode, backend="inductor")
+    model = torch.compile(model, mode=args.compile_mode)
 
 
 def ids_for_prompt(prompt):
     tokens = tokenizer.tokenize(prompt)
-    tokens = ["<s>"] + tokens
+    # tokens = ["<s>"] + tokens
     ids = tokenizer.convert_tokens_to_ids(tokens)
     ids = torch.tensor(ids, dtype=torch.long, device=device)
     return ids
@@ -216,11 +250,18 @@ if args.context_file is not None:
 else:
     template = "Below is an instruction that describes a task. Write a response that appropriately completes the request.\n\n### Instruction:\n{}\n\n### Response:"
 
+    # prompt1 = template.format(
+    #     "Provide a list of instructions for preparing chicken soup."
+    # )
+    # prompt1 = template.format(
+    #     "Add a boilerplate conda environment with numpy and pytorch"
+    # )
     prompt1 = template.format(
-        "Provide a list of instructions for preparing chicken soup."
+        "Write me a function in python that performs a bubble sort"
     )
     prompt2 = template.format("Explain some popular greetings in Spanish.")
 
+prompt1_str = prompt1
 prompt1 = ids_for_prompt(prompt1)
 prompt2 = ids_for_prompt(prompt2)
 
@@ -254,15 +295,16 @@ def infer(use_cache, do_sample):
     if local_rank == 0:
         print("use_cache", use_cache, ";; do_sample", do_sample)
         print("==================")
-    if model.config.ntk_scaling:
-        max_seq_len = max(max_len, model.config.max_expected_seq_len)
-    else:
-        # without ntk scaling, extending the seq length too far gives bogus results.
-        max_seq_len = model.config.max_expected_seq_len
+    # if model.config.ntk_scaling:
+    #     max_seq_len = max(max_len, model.config.max_expected_seq_len)
+    # else:
+    # without ntk scaling, extending the seq length too far gives bogus results.
+    max_seq_len = model.config.max_expected_seq_len
+
+    print(next(model.parameters()).device)
 
     result = generate(
-        prefill_model,
-        decode_model,
+        model,
         ids,
         max_new_tokens=100,
         use_cache=use_cache,
@@ -280,3 +322,11 @@ use_cache = [
 ]  # True/False are identical with greedy iff `torch.use_deterministic_algorithms(True)`
 for sample, cache in itertools.product(do_sample, use_cache):
     infer(cache, sample)
+
+# model = to_hf_api(model, bos_token_id=2, pad_token_id=2, eos_token_id=2)
+# from transformers import pipeline, AutoTokenizer
+#
+# tokenizer = AutoTokenizer.from_pretrained(args.model_path)
+#
+# gen = pipeline("text-generation", model=model, tokenizer=tokenizer, device=device)
+# print(gen(prompt1_str, max_new_tokens=100))
