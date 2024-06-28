@@ -9,7 +9,7 @@ import torch._inductor.config
 from torch import distributed as dist
 
 from fms.models import get_model
-from fms.utils import generation, tokenizers
+from fms.utils import fusion, generation, tokenizers
 from fms.utils.generation import generate
 
 
@@ -56,6 +56,11 @@ parser.add_argument(
     "--no_use_cache",
     action="store_false",
     help="Disable the kv-cache (on by default)",
+)
+parser.add_argument(
+    "--unfuse_weights",
+    action="store_true",
+    help="If set to True, this will unfuse any fused weight modules that support the unfuse_weights method",
 )
 parser.add_argument(
     "--compile",
@@ -124,6 +129,11 @@ model = get_model(
     distributed_strategy=distr_param,
     group=dist.group.WORLD,
 )
+
+if args.unfuse_weights:
+    print("unfusing weights")
+    model = fusion.apply_unfuse_weights(model)
+
 tokenizer = tokenizers.get_tokenizer(args.tokenizer)
 model.eval()
 torch.set_grad_enabled(False)
