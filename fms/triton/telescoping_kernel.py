@@ -37,6 +37,7 @@ def telescoping_kernel(
     L,  # length
     H: tl.constexpr,  # kv heads
     num_groups: tl.constexpr,  # n_heads / kv_heads
+    padded_num_groups: tl.constexpr,
     D,  # head_dim
     N,  # buffer len
     C,  # cache size
@@ -45,6 +46,7 @@ def telescoping_kernel(
     # by to get the element one row down (A has M rows).
     stride_ab,
     stride_am,
+    stride_ae,
     stride_ak,
     stride_bb,
     stride_bn,
@@ -54,6 +56,7 @@ def telescoping_kernel(
     stride_mc,
     stride_ob,
     stride_om,
+    stride_oe,
     stride_on,
     # Meta-parameters
     block_size_b: tl.constexpr,
@@ -77,11 +80,13 @@ def telescoping_kernel(
     # A matrix pointers
     offs_k = tl.arange(0, block_size_k)
     offs_b = (pid_b * block_size_b + tl.arange(0, block_size_b)) % B
-    offs_am = (pid_m * block_size_m + tl.arange(0, block_size_m)) % (L * H * num_groups)
+    offs_am = (pid_m * block_size_l + tl.arange(0, block_size_l)) % (L * H)
+    offs_ae = tl.arange(0, padded_num_groups)
     a_offs = (
-        offs_b[:, None, None] * stride_ab
-        + offs_am[None, :, None] * stride_am
-        + offs_k[None, None, :] * stride_ak
+        offs_b[:, None, None, None] * stride_ab
+        + offs_am[None, :, None, None] * stride_am
+        + offs_ae[None, None, :, None] * stride_ae
+        + offs_k[None, None, None, :] * stride_ak
     )
     a_ptrs = a_ptr + a_offs
 
@@ -109,7 +114,7 @@ def telescoping_kernel(
     # of fp32 values for higher accuracy.
     # `accumulator` will be converted back to fp16 after the loop.
     accumulator = tl.zeros(
-        (block_size_b * block_size_l, num_groups, block_size_n), dtype=tl.float32
+        (block_size_b * block_size_l, padded_num_groups, block_size_n), dtype=tl.float32
     )
 
     for k in range(0, tl.cdiv(D, block_size_k)):
@@ -117,10 +122,11 @@ def telescoping_kernel(
         a = tl.reshape(
             tl.load(
                 a_ptrs,
-                mask=offs_k[None, None, :] < D - k * block_size_k,
+                mask=(offs_k[None, None, None, :] < D - k * block_size_k)
+                & (offs_ae[None, None, :, None] < num_groups),
                 other=0.0,
             ),
-            (block_size_b * block_size_l, num_groups, block_size_k),
+            (block_size_b * block_size_l, padded_num_groups, block_size_k),
         )
         b = tl.reshape(
             tl.load(
@@ -132,7 +138,6 @@ def telescoping_kernel(
             (block_size_b * block_size_l, block_size_k, block_size_n),
         )
         # We accumulate along the K dimension.
-        # assert False, "GOTHERE"
         accumulator += tl.dot(a, b)
         # Advance the ptrs to the next K block.
         a_ptrs += block_size_k * stride_ak
@@ -140,20 +145,26 @@ def telescoping_kernel(
 
     # -----------------------------------------------------------
     # Write back the block of the output
-    offs_om = pid_m * block_size_m + tl.arange(0, block_size_m)
+    offs_om = pid_m * block_size_l + tl.arange(0, block_size_l)
+    offs_oe = tl.arange(0, padded_num_groups)
     offs_on = pid_n * block_size_n + tl.arange(0, block_size_n)
     o_ptrs = (
         o_ptr
-        + offs_b[:, None, None] * stride_ob
-        + offs_om[None, :, None] * stride_om
-        + offs_on[None, None, :] * stride_on
+        + offs_b[:, None, None, None] * stride_ob
+        + offs_om[None, :, None, None] * stride_om
+        + offs_oe[None, None, :, None] * stride_oe
+        + offs_on[None, None, None, :] * stride_on
     )
-    o_mask = (offs_om[None, :, None] < L * H * num_groups) & (
-        offs_on[None, None, :] < C
+    o_mask = (
+        (offs_om[None, :, None, None] < L * H)
+        & (offs_on[None, None, None, :] < C)
+        & (offs_ae[None, None, :, None] < num_groups)
     )
     tl.store(
         o_ptrs,
-        tl.reshape(accumulator, (block_size_b, block_size_m, block_size_n)),
+        tl.reshape(
+            accumulator, (block_size_b, block_size_l, padded_num_groups, block_size_n)
+        ),
         mask=o_mask,
     )
 
@@ -193,10 +204,12 @@ def invoke_telescoping_kernel(
         sl,
         h,
         gs,
+        max(gs, 16),
         d,
         n,
         cs,
         A.stride(0),
+        A.stride(2),
         A.stride(3),
         A.stride(4),
         B.stride(0),
@@ -206,6 +219,7 @@ def invoke_telescoping_kernel(
         M.stride(0),
         M.stride(1),
         output.stride(0),
+        output.stride(2),
         output.stride(3),
         output.stride(4),
         block_size_l=block_size_l,
@@ -226,6 +240,7 @@ def telescoping_bwd_a_kernel(
     L,  # length
     H: tl.constexpr,  # kv heads
     num_groups: tl.constexpr,  # n_heads / kv_heads
+    padded_num_groups: tl.constexpr,
     D,  # head_dim
     N,  # buffer len
     C,  # cache size
@@ -234,6 +249,7 @@ def telescoping_bwd_a_kernel(
     # by to get the element one row down (A has M rows).
     stride_ab,
     stride_am,
+    stride_ae,
     stride_ak,
     stride_bb,
     stride_bn,
@@ -243,6 +259,7 @@ def telescoping_bwd_a_kernel(
     stride_md,
     stride_ob,
     stride_om,
+    stride_oe,
     stride_on,
     # Meta-parameters
     block_size_b: tl.constexpr,
@@ -268,23 +285,20 @@ def telescoping_bwd_a_kernel(
     offs_n = tl.arange(0, block_size_n)
 
     offs_b = (pid_b * block_size_b + tl.arange(0, block_size_b)) % B
-    offs_am = (pid_m * block_size_m + tl.arange(0, block_size_m)) % (L * H * num_groups)
+    offs_am = (pid_m * block_size_l + tl.arange(0, block_size_l)) % (L * H)
+    offs_ae = tl.arange(0, padded_num_groups)
     a_offs = (
-        offs_b[:, None, None] * stride_ab
-        + offs_am[None, :, None] * stride_am
-        + offs_k[None, None, :] * stride_ak
+        offs_b[:, None, None, None] * stride_ab
+        + offs_am[None, :, None, None] * stride_am
+        + offs_ae[None, None, :, None] * stride_ae
+        + offs_k[None, None, None, :] * stride_ak
     )
 
-    # breakpoint()
     a_ptrs = a_ptr + a_offs
-    offs_ml = (pid_m * block_size_l + tl.arange(0, block_size_l)) // H
 
-    # offs_mk = tl.arange(0, block_size_k)
+    offs_ml = (pid_m * block_size_l + tl.arange(0, block_size_l)) // H
     m_offs = offs_ml[:, None] * stride_ml + offs_k[None, :] * stride_md
     m_ptrs = m_ptr + m_offs
-
-    # n_idxs = tl.load(m_ptrs, mask=offs_ml[:, None] < L, other=N)  # [2, 64]
-    # n_mask = tl.reshape(n_idxs < N, (1, block_size_l // H, H, block_size_k, 1))
 
     # B matrix pointers
     offs_bh = tl.arange(0, H)
@@ -296,7 +310,7 @@ def telescoping_bwd_a_kernel(
         )  # N block
     )
     accumulator = tl.zeros(
-        (block_size_b * block_size_l, num_groups, block_size_n), dtype=tl.float32
+        (block_size_b * block_size_l, padded_num_groups, block_size_n), dtype=tl.float32
     )
     # for k in range(0, tl.cdiv(D, block_size_k)):
 
@@ -304,13 +318,13 @@ def telescoping_bwd_a_kernel(
     a = tl.reshape(
         tl.load(
             a_ptrs,
-            mask=offs_k[None, None, :] < D,  # - k * block_size_k,
+            mask=(offs_k[None, None, None, :] < D)
+            & (offs_ae[None, None, :, None] < num_groups),
             other=0.0,
         ),
-        (block_size_b * block_size_l, num_groups, block_size_k),
+        (block_size_b * block_size_l, padded_num_groups, block_size_k),
     )
 
-    # breakpoint()
     n_idxs = tl.load(m_ptrs, mask=offs_ml[:, None] < L, other=N)  # [2, 64]
     n_mask = tl.reshape(n_idxs < N, (1, block_size_l // H, H, block_size_k, 1))
 
@@ -322,8 +336,7 @@ def telescoping_bwd_a_kernel(
     b = tl.reshape(
         tl.load(
             b_ptrs,
-            mask=n_mask
-            & (offs_k[None, None, None, :, None] < D),  # - k * block_size_k),
+            mask=n_mask & (offs_k[None, None, None, :, None] < D),
             other=0.0,
         ),
         (block_size_b * block_size_l, block_size_k, block_size_n),
@@ -331,29 +344,30 @@ def telescoping_bwd_a_kernel(
     # We accumulate along the K dimension.
     accumulator = tl.dot(a, b)
 
-    # Advance the ptrs to the next K block.
-    # a_ptrs += block_size_k * stride_ak
-    # m_ptrs += block_size_k * stride_md
-
     # -----------------------------------------------------------
     # Write back the block of the output
-    offs_om = pid_m * block_size_m + tl.arange(0, block_size_m)
+    offs_om = pid_m * block_size_l + tl.arange(0, block_size_l)
+    offs_oe = tl.arange(0, padded_num_groups)
     offs_on = pid_n * block_size_n + tl.arange(0, block_size_n)
     o_ptrs = (
         o_ptr
-        + offs_b[:, None, None] * stride_ob
-        + offs_om[None, :, None] * stride_om
-        + offs_on[None, None, :] * stride_on
+        + offs_b[:, None, None, None] * stride_ob
+        + offs_om[None, :, None, None] * stride_om
+        + offs_oe[None, None, :, None] * stride_oe
+        + offs_on[None, None, None, :] * stride_on
     )
 
-    o_mask = (offs_om[None, :, None] < L * H * num_groups) & (
-        offs_on[None, None, :] < C
+    o_mask = (
+        (offs_om[None, :, None, None] < L * H)
+        & (offs_on[None, None, None, :] < C)
+        & (offs_ae[None, None, :, None] < num_groups)
     )
 
-    # breakpoint()
     tl.atomic_add(
         o_ptrs,
-        tl.reshape(accumulator, (block_size_b, block_size_m, block_size_n)),
+        tl.reshape(
+            accumulator, (block_size_b, block_size_l, padded_num_groups, block_size_n)
+        ),
         mask=o_mask,
     )
 
@@ -401,10 +415,12 @@ def invoke_telescoping_bwd_a_kernel(
         sl,
         h,
         gs,
+        max(gs, 16),
         d,
         n,
         cs,
         A.stride(0),
+        A.stride(2),
         A.stride(3),
         A.stride(4),
         B.stride(0),
@@ -414,6 +430,7 @@ def invoke_telescoping_bwd_a_kernel(
         M.stride(0),
         M.stride(1),
         output.stride(0),
+        output.stride(2),
         output.stride(3),
         output.stride(4),
         block_size_l=block_size_l,
@@ -762,8 +779,8 @@ class IndLinearTransposed(torch.autograd.Function):
 b = 1
 l = 4096
 n = 8192
-h = 2
-e = 16
+h = 4
+e = 8
 c = 128
 d = 128
 
