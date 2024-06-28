@@ -133,9 +133,9 @@ parser.add_argument(
     "--skip_e2e_runs", action="store_true", help="Do not run the e2e benchmarks"
 )
 parser.add_argument(
-    "--unfuse_kernels",
+    "--unfuse_weights",
     action="store_true",
-    help="If set to True, this will flip any fused kernels that support the unfuse method into unfused kernels",
+    help="If set to True, this will unfuse any fused weight modules that support the unfuse_weights method",
 )
 
 args = parser.parse_args()
@@ -166,8 +166,8 @@ if world_size > 1:
 print("loading model")
 model = models.get_model(args.architecture, args.variant, device_type=args.device_type)
 
-if args.unfuse_kernels:
-    print("unfusing kernels")
+if args.unfuse_weights:
+    print("unfusing weights")
     model = fusion.apply_unfuse_weights(model)
 
 tokenizer = tokenizers.get_tokenizer(args.tokenizer)
