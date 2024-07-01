@@ -105,7 +105,7 @@ def _make_cache_contiguous(past_key_value_states):
 def generate(
     model: Union[Callable, torch.nn.Module],
     input_ids: Union[torch.Tensor, List[torch.Tensor]],
-    max_seq_len: int = 2048,
+    max_seq_len: int = 4096,
     max_new_tokens: int = 256,
     temperature: float = 1.0,
     top_k: int = 10,
