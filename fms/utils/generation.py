@@ -4,6 +4,91 @@ import torch
 import torch.nn.functional as F
 
 
+def __create_prefill_mask(
+    prompt_lengths: List[int], device: Union[str, torch.device]
+) -> torch.Tensor:
+    """Create a prefill mask based on prompt_lengths. When referring to prefill, this is typically the first iteration
+    before the kv-cache has had values stored in it for a given prompt
+
+    Args:
+        prompt_lengths: List[int]
+            list of prompt lengths
+        device: Union[str, torch.device]
+            device to put mask on
+
+    Returns:
+    torch.Tensor
+        a causal mask
+    """
+    max_tokens = max(prompt_lengths)
+
+    is_pad_list = []
+    for seq_len in prompt_lengths:
+        pads = torch.zeros(max_tokens - seq_len, dtype=torch.bool, device=device)
+        non_pads = torch.ones(seq_len, dtype=torch.bool, device=device)
+        is_pad_list.append(torch.cat((pads, non_pads)))
+    is_pad = torch.stack(is_pad_list)
+    mask = is_pad.unsqueeze(-1) == is_pad.unsqueeze(-2)
+    return mask.tril()
+
+
+def __create_decode_mask(
+    context_lengths: List[int], device: Union[str, torch.device]
+) -> torch.Tensor:
+    """create a decode mask. When referring to decode, we are referring to all subsequent steps following prefill
+    (kv-cache has already been filled)
+
+    Args:
+        context_lengths: List[int]
+            current context length of each sequence in the batch
+        device: Union[str, torch.device]
+            device to put mask on
+
+    Returns:
+    torch.Tensor
+        a decode mask
+    """
+    max_context_length = max(context_lengths)
+
+    is_not_pad_list = []
+    for seq_len in context_lengths:
+        ones = torch.ones(seq_len, dtype=torch.bool, device=device)
+        zeroes = torch.zeros(
+            max_context_length - seq_len, dtype=torch.bool, device=device
+        )
+        is_not_pad_list.append(torch.cat((zeroes, ones)))
+    is_not_pad = torch.stack(is_not_pad_list)
+    mask = is_not_pad.unsqueeze(-2)
+    return mask
+
+
+def __create_prefill_position_ids(
+    prompt_lengths: List[int], device: Union[str, torch.device]
+) -> torch.Tensor:
+    """Create the prefill position_ids based on prompt lengths. This is most important for models that utilize absolute
+    positional embeddings such as gpt_bigcode. When referring to prefill, this is typically the first iteration
+    before the kv-cache has had values stored in it for a given prompt.
+
+    Args:
+        prompt_lengths: List[int]
+            list of prompt lengths
+        device: Union[str, torch.device]
+            device to put mask on
+
+    Returns:
+    torch.Tensor
+        the position ids
+    """
+    max_len = max(prompt_lengths)
+    position_ids = []
+    for prompt_length in prompt_lengths:
+        position_ids_i = [0] * (max_len - prompt_length) + [
+            i for i in range(prompt_length)
+        ]
+        position_ids.append(position_ids_i)
+    return torch.tensor(position_ids, device=device, dtype=torch.long)
+
+
 def _make_cache_contiguous(past_key_value_states):
     # kv updates are required for torch.compile with
     # mode='reduce-overhead'
@@ -22,7 +107,7 @@ def _make_cache_contiguous(past_key_value_states):
 
 def generate(
     model: Union[Callable, torch.nn.Module],
-    input_ids: torch.Tensor,
+    input_ids: Union[torch.Tensor, List[torch.Tensor]],
     max_seq_len: int = 4096,
     max_new_tokens: int = 256,
     temperature: float = 1.0,
@@ -53,17 +138,35 @@ def generate(
         use_cache: requires that the model accept use_cache and
             past_key_value_states args in forward method.
     """
-    batched = False
     if num_beams != 1:
         raise NotImplementedError("generate() does yet not support beam search")
-    if type(input_ids) == torch.Tensor:
-        if input_ids.dim() != 1:
-            batched = True
-    else:
-        raise RuntimeError("generate() requires a tensor of token ids as the prefix")
 
-    if not batched:
+    if isinstance(input_ids, torch.Tensor) and len(input_ids.shape) == 1:
+        model_input_lengths = [input_ids.size(0)]
         input_ids = input_ids.unsqueeze(0)
+        is_batch = False
+        position_ids = None
+    else:
+        bsize = len(input_ids)
+        if isinstance(input_ids, torch.Tensor):
+            max_len = input_ids.size(1)
+            model_input_lengths = [max_len for _ in range(bsize)]
+            position_ids = None
+        else:
+            max_len = max([seq.size(0) for seq in input_ids])
+            model_input_lengths = [seq.size(0) for seq in input_ids]
+            # Setting this to 0, however if 0 is the eos, we will end up truncating the output if using truncate_after_eos
+            # once this workflow works for nested tensor, this can probably be removed
+            input_ids = torch.stack(
+                [
+                    F.pad(input_ids[i], (max_len - model_input_lengths[i], 0))
+                    for i in range(bsize)
+                ]
+            )
+            position_ids = __create_prefill_position_ids(
+                model_input_lengths, input_ids.device
+            )
+        is_batch = bsize != 1
 
     eos_found = torch.zeros(
         input_ids.shape[0], dtype=torch.bool, device=input_ids.device
@@ -74,9 +177,33 @@ def generate(
     kwargs: MutableMapping[str, Any] = dict()
     kwargs["past_key_value_states"] = None
     kwargs["use_cache"] = use_cache
+    kwargs["position_ids"] = position_ids
 
-    for _ in range(max_new_tokens):
+    for i in range(max_new_tokens):
         input_ids = next_input[:, -max_seq_len:]
+
+        # prefill
+        if i == 0:
+            kwargs["mask"] = __create_prefill_mask(
+                model_input_lengths, input_ids.device
+            )
+        # decode
+        else:
+            # add 1 for generate
+            model_input_lengths = [
+                model_input_lengths + 1 for model_input_lengths in model_input_lengths
+            ]
+            kwargs["mask"] = __create_decode_mask(model_input_lengths, input_ids.device)
+            # update the position ids
+            if kwargs["position_ids"] is not None:
+                if use_cache:
+                    kwargs["position_ids"] = kwargs["position_ids"][:, -1:] + 1
+                else:
+                    kwargs["position_ids"] = torch.cat(
+                        (kwargs["position_ids"], kwargs["position_ids"][:, -1:] + 1),
+                        dim=1,
+                    )
+
         output = model(input_ids, **kwargs)
         if use_cache:
             logits, past_key_value_states = output
@@ -117,7 +244,7 @@ def generate(
         else:
             next_input = result
 
-    if not batched:
+    if not is_batch:
         result = result[0]
     return result
 
