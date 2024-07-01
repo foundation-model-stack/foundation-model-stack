@@ -9,7 +9,7 @@ import torch._inductor.config
 from torch import distributed as dist
 
 from fms.models import get_model
-from fms.utils import generation, tokenizers
+from fms.utils import fusion, generation, tokenizers
 from fms.utils.generation import generate
 
 
@@ -58,6 +58,11 @@ parser.add_argument(
     help="Disable the kv-cache (on by default)",
 )
 parser.add_argument(
+    "--unfuse_weights",
+    action="store_true",
+    help="If set to True, this will unfuse any fused weight modules that support the unfuse_weights method",
+)
+parser.add_argument(
     "--compile",
     action="store_true",
     help="Use torch.compile (slow for first inference pass)",
@@ -96,7 +101,7 @@ if args.device_type == "cuda":
 else:
     device = torch.device(args.device_type)
 
-torch.set_default_dtype(torch.half)
+torch.set_default_dtype(torch.float16)
 
 # requires setting environment variable: `CUBLAS_WORKSPACE_CONFIG=:4096:8`
 if args.deterministic:
@@ -129,6 +134,11 @@ model = get_model(
     distributed_strategy=distr_param,
     group=dist.group.WORLD,
 )
+
+if args.unfuse_weights:
+    print("unfusing weights")
+    model = fusion.apply_unfuse_weights(model)
+
 tokenizer = tokenizers.get_tokenizer(args.tokenizer)
 model.eval()
 torch.set_grad_enabled(False)
@@ -136,8 +146,6 @@ print("loading complete on rank", local_rank)
 
 if args.compile:
     print("compiling model")
-    # Bug with kv-cache in PT2.1
-    torch._inductor.config.joint_graph_constant_folding = False
     # compiling can make first inference pass slow
     model = torch.compile(model, mode=args.compile_mode)
 
@@ -184,9 +192,7 @@ def print_result(result):
     if local_rank != 0:
         return
     # stop at EOS token if present
-    result = generation.truncate_after_eos(
-        result, tokenizer.convert_tokens_to_ids("</s>")
-    )
+    result = generation.truncate_after_eos(result, tokenizer.eos_token_id)
     # print(result)
     # print(tokenizer.convert_ids_to_tokens(result))
     print(tokenizer.convert_tokens_to_string(tokenizer.convert_ids_to_tokens(result)))

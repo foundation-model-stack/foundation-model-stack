@@ -1,4 +1,4 @@
-from typing import Any, Callable, List, MutableMapping, Union
+from typing import Any, Callable, List, MutableMapping, Optional, Union
 
 import torch
 import torch.nn.functional as F
@@ -113,6 +113,7 @@ def generate(
     num_beams: int = 1,
     use_cache: bool = False,
     contiguous_cache: bool = False,
+    eos_token_id: Optional[int] = None,
 ):
     """
     A trivial generate function that can be used for validation/testing in
@@ -163,6 +164,10 @@ def generate(
                 model_input_lengths, input_ids.device
             )
         is_batch = True
+
+    eos_found = torch.zeros(
+        input_ids.shape[0], dtype=torch.bool, device=input_ids.device
+    )
 
     result = input_ids
     next_input = input_ids
@@ -225,6 +230,12 @@ def generate(
 
         result = torch.cat((result, next_val), dim=-1)
 
+        # avoid continuing to generate if all have reached EOS
+        if eos_token_id is not None:
+            eos_found = torch.logical_or(eos_found, next_val == eos_token_id)
+            if torch.sum(eos_found) == input_ids.shape[0]:
+                break
+
         if use_cache:
             next_input = next_val
         else:
@@ -235,7 +246,9 @@ def generate(
     return result
 
 
-def truncate_after_eos(result, eos_token_id):
+def truncate_after_eos(
+    result: torch.Tensor, eos_token_id: Union[int, "Any | None"]
+) -> torch.Tensor:
     """
     Helper function to return a truncated sequence of token IDs stopping at
     (and including) the 'end of sentence' token.
@@ -243,10 +256,9 @@ def truncate_after_eos(result, eos_token_id):
     """
     if eos_token_id is None:
         return result
-
     eos_idx = torch.where(result == eos_token_id)
-    eos_idx = eos_idx[0]
-    if eos_idx.shape[0] >= 1:
-        eos_idx = eos_idx[0].item()
-        result = result[: eos_idx + 1]
+    eos_index = eos_idx[0]
+    if eos_index.shape[0] >= 1:
+        index = eos_index[0]
+        result = result[: index + 1]
     return result
