@@ -7,7 +7,8 @@ import torch.nn.functional as F
 def __create_prefill_mask(
     prompt_lengths: List[int], device: Union[str, torch.device]
 ) -> torch.Tensor:
-    """Create a prefill mask based on prompt_lengths
+    """Create a prefill mask based on prompt_lengths. When referring to prefill, this is typically the first iteration
+    before the kv-cache has had values stored in it for a given prompt
 
     Args:
         prompt_lengths: List[int]
@@ -28,13 +29,14 @@ def __create_prefill_mask(
         is_pad_list.append(torch.cat((pads, non_pads)))
     is_pad = torch.stack(is_pad_list)
     mask = is_pad.unsqueeze(-1) == is_pad.unsqueeze(-2)
-    return mask.tril(diagonal=0)
+    return mask.tril()
 
 
 def __create_decode_mask(
     context_lengths: List[int], device: Union[str, torch.device]
 ) -> torch.Tensor:
-    """create a decode mask
+    """create a decode mask. When referring to decode, we are referring to all subsequent steps following prefill
+    (kv-cache has already been filled)
 
     Args:
         context_lengths: List[int]
@@ -64,7 +66,8 @@ def __create_prefill_position_ids(
     prompt_lengths: List[int], device: Union[str, torch.device]
 ) -> torch.Tensor:
     """Create the prefill position_ids based on prompt lengths. This is most important for models that utilize absolute
-    positional embeddings such as gpt_bigcode
+    positional embeddings such as gpt_bigcode. When referring to prefill, this is typically the first iteration
+    before the kv-cache has had values stored in it for a given prompt.
 
     Args:
         prompt_lengths: List[int]
@@ -163,7 +166,7 @@ def generate(
             position_ids = __create_prefill_position_ids(
                 model_input_lengths, input_ids.device
             )
-        is_batch = True
+        is_batch = bsize != 1
 
     eos_found = torch.zeros(
         input_ids.shape[0], dtype=torch.bool, device=input_ids.device
