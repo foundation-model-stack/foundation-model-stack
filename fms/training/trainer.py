@@ -1,9 +1,9 @@
+import functools
 from contextlib import nullcontext
 from typing import List, Optional
 
 import torch
-from torch import nn
-from torch.cuda import amp
+from torch import amp, nn
 from torch.optim import Optimizer
 from torch.utils.data import DataLoader, DistributedSampler
 
@@ -18,8 +18,10 @@ def __one_step(
     loss_fn: nn.Module,
     grad_scaler: Optional[amp.GradScaler],
 ):
-    autocast = amp.autocast if grad_scaler is not None else nullcontext
-    with autocast():
+    autocast = (
+        torch.autocast(device_type="cuda") if grad_scaler is not None else nullcontext()
+    )
+    with autocast:
         output = model(input)
         loss = loss_fn(output, label)
 
@@ -92,8 +94,12 @@ def __one_epoch(
             plugin.step(epoch, step, metrics)
     if not optimized:
         __optimize(model, optimizer, grad_scaler)
+    metrics = {
+        "batch_size": batch_size,
+        "input_length": input_length,
+    }
     for plugin in plugins:
-        plugin.step(epoch, step=highest_step, end_of_epoch=True)
+        plugin.step(epoch, step=highest_step, metrics=metrics, end_of_epoch=True)
 
 
 def train(

@@ -334,7 +334,10 @@ class Checkpointer(TrainerPlugin):
         if step:
             train_dict |= {"step": step}
 
-        if self.dataset is not None:
+        if (
+            self.dataset is not None
+            and getattr(self.dataset, "state_dict", None) is not None
+        ):
             dataset_sd = self.dataset.state_dict()
             train_dict |= {"dataset": dataset_sd}
 
