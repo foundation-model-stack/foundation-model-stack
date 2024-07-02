@@ -35,8 +35,9 @@ def __create_prefill_mask(
 def __create_decode_mask(
     context_lengths: List[int], device: Union[str, torch.device]
 ) -> torch.Tensor:
-    """create a decode mask. When referring to decode, we are referring to all subsequent steps following prefill
-    (kv-cache has already been filled)
+    """create a mask to be used during a decode step. When referring to decode, we are referring to all subsequent steps
+    following prefill (kv-cache has already been filled). During the decode step, when creating a mask, we must include
+    context from the next token as well as the kv-cache.
 
     Args:
         context_lengths: List[int]
@@ -46,7 +47,7 @@ def __create_decode_mask(
 
     Returns:
     torch.Tensor
-        a decode mask
+        the 3d mask that is provided in each decode step (iteration where kv-cache is already filled).
     """
     max_context_length = max(context_lengths)
 
