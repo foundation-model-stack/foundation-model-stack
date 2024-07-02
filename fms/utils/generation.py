@@ -141,32 +141,35 @@ def generate(
     if num_beams != 1:
         raise NotImplementedError("generate() does yet not support beam search")
 
-    if isinstance(input_ids, torch.Tensor) and len(input_ids.shape) == 1:
-        model_input_lengths = [input_ids.size(0)]
-        input_ids = input_ids.unsqueeze(0)
-        is_batch = False
+    # if the inputs are a tensor, we assume they are all non-pad ids and include entire context length
+    if isinstance(input_ids, torch.Tensor):
+        is_batch = len(input_ids.shape) > 1
+        # our model requires batch dimension
+        if not is_batch:
+            input_ids = input_ids.unsqueeze(0)
+
+        max_len = input_ids.size(1)
+        model_input_lengths = [max_len for _ in range(input_ids.size(0))]
         position_ids = None
+    # if the inputs are a list, they may be made up of differently sized tensors
+    # in the case where the tensors are of different sizes, proper position ids and pads will be created
+    elif isinstance(input_ids, List):
+        is_batch = len(input_ids) > 1
+        max_len = max([seq.size(0) for seq in input_ids])
+        model_input_lengths = [seq.size(0) for seq in input_ids]
+        # Setting this to 0, however if 0 is the eos, we will end up truncating the output if using truncate_after_eos
+        # once this workflow works for nested tensor, this can probably be removed
+        input_ids = torch.stack(
+            [
+                F.pad(input_ids[i], (max_len - model_input_lengths[i], 0))
+                for i in range(len(input_ids))
+            ]
+        )
+        position_ids = __create_prefill_position_ids(
+            model_input_lengths, input_ids.device
+        )
     else:
-        bsize = len(input_ids)
-        if isinstance(input_ids, torch.Tensor):
-            max_len = input_ids.size(1)
-            model_input_lengths = [max_len for _ in range(bsize)]
-            position_ids = None
-        else:
-            max_len = max([seq.size(0) for seq in input_ids])
-            model_input_lengths = [seq.size(0) for seq in input_ids]
-            # Setting this to 0, however if 0 is the eos, we will end up truncating the output if using truncate_after_eos
-            # once this workflow works for nested tensor, this can probably be removed
-            input_ids = torch.stack(
-                [
-                    F.pad(input_ids[i], (max_len - model_input_lengths[i], 0))
-                    for i in range(bsize)
-                ]
-            )
-            position_ids = __create_prefill_position_ids(
-                model_input_lengths, input_ids.device
-            )
-        is_batch = bsize != 1
+        raise TypeError("input_ids must be one of Tensor or List")
 
     eos_found = torch.zeros(
         input_ids.shape[0], dtype=torch.bool, device=input_ids.device
