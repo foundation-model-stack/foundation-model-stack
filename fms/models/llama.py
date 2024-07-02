@@ -437,10 +437,12 @@ class LLaMAForClassification(nn.Module):
         self.distributed_strategy = distributed_strategy
 
         self.base_model = LLaMAHeadless(self.config, self.distributed_strategy)
-        head = LinearClassificationHead(
+        classification_head = LinearClassificationHead(
             self.config.emb_dim, self.config.num_classes, bias=False
         )
-        self.head = self.distributed_strategy.distribute_module(head)
+        self.classification_head = self.distributed_strategy.distribute_module(
+            classification_head
+        )
 
     def get_config(self) -> LLaMAForClassificationConfig:
         return self.config
@@ -452,7 +454,7 @@ class LLaMAForClassification(nn.Module):
         return cls(config)
 
     def reset_head(self):
-        self.head.weight.data.normal_(
+        self.classification_head.weight.data.normal_(
             0, 1 / math.sqrt(math.sqrt(self.config.emb_dim * self.config.num_classes))
         )
 
@@ -477,7 +479,7 @@ class LLaMAForClassification(nn.Module):
                 assert p.isnan().int().sum() == 0
                 assert p.isinf().int().sum() == 0
             self.base_model.validate_reset_parameters()
-            check_close(self.head.weight)
+            check_close(self.classification_head.weight)
 
     def forward(
         self,
@@ -496,7 +498,7 @@ class LLaMAForClassification(nn.Module):
         if only_last_token:
             output = output[:, -1, :]
 
-        preds = self.head(torch.mean(output, dim=1))
+        preds = self.classification_head(output[:, -1, :])
 
         if use_cache:
             return preds, cache
@@ -561,6 +563,8 @@ _granite_3b_code_base_classification_config = LLaMAForClassificationConfig(
     num_classes=2,
 )
 
+_granite_7b_base_classification_config = LLaMAForClassificationConfig(pad_id=0)
+
 _architecture_name = "llama"
 
 
@@ -594,6 +598,11 @@ models.register_model(
     "llama_classifier",
     "ibm.granite.3b.code.base",
     _llama_classification_factory_factory(_granite_3b_code_base_classification_config),
+)
+models.register_model(
+    "llama_classifier",
+    "ibm.granite.7b.base",
+    _llama_classification_factory_factory(_granite_7b_base_classification_config),
 )
 
 

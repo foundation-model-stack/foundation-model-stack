@@ -62,6 +62,9 @@ class JsonSentiment(Dataset):
         if self.bos_token_id is not None:
             input_text = [self.bos_token_id] + input_text
 
+        if self.eos_token_id is not None:
+            input_text = input_text + [self.eos_token_id]
+
         input = torch.tensor(input_text, dtype=torch.long)
 
         if self.pad_id is not None and input.shape[0] < self.max_len:

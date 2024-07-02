@@ -131,6 +131,16 @@ parser.add_argument(
     default="./checkpoints",
     help="Output directory to save trained model checkpoints",
 )
+parser.add_argument(
+    "--compile",
+    action="store_true",
+    help="Whether to compile the model and optimizer.",
+)
+parser.add_argument(
+    "--head_only",
+    action="store_true",
+    help="Whether to only tune the head or the whole model.",
+)
 
 # Training/tuning parameters
 parser.add_argument(
@@ -250,8 +260,9 @@ def main():
     )
     model.base_model.rot_emb.compute_freqs_cis(device, 512)
     model.reset_head()
-    for param in model.base_model.parameters():
-        param.requires_grad = False
+    if args.head_only:
+        for param in model.base_model.parameters():
+            param.requires_grad = False
     optimizer, dataset_sd, epoch, prev_step, cum_tokens = training_state(
         args.model_path, model, rank
     )
@@ -261,8 +272,9 @@ def main():
     )
     print0("dataset state", dataset_sd)
 
-    # model = torch.compile(model)
-    # optimizer.step = torch.compile(optimizer.step)
+    if args.compile:
+        model = torch.compile(model)
+        optimizer.step = torch.compile(optimizer.step)
 
     tokenizer = tokenizers.get_tokenizer(args.tokenizer)
 
