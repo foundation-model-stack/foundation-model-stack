@@ -7,6 +7,7 @@ import numpy as np
 import torch
 import torch._inductor.config
 from torch import distributed as dist
+from torch.export import export, save, load
 
 from fms.models import get_model
 from fms.utils import fusion, generation, tokenizers
@@ -86,6 +87,18 @@ parser.add_argument(
 )
 parser.add_argument("--context_file", type=str, default=None, help="File to summarize")
 
+parser.add_argument(
+    "--export_model",
+    action="store_true",
+    help="Export the compiled model using torch.export",
+)
+parser.add_argument(
+    "--export_path",
+    type=str,
+    default="exported_model.pt2",
+    help="Path to save the exported model",
+)
+
 args = parser.parse_args()
 
 local_rank = int(os.getenv("LOCAL_RANK", 0))
@@ -139,10 +152,6 @@ model.eval()
 torch.set_grad_enabled(False)
 print("loading complete on rank", local_rank)
 
-if args.compile:
-    print("compiling model")
-    # compiling can make first inference pass slow
-    model = torch.compile(model, mode=args.compile_mode)
 
 
 def ids_for_prompt(prompt):
@@ -194,6 +203,22 @@ max_len = max([len(prompt) for prompt in [prompt1, prompt2]])
 
 ids = prompt1.unsqueeze(0)
 
+if args.compile:
+    print("compiling model")
+    # compiling can make first inference pass slow
+    model = torch.compile(model, mode=args.compile_mode)
+
+# Export and load the model
+if args.export_model:
+    print("Exporting the compiled model...")
+    example_inputs = (ids,)
+    exported_program = export(model, args=example_inputs)
+    save(exported_program, args.export_path)
+    model = load(args.export_path).module()
+
+    print("Exported program:", model.state_dict)
+    
+    #TODO: Add code to handle serialization with and without state_dict 
 
 def print_result(result):
     if local_rank != 0:
