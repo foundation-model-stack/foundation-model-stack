@@ -1,13 +1,18 @@
+import os.path
 from typing import Union
 
 import torch
 import torch.nn as nn
+from huggingface_hub import snapshot_download
 from transformers import (
     AutoConfig,
     AutoModel,
     AutoModelForCausalLM,
     AutoModelForMaskedLM,
 )
+
+from fms.models import get_model as fms_get_model
+from fms.models import list_variants
 
 
 def register_fms_models():
@@ -130,3 +135,68 @@ def to_hf_api(model: nn.Module, **override_config_kwargs) -> "HFModelArchitectur
 
     hf_adapted_cls = _fms_to_hf_adapt_map[model_type]
     return hf_adapted_cls.from_fms_model(model, **override_config_kwargs)
+
+
+def get_model(
+    model_id_or_path: Union[str, os.PathLike], device: Union[str, torch.device] = "cpu"
+) -> nn.Module:
+    """
+    get an FMS model from a huggingface checkpoint
+
+    Parameters
+    ----------
+    model_id_or_path: Union[str, os.PathLike]
+        The huggingface hub model id or a local path. If the local path exists, the model will be loaded directly from
+        the local path, otherwise the huggingface cache will be checked. If the huggingface cache does not contain the
+        model, then the weights will be downloaded and stored into the huggingface cache
+    device: Union[str, torch.device]
+        the device to load the model weights to
+
+    Returns
+    -------
+    nn.Module
+        an fms equivalent implementation of an HF model
+    """
+    if not os.path.exists(model_id_or_path):
+        model_id_or_path = snapshot_download(repo_id=model_id_or_path)
+
+    config = AutoConfig.from_pretrained(model_id_or_path)
+
+    architecture = config.architectures[0]
+    params = {
+        "model_path": model_id_or_path,
+        "source": "hf",
+        "device_type": device.type if isinstance(device, torch.device) else device,
+    }
+
+    if architecture == "LlamaForCausalLM":
+        params["architecture"] = "llama"
+        params["attn_bias"] = getattr(config, "attention_bias", False)
+        params["mlp_bias"] = getattr(config, "mlp_bias", False)
+        params["kv_heads"] = config.num_key_value_heads
+        params["norm_eps"] = config.rms_norm_eps
+        params["multiple_of"] = 1
+        inner_dim = config.intermediate_size
+        max_expected_seq_len = config.max_position_embeddings
+    elif architecture == "GPTBigCodeForCausalLM":
+        params["architecture"] = "gpt_bigcode"
+        params["ln_eps"] = config.layer_norm_epsilon
+        params["multiquery_attn"] = config.multi_query
+        inner_dim = config.n_inner
+        max_expected_seq_len = config.n_positions
+    else:
+        raise ValueError(
+            "FMS model implementations currently only support LlamaForCausalLM and GPTBigCodeForCausalLM"
+        )
+
+    # infer common params
+    params["variant"] = list_variants(params["architecture"])[0]
+    params["src_vocab_size"] = config.vocab_size
+    params["emb_dim"] = config.hidden_size
+    params["nheads"] = config.num_attention_heads
+    params["nlayers"] = config.num_hidden_layers
+    params["hidden_grow_factor"] = inner_dim / config.hidden_size
+    params["max_expected_seq_len"] = max_expected_seq_len
+    params["tie_heads"] = config.tie_word_embeddings
+
+    return fms_get_model(**params)
