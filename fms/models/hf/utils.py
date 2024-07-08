@@ -137,7 +137,7 @@ def to_hf_api(model: nn.Module, **override_config_kwargs) -> "HFModelArchitectur
     return hf_adapted_cls.from_fms_model(model, **override_config_kwargs)
 
 
-def get_model(
+def as_fms_model(
     model_id_or_path: Union[str, os.PathLike], device: Union[str, torch.device] = "cpu"
 ) -> nn.Module:
     """

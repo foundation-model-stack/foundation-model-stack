@@ -1,13 +1,13 @@
 import pytest
 from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
 
-from fms.models.hf import get_model, to_hf_api
+from fms.models.hf import as_fms_model, to_hf_api
 from fms.testing.comparison import HFModelSignatureParams, compare_model_signatures
 
 
 @pytest.mark.parametrize("model_id_or_path", ["bigcode/gpt_bigcode-santacoder"])
 def test_get_model_equivalency(model_id_or_path):
-    fms_model = get_model(model_id_or_path)
+    fms_model = as_fms_model(model_id_or_path)
     hf_model = AutoModelForCausalLM.from_pretrained(model_id_or_path)
     fms_model = to_hf_api(
         fms_model,
