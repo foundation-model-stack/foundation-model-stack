@@ -170,20 +170,42 @@ def as_fms_model(
     }
 
     if architecture == "LlamaForCausalLM":
+        inner_dim = config.intermediate_size
         params["architecture"] = "llama"
         params["attn_bias"] = getattr(config, "attention_bias", False)
         params["mlp_bias"] = getattr(config, "mlp_bias", False)
         params["kv_heads"] = config.num_key_value_heads
         params["norm_eps"] = config.rms_norm_eps
         params["multiple_of"] = 1
-        inner_dim = config.intermediate_size
-        max_expected_seq_len = config.max_position_embeddings
+        params["emb_dim"] = config.hidden_size
+        params["max_expected_seq_len"] = config.max_position_embeddings
     elif architecture == "GPTBigCodeForCausalLM":
+        inner_dim = config.n_inner
         params["architecture"] = "gpt_bigcode"
         params["ln_eps"] = config.layer_norm_epsilon
         params["multiquery_attn"] = config.multi_query
-        inner_dim = config.n_inner
-        max_expected_seq_len = config.n_positions
+        params["emb_dim"] = config.hidden_size
+        params["max_expected_seq_len"] = config.n_positions
+    elif architecture == "MixtralForCausalLM":
+        inner_dim = config.intermediate_size
+        params["architecture"] = "mixtral"
+        params["dim"] = config.hidden_size
+        params["hidden_dim"] = inner_dim
+        params["norm_eps"] = config.rms_norm_eps
+        params["kv_heads"] = config.num_key_value_heads
+        params["num_experts"] = config.num_local_experts
+        params["top_k_experts"] = config.num_experts_per_tok
+        params["rope_base"] = config.rope_theta
+        params["max_expected_seq_len"] = config.max_position_embeddings
+    elif architecture == "RobertaForMaskedLM":
+        inner_dim = config.intermediate_size
+        params["architecture"] = "roberta"
+        params["emb_dim"] = config.hidden_size
+        params["pad_id"] = config.pad_token_id
+        params["max_pos"] = config.max_position_embeddings - 2
+        params["p_dropout"] = 0.0  # config.hidden_dropout_prob
+        params["norm_eps"] = config.layer_norm_eps
+        params["activation_fn"] = config.hidden_act
     else:
         raise ValueError(
             "FMS model implementations currently only support LlamaForCausalLM and GPTBigCodeForCausalLM"
@@ -192,11 +214,9 @@ def as_fms_model(
     # infer common params
     params["variant"] = list_variants(params["architecture"])[0]
     params["src_vocab_size"] = config.vocab_size
-    params["emb_dim"] = config.hidden_size
     params["nheads"] = config.num_attention_heads
     params["nlayers"] = config.num_hidden_layers
     params["hidden_grow_factor"] = inner_dim / config.hidden_size
-    params["max_expected_seq_len"] = max_expected_seq_len
     params["tie_heads"] = config.tie_word_embeddings
 
     return fms_get_model(**params)
