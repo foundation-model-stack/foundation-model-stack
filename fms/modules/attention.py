@@ -380,6 +380,7 @@ class MultiHeadAttention(nn.Module):
             attn_mask=attn_mask,
             dropout_p=self.p_dropout if self.training else 0.0,
             is_causal=is_causal_mask,
+            scale = 1/self.emb_kq_per_head
         )
 
         if attn_algorithm:
