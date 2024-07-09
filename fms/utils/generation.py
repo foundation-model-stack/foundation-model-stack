@@ -1,93 +1,102 @@
-from typing import Any, Callable, List, MutableMapping, Optional, Union
+import inspect
+from typing import Any, Callable, Dict, List, MutableMapping, Optional, Tuple, Union
 
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 
 
-def __create_prefill_mask(
-    prompt_lengths: List[int], device: Union[str, torch.device]
-) -> torch.Tensor:
-    """Create a prefill mask based on prompt_lengths. When referring to prefill, this is typically the first iteration
-    before the kv-cache has had values stored in it for a given prompt
-
-    Args:
-        prompt_lengths: List[int]
-            list of prompt lengths
-        device: Union[str, torch.device]
-            device to put mask on
-
-    Returns:
-    torch.Tensor
-        a causal mask
+def __prepare_list_input(
+    input_ids_list: List[torch.Tensor], model: Union[Callable, torch.nn.Module]
+) -> Tuple[torch.Tensor, MutableMapping[str, Any]]:
     """
-    max_tokens = max(prompt_lengths)
-
-    is_pad_list = []
-    for seq_len in prompt_lengths:
-        pads = torch.zeros(max_tokens - seq_len, dtype=torch.bool, device=device)
-        non_pads = torch.ones(seq_len, dtype=torch.bool, device=device)
-        is_pad_list.append(torch.cat((pads, non_pads)))
-    is_pad = torch.stack(is_pad_list)
-    mask = is_pad.unsqueeze(-1) == is_pad.unsqueeze(-2)
-    return mask.tril()
-
-
-def __create_decode_mask(
-    context_lengths: List[int], device: Union[str, torch.device]
-) -> torch.Tensor:
-    """create a mask to be used during a decode step. When referring to decode, we are referring to all subsequent steps
-    following prefill (kv-cache has already been filled). During the decode step, when creating a mask, we must include
-    context from the next token as well as the kv-cache.
-
-    Args:
-        context_lengths: List[int]
-            current context length of each sequence in the batch
-        device: Union[str, torch.device]
-            device to put mask on
-
-    Returns:
-    torch.Tensor
-        the 3d mask that is provided in each decode step (iteration where kv-cache is already filled).
+    Convert the list of Tensors to a rectangular tensor. Return extra kwargs for the position_ids and mask, since this
+    will be required to properly handle the rectangular tensor for certain models.
     """
-    max_context_length = max(context_lengths)
+    min_len = min([seq.size(0) for seq in input_ids_list])
+    max_len = max([seq.size(0) for seq in input_ids_list])
 
-    is_not_pad_list = []
-    for seq_len in context_lengths:
-        ones = torch.ones(seq_len, dtype=torch.bool, device=device)
-        zeroes = torch.zeros(
-            max_context_length - seq_len, dtype=torch.bool, device=device
+    params = inspect.signature(
+        model.forward if isinstance(model, nn.Module) else model
+    ).parameters.keys()
+    extra_kwargs = {}
+    needs_mask = "mask" in params and min_len != max_len
+    needs_position_ids = "position_ids" in params and min_len != max_len
+
+    padded_input_ids_list = []
+    mask_list = []
+    position_ids_list = []
+    for input_ids_i in input_ids_list:
+        seq_len = input_ids_i.size(0)
+        pads = torch.zeros(
+            max_len - seq_len, dtype=torch.long, device=input_ids_i.device
         )
-        is_not_pad_list.append(torch.cat((zeroes, ones)))
-    is_not_pad = torch.stack(is_not_pad_list)
-    mask = is_not_pad.unsqueeze(-2)
-    return mask
+        non_pads = torch.ones(seq_len, dtype=torch.bool, device=input_ids_i.device)
+
+        # Setting this to 0, however if 0 is the eos, we will end up truncating the output if using truncate_after_eos
+        # once this workflow works for nested tensor, this can probably be removed
+        padded_input_ids_list.append(torch.cat((pads, input_ids_i)))
+
+        # computing this as it's lightweight but could potentially be skipped
+        mask_list.append(torch.cat((pads.bool(), non_pads)))
+        position_ids_list.append(
+            torch.cat(
+                (
+                    pads,
+                    torch.arange(
+                        0, seq_len, dtype=torch.long, device=input_ids_i.device
+                    ),
+                )
+            )
+        )
+
+    input_ids = torch.stack(padded_input_ids_list)
+    if needs_mask:
+        mask = torch.stack(mask_list)
+        mask = (mask.unsqueeze(-1) == mask.unsqueeze(-2)).tril()
+        extra_kwargs["mask"] = mask
+
+    if needs_position_ids:
+        position_ids = torch.stack(position_ids_list)
+        extra_kwargs["position_ids"] = position_ids
+
+    return input_ids, extra_kwargs
 
 
-def __create_prefill_position_ids(
-    prompt_lengths: List[int], device: Union[str, torch.device]
-) -> torch.Tensor:
-    """Create the prefill position_ids based on prompt lengths. This is most important for models that utilize absolute
-    positional embeddings such as gpt_bigcode. When referring to prefill, this is typically the first iteration
-    before the kv-cache has had values stored in it for a given prompt.
+def __prepare_model_specific_kwargs(
+    iteration: int, use_cache: bool, model_specific_kwargs: MutableMapping[str, Any]
+):
+    """Generic function to prepare any model specific keyword arguments"""
+    # iteration 0 is the prefill step, so no need to extend the mask/position_ids
+    if iteration > 0:
+        # extend the attention mask
+        mask = model_specific_kwargs.get("mask", None)
+        if mask is not None:
+            # get the last row of the 3d mask
+            mask = mask[:, -1:, :]
+            # extend the mask one slot
+            mask = torch.cat(
+                (
+                    mask,
+                    torch.ones(
+                        mask.size(0), 1, 1, dtype=torch.bool, device=mask.device
+                    ),
+                ),
+                dim=2,
+            )
+            model_specific_kwargs["mask"] = mask
 
-    Args:
-        prompt_lengths: List[int]
-            list of prompt lengths
-        device: Union[str, torch.device]
-            device to put mask on
-
-    Returns:
-    torch.Tensor
-        the position ids
-    """
-    max_len = max(prompt_lengths)
-    position_ids = []
-    for prompt_length in prompt_lengths:
-        position_ids_i = [0] * (max_len - prompt_length) + [
-            i for i in range(prompt_length)
-        ]
-        position_ids.append(position_ids_i)
-    return torch.tensor(position_ids, device=device, dtype=torch.long)
+        # extend the position_ids
+        position_ids = model_specific_kwargs.get("position_ids", None)
+        if position_ids is not None:
+            if use_cache:
+                position_ids = position_ids[:, -1:] + 1
+            else:
+                position_ids = torch.cat(
+                    (position_ids, position_ids[:, -1:] + 1),
+                    dim=1,
+                )
+            model_specific_kwargs["position_ids"] = position_ids
 
 
 def _make_cache_contiguous(past_key_value_states):
@@ -142,33 +151,20 @@ def generate(
     if num_beams != 1:
         raise NotImplementedError("generate() does yet not support beam search")
 
+    # a mapping that contains kwargs that are model specific
+    model_specific_kwargs: MutableMapping[str, Any] = dict()
+
     # if the inputs are a tensor, we assume they are all non-pad ids and include entire context length
     if isinstance(input_ids, torch.Tensor):
         is_batch = len(input_ids.shape) > 1
         # our model requires batch dimension
         if not is_batch:
             input_ids = input_ids.unsqueeze(0)
-
-        max_len = input_ids.size(1)
-        model_input_lengths = [max_len for _ in range(input_ids.size(0))]
-        position_ids = None
     # if the inputs are a list, they may be made up of differently sized tensors
     # in the case where the tensors are of different sizes, proper position ids and pads will be created
     elif isinstance(input_ids, List):
         is_batch = len(input_ids) > 1
-        max_len = max([seq.size(0) for seq in input_ids])
-        model_input_lengths = [seq.size(0) for seq in input_ids]
-        # Setting this to 0, however if 0 is the eos, we will end up truncating the output if using truncate_after_eos
-        # once this workflow works for nested tensor, this can probably be removed
-        input_ids = torch.stack(
-            [
-                F.pad(input_ids[i], (max_len - model_input_lengths[i], 0))
-                for i in range(len(input_ids))
-            ]
-        )
-        position_ids = __create_prefill_position_ids(
-            model_input_lengths, input_ids.device
-        )
+        input_ids, model_specific_kwargs = __prepare_list_input(input_ids, model)
     else:
         raise TypeError("input_ids must be one of Tensor or List")
 
@@ -181,34 +177,13 @@ def generate(
     kwargs: MutableMapping[str, Any] = dict()
     kwargs["past_key_value_states"] = None
     kwargs["use_cache"] = use_cache
-    kwargs["position_ids"] = position_ids
-
     for i in range(max_new_tokens):
         input_ids = next_input[:, -max_seq_len:]
 
-        # prefill
-        if i == 0:
-            kwargs["mask"] = __create_prefill_mask(
-                model_input_lengths, input_ids.device
-            )
-        # decode
-        else:
-            # add 1 for generate
-            model_input_lengths = [
-                model_input_lengths + 1 for model_input_lengths in model_input_lengths
-            ]
-            kwargs["mask"] = __create_decode_mask(model_input_lengths, input_ids.device)
-            # update the position ids
-            if kwargs["position_ids"] is not None:
-                if use_cache:
-                    kwargs["position_ids"] = kwargs["position_ids"][:, -1:] + 1
-                else:
-                    kwargs["position_ids"] = torch.cat(
-                        (kwargs["position_ids"], kwargs["position_ids"][:, -1:] + 1),
-                        dim=1,
-                    )
+        # prepare any model specific keyword arguments
+        __prepare_model_specific_kwargs(i, use_cache, model_specific_kwargs)
 
-        output = model(input_ids, **kwargs)
+        output = model(input_ids, **kwargs, **model_specific_kwargs)
         if use_cache:
             logits, past_key_value_states = output
             # TODO: this should go away when reduce-overhead issues are fixed, or
