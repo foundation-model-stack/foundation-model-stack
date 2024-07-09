@@ -277,7 +277,7 @@ def load_state_dict(
         elif source == "meta":
             glob_pattern_list = ["*.pth", "*.safetensors"]
         elif source == "hf":
-            glob_pattern_list = ["*.bin", "*.safetensors"]
+            glob_pattern_list = ["*.bin", "*.safetensors", "*.pt"]
         else:
             glob_pattern_list = ["*.safetensors", "*.pth", "*.bin"]
         for glob_pattern_possibility in glob_pattern_list:
