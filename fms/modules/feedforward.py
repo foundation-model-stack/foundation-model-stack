@@ -46,6 +46,7 @@ class FeedForwardBlock(nn.Module):
         use_bias=True,
     ):
         super(FeedForwardBlock, self).__init__()
+        self.emb_dim = emb_dim
         self.hidden_dim = int(hidden_grow_factor * emb_dim)
         if multiple_of:
             self.hidden_dim = multiple_of * (
@@ -58,13 +59,15 @@ class FeedForwardBlock(nn.Module):
             self.d = nn.Dropout(p_dropout)
         self.w2 = nn.Linear(self.hidden_dim, emb_dim, bias=use_bias)
         self.use_bias = use_bias
+        self.muP_factor = 0
 
     def reset_parameters(self):
+        self.muP_factor = (self.emb_dim * self.hidden_dim) ** .5
         for layer in ["w1", "w2"]:
-            nn.init.trunc_normal_(
+            nn.init.normal_(
                 getattr(self, layer).weight,
                 mean=0.0,
-                std=0.02,
+                std=1 / self.muP_factor**.5,
             )
             if self.use_bias:
                 getattr(self, layer).bias.data.zero_()
@@ -200,6 +203,7 @@ class GatedLinearUnit(nn.Module):
         use_bias=True,
     ):
         super(GatedLinearUnit, self).__init__()
+        self.emb_dim = emb_dim
         self.hidden_dim = int(hidden_grow_factor * emb_dim)
         if multiple_of:
             self.hidden_dim = multiple_of * (
@@ -214,13 +218,15 @@ class GatedLinearUnit(nn.Module):
         self.use_bias = use_bias
         self.width = emb_dim
         self.grow_factor = hidden_grow_factor
+        self.muP_factor = 0
 
     def reset_parameters(self):
+        self.muP_factor = (self.emb_dim**2 * self.hidden_dim) ** (1/3)
         for layer in ["wg1_fused", "w2"]:
-            nn.init.trunc_normal_(
+            nn.init.normal_(
                 getattr(self, layer).weight,
                 mean=0.0,
-                std=0.02,
+                std=1 / self.muP_factor**.5,
             )
             if self.use_bias:
                 getattr(self, layer).bias.data.zero_()
@@ -358,13 +364,15 @@ class ConditionalFeedForward(nn.Module):
         self.intermediate_size = intermediate_size
         self.w13 = nn.Parameter(torch.empty(num_experts, 2 * intermediate_size, dim))
         self.w2 = nn.Parameter(torch.empty(num_experts, dim, intermediate_size))
+        self.muP_factor = 0
 
     def reset_parameters(self):
+        self.muP_factor = (self.dim**2 * self.intermediate_size) ** (1/3)
         for param in ["w13", "w2"]:
-            nn.init.trunc_normal_(
+            nn.init.normal_(
                 getattr(self, param),
                 mean=0.0,
-                std=0.02,
+                std=1 / self.muP_factor**.5,
             )
 
     def to_tp(self, group: ProcessGroup) -> "TPConditionalFeedForward":
@@ -529,12 +537,11 @@ class MOEFeedForward(nn.Module):
         self.num_activated_experts = num_activated_experts
 
     def reset_parameters(self):
-        nn.init.trunc_normal_(
+        nn.init.normal_(
             self.gate.weight,
             mean=0.0,
-            std=0.02,
+            std=1/self.dim**.5,
         )
-
         self.cond_ffn.reset_parameters()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:

@@ -58,16 +58,6 @@ class QKV(nn.Module, metaclass=abc.ABCMeta):
         """
         pass
 
-    @abc.abstractmethod
-    def reset_parameters(self):
-        """resets the query, key, and value weights for training
-
-        Args:
-            gain: int
-                gain for std in norm (default is 1)
-        """
-        pass
-
 
 class UnfusedQKV(QKV):
     """
@@ -105,12 +95,6 @@ class UnfusedQKV(QKV):
             self.emb_dim, self.kvheads * self.emb_v_per_head, bias=use_bias
         )
 
-    def reset_parameters(self):
-        for m in self.modules():
-            if isinstance(m, nn.Linear):
-                nn.init.trunc_normal_(m.weight, mean=0.0, std=0.02)
-                if self.use_bias:
-                    m.bias.data.zero_()
 
     def forward(
         self, q: torch.Tensor, k: Optional[torch.Tensor], v: Optional[torch.Tensor]
@@ -190,11 +174,6 @@ class FusedQKV(QKV):
             result.value.bias.copy_(value_bias)
         return result
 
-    def reset_parameters(self):
-        nn.init.trunc_normal_(self.qkv_fused.weight, mean=0.0, std=0.02)
-        if self.use_bias:
-            self.qkv_fused.bias.data.zero_()
-
     def forward(
         self, q: torch.Tensor, k: Optional[torch.Tensor], v: Optional[torch.Tensor]
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -248,6 +227,7 @@ class MultiHeadAttention(nn.Module):
         self.p_dropout = p_dropout if p_dropout is not None else 0.0
         self.use_bias = use_bias
         self.fused = fused
+        self.muP_factor = 0
 
         self.in_proj: QKV = (FusedQKV if self.fused else UnfusedQKV)(
             self.emb_dim,
@@ -272,13 +252,13 @@ class MultiHeadAttention(nn.Module):
         self.previous_math: bool = torch.backends.cuda.math_sdp_enabled()
 
     def reset_parameters(self):
+        muP_factor = (self.emb_dim * self.nheads * self.emb_v_per_head) ** .5
+        self.muP_factor = muP_factor
         for m in self.modules():
             if isinstance(m, nn.Linear):
-                nn.init.trunc_normal_(m.weight, mean=0.0, std=0.02)
+                nn.init.normal_(m.weight, mean=0.0, std= 1 / muP_factor**.5)
                 if self.use_bias:
                     m.bias.data.zero_()
-            elif isinstance(m, QKV):
-                m.reset_parameters()
 
     def to_tp(self, group: ProcessGroup) -> "TPMultiHeadAttention":
         return TPMultiHeadAttention.import_module(self, group)
