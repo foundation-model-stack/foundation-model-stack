@@ -11,8 +11,7 @@ from transformers import (
     AutoModelForMaskedLM,
 )
 
-from fms.models import get_model as fms_get_model
-from fms.models import list_variants
+from fms.models import get_model, list_variants
 
 
 def register_fms_models():
@@ -157,66 +156,71 @@ def as_fms_model(
     nn.Module
         an fms equivalent implementation of an HF model
     """
+    # if the path does not exist, download it from huggingface and get the local path
     if not os.path.exists(model_id_or_path):
-        model_id_or_path = snapshot_download(repo_id=model_id_or_path)
+        model_path = snapshot_download(repo_id=model_id_or_path)
+    else:
+        model_path = model_id_or_path
 
-    config = AutoConfig.from_pretrained(model_id_or_path)
+    config = AutoConfig.from_pretrained(model_path)
 
     architecture = config.architectures[0]
-    params = {
-        "model_path": model_id_or_path,
-        "source": "hf",
-        "device_type": device.type if isinstance(device, torch.device) else device,
-    }
+    config_params = {}
 
     if architecture == "LlamaForCausalLM":
         inner_dim = config.intermediate_size
-        params["architecture"] = "llama"
-        params["attn_bias"] = getattr(config, "attention_bias", False)
-        params["mlp_bias"] = getattr(config, "mlp_bias", False)
-        params["kv_heads"] = config.num_key_value_heads
-        params["norm_eps"] = config.rms_norm_eps
-        params["multiple_of"] = 1
-        params["emb_dim"] = config.hidden_size
-        params["max_expected_seq_len"] = config.max_position_embeddings
+        architecture = "llama"
+        config_params["attn_bias"] = getattr(config, "attention_bias", False)
+        config_params["mlp_bias"] = getattr(config, "mlp_bias", False)
+        config_params["kv_heads"] = config.num_key_value_heads
+        config_params["norm_eps"] = config.rms_norm_eps
+        config_params["multiple_of"] = 1
+        config_params["emb_dim"] = config.hidden_size
+        config_params["max_expected_seq_len"] = config.max_position_embeddings
     elif architecture == "GPTBigCodeForCausalLM":
         inner_dim = config.n_inner
-        params["architecture"] = "gpt_bigcode"
-        params["ln_eps"] = config.layer_norm_epsilon
-        params["multiquery_attn"] = config.multi_query
-        params["emb_dim"] = config.hidden_size
-        params["max_expected_seq_len"] = config.n_positions
+        architecture = "gpt_bigcode"
+        config_params["ln_eps"] = config.layer_norm_epsilon
+        config_params["multiquery_attn"] = config.multi_query
+        config_params["emb_dim"] = config.hidden_size
+        config_params["max_expected_seq_len"] = config.n_positions
     elif architecture == "MixtralForCausalLM":
         inner_dim = config.intermediate_size
-        params["architecture"] = "mixtral"
-        params["dim"] = config.hidden_size
-        params["hidden_dim"] = inner_dim
-        params["norm_eps"] = config.rms_norm_eps
-        params["kv_heads"] = config.num_key_value_heads
-        params["num_experts"] = config.num_local_experts
-        params["top_k_experts"] = config.num_experts_per_tok
-        params["rope_base"] = config.rope_theta
-        params["max_expected_seq_len"] = config.max_position_embeddings
+        architecture = "mixtral"
+        config_params["dim"] = config.hidden_size
+        config_params["hidden_dim"] = inner_dim
+        config_params["norm_eps"] = config.rms_norm_eps
+        config_params["kv_heads"] = config.num_key_value_heads
+        config_params["num_experts"] = config.num_local_experts
+        config_params["top_k_experts"] = config.num_experts_per_tok
+        config_params["rope_base"] = config.rope_theta
+        config_params["max_expected_seq_len"] = config.max_position_embeddings
     elif architecture == "RobertaForMaskedLM":
         inner_dim = config.intermediate_size
-        params["architecture"] = "roberta"
-        params["emb_dim"] = config.hidden_size
-        params["pad_id"] = config.pad_token_id
-        params["max_pos"] = config.max_position_embeddings - 2
-        params["p_dropout"] = 0.0  # config.hidden_dropout_prob
-        params["norm_eps"] = config.layer_norm_eps
-        params["activation_fn"] = config.hidden_act
+        architecture = "roberta"
+        config_params["emb_dim"] = config.hidden_size
+        config_params["pad_id"] = config.pad_token_id
+        config_params["max_pos"] = config.max_position_embeddings - 2
+        config_params["p_dropout"] = 0.0  # config.hidden_dropout_prob
+        config_params["norm_eps"] = config.layer_norm_eps
+        config_params["activation_fn"] = config.hidden_act
     else:
         raise ValueError(
             "FMS model implementations currently only support LlamaForCausalLM and GPTBigCodeForCausalLM"
         )
 
     # infer common params
-    params["variant"] = list_variants(params["architecture"])[0]
-    params["src_vocab_size"] = config.vocab_size
-    params["nheads"] = config.num_attention_heads
-    params["nlayers"] = config.num_hidden_layers
-    params["hidden_grow_factor"] = inner_dim / config.hidden_size
-    params["tie_heads"] = config.tie_word_embeddings
+    config_params["src_vocab_size"] = config.vocab_size
+    config_params["nheads"] = config.num_attention_heads
+    config_params["nlayers"] = config.num_hidden_layers
+    config_params["hidden_grow_factor"] = inner_dim / config.hidden_size
+    config_params["tie_heads"] = config.tie_word_embeddings
 
-    return fms_get_model(**params)
+    return get_model(
+        architecture=architecture,
+        variant=list_variants(architecture)[0],
+        model_path=model_path,
+        source="hf",
+        device_type=device.type if isinstance(device, torch.device) else device,
+        **config_params,
+    )
