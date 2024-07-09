@@ -128,7 +128,7 @@ class WordEmbedding(nn.Module):
                 assert (
                     self.reversible
                 ), "Error: cannot make prediction when there is no output head!"
-            return self.head(inp / self.muP_factor)
+            return self.head(inp / (self.muP_factor/10))
 
 
 class TPWordEmbedding(WordEmbedding, TPModule):
