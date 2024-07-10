@@ -59,6 +59,7 @@ def __prepare_list_input(
     input_ids = torch.stack(padded_input_ids_list)
     if needs_mask:
         mask = torch.stack(mask_list)
+        # this is a causal mask for generation
         mask = (mask.unsqueeze(-1) == mask.unsqueeze(-2)).tril()
         extra_kwargs["mask"] = mask
 
