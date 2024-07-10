@@ -122,7 +122,7 @@ class WordEmbedding(nn.Module):
                     min=0
                 )  # In case of left-padding, prevent negative indices (get zeroed anyways)
                 out = out.addcmul(self.pos_emb(pos), ~is_pad.unsqueeze(-1))
-            return out * self.muP_factor
+            return out * self.muP_factor / 45
         else:
             if self.debug:
                 assert (
