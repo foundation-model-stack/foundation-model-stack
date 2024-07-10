@@ -45,16 +45,12 @@ def __prepare_list_input(
 
         # computing this as it's lightweight but could potentially be skipped
         mask_list.append(torch.cat((pads.bool(), non_pads)))
-        position_ids_list.append(
-            torch.cat(
-                (
-                    pads,
-                    torch.arange(
-                        0, seq_len, dtype=torch.long, device=input_ids_i.device
-                    ),
-                )
-            )
+
+        pos_ids_pads = pads
+        pos_ids_seq = torch.arange(
+            0, seq_len, dtype=torch.long, device=input_ids_i.device
         )
+        position_ids_list.append(torch.cat((pos_ids_pads, pos_ids_seq)))
 
     input_ids = torch.stack(padded_input_ids_list)
     if needs_mask:
