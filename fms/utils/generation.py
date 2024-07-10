@@ -71,7 +71,7 @@ def __prepare_list_input(
 
 def __update_padding_kwargs(
     use_cache: bool, model_specific_kwargs: MutableMapping[str, Any]
-):
+) -> MutableMapping[str, Any]:
     """Generic function to prepare any model specific keyword arguments"""
     # extend the attention mask
     mask = model_specific_kwargs.get("mask", None)
@@ -99,6 +99,7 @@ def __update_padding_kwargs(
                 dim=1,
             )
         model_specific_kwargs["position_ids"] = position_ids
+    return model_specific_kwargs
 
 
 def _make_cache_contiguous(past_key_value_states):
@@ -182,7 +183,7 @@ def generate(
         # prepare any padding keyword arguments
         # iteration 0 is the prefill step (cache has not been filled yet), so no need to extend the mask/position_ids
         if i > 0:
-            __update_padding_kwargs(use_cache, kwargs)
+            kwargs = __update_padding_kwargs(use_cache, kwargs)
 
         output = model(input_ids, **kwargs)
         if use_cache:
