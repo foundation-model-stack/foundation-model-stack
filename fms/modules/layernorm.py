@@ -52,7 +52,7 @@ class LayerNormParameterized(nn.Module):
         self.muP_factor = 0
 
     def reset_parameters(self):
-        self.muP_factor = 1
+        self.muP_factor = self.normalized_shape**.5
         if self.elementwise_scale:
             self.weight.data.fill_(1)
         if self.elementwise_shift:
