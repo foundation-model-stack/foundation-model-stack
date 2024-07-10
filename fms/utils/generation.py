@@ -1,10 +1,9 @@
 import inspect
-from typing import Any, Callable, Dict, List, MutableMapping, Optional, Tuple, Union
+from typing import Any, Callable, List, MutableMapping, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch._dynamo import OptimizedModule
 
 
 def __prepare_list_input(
@@ -17,9 +16,7 @@ def __prepare_list_input(
     min_len = min([seq.size(0) for seq in input_ids_list])
     max_len = max([seq.size(0) for seq in input_ids_list])
 
-    if isinstance(model, OptimizedModule):
-        forward_function = model._orig_mod.forward
-    elif isinstance(model, nn.Module):
+    if isinstance(model, nn.Module):
         forward_function = model.forward
     else:
         forward_function = model
