@@ -84,6 +84,11 @@ parser.add_argument(
     action="store_true",
     help="This is a distributed job (multiple instances run with RANK+WORLD_SIZE)",
 )
+parser.add_argument(
+    "--batch_input",
+    action="store_true",
+    help="use a batch of prompts as input",
+)
 parser.add_argument("--context_file", type=str, default=None, help="File to summarize")
 
 args = parser.parse_args()
@@ -142,7 +147,7 @@ print("loading complete on rank", local_rank)
 if args.compile:
     print("compiling model")
     # compiling can make first inference pass slow
-    model = torch.compile(model, mode=args.compile_mode)
+    model.compile(mode=args.compile_mode)
 
 
 def ids_for_prompt(prompt):
@@ -151,16 +156,6 @@ def ids_for_prompt(prompt):
     ids = [tokenizer.bos_token_id] + ids
     ids = torch.tensor(ids, dtype=torch.long, device=device)
     return ids
-
-
-def pad_prompt(prompt, pad_len, pad_token="<unk>"):
-    to_pad = pad_len - len(prompt)
-    if to_pad == 0:
-        return prompt
-
-    pad_id = tokenizer.convert_tokens_to_ids(pad_token)
-    pad_ids = [pad_id] * to_pad
-    return torch.cat((torch.tensor(pad_ids, device=device), prompt))
 
 
 if args.context_file is not None:
@@ -184,15 +179,13 @@ else:
 
 prompt1 = ids_for_prompt(prompt1)
 prompt2 = ids_for_prompt(prompt2)
-
 max_len = max([len(prompt) for prompt in [prompt1, prompt2]])
-# prompt1 = pad_prompt(prompt1, max_len)
-# LLaMA 7B did better on the spanish prompt vs 13B.
-# TODO: add a better english prompt to demonstrate padding/batching.
-# prompt2 = pad_prompt(prompt2, max_len)
-# ids = torch.stack((prompt2, prompt1), dim=0)
 
-ids = prompt1.unsqueeze(0)
+
+if args.batch_input:
+    ids = [prompt1, prompt2]
+else:
+    ids = prompt1
 
 
 def print_result(result):
@@ -227,6 +220,9 @@ def infer(use_cache, do_sample):
         do_sample=do_sample,
         max_seq_len=max_seq_len,
     )
+    if len(result.shape) == 1:
+        result = result.unsqueeze(0)
+
     for i in range(result.shape[0]):
         print_result(result[i])
 
