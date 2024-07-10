@@ -256,7 +256,7 @@ class MultiHeadAttention(nn.Module):
         self.muP_factor = muP_factor
         for m in self.modules():
             if isinstance(m, nn.Linear):
-                nn.init.normal_(m.weight, mean=0.0, std= 1 / muP_factor**.5)
+                nn.init.normal_(m.weight, mean=0.0, std= .02) #1 / muP_factor**.5)
                 if self.use_bias:
                     m.bias.data.zero_()
 
