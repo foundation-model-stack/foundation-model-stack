@@ -158,7 +158,14 @@ def as_fms_model(
     """
     # if the path does not exist, download it from huggingface and get the local path
     if not os.path.exists(model_id_or_path):
-        model_path = snapshot_download(repo_id=model_id_or_path)
+        # mixtral saves safetensors expert sharded, so we will need their pt checkpoints
+        # ideally this should be fixed in the adapter in the future
+        ignore_patterns = None
+        if model_id_or_path.startswith("mistralai/Mixtral"):
+            ignore_patterns = ["*.safetensors"]
+        model_path = snapshot_download(
+            repo_id=model_id_or_path, ignore_patterns=ignore_patterns
+        )
     else:
         model_path = model_id_or_path
 
@@ -206,7 +213,7 @@ def as_fms_model(
         config_params["activation_fn"] = config.hidden_act
     else:
         raise ValueError(
-            "FMS model implementations currently only support LlamaForCausalLM and GPTBigCodeForCausalLM"
+            "FMS model implementations currently only support LlamaForCausalLM, GPTBigCodeForCausalLM, MixtralForCausalLM, and RobertaForMaskedLM"
         )
 
     # infer common params
