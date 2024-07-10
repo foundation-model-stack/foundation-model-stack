@@ -4,6 +4,7 @@ from typing import Any, Callable, Dict, List, MutableMapping, Optional, Tuple, U
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch._dynamo import OptimizedModule
 
 
 def __prepare_list_input(
@@ -16,9 +17,14 @@ def __prepare_list_input(
     min_len = min([seq.size(0) for seq in input_ids_list])
     max_len = max([seq.size(0) for seq in input_ids_list])
 
-    params = inspect.signature(
-        model.forward if isinstance(model, nn.Module) else model
-    ).parameters.keys()
+    if isinstance(model, OptimizedModule):
+        forward_function = model._base_model.forward
+    elif isinstance(model, nn.Module):
+        forward_function = model.forward
+    else:
+        forward_function = model
+
+    params = inspect.signature(forward_function).parameters.keys()
     extra_kwargs = {}
     needs_mask = "mask" in params and min_len != max_len
     needs_position_ids = "position_ids" in params and min_len != max_len
@@ -63,40 +69,36 @@ def __prepare_list_input(
     return input_ids, extra_kwargs
 
 
-def __prepare_model_specific_kwargs(
-    iteration: int, use_cache: bool, model_specific_kwargs: MutableMapping[str, Any]
+def __update_padding_kwargs(
+    use_cache: bool, model_specific_kwargs: MutableMapping[str, Any]
 ):
     """Generic function to prepare any model specific keyword arguments"""
-    # iteration 0 is the prefill step, so no need to extend the mask/position_ids
-    if iteration > 0:
-        # extend the attention mask
-        mask = model_specific_kwargs.get("mask", None)
-        if mask is not None:
-            # get the last row of the 3d mask
-            mask = mask[:, -1:, :]
-            # extend the mask one slot
-            mask = torch.cat(
-                (
-                    mask,
-                    torch.ones(
-                        mask.size(0), 1, 1, dtype=torch.bool, device=mask.device
-                    ),
-                ),
-                dim=2,
-            )
-            model_specific_kwargs["mask"] = mask
+    # extend the attention mask
+    mask = model_specific_kwargs.get("mask", None)
+    if mask is not None:
+        # get the last row of the 3d mask
+        mask = mask[:, -1:, :]
+        # extend the mask one slot
+        mask = torch.cat(
+            (
+                mask,
+                torch.ones(mask.size(0), 1, 1, dtype=torch.bool, device=mask.device),
+            ),
+            dim=2,
+        )
+        model_specific_kwargs["mask"] = mask
 
-        # extend the position_ids
-        position_ids = model_specific_kwargs.get("position_ids", None)
-        if position_ids is not None:
-            if use_cache:
-                position_ids = position_ids[:, -1:] + 1
-            else:
-                position_ids = torch.cat(
-                    (position_ids, position_ids[:, -1:] + 1),
-                    dim=1,
-                )
-            model_specific_kwargs["position_ids"] = position_ids
+    # extend the position_ids
+    position_ids = model_specific_kwargs.get("position_ids", None)
+    if position_ids is not None:
+        if use_cache:
+            position_ids = position_ids[:, -1:] + 1
+        else:
+            position_ids = torch.cat(
+                (position_ids, position_ids[:, -1:] + 1),
+                dim=1,
+            )
+        model_specific_kwargs["position_ids"] = position_ids
 
 
 def _make_cache_contiguous(past_key_value_states):
@@ -151,9 +153,7 @@ def generate(
     if num_beams != 1:
         raise NotImplementedError("generate() does yet not support beam search")
 
-    # a mapping that contains kwargs that are model specific
-    model_specific_kwargs: MutableMapping[str, Any] = dict()
-
+    kwargs: MutableMapping[str, Any] = dict()
     # if the inputs are a tensor, we assume they are all non-pad ids and include entire context length
     if isinstance(input_ids, torch.Tensor):
         is_batch = len(input_ids.shape) > 1
@@ -164,7 +164,7 @@ def generate(
     # in the case where the tensors are of different sizes, proper position ids and pads will be created
     elif isinstance(input_ids, List):
         is_batch = len(input_ids) > 1
-        input_ids, model_specific_kwargs = __prepare_list_input(input_ids, model)
+        input_ids, kwargs = __prepare_list_input(input_ids, model)
     else:
         raise TypeError("input_ids must be one of Tensor or List")
 
@@ -174,16 +174,17 @@ def generate(
 
     result = input_ids
     next_input = input_ids
-    kwargs: MutableMapping[str, Any] = dict()
     kwargs["past_key_value_states"] = None
     kwargs["use_cache"] = use_cache
     for i in range(max_new_tokens):
         input_ids = next_input[:, -max_seq_len:]
 
-        # prepare any model specific keyword arguments
-        __prepare_model_specific_kwargs(i, use_cache, model_specific_kwargs)
+        # prepare any padding keyword arguments
+        # iteration 0 is the prefill step (cache has not been filled yet), so no need to extend the mask/position_ids
+        if i > 0:
+            __update_padding_kwargs(use_cache, kwargs)
 
-        output = model(input_ids, **kwargs, **model_specific_kwargs)
+        output = model(input_ids, **kwargs)
         if use_cache:
             logits, past_key_value_states = output
             # TODO: this should go away when reduce-overhead issues are fixed, or
