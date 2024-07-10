@@ -25,9 +25,11 @@ def test_as_fms_model_equivalency_for_decoder(model_id_or_path):
         pad_token_id=hf_model.config.pad_token_id,
         eos_token_id=hf_model.config.eos_token_id,
     )
-
-    fms_params = HFModelSignatureParams(model=fms_model, params=["input_ids"])
-    hf_params = HFModelSignatureParams(model=hf_model, params=["input_ids"])
+    hf_model = hf_model.eval()
+    fms_model = fms_model.eval()
+    inp = torch.arange(5, 15).unsqueeze(0)
+    fms_params = HFModelSignatureParams(model=fms_model, params=["input_ids"], inp=inp)
+    hf_params = HFModelSignatureParams(model=hf_model, params=["input_ids"], inp=inp)
 
     compare_model_signatures(fms_params, hf_params)
 
