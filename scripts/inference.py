@@ -147,7 +147,7 @@ print("loading complete on rank", local_rank)
 if args.compile:
     print("compiling model")
     # compiling can make first inference pass slow
-    model.forward = torch.compile(model.forward, mode=args.compile_mode)
+    model = torch.compile(model, mode=args.compile_mode)
 
 
 def ids_for_prompt(prompt):

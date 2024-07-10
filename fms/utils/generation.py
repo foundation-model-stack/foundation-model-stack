@@ -18,7 +18,7 @@ def __prepare_list_input(
     max_len = max([seq.size(0) for seq in input_ids_list])
 
     if isinstance(model, OptimizedModule):
-        forward_function = model._base_model.forward
+        forward_function = model._orig_mod.forward
     elif isinstance(model, nn.Module):
         forward_function = model.forward
     else:
