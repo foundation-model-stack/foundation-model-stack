@@ -62,12 +62,12 @@ class FeedForwardBlock(nn.Module):
         self.muP_factor = 0
 
     def reset_parameters(self):
-        self.muP_factor = (self.emb_dim * self.hidden_dim) ** .5
+        self.muP_factor = (self.emb_dim * self.hidden_dim) ** .25
         for layer in ["w1", "w2"]:
             nn.init.normal_(
                 getattr(self, layer).weight,
                 mean=0.0,
-                std=1 / self.muP_factor**.5,
+                std=1 / self.muP_factor,
             )
             if self.use_bias:
                 getattr(self, layer).bias.data.zero_()
@@ -221,12 +221,12 @@ class GatedLinearUnit(nn.Module):
         self.muP_factor = 0
 
     def reset_parameters(self):
-        self.muP_factor = (self.emb_dim**2 * self.hidden_dim) ** (1/3)
+        self.muP_factor = (self.emb_dim**2 * self.hidden_dim) ** (1/6)
         for layer in ["wg1_fused", "w2"]:
             nn.init.normal_(
                 getattr(self, layer).weight,
                 mean=0.0,
-                std=1 / self.muP_factor**.5,
+                std=1 / self.muP_factor,
             )
             if self.use_bias:
                 getattr(self, layer).bias.data.zero_()
