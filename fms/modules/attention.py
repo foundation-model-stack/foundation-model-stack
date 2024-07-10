@@ -252,11 +252,11 @@ class MultiHeadAttention(nn.Module):
         self.previous_math: bool = torch.backends.cuda.math_sdp_enabled()
 
     def reset_parameters(self):
-        muP_factor = (self.emb_dim * self.nheads * self.emb_v_per_head) ** .25
+        muP_factor = (self.emb_dim * self.nheads * self.emb_v_per_head) ** .5
         self.muP_factor = muP_factor
         for m in self.modules():
             if isinstance(m, nn.Linear):
-                nn.init.normal_(m.weight, mean=0.0, std= 1 / muP_factor)
+                nn.init.normal_(m.weight, mean=0.0, std= 1 / muP_factor**.5)
                 if self.use_bias:
                     m.bias.data.zero_()
 
