@@ -92,7 +92,7 @@ class WordEmbedding(nn.Module):
         if self.reversible and not self.tie_weights:
             layers.append("head")
         for layer in layers:
-            nn.init.normal_(getattr(self, layer).weight, mean=0.0, std=1/self.muP_factor)
+            nn.init.normal_(getattr(self, layer).weight, mean=0.0, std=.02) #1/self.muP_factor)
         if self.reversible and self.bias:
             self.head.bias.data.zero_()
         # Preserve pad index dummy-hood
@@ -122,13 +122,13 @@ class WordEmbedding(nn.Module):
                     min=0
                 )  # In case of left-padding, prevent negative indices (get zeroed anyways)
                 out = out.addcmul(self.pos_emb(pos), ~is_pad.unsqueeze(-1))
-            return out * self.muP_factor / 45
+            return out #* self.muP_factor / 45
         else:
             if self.debug:
                 assert (
                     self.reversible
                 ), "Error: cannot make prediction when there is no output head!"
-            return self.head(inp / (self.muP_factor / 45))
+            return self.head(inp) # / (self.muP_factor / 45))
 
 
 class TPWordEmbedding(WordEmbedding, TPModule):
