@@ -67,7 +67,7 @@ class FeedForwardBlock(nn.Module):
             nn.init.normal_(
                 getattr(self, layer).weight,
                 mean=0.0,
-                std=1 / self.muP_factor**.5,
+                std= 2**.5 / self.muP_factor**.5,
             )
             if self.use_bias:
                 getattr(self, layer).bias.data.zero_()
@@ -226,7 +226,7 @@ class GatedLinearUnit(nn.Module):
             nn.init.normal_(
                 getattr(self, layer).weight,
                 mean=0.0,
-                std=1 / self.muP_factor**.5,
+                std= 2**(1/3) / self.muP_factor**.5,
             )
             if self.use_bias:
                 getattr(self, layer).bias.data.zero_()
