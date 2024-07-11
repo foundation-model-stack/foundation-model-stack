@@ -49,7 +49,8 @@ class TPModule(nn.Module, metaclass=ABCMeta):
             sharding_rank = self.rank // max(1, self.world_size // replication)
             # The number of elements to shard out of the tensor
             tensor_shard_size = output_size_per_partition * (
-                max_partition_sizes[weight_i] // min_partition_size
+                max(self.world_size, replication)
+                // max(self.world_size, min_partition_size)
             )
             # For fused weights, where to start extracting the shard
             tensor_shard_offset = (
@@ -105,9 +106,15 @@ class TPModule(nn.Module, metaclass=ABCMeta):
             [0 1 8 9] [2 3 8 9] [4 5 8 9] [6 7 8 9]
         """
         if is_sharded:
+            # In the case where world size is larger than any of the partition sizes, we must add replication up til the
+            # world size per partition
+            max_partition_sizes_replicated = [
+                max(self.world_size, m) for m in max_partition_sizes
+            ]
             # Divide the weight matrix along the second dimension.
             output_size_per_partition = param.shape[dim] // (
-                sum(max_partition_sizes) // min(max_partition_sizes)
+                sum(max_partition_sizes_replicated)
+                // min(max_partition_sizes_replicated)
             )
             tp_slices = self.__get_tp_slices(
                 tensor_value.shape[dim], output_size_per_partition, max_partition_sizes

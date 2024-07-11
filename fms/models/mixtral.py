@@ -361,6 +361,8 @@ models.register_model(
     _architecture_name, "8x7b", _mixtral_factory_factory(_8x7b_config)
 )
 
+_convert_to_fused_qkv = serialization._legacy_attn_unfused_to_fused_adapter
+
 
 def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
     replacements = [
@@ -428,7 +430,10 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
         if "w2" in key:
             new_sd[key] = new_sd[key].transpose(1, 2).contiguous()
 
+    new_sd = _convert_to_fused_qkv(new_sd)
+
     return new_sd
 
 
 serialization.register_adapter("mixtral", "hf", _hf_sd_to_fms_sd)
+serialization.register_adapter("mixtral", "fms.pre0.0.6", _convert_to_fused_qkv)
