@@ -11,7 +11,7 @@ from torch import distributed as dist
 from torch._dynamo import OptimizedModule
 
 from fms import models
-from fms.utils import generation, print0, tokenizers
+from fms.utils import fusion, generation, print0, tokenizers
 
 
 # Example running llama 7B on one A100:
@@ -132,6 +132,11 @@ parser.add_argument(
 parser.add_argument(
     "--skip_e2e_runs", action="store_true", help="Do not run the e2e benchmarks"
 )
+parser.add_argument(
+    "--unfuse_weights",
+    action="store_true",
+    help="If set to True, this will unfuse any fused weight modules that support the unfuse_weights method",
+)
 
 args = parser.parse_args()
 
@@ -160,6 +165,11 @@ if world_size > 1:
 
 print("loading model")
 model = models.get_model(args.architecture, args.variant, device_type=args.device_type)
+
+if args.unfuse_weights:
+    print("unfusing weights")
+    model = fusion.apply_unfuse_weights(model)
+
 tokenizer = tokenizers.get_tokenizer(args.tokenizer)
 
 model.eval()

@@ -11,7 +11,7 @@ import torch._dynamo.config
 from torch import distributed as dist
 
 from fms.models import get_model
-from fms.utils import generation, tokenizers
+from fms.utils import fusion, generation, tokenizers
 from fms.utils.generation import generate
 
 
@@ -60,6 +60,11 @@ parser.add_argument(
     help="Disable the kv-cache (on by default)",
 )
 parser.add_argument(
+    "--unfuse_weights",
+    action="store_true",
+    help="If set to True, this will unfuse any fused weight modules that support the unfuse_weights method",
+)
+parser.add_argument(
     "--compile",
     action="store_true",
     help="Use torch.compile (slow for first inference pass)",
@@ -80,6 +85,11 @@ parser.add_argument(
     "--distributed",
     action="store_true",
     help="This is a distributed job (multiple instances run with RANK+WORLD_SIZE)",
+)
+parser.add_argument(
+    "--batch_input",
+    action="store_true",
+    help="use a batch of prompts as input",
 )
 parser.add_argument("--context_file", type=str, default=None, help="File to summarize")
 
@@ -125,6 +135,11 @@ model = get_model(
     distributed_strategy=distr_param,
     group=dist.group.WORLD,
 )
+
+if args.unfuse_weights:
+    print("unfusing weights")
+    model = fusion.apply_unfuse_weights(model)
+
 tokenizer = tokenizers.get_tokenizer(args.tokenizer)
 model.eval()
 torch.set_grad_enabled(False)
@@ -150,16 +165,6 @@ def ids_for_prompt(prompt):
     return ids
 
 
-def pad_prompt(prompt, pad_len, pad_token="<unk>"):
-    to_pad = pad_len - len(prompt)
-    if to_pad == 0:
-        return prompt
-
-    pad_id = tokenizer.convert_tokens_to_ids(pad_token)
-    pad_ids = [pad_id] * to_pad
-    return torch.cat((torch.tensor(pad_ids, device=device), prompt))
-
-
 if args.context_file is not None:
     # during testing, the context_file used was a copy/paste of the text of:
     # https://arxiv.org/pdf/2306.15595.pdf
@@ -181,24 +186,20 @@ else:
 
 prompt1 = ids_for_prompt(prompt1)
 prompt2 = ids_for_prompt(prompt2)
-
 max_len = max([len(prompt) for prompt in [prompt1, prompt2]])
-# prompt1 = pad_prompt(prompt1, max_len)
-# LLaMA 7B did better on the spanish prompt vs 13B.
-# TODO: add a better english prompt to demonstrate padding/batching.
-# prompt2 = pad_prompt(prompt2, max_len)
-# ids = torch.stack((prompt2, prompt1), dim=0)
 
-# ids = prompt1.unsqueeze(0)
-ids = torch.randint(0, 32000, (384, 128), device=device)
+
+if args.batch_input:
+    ids = [prompt1, prompt2]
+else:
+    ids = prompt1
+
 
 def print_result(result):
     if local_rank != 0:
         return
     # stop at EOS token if present
-    result = generation.truncate_after_eos(
-        result, tokenizer.convert_tokens_to_ids("</s>")
-    )
+    result = generation.truncate_after_eos(result, tokenizer.eos_token_id)
     # print(result)
     # print(tokenizer.convert_ids_to_tokens(result))
     print(tokenizer.convert_tokens_to_string(tokenizer.convert_ids_to_tokens(result)))
@@ -227,6 +228,9 @@ def infer(use_cache, do_sample):
         do_sample=do_sample,
         max_seq_len=max_seq_len,
     )
+    if len(result.shape) == 1:
+        result = result.unsqueeze(0)
+
     for i in range(result.shape[0]):
         print_result(result[i])
 

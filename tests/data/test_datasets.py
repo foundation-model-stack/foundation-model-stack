@@ -35,7 +35,7 @@ def test_text_dataset():
     assert len(ds) == 11
     first_input, _ = ds[0]
     last_input, last_label = ds[10]
-    assert last_input[0] == tokenizer.convert_tokens_to_ids("b")[0]
+    assert last_input[0] == tokenizer.convert_tokens_to_ids("b")
     expected = (["b"] * 90) + (["a"] * 9)
     torch.testing.assert_close(
         last_input, torch.tensor(tokenizer.convert_tokens_to_ids(expected))
