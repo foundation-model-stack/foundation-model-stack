@@ -5,12 +5,17 @@ from fms.models.hf.gpt_bigcode.modeling_gpt_bigcode_hf import (
 )
 from fms.models.hf.llama import HFAdaptedLLaMAForCausalLM
 from fms.models.hf.llama.modeling_llama_hf import HFAdaptedLLaMAHeadless
+from fms.models.hf.mixtral.modeling_mixtral_hf import (
+    HFAdaptedMixtralForCausalLM,
+    HFAdaptedMixtralHeadless,
+)
 from fms.models.hf.roberta.modeling_roberta_hf import (
     HFAdaptedRoBERTaForMaskedLM,
     HFAdaptedRoBERTaHeadless,
 )
 from fms.models.hf.utils import register_fms_models, to_hf_api
 from fms.models.llama import LLaMA
+from fms.models.mixtral import Mixtral, MixtralHeadless
 from fms.models.roberta import RoBERTa, RoBERTaHeadless
 
 
@@ -23,6 +28,8 @@ _fms_to_hf_adapt_map = {
     GPTBigCodeHeadless: HFAdaptedGPTBigCodeHeadless,
     RoBERTa: HFAdaptedRoBERTaForMaskedLM,
     RoBERTaHeadless: HFAdaptedRoBERTaHeadless,
+    Mixtral: HFAdaptedMixtralForCausalLM,
+    MixtralHeadless: HFAdaptedMixtralHeadless,
 }
 
 """
@@ -32,12 +39,17 @@ _headless_models = [
     HFAdaptedGPTBigCodeHeadless,
     HFAdaptedLLaMAHeadless,
     HFAdaptedRoBERTaHeadless,
+    HFAdaptedMixtralHeadless,
 ]
 
 """
 list of all causal-lm HF-Adapted models used in registration 
 """
-_causal_lm_models = [HFAdaptedGPTBigCodeForCausalLM, HFAdaptedLLaMAForCausalLM]
+_causal_lm_models = [
+    HFAdaptedGPTBigCodeForCausalLM,
+    HFAdaptedLLaMAForCausalLM,
+    HFAdaptedMixtralForCausalLM,
+]
 
 """
 list of all masked-lm HF-Adapted models used in registration
