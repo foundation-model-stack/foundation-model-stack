@@ -16,7 +16,7 @@ def __one_step(
     input: torch.Tensor,
     label: torch.Tensor,
     loss_fn: nn.Module,
-    grad_scaler: Optional[amp.GradScaler],
+    grad_scaler,
 ):
     autocast = (
         torch.autocast(device_type="cuda") if grad_scaler is not None else nullcontext()

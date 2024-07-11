@@ -79,7 +79,7 @@ class MLPClassificationHead(nn.Module):
             x = x[:, 0]
         x = self.dense(x)
         x = self.act(x)
-        x = self.dropout(x)
+        # x = self.dropout(x)
         if self.ln is not None:
             x = self.ln(x)
         x = self.head(x)
