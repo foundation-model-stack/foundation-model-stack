@@ -7,7 +7,7 @@ import torch.nn.functional as F
 
 
 def pad_input_ids(
-    input_ids_list: List[torch.Tensor], pad_to_min_length: int = 0
+    input_ids_list: List[torch.Tensor], min_pad_length: int = 0
 ) -> Tuple[torch.Tensor, MutableMapping[str, Any]]:
     """
     Convert a list of Tensors to a rectangular tensor. Return extra padding kwargs for the position_ids and mask, since
@@ -17,8 +17,8 @@ def pad_input_ids(
     ----------
     input_ids_list: List[torch.Tensor]
         a list of Tensors of varied length
-    pad_to_min_length: int
-        pad to a min length provided. If the pad_to_min_length is less than the largest input_ids in the input_ids_list,
+    min_pad_length: int
+        pad to a min length provided. If the min_pad_length is less than the largest input_ids in the input_ids_list,
         padding will be determined based on the largest length input_ids.
 
     Returns
@@ -28,7 +28,7 @@ def pad_input_ids(
         in fms models
         A mapping from mask to a 3d causal mask and from position_ids to a 2d rectangular position_ids tensor
     """
-    max_len = max([pad_to_min_length] + [seq.size(0) for seq in input_ids_list])
+    max_len = max([min_pad_length] + [seq.size(0) for seq in input_ids_list])
 
     padded_input_ids_list = []
     mask_list = []
@@ -134,7 +134,7 @@ def generate(
     cases where HF is not available.
     We could add implementations for other types of generation, but this is
     enough for making sure a model is working.
-    Does not implement batching nor beam search, but those could be added.
+    Does not implement beam search, but this can be added.
 
     Args:
         model: A function or nn.Module that takes a batch of input_ids and

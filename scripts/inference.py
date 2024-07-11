@@ -90,7 +90,7 @@ parser.add_argument(
     help="use a batch of prompts as input",
 )
 parser.add_argument(
-    "--pad_to_min_length",
+    "--min_pad_length",
     type=int,
     help="Pad inputs to a minimum specified length. If any prompt is larger than the specified length, padding will be determined by the largest prompt",
     default=0,
@@ -190,13 +190,11 @@ max_len = max([len(prompt) for prompt in [prompt1, prompt2]])
 
 if args.batch_input:
     ids = [prompt1, prompt2]
-    ids, padding_kwargs = pad_input_ids(ids, pad_to_min_length=args.pad_to_min_length)
+    ids, padding_kwargs = pad_input_ids(ids, min_pad_length=args.min_pad_length)
 else:
     ids = prompt1
-    if args.pad_to_min_length != 0:
-        ids, padding_kwargs = pad_input_ids(
-            [ids], pad_to_min_length=args.pad_to_min_length
-        )
+    if args.min_pad_length != 0:
+        ids, padding_kwargs = pad_input_ids([ids], min_pad_length=args.min_pad_length)
     else:
         padding_kwargs = None
 

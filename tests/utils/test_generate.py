@@ -135,7 +135,7 @@ def test_truncate():
     torch.testing.assert_close(result, expected)
 
 
-def test_make_padded():
+def test_pad_input_ids():
     input_ids = [
         torch.arange(1, 5, dtype=torch.long),
         torch.arange(1, 10, dtype=torch.long),
@@ -163,7 +163,7 @@ def test_make_padded():
     torch.testing.assert_close(padding_kwargs["position_ids"], expected_position_ids)
     torch.testing.assert_close(padding_kwargs["mask"], expected_mask)
 
-    padded_input_ids, padding_kwargs = pad_input_ids(input_ids, pad_to_min_length=64)
+    padded_input_ids, padding_kwargs = pad_input_ids(input_ids, min_pad_length=64)
 
     expected_input_ids = torch.tensor(
         [([0] * 60) + [i for i in range(1, 5)], ([0] * 55) + [i for i in range(1, 10)]],
