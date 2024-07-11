@@ -6,25 +6,36 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-def __prepare_list_input(
-    input_ids_list: List[torch.Tensor], model: Union[Callable, torch.nn.Module]
+def make_padded(
+    input_ids_list: List[torch.Tensor], pad_to_length: Optional[int] = None
 ) -> Tuple[torch.Tensor, MutableMapping[str, Any]]:
     """
-    Convert the list of Tensors to a rectangular tensor. Return extra kwargs for the position_ids and mask, since this
-    will be required to properly handle the rectangular tensor for certain models.
+    Convert a list of Tensors to a rectangular tensor. Return extra padding kwargs for the position_ids and mask, since
+    this will be required to properly handle the rectangular tensor for certain models.
+
+    Parameters
+    ----------
+    input_ids_list: List[torch.Tensor]
+        a list of Tensors of varied length
+    pad_to_length: int, optional
+        If given, will pad to a specific max length. This value must be greater than or equal to the max length tensor.
+        (default is pad to pax tensor length)
+
+    Returns
+    -------
+    Tuple[torch.Tensor, MutableMapping[str, Any]]
+        A rectangular 2d padded tensor and a mapping containing the mask and position_ids typically used in forward pass
+        in fms models
+        A mapping from mask to a 3d causal mask and from position_ids to a 2d rectangular position_ids tensor
     """
-    min_len = min([seq.size(0) for seq in input_ids_list])
     max_len = max([seq.size(0) for seq in input_ids_list])
 
-    if isinstance(model, nn.Module):
-        forward_function = model.forward
-    else:
-        forward_function = model
-
-    params = inspect.signature(forward_function).parameters.keys()
-    extra_kwargs = {}
-    needs_mask = "mask" in params and min_len != max_len
-    needs_position_ids = "position_ids" in params and min_len != max_len
+    if pad_to_length is not None:
+        if pad_to_length < max_len:
+            raise ValueError(
+                f"pad_to_length (len={pad_to_length}) must be greater than or equal to the max length tensor (len={max_len})"
+            )
+        max_len = pad_to_length
 
     padded_input_ids_list = []
     mask_list = []
@@ -50,17 +61,16 @@ def __prepare_list_input(
         position_ids_list.append(torch.cat((pos_ids_pads, pos_ids_seq)))
 
     input_ids = torch.stack(padded_input_ids_list)
-    if needs_mask:
-        mask = torch.stack(mask_list)
-        # this is a causal mask for generation
-        mask = (mask.unsqueeze(-1) == mask.unsqueeze(-2)).tril()
-        extra_kwargs["mask"] = mask
+    padding_kwargs = {}
+    mask = torch.stack(mask_list)
+    # this is a causal mask for generation
+    mask = (mask.unsqueeze(-1) == mask.unsqueeze(-2)).tril()
+    padding_kwargs["mask"] = mask
 
-    if needs_position_ids:
-        position_ids = torch.stack(position_ids_list)
-        extra_kwargs["position_ids"] = position_ids
+    position_ids = torch.stack(position_ids_list)
+    padding_kwargs["position_ids"] = position_ids
 
-    return input_ids, extra_kwargs
+    return input_ids, padding_kwargs
 
 
 def __update_padding_kwargs(
@@ -114,7 +124,7 @@ def _make_cache_contiguous(past_key_value_states):
 
 def generate(
     model: Union[Callable, torch.nn.Module],
-    input_ids: Union[torch.Tensor, List[torch.Tensor]],
+    input_ids: torch.Tensor,
     max_seq_len: int = 4096,
     max_new_tokens: int = 256,
     temperature: float = 1.0,
@@ -124,6 +134,7 @@ def generate(
     use_cache: bool = False,
     contiguous_cache: bool = False,
     eos_token_id: Optional[int] = None,
+    extra_kwargs: Optional[MutableMapping[str, Any]] = None,
 ):
     """
     A trivial generate function that can be used for validation/testing in
@@ -135,7 +146,7 @@ def generate(
     Args:
         model: A function or nn.Module that takes a batch of input_ids and
             returns logits
-        prefix: A tensor of token IDs.
+        input_ids: a rectangular tensor of input_ids (batch x seq)
         max_seq_len: the sequence length of the model
         max_new_tokens: max tokens to generate
         temperature: temperature of softmax when sampling
@@ -144,22 +155,21 @@ def generate(
         num_beams: TODO: support beam search
         use_cache: requires that the model accept use_cache and
             past_key_value_states args in forward method.
+        eos_token_id: the optional token id representing the end of sequence
+        extra_kwargs: an optional mapping of additional kwargs to pass to the model
     """
     if num_beams != 1:
         raise NotImplementedError("generate() does yet not support beam search")
 
     kwargs: MutableMapping[str, Any] = dict()
-    # if the inputs are a tensor, we assume they are all non-pad ids and include entire context length
+    if extra_kwargs is not None:
+        kwargs.update(extra_kwargs)
+
     if isinstance(input_ids, torch.Tensor):
         is_batch = len(input_ids.shape) > 1
         # our model requires batch dimension
         if not is_batch:
             input_ids = input_ids.unsqueeze(0)
-    # if the inputs are a list, they may be made up of differently sized tensors
-    # in the case where the tensors are of different sizes, proper position ids and pads will be created
-    elif isinstance(input_ids, List):
-        is_batch = len(input_ids) > 1
-        input_ids, kwargs = __prepare_list_input(input_ids, model)
     else:
         raise TypeError("input_ids must be one of Tensor or List")
 
