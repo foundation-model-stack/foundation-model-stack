@@ -50,6 +50,9 @@ class LLaMAConfig(ModelConfig):
     p_dropout: float = 0.0
     max_expected_seq_len: int = 4096
     ntk_scaling: bool = False
+    attn_bias: bool = False
+    mlp_bias: bool = False
+    tie_heads: bool = False
 
 
 class LLaMABlock(nn.Module):
@@ -89,7 +92,7 @@ class LLaMABlock(nn.Module):
             self.config.nheads,
             kvheads,
             p_dropout=self.config.p_dropout,
-            use_bias=False,
+            use_bias=self.config.attn_bias,
             position_encoder=rotary_emb,
         )
         self.ff_sub_layer = GatedLinearUnit(
@@ -98,7 +101,7 @@ class LLaMABlock(nn.Module):
             multiple_of=self.config.multiple_of,
             activation_fn=str_to_activation(self.config.activation_fn),
             p_dropout=self.config.p_dropout,
-            use_bias=False,
+            use_bias=self.config.mlp_bias,
         )
 
         if self.config.p_dropout != 0:
@@ -127,8 +130,6 @@ class LLaMABlock(nn.Module):
         x = self.ln(x)
         x = self.attn(
             q=x,
-            k=x,
-            v=x,
             mask=mask,
             position_ids=position_ids,
             attn_algorithm=attn_algorithm,
@@ -185,7 +186,7 @@ class LLaMA(nn.Module):
             padding_idx=self.config.pad_id,
             abs_pos=False,
             reversible=True,
-            tie_weights=False,
+            tie_weights=self.config.tie_heads,
             bias=False,
         )
         self.shared = self.distributed_strategy.distribute_module(shared)
@@ -406,7 +407,12 @@ models.register_model(_architecture_name, "13b", _llama_factory_factory(_13b_con
 models.register_model(_architecture_name, "70b", _llama_factory_factory(_70b_config))
 
 
-def _rename_weights_to_fms(orig_sd):
+_convert_to_fused = lambda sd: serialization._legacy_mlp_glu_unfused_to_fused_adapter(
+    serialization._legacy_attn_unfused_to_fused_adapter(sd)
+)
+
+
+def _rename_meta_weights_to_fms(orig_sd):
     replacements = [
         (r"^tok_embeddings", "shared.emb"),
         (r"^norm", "dec_norm"),
@@ -430,7 +436,9 @@ def _rename_weights_to_fms(orig_sd):
             new_name = re.sub(pattern, repl, new_name)
         new_sd[new_name] = param
 
-    return new_sd
+    fused_sd = _convert_to_fused(new_sd)
+
+    return fused_sd
 
 
 def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
@@ -474,11 +482,14 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
 
             new_sd[new_name] = temp
 
-    return new_sd
+    fused_sd = _convert_to_fused(new_sd)
+
+    return fused_sd
 
 
-serialization.register_adapter("llama", "meta", _rename_weights_to_fms)
+serialization.register_adapter("llama", "meta", _rename_meta_weights_to_fms)
 serialization.register_adapter("llama", "hf", _hf_sd_to_fms_sd)
+serialization.register_adapter("llama", "fms.pre0.0.6", _convert_to_fused)
 
 
 def convert_hf_llama(hf_model: "LlamaForCausalLM") -> LLaMA:  # type: ignore
