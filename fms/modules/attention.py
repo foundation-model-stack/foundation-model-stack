@@ -351,11 +351,19 @@ class MultiHeadAttention(nn.Module):
             and past_key_value_state[0].numel() > 0
         ):
             if is_self:
-                keys = torch.cat((past_key_value_state[0], keys), dim=2)
-                values = torch.cat((past_key_value_state[1], values), dim=2)
+                past_key_value_state[0][:, :, position_ids[0]] = keys
+                past_key_value_state[1][:, :, position_ids[0]] = values
+                keys_c = past_key_value_state[0]
+                values_c = past_key_value_state[1]
             else:
-                keys = past_key_value_state[0]
-                values = past_key_value_state[1]
+                keys_c = past_key_value_state[0]
+                values_c = past_key_value_state[1]
+        else:
+            B, _, H, E = keys.shape
+            keys_c = torch.zeros((B, 256, H, E), device=keys.device, dtype=keys.dtype)
+            values_c = torch.zeros((B, 256, H, E), device=keys.device, dtype=keys.dtype)
+            keys_c[:, :, position_ids[0]] = keys
+            values_c[:, :, position_ids[0]] = values
 
         # Merge rel pos bias and mask into single float mask
         if mask is not None:
@@ -366,7 +374,7 @@ class MultiHeadAttention(nn.Module):
 
         if self.position_encoder is not None:
             attn_mask: Optional[Tensor] = self.position_encoder.adjusted_mask(
-                mask, queries, keys, past_key_value_state, use_cache
+                mask, queries, keys_c, past_key_value_state, use_cache
             )
         else:
             attn_mask = mask
@@ -375,13 +383,13 @@ class MultiHeadAttention(nn.Module):
         expansion = self.nheads // self.kvheads
         # k/v: b h l d
         if expansion != 1:
-            keys_e = keys.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
+            keys_e = keys_c.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
             values_e = (
-                values.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
+                values_c.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
             )
         else:
-            keys_e = keys
-            values_e = values
+            keys_e = keys_c
+            values_e = values_c
 
         if attn_algorithm:
             # Pick which fused attn kernels will run.
@@ -420,7 +428,7 @@ class MultiHeadAttention(nn.Module):
 
         # if use_cache=True, we return the hidden_state as well as the kv cache
         if use_cache:
-            return out, (keys, values)
+            return out, (keys_c, values_c)
         else:
             return out
 

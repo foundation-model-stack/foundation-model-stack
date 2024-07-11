@@ -101,7 +101,9 @@ class InferenceValidator(TrainerPlugin):
             if step is not None:
                 prefix = prefix + f":{step:04d}"
 
-            result = generation.generate(self.model, self.input_ids, use_cache=True)
+            result = generation.generate(
+                self.model, self.model, self.input_ids, use_cache=True
+            )
             result = generation.truncate_after_eos(result, self.eos_token_id)
             result = self.tokenizer.convert_ids_to_tokens(result)
             result = self.tokenizer.convert_tokens_to_string(result)
