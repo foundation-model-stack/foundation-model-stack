@@ -6,8 +6,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-def make_padded(
-    input_ids_list: List[torch.Tensor], pad_to_length: Optional[int] = None
+def pad_input_ids(
+    input_ids_list: List[torch.Tensor], pad_to_min_length: int = 0
 ) -> Tuple[torch.Tensor, MutableMapping[str, Any]]:
     """
     Convert a list of Tensors to a rectangular tensor. Return extra padding kwargs for the position_ids and mask, since
@@ -17,9 +17,9 @@ def make_padded(
     ----------
     input_ids_list: List[torch.Tensor]
         a list of Tensors of varied length
-    pad_to_length: int, optional
-        If given, will pad to a specific max length. This value must be greater than or equal to the max length tensor.
-        (default is pad to pax tensor length)
+    pad_to_min_length: int
+        pad to a min length provided. If the pad_to_min_length is less than the largest input_ids in the input_ids_list,
+        padding will be determined based on the largest length input_ids.
 
     Returns
     -------
@@ -28,14 +28,7 @@ def make_padded(
         in fms models
         A mapping from mask to a 3d causal mask and from position_ids to a 2d rectangular position_ids tensor
     """
-    max_len = max([seq.size(0) for seq in input_ids_list])
-
-    if pad_to_length is not None:
-        if pad_to_length < max_len:
-            raise ValueError(
-                f"pad_to_length (len={pad_to_length}) must be greater than or equal to the max length tensor (len={max_len})"
-            )
-        max_len = pad_to_length
+    max_len = max([pad_to_min_length] + [seq.size(0) for seq in input_ids_list])
 
     padded_input_ids_list = []
     mask_list = []
@@ -156,7 +149,9 @@ def generate(
         use_cache: requires that the model accept use_cache and
             past_key_value_states args in forward method.
         eos_token_id: the optional token id representing the end of sequence
-        extra_kwargs: an optional mapping of additional kwargs to pass to the model
+        extra_kwargs: an optional mapping of additional kwargs to pass to the model.
+            For example: if extra_kwargs contains position_ids and mask keys, these
+            model parameters will be updated as-appropriate for each token generated.
     """
     if num_beams != 1:
         raise NotImplementedError("generate() does yet not support beam search")

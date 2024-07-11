@@ -10,7 +10,7 @@ from torch import distributed as dist
 
 from fms.models import get_model
 from fms.utils import fusion, generation, tokenizers
-from fms.utils.generation import generate, make_padded
+from fms.utils.generation import generate, pad_input_ids
 
 
 # This example script validates the LLaMA implementation by running inference on a couple of prompts.
@@ -90,10 +90,10 @@ parser.add_argument(
     help="use a batch of prompts as input",
 )
 parser.add_argument(
-    "--pad_to_length",
+    "--pad_to_min_length",
     type=int,
-    help="Pad inputs to a specific length (Default is to pad to the max sequence length in batch)",
-    default=None,
+    help="Pad inputs to a minimum specified length. If any prompt is larger than the specified length, padding will be determined by the largest prompt",
+    default=0,
 )
 parser.add_argument("--context_file", type=str, default=None, help="File to summarize")
 
@@ -190,11 +190,13 @@ max_len = max([len(prompt) for prompt in [prompt1, prompt2]])
 
 if args.batch_input:
     ids = [prompt1, prompt2]
-    ids, padding_kwargs = make_padded(ids, pad_to_length=args.pad_to_length)
+    ids, padding_kwargs = pad_input_ids(ids, pad_to_min_length=args.pad_to_min_length)
 else:
     ids = prompt1
-    if args.pad_to_length is not None:
-        ids, padding_kwargs = make_padded([ids], pad_to_length=args.pad_to_length)
+    if args.pad_to_min_length != 0:
+        ids, padding_kwargs = pad_input_ids(
+            [ids], pad_to_min_length=args.pad_to_min_length
+        )
     else:
         padding_kwargs = None
 
