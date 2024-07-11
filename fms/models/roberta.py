@@ -269,6 +269,79 @@ class RoBERTa(nn.Module):
                 ),
             )
 
+class RoBERTaSentiment(nn.Module):
+    def __init__(
+        self,
+        config: Optional[RoBERTaConfig] = None,
+        distributed_strategy: DistributedStrategy = NoOpStrategy,
+        **kwargs,
+    ):
+        super(RoBERTaSentiment, self).__init__()
+        if config is not None:
+            self.config = config
+        else:
+            self.config = RoBERTaConfig()
+        self.config = self.config.updated(**kwargs)
+        self.distributed_strategy = distributed_strategy
+
+        self.base_model = RoBERTaHeadless(self.config, self.distributed_strategy)
+
+        # The head does not get TP-Wrapped as in many cases the vocab_size will not be divisible by the world size
+        self.classification_head = self.distributed_strategy.distribute_module(
+            MLPClassificationHead(
+                self.config.emb_dim,
+                # number of classes is vocab size as this is predicting a masked token
+                num_classes=2,
+                activation_fn=str_to_activation(self.config.activation_fn),
+                layer_norm=nn.LayerNorm(self.config.emb_dim, self.config.norm_eps),
+                dropout=self.config.p_dropout,
+                apply_pooling_fn=True,
+                dense_bias=False,
+                head_bias=False
+            ),
+            final_layers=True,
+        )
+
+        # this model ties weights, so we tie here
+        if self.config.tie_heads:
+            self.classification_head.head.weight = self.base_model.embedding.weight
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        mask: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.Tensor] = None,
+        attn_algorithm: Optional[str] = None,
+    ):
+        # run through the encoder layers
+        x = self.base_model(
+            x, mask=mask, position_ids=position_ids, attn_algorithm=attn_algorithm
+        )
+
+        # run through classification head and project to vocab space
+        x = self.classification_head(x)
+        return x
+
+    @classmethod
+    def from_config(cls, config: RoBERTaConfig) -> "RoBERTaSentiment":
+        return cls(config)
+
+    def get_config(self) -> RoBERTaConfig:
+        return self.config
+
+    def reset_parameters(self):
+        self.base_model.reset_parameters()
+        if self.config.tie_heads:
+            self.classification_head.head.bias.data.zero_()
+        else:
+            self.classification_head.head.weight.data.normal_(
+                0,
+                1
+                / math.sqrt(
+                    math.sqrt(self.config.emb_dim * self.config.src_vocab_size)
+                ),
+            )
+
 
 # a micro llama model to use with a char-level tokenizer
 _micro_char_config = RoBERTaConfig(
@@ -282,7 +355,7 @@ _architecture_name = "roberta"
 
 def _roberta_factory_factory(config):
     def factory(**kwargs):
-        return RoBERTa(config, **kwargs)
+        return RoBERTaSentiment(config, **kwargs)
 
     return factory
 

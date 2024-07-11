@@ -246,7 +246,7 @@ def training_state(model_path, model, rank):
 
 
 def main():
-    torch.set_default_dtype(torch.bfloat16)
+    torch.set_default_dtype(torch.float32)
 
     print0("Loading model...")
     model = models.get_model(
@@ -258,8 +258,8 @@ def main():
         distributed_strategy=args.distributed,
         group=group,
     )
-    model.base_model.rot_emb.compute_freqs_cis(device, 512)
-    model.reset_head()
+    #model.base_model.rot_emb.compute_freqs_cis(device, 512)
+    #model.reset_head()
     if args.head_only:
         for param in model.base_model.parameters():
             param.requires_grad = False
@@ -278,8 +278,8 @@ def main():
 
     tokenizer = tokenizers.get_tokenizer(args.tokenizer)
 
-    bos_token_id = tokenizer.bos_token_id
-    eos_token_id = tokenizer.eos_token_id
+    bos_token_id = 101
+    eos_token_id = 102
     bos_token = tokenizer.convert_ids_to_tokens([bos_token_id])[0]
     eos_token = tokenizer.convert_ids_to_tokens([eos_token_id])[0]
 
