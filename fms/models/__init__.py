@@ -1,6 +1,6 @@
 from contextlib import nullcontext
 from functools import partial
-from typing import Any, Callable, MutableMapping, Optional
+from typing import Any, Callable, MutableMapping, Optional, List
 
 import torch
 from torch import nn
@@ -216,6 +216,7 @@ def get_model(
     distributed_strategy: Optional[str] = None,
     checkpoint_sharding: Optional[str] = None,
     group: Optional[ProcessGroup] = None,
+    tp_ignore_modules: Optional[List[str]] = None,
     **kwargs,
 ):
     """
@@ -277,7 +278,7 @@ def get_model(
     if "distributed_strategy" not in extra_args:
         if distributed_strategy == "tp":
             print("using tensor parallel")
-            extra_args["distributed_strategy"] = TensorParallelStrategy()
+            extra_args["distributed_strategy"] = TensorParallelStrategy(ignore_modules=tp_ignore_modules)
         elif distributed_strategy == "mp":
             print("using model parallel")
             devices = [i for i in range(torch.cuda.device_count())]

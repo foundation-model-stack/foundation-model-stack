@@ -1,5 +1,5 @@
 from abc import abstractmethod
-from typing import Any, List, Mapping
+from typing import Any, List, Mapping, Optional
 
 import torch
 import torch.distributed
@@ -110,15 +110,18 @@ class UniformModelParallelStrategy(DistributedStrategy):
 
 
 class TensorParallelStrategy(DistributedStrategy):
-    def __init__(self, group=None, from_meta=False):
+    def __init__(self, group=None, from_meta=False, ignore_modules: Optional[List[str]] = None):
         super().__init__(from_meta)
         assert torch.distributed.is_initialized(), "must initialize a process group"
         self.group = group if group is not None else torch.distributed.GroupMember.WORLD
+        self.ignore_modules = [] if ignore_modules is None else ignore_modules
 
     def distribute_module(
         self, module: nn.Module, final_layers: bool = False
     ) -> nn.Module:
-        return tp_wrapping.apply_tp(module, self.group)
+        if type(module).__name__ not in self.ignore_modules:
+            return tp_wrapping.apply_tp(module, self.group)
 
     def distribute_layer(self, block: nn.Module, layer: int) -> nn.Module:
-        return tp_wrapping.apply_tp(block, self.group)
+        if type(block).__name__ not in self.ignore_modules:
+            return tp_wrapping.apply_tp(block, self.group)

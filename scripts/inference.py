@@ -95,6 +95,12 @@ parser.add_argument(
     help="Pad inputs to a minimum specified length. If any prompt is larger than the specified length, padding will be determined by the largest prompt",
     default=0,
 )
+parser.add_argument(
+    "--tp_ignore_modules",
+    nargs="*",
+    type=str,
+    help="List of module names to ignore when distributing with tp strategy"
+)
 parser.add_argument("--context_file", type=str, default=None, help="File to summarize")
 
 args = parser.parse_args()
@@ -139,6 +145,7 @@ model = get_model(
     source=args.model_source,
     distributed_strategy=distr_param,
     group=dist.group.WORLD,
+    tp_ignore_modules=args.tp_ignore_modules,
 )
 
 if args.unfuse_weights:
