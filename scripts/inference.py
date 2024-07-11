@@ -99,7 +99,7 @@ parser.add_argument(
     "--tp_ignore_modules",
     nargs="*",
     type=str,
-    help="List of module names to ignore when distributing with tp strategy"
+    help="List of module names to ignore when distributing with tp strategy",
 )
 parser.add_argument("--context_file", type=str, default=None, help="File to summarize")
 

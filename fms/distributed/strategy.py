@@ -110,7 +110,9 @@ class UniformModelParallelStrategy(DistributedStrategy):
 
 
 class TensorParallelStrategy(DistributedStrategy):
-    def __init__(self, group=None, from_meta=False, ignore_modules: Optional[List[str]] = None):
+    def __init__(
+        self, group=None, from_meta=False, ignore_modules: Optional[List[str]] = None
+    ):
         super().__init__(from_meta)
         assert torch.distributed.is_initialized(), "must initialize a process group"
         self.group = group if group is not None else torch.distributed.GroupMember.WORLD
@@ -121,7 +123,11 @@ class TensorParallelStrategy(DistributedStrategy):
     ) -> nn.Module:
         if type(module).__name__ not in self.ignore_modules:
             return tp_wrapping.apply_tp(module, self.group)
+        else:
+            return module
 
     def distribute_layer(self, block: nn.Module, layer: int) -> nn.Module:
         if type(block).__name__ not in self.ignore_modules:
             return tp_wrapping.apply_tp(block, self.group)
+        else:
+            return block
