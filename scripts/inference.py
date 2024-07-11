@@ -114,6 +114,8 @@ if args.deterministic:
     torch.use_deterministic_algorithms(True)
 
 if args.distributed:
+    # os.environ['MASTER_ADDR'] = '127.0.0.1'
+    # os.environ['MASTER_PORT'] = '29508'
     dist.init_process_group()
     # Fix until PT 2.3
     torch._C._distributed_c10d._register_process_group("default", dist.group.WORLD)
@@ -132,7 +134,7 @@ model = get_model(
     # model_path=args.model_path,
     device_type=args.device_type,
     source=args.model_source,
-    distributed_strategy=distr_param,
+    distributed_strategy="fsdp",
     group=dist.group.WORLD,
 )
 
