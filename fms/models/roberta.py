@@ -155,12 +155,12 @@ class RoBERTaHeadless(nn.Module):
         position_ids: Optional[torch.Tensor] = None,
         attn_algorithm: Optional[str] = None,
     ):
-        if mask is None:
-            if x is None:
-                raise ValueError("cannot create a mask when x is None")
-            pad_id: int = self.config.pad_id
-            is_pad = x == pad_id
-            mask = is_pad.unsqueeze(-1) == is_pad.unsqueeze(-2)
+        # if mask is None:
+        #     if x is None:
+        #         raise ValueError("cannot create a mask when x is None")
+        #     pad_id: int = self.config.pad_id
+        #     is_pad = x == pad_id
+        #     mask = is_pad.unsqueeze(-1) == is_pad.unsqueeze(-2)
 
         x_emb = self.embedding(x)
 
