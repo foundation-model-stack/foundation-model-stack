@@ -108,6 +108,7 @@ class LLaMABlock(nn.Module):
             p_dropout=self.config.p_dropout,
             use_bias=self.config.attn_bias,
             position_encoder=rotary_emb,
+            attn_scale=self.config.mup_attn_temp,
         )
         self.ff_sub_layer = GatedLinearUnit(
             self.config.emb_dim,
@@ -253,12 +254,11 @@ class LLaMA(nn.Module):
     def reset_parameters(self):
         # Call reset_parameters for relevant sub-layers
         for m in self.modules():
-            if (
-                isinstance(m, MultiHeadAttention)
-                or isinstance(m, WordEmbedding)
-                or isinstance(m, GatedLinearUnit)
-                or isinstance(m, LayerNormParameterized)
-            ):
+            if isinstance(m, MultiHeadAttention):
+                m.reset_parameters(scale = self.config.mup_attn_init)
+            elif isinstance(m, GatedLinearUnit):
+                m.reset_parameters(scale = self.config.mup_ffn_init)
+            elif isinstance(m, WordEmbedding) or isinstance(m, LayerNormParameterized):
                 m.reset_parameters()
 
     def validate_reset_parameters(self):
