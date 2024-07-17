@@ -53,6 +53,20 @@ class LLaMAConfig(ModelConfig):
     attn_bias: bool = False
     mlp_bias: bool = False
     tie_heads: bool = False
+    
+    # muP values
+    #   - Comments are: Left, our formula, Right, target
+    #   - Values calculated based on TinyLlama
+    mup_emb_scale: float = .02  # 1 * f  =  0.02
+    mup_head_scale: float = 20.48  # 1/sqrt(d) * f  =  .02 * sqrt(d)
+    mup_ffn_init: float = .7575  # 1/sqrt(d) / 6rt(multiple_of_growf) * f  =  .02
+    mup_attn_init: float = .640  # 1/sqrt(d) / 4rt(emb_v * nheads / d) * f  =  .02
+    mup_attn_temp: float = 32  # 1/d * f  =  1/sqrt(d)
+    
+    # muP LRs
+    mup_0d_lr: float = .001  # f  =  .001
+    mup_1d_lr: float = .032  # 1/sqrt(d) * f  =  .001
+    mup_2d_lr: float = 1.024  # 1/d * f = .001
 
 
 class LLaMABlock(nn.Module):

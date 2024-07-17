@@ -215,12 +215,12 @@ class GatedLinearUnit(nn.Module):
         self.width = emb_dim
         self.grow_factor = hidden_grow_factor
 
-    def reset_parameters(self):
+    def reset_parameters(self, scale=1):
         for layer in ["wg1_fused", "w2"]:
             nn.init.trunc_normal_(
                 getattr(self, layer).weight,
                 mean=0.0,
-                std=0.02,
+                std=scale / (self.width**.5) / (self.hidden_dim/self.width)**(1/6),
             )
             if self.use_bias:
                 getattr(self, layer).bias.data.zero_()

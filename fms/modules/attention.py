@@ -58,16 +58,6 @@ class QKV(nn.Module, metaclass=abc.ABCMeta):
         """
         pass
 
-    @abc.abstractmethod
-    def reset_parameters(self):
-        """resets the query, key, and value weights for training
-
-        Args:
-            gain: int
-                gain for std in norm (default is 1)
-        """
-        pass
-
 
 class UnfusedQKV(QKV):
     """
@@ -104,13 +94,6 @@ class UnfusedQKV(QKV):
         self.value = nn.Linear(
             self.emb_dim, self.kvheads * self.emb_v_per_head, bias=use_bias
         )
-
-    def reset_parameters(self):
-        for m in self.modules():
-            if isinstance(m, nn.Linear):
-                nn.init.trunc_normal_(m.weight, mean=0.0, std=0.02)
-                if self.use_bias:
-                    m.bias.data.zero_()
 
     def forward(
         self, q: torch.Tensor, k: Optional[torch.Tensor], v: Optional[torch.Tensor]
@@ -190,11 +173,6 @@ class FusedQKV(QKV):
             result.value.bias.copy_(value_bias)
         return result
 
-    def reset_parameters(self):
-        nn.init.trunc_normal_(self.qkv_fused.weight, mean=0.0, std=0.02)
-        if self.use_bias:
-            self.qkv_fused.bias.data.zero_()
-
     def forward(
         self, q: torch.Tensor, k: Optional[torch.Tensor], v: Optional[torch.Tensor]
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -238,6 +216,7 @@ class MultiHeadAttention(nn.Module):
         use_bias=False,
         position_encoder: Optional[PositionEncoder] = None,
         fused: bool = True,
+        attn_scale: float = 1
     ):
         super(MultiHeadAttention, self).__init__()
         self.nheads = nheads
@@ -248,6 +227,7 @@ class MultiHeadAttention(nn.Module):
         self.p_dropout = p_dropout if p_dropout is not None else 0.0
         self.use_bias = use_bias
         self.fused = fused
+        self.attn_scale = attn_scale
 
         self.in_proj: QKV = (FusedQKV if self.fused else UnfusedQKV)(
             self.emb_dim,
@@ -271,14 +251,16 @@ class MultiHeadAttention(nn.Module):
         )
         self.previous_math: bool = torch.backends.cuda.math_sdp_enabled()
 
-    def reset_parameters(self):
+    def reset_parameters(self, scale=1):
         for m in self.modules():
             if isinstance(m, nn.Linear):
-                nn.init.trunc_normal_(m.weight, mean=0.0, std=0.02)
+                nn.init.normal_(
+                    m.weight, 
+                    mean=0.0, 
+                    std=scale / self.emb_dim**.5 / (self.nheads * self.emb_v_per_head / self.emb_dim)**.25,
+                )
                 if self.use_bias:
                     m.bias.data.zero_()
-            elif isinstance(m, QKV):
-                m.reset_parameters()
 
     def to_tp(self, group: ProcessGroup) -> "TPMultiHeadAttention":
         return TPMultiHeadAttention.import_module(self, group)
@@ -288,10 +270,10 @@ class MultiHeadAttention(nn.Module):
         q: torch.Tensor,
         k: Optional[torch.Tensor] = None,
         v: Optional[torch.Tensor] = None,
-        mask: Optional[Tensor] = None,
+        mask: Optional[torch.Tensor] = None,
         position_ids=None,
         attn_algorithm=None,
-        past_key_value_state: Optional[Tuple[Tensor, Tensor]] = None,
+        past_key_value_state: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
         use_cache=False,
         is_self=True,
         is_causal_mask=False,
@@ -400,6 +382,7 @@ class MultiHeadAttention(nn.Module):
             attn_mask=attn_mask,
             dropout_p=self.p_dropout if self.training else 0.0,
             is_causal=is_causal_mask,
+            scale=self.attn_scale / self.emb_kq_per_head,
         )
 
         if attn_algorithm:
