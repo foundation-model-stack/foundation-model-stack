@@ -217,7 +217,7 @@ class GatedLinearUnit(nn.Module):
 
     def reset_parameters(self, scale=1):
         for layer in ["wg1_fused", "w2"]:
-            nn.init.trunc_normal_(
+            nn.init.normal_(
                 getattr(self, layer).weight,
                 mean=0.0,
                 std=scale / (self.width**.5) / (self.hidden_dim/self.width)**(1/6),
