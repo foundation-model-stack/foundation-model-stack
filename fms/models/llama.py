@@ -17,7 +17,7 @@ from fms.distributed.strategy import (
     TensorParallelStrategy,
     UniformModelParallelStrategy,
 )
-from fms.modules.attention import MultiHeadAttention
+from fms.modules.attention import MultiHeadAttention, QKV
 from fms.modules.embedding import WordEmbedding
 from fms.modules.feedforward import GatedLinearUnit
 from fms.modules.layernorm import LayerNormParameterized
@@ -258,6 +258,8 @@ class LLaMA(nn.Module):
                 m.reset_parameters(scale = self.config.mup_attn_init)
             elif isinstance(m, GatedLinearUnit):
                 m.reset_parameters(scale = self.config.mup_ffn_init)
+            elif isinstance(m, QKV):
+                m.reset_parameters(scale = self.config.mup_attn_init)
             elif isinstance(m, WordEmbedding) or isinstance(m, LayerNormParameterized):
                 m.reset_parameters()
 

@@ -58,6 +58,16 @@ class QKV(nn.Module, metaclass=abc.ABCMeta):
         """
         pass
 
+    @abc.abstractmethod
+    def reset_parameters(self, scale=1):
+        """resets the query, key, and value weights for training
+
+        Args:
+            scale: int
+                degree of scaling for each param tensor (default is 1)
+        """
+        pass
+
 
 class UnfusedQKV(QKV):
     """
@@ -94,6 +104,17 @@ class UnfusedQKV(QKV):
         self.value = nn.Linear(
             self.emb_dim, self.kvheads * self.emb_v_per_head, bias=use_bias
         )
+
+    def reset_parameters(self, scale=1):
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.normal_(
+                    m.weight, 
+                    mean=0.0, 
+                    std=scale / self.emb_dim**.5 / (self.nheads * self.emb_v_per_head / self.emb_dim)**.25,
+                )
+                if self.use_bias:
+                    m.bias.data.zero_()
 
     def forward(
         self, q: torch.Tensor, k: Optional[torch.Tensor], v: Optional[torch.Tensor]
@@ -172,6 +193,15 @@ class FusedQKV(QKV):
             result.key.bias.copy_(key_bias)
             result.value.bias.copy_(value_bias)
         return result
+    
+    def reset_parameters(self, scale=1):
+        nn.init.normal_(
+            self.qkv_fused.weight, 
+            mean=0.0, 
+            std=scale / self.emb_dim**.5 / (self.nheads * self.emb_v_per_head / self.emb_dim)**.25,
+        )
+        if self.use_bias:
+            self.qkv_fused.bias.data.zero_()
 
     def forward(
         self, q: torch.Tensor, k: Optional[torch.Tensor], v: Optional[torch.Tensor]
@@ -252,15 +282,13 @@ class MultiHeadAttention(nn.Module):
         self.previous_math: bool = torch.backends.cuda.math_sdp_enabled()
 
     def reset_parameters(self, scale=1):
-        for m in self.modules():
-            if isinstance(m, nn.Linear):
-                nn.init.normal_(
-                    m.weight, 
-                    mean=0.0, 
-                    std=scale / self.emb_dim**.5 / (self.nheads * self.emb_v_per_head / self.emb_dim)**.25,
-                )
-                if self.use_bias:
-                    m.bias.data.zero_()
+        nn.init.normal_(
+            self.dense.weight, 
+            mean=0.0, 
+            std=scale / self.emb_dim**.5 / (self.nheads * self.emb_v_per_head / self.emb_dim)**.25,
+        )
+        if self.use_bias:
+            self.dense.bias.data.zero_()
 
     def to_tp(self, group: ProcessGroup) -> "TPMultiHeadAttention":
         return TPMultiHeadAttention.import_module(self, group)
