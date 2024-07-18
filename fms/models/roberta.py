@@ -32,6 +32,10 @@ class RoBERTaConfig(ModelConfig):
     norm_eps: float = 1e-12
     tie_heads: bool = False
 
+@dataclass
+class RoBERTaClassificationConfig(RoBERTaConfig):
+    num_classes: int = 2
+
 
 class RoBERTaBlock(nn.Module):
     def __init__(self, config: RoBERTaConfig):
@@ -269,18 +273,18 @@ class RoBERTa(nn.Module):
                 ),
             )
 
-class RoBERTaSentiment(nn.Module):
+class RoBERTaForClassification(nn.Module):
     def __init__(
         self,
-        config: Optional[RoBERTaConfig] = None,
+        config: Optional[RoBERTaClassificationConfig] = None,
         distributed_strategy: DistributedStrategy = NoOpStrategy,
         **kwargs,
     ):
-        super(RoBERTaSentiment, self).__init__()
+        super(RoBERTaForClassification, self).__init__()
         if config is not None:
             self.config = config
         else:
-            self.config = RoBERTaConfig()
+            self.config = RoBERTaClassificationConfig()
         self.config = self.config.updated(**kwargs)
         self.distributed_strategy = distributed_strategy
 
@@ -291,7 +295,7 @@ class RoBERTaSentiment(nn.Module):
             MLPClassificationHead(
                 self.config.emb_dim,
                 # number of classes is vocab size as this is predicting a masked token
-                num_classes=2,
+                num_classes=self.config.num_classes,
                 activation_fn=str_to_activation(self.config.activation_fn),
                 layer_norm=nn.LayerNorm(self.config.emb_dim, self.config.norm_eps),
                 dropout=self.config.p_dropout,
@@ -301,10 +305,6 @@ class RoBERTaSentiment(nn.Module):
             ),
             final_layers=True,
         )
-
-        # this model ties weights, so we tie here
-        if self.config.tie_heads:
-            self.classification_head.head.weight = self.base_model.embedding.weight
 
     def forward(
         self,
@@ -323,24 +323,21 @@ class RoBERTaSentiment(nn.Module):
         return x
 
     @classmethod
-    def from_config(cls, config: RoBERTaConfig) -> "RoBERTaSentiment":
+    def from_config(cls, config: RoBERTaClassificationConfig) -> "RoBERTaForClassification":
         return cls(config)
 
-    def get_config(self) -> RoBERTaConfig:
+    def get_config(self) -> RoBERTaClassificationConfig:
         return self.config
 
     def reset_parameters(self):
         self.base_model.reset_parameters()
-        if self.config.tie_heads:
-            self.classification_head.head.bias.data.zero_()
-        else:
-            self.classification_head.head.weight.data.normal_(
-                0,
-                1
-                / math.sqrt(
-                    math.sqrt(self.config.emb_dim * self.config.src_vocab_size)
-                ),
-            )
+        self.classification_head.head.weight.data.normal_(
+            0,
+            1
+            / math.sqrt(
+                math.sqrt(self.config.emb_dim * self.config.src_vocab_size)
+            ),
+        )
 
 
 # a micro llama model to use with a char-level tokenizer
@@ -350,12 +347,28 @@ _micro_char_config = RoBERTaConfig(
 
 _base_config = RoBERTaConfig()
 
+_bert_base_config = RoBERTaConfig(
+    src_vocab_size=30522,
+)
+
+_bert_base_classification_config = RoBERTaClassificationConfig(
+    **_bert_base_config.__dict__,
+    num_classes=2
+)
+
 _architecture_name = "roberta"
 
 
 def _roberta_factory_factory(config):
     def factory(**kwargs):
-        return RoBERTaSentiment(config, **kwargs)
+        return RoBERTa(config, **kwargs)
+
+    return factory
+
+
+def _roberta_classification_factory_factory(config):
+    def factory(**kwargs):
+        return RoBERTaForClassification(config, **kwargs)
 
     return factory
 
@@ -365,6 +378,14 @@ models.register_model(
 )
 models.register_model(
     _architecture_name, "base", _roberta_factory_factory(_base_config)
+)
+
+models.register_model(
+    "bert", "base", _roberta_factory_factory(_bert_base_config)
+)
+
+models.register_model(
+    "bert_classification", "base", _roberta_classification_factory_factory(_bert_base_classification_config)
 )
 
 _convert_to_fused_qkv = serialization._legacy_attn_unfused_to_fused_adapter
@@ -407,5 +428,8 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping[Any, Any]) -> Mapping[Any, Any]:
     return fused_sd
 
 
+
+serialization.register_adapter("bert", "hf", _hf_sd_to_fms_sd)
+serialization.register_adapter("bert_classification", "hf", _hf_sd_to_fms_sd)
 serialization.register_adapter("roberta", "hf", _hf_sd_to_fms_sd)
 serialization.register_adapter("roberta", "fms.pre0.0.6", _convert_to_fused_qkv)
