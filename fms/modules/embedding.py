@@ -82,7 +82,7 @@ class WordEmbedding(nn.Module):
             if tie_weights:
                 self.head.weight = self.emb.weight
 
-    def reset_parameters(self):
+    def reset_parameters(self, scale=1):
         # Defaults to norm-preserving in reverse op, unit vector in forward op
         layers = ["emb"]
         if self.abs_pos:
