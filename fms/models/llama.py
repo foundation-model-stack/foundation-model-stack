@@ -57,11 +57,12 @@ class LLaMAConfig(ModelConfig):
     # muP values
     #   - Comments are: Left, our formula, Right, target
     #   - Values calculated based on TinyLlama
-    mup_emb_scale: float = .02  # 1 * f  =  0.02
-    mup_head_scale: float = 20.48  # 1/sqrt(d) * f  =  .02 * sqrt(d)
+    mup_emb_scale: float = .03125  # sqrt(d) * f  =  1
+    mup_head_scale: float = 32.0  # 1/sqrt(d) * f  =  1
+    mup_1d_init: float = .640  # 1/sqrt(d) * f = 0.02
     mup_ffn_init: float = .7575  # 1/sqrt(d) / 6rt(multiple_of_growf) * f  =  .02
     mup_attn_init: float = .640  # 1/sqrt(d) / 4rt(emb_v * nheads / d) * f  =  .02
-    mup_attn_temp: float = 32  # 1/d * f  =  1/sqrt(d)
+    mup_attn_temp: float = 32.0  # 1/d * f  =  1/sqrt(d)
     
     # muP LRs
     mup_0d_lr: float = .001  # f  =  .001
@@ -260,7 +261,13 @@ class LLaMA(nn.Module):
                 m.reset_parameters(scale = self.config.mup_ffn_init)
             elif isinstance(m, QKV):
                 m.reset_parameters(scale = self.config.mup_attn_init)
-            elif isinstance(m, WordEmbedding) or isinstance(m, LayerNormParameterized):
+            elif isinstance(m, WordEmbedding):
+                m.reset_parameters(scale = (
+                    self.config.mup_1d_init, 
+                    self.config.mup_emb_scale, 
+                    self.config.mup_head_scale,
+                ))
+            elif isinstance(m, LayerNormParameterized):
                 m.reset_parameters()
 
     def validate_reset_parameters(self):
