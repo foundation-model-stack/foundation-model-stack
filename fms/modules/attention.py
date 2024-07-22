@@ -109,9 +109,11 @@ class UnfusedQKV(QKV):
         for m in self.modules():
             if isinstance(m, nn.Linear):
                 nn.init.normal_(
-                    m.weight, 
-                    mean=0.0, 
-                    std=scale / self.emb_dim**.5 / (self.nheads * self.emb_v_per_head / self.emb_dim)**.25,
+                    m.weight,
+                    mean=0.0,
+                    std=scale
+                    / self.emb_dim**0.5
+                    / (self.nheads * self.emb_v_per_head / self.emb_dim) ** 0.25,
                 )
                 if self.use_bias:
                     m.bias.data.zero_()
@@ -193,12 +195,14 @@ class FusedQKV(QKV):
             result.key.bias.copy_(key_bias)
             result.value.bias.copy_(value_bias)
         return result
-    
+
     def reset_parameters(self, scale=1):
         nn.init.normal_(
-            self.qkv_fused.weight, 
-            mean=0.0, 
-            std=scale / self.emb_dim**.5 / (self.nheads * self.emb_v_per_head / self.emb_dim)**.25,
+            self.qkv_fused.weight,
+            mean=0.0,
+            std=scale
+            / self.emb_dim**0.5
+            / (self.nheads * self.emb_v_per_head / self.emb_dim) ** 0.25,
         )
         if self.use_bias:
             self.qkv_fused.bias.data.zero_()
@@ -246,7 +250,7 @@ class MultiHeadAttention(nn.Module):
         use_bias=False,
         position_encoder: Optional[PositionEncoder] = None,
         fused: bool = True,
-        attn_scale: float = 1
+        attn_scale: float = 1,
     ):
         super(MultiHeadAttention, self).__init__()
         self.nheads = nheads
@@ -283,9 +287,11 @@ class MultiHeadAttention(nn.Module):
 
     def reset_parameters(self, scale=1):
         nn.init.normal_(
-            self.dense.weight, 
-            mean=0.0, 
-            std=scale / self.emb_dim**.5 / (self.nheads * self.emb_v_per_head / self.emb_dim)**.25,
+            self.dense.weight,
+            mean=0.0,
+            std=scale
+            / self.emb_dim**0.5
+            / (self.nheads * self.emb_v_per_head / self.emb_dim) ** 0.25,
         )
         if self.use_bias:
             self.dense.bias.data.zero_()

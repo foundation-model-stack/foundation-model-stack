@@ -84,17 +84,21 @@ class WordEmbedding(nn.Module):
             if tie_weights:
                 self.head.weight = self.emb.weight
 
-    def reset_parameters(self, scale=(1,1,1)):
+    def reset_parameters(self, scale=(1, 1, 1)):
         self.in_scale = scale[1]
         self.out_scale = scale[2]
         # Emb scaling
-        nn.init.normal_(self.emb.weight, mean=0.0, std=scale[0]/self.emb_dim**.5)
+        nn.init.normal_(self.emb.weight, mean=0.0, std=scale[0] / self.emb_dim**0.5)
         # Pos emb scaling
         if self.abs_pos:
-            nn.init.normal_(self.pos_emb.weight, mean=0.0, std=scale[0]/self.emb_dim**.5)
+            nn.init.normal_(
+                self.pos_emb.weight, mean=0.0, std=scale[0] / self.emb_dim**0.5
+            )
         # Head scaling
         if self.reversible and not self.tie_weights:
-            nn.init.normal_(self.head.weight, mean=0.0, std=scale[0]/self.emb_dim**.5)
+            nn.init.normal_(
+                self.head.weight, mean=0.0, std=scale[0] / self.emb_dim**0.5
+            )
         if self.reversible and self.bias:
             self.head.bias.data.zero_()
         # Preserve pad index dummy-hood
@@ -124,14 +128,14 @@ class WordEmbedding(nn.Module):
                     min=0
                 )  # In case of left-padding, prevent negative indices (get zeroed anyways)
                 out = out.addcmul(self.pos_emb(pos), ~is_pad.unsqueeze(-1))
-            out = out * (self.in_scale * self.emb_dim**.5)
+            out = out * (self.in_scale * self.emb_dim**0.5)
             return out
         else:
             if self.debug:
                 assert (
                     self.reversible
                 ), "Error: cannot make prediction when there is no output head!"
-            inp = inp * (self.out_scale / self.emb_dim**.5)
+            inp = inp * (self.out_scale / self.emb_dim**0.5)
             return self.head(inp)
 
 
