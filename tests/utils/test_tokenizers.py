@@ -1,7 +1,8 @@
-import pytest
-import tempfile
-import sentencepiece as spm
 import os
+import tempfile
+
+import pytest
+import sentencepiece as spm
 
 from fms.utils.tokenizers import get_tokenizer
 
