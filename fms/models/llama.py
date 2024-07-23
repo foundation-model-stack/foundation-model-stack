@@ -543,7 +543,7 @@ def convert_hf_llama(hf_model: "LlamaForCausalLM") -> LLaMA:  # type: ignore
         multiple_of=1,  # this is set to 1 as it is encoded in the hidden dimension
         activation_fn=hf_model.config.hidden_act,
         max_expected_seq_len=hf_model.config.max_position_embeddings,
-        rope_theta=hf_model.config.rope_theta
+        rope_theta=hf_model.config.rope_theta,
     )
     model = LLaMA(config)
     count_parameters = lambda m: sum(p.numel() for p in m.parameters())
