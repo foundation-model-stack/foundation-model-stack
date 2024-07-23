@@ -4,7 +4,18 @@ import re
 from collections import ChainMap
 from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Callable, List, Mapping, MutableMapping, Optional, Set, Union
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    List,
+    Mapping,
+    MutableMapping,
+    Optional,
+    Set,
+    Tuple,
+    Union,
+)
 
 import torch
 
@@ -54,6 +65,96 @@ def list_sources(architecture: str):
     if architecture not in __adapters:
         return []
     return list(__adapters[architecture].keys())
+
+
+def _legacy_attn_unfused_to_fused_adapter(orig_sd):
+    """
+    Legacy adapter for converting pre 0.0.6 unfused attn weights to fused attn weights
+    """
+    new_sd = {}
+    removed_params = set()
+    orig_keys = set(orig_sd.keys())
+    for name in orig_keys:
+        # if the name is part of removed_params, we no longer want to process it
+        if name in removed_params:
+            continue
+
+        if "attn.query" in name or "attn.key" in name or "attn.value" in name:
+            # weight_type denotes weight or bias
+            weight_type = name.split(".")[-1]
+
+            unfused_weights = [
+                re.sub(
+                    rf"attn.(query|key|value).{weight_type}",
+                    f"attn.query.{weight_type}",
+                    name,
+                ),
+                re.sub(
+                    rf"attn.(query|key|value).{weight_type}",
+                    f"attn.key.{weight_type}",
+                    name,
+                ),
+                re.sub(
+                    rf"attn.(query|key|value).{weight_type}",
+                    f"attn.value.{weight_type}",
+                    name,
+                ),
+            ]
+            removed_params.update(unfused_weights)
+            new_name = re.sub(
+                rf"attn.(query|key|value).{weight_type}",
+                f"attn.in_proj.qkv_fused.{weight_type}",
+                name,
+            )
+            new_sd[new_name] = torch.cat(
+                [orig_sd.pop(w) for w in unfused_weights], dim=0
+            )
+        else:
+            new_sd[name] = orig_sd.pop(name)
+    return new_sd
+
+
+def _legacy_mlp_glu_unfused_to_fused_adapter(orig_sd):
+    """
+    Legacy adapter for converting pre 0.0.6 unfused mlp glu weights to fused mlp glu weights
+    """
+    new_sd = {}
+    removed_params = set()
+    orig_keys = set(orig_sd.keys())
+    for name in orig_keys:
+        # if the name is part of removed_params, we no longer want to process it
+        if name in removed_params:
+            continue
+
+        if "ff_sub_layer.wg1_fused" not in name and (
+            "ff_sub_layer.wg" in name or "ff_sub_layer.w1" in name
+        ):
+            weight_type = name.split(".")[-1]
+
+            unfused_weights = [
+                re.sub(
+                    rf"ff_sub_layer.(wg|w1).{weight_type}",
+                    f"ff_sub_layer.wg.{weight_type}",
+                    name,
+                ),
+                re.sub(
+                    rf"ff_sub_layer.(wg|w1).{weight_type}",
+                    f"ff_sub_layer.w1.{weight_type}",
+                    name,
+                ),
+            ]
+            removed_params.update(unfused_weights)
+            new_name = re.sub(
+                rf"ff_sub_layer.(w1|wg).{weight_type}",
+                f"ff_sub_layer.wg1_fused.{weight_type}",
+                name,
+            )
+            new_sd[new_name] = torch.cat(
+                [orig_sd.pop(w) for w in unfused_weights], dim=0
+            )
+        else:
+            new_sd[name] = orig_sd.pop(name)
+    return new_sd
 
 
 def _get_adapter(
@@ -176,7 +277,7 @@ def load_state_dict(
         elif source == "meta":
             glob_pattern_list = ["*.pth", "*.safetensors"]
         elif source == "hf":
-            glob_pattern_list = ["*.bin", "*.safetensors"]
+            glob_pattern_list = ["*.bin", "*.safetensors", "*.pt"]
         else:
             glob_pattern_list = ["*.safetensors", "*.pth", "*.bin"]
         for glob_pattern_possibility in glob_pattern_list:

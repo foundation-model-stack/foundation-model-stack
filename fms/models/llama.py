@@ -131,8 +131,6 @@ class LLaMABlock(nn.Module):
         x = self.ln(x)
         x = self.attn(
             q=x,
-            k=x,
-            v=x,
             mask=mask,
             position_ids=position_ids,
             attn_algorithm=attn_algorithm,
@@ -427,7 +425,12 @@ models.register_model(
 )
 
 
-def _rename_weights_to_fms(orig_sd):
+_convert_to_fused = lambda sd: serialization._legacy_mlp_glu_unfused_to_fused_adapter(
+    serialization._legacy_attn_unfused_to_fused_adapter(sd)
+)
+
+
+def _rename_meta_weights_to_fms(orig_sd):
     replacements = [
         (r"^tok_embeddings", "shared.emb"),
         (r"^norm", "dec_norm"),
@@ -451,7 +454,9 @@ def _rename_weights_to_fms(orig_sd):
             new_name = re.sub(pattern, repl, new_name)
         new_sd[new_name] = param
 
-    return new_sd
+    fused_sd = _convert_to_fused(new_sd)
+
+    return fused_sd
 
 
 def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
@@ -495,11 +500,14 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
 
             new_sd[new_name] = temp
 
-    return new_sd
+    fused_sd = _convert_to_fused(new_sd)
+
+    return fused_sd
 
 
-serialization.register_adapter("llama", "meta", _rename_weights_to_fms)
+serialization.register_adapter("llama", "meta", _rename_meta_weights_to_fms)
 serialization.register_adapter("llama", "hf", _hf_sd_to_fms_sd)
+serialization.register_adapter("llama", "fms.pre0.0.6", _convert_to_fused)
 
 
 def convert_hf_llama(hf_model: "LlamaForCausalLM") -> LLaMA:  # type: ignore
