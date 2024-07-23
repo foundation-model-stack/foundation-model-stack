@@ -450,25 +450,33 @@ def _llama_factory_factory(config):
 models.register_model(
     _architecture_name, "micro", _llama_factory_factory(_micro_char_config)
 )
+# Backwards compat
 models.register_model(_architecture_name, "7b", _llama_factory_factory(_7b_config))
 models.register_model(_architecture_name, "13b", _llama_factory_factory(_13b_config))
 models.register_model(_architecture_name, "70b", _llama_factory_factory(_70b_config))
+
+# LLama 2 family
+models.register_model(_architecture_name, "2-7b", _llama_factory_factory(_7b_config))
+models.register_model(_architecture_name, "2-13b", _llama_factory_factory(_13b_config))
+models.register_model(_architecture_name, "2-70b", _llama_factory_factory(_70b_config))
+
+# LLama 3 family
 models.register_model(
-    _architecture_name, "3.8b", _llama_factory_factory((_8b_llama3_config))
+    _architecture_name, "3-8b", _llama_factory_factory((_8b_llama3_config))
 )
 
-# Granite
+# Granite family
 models.register_model(
-    _architecture_name, "granite.7b", _llama_factory_factory((_granite_7b_config))
+    _architecture_name, "granite-7b", _llama_factory_factory((_granite_7b_config))
 )
 models.register_model(
     _architecture_name,
-    "granite.code.3b",
+    "granite.code-3b",
     _llama_factory_factory((_granite_3b_code_config)),
 )
 models.register_model(
     _architecture_name,
-    "granite.code.8b",
+    "granite.code-8b",
     _llama_factory_factory((_granite_8b_code_config)),
 )
 
@@ -525,7 +533,7 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
     ]
     new_sd = {}
 
-    trans_required_pattern = re.compile("layers.[0-9]+.attn.(query|key).weight")
+    trans_required_pattern = re.compile("layers.[0-9]+.attn.(query|key).(weight|bias)")
     for name, param in hf_sd.items():
         new_name = name
         for pattern, repl in replacements:
@@ -542,11 +550,11 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
                 head_size = 128  # every other Llama model in existence
             nheads = int(temp.size(0) / head_size)
 
-            temp = (
-                temp.view(nheads, 2, -1, temp.size(1))
-                .transpose(1, 2)
-                .reshape(*temp.size())
-            )
+            if temp.dim() == 2:
+                temp_view = temp.view(nheads, 2, -1, temp.size(1))
+            else:
+                temp_view = temp.view(nheads, 2, -1)
+            temp = temp_view.transpose(1, 2).reshape(*temp.size())
 
             new_sd[new_name] = temp
 
