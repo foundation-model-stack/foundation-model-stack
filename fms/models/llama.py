@@ -546,10 +546,11 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
         # HF and FMS. While FMS follows the original RoPE paper
         # (https://arxiv.org/abs/2104.09864), HF has its own implementation
         # that doesn't respect the order of outputs. This is OK as long as you
-        # transpose the weights of the query and key projections, as the
+        # rearrange the weights of the query and key projections, as the
         # combination projection + RoPE ends up producing the same outputs.
         # Therefore, to make FMS produce the correct order of outputs when
-        # loading from an HF checkpoint, we need to do the following transformation:
+        # loading from an HF checkpoint, we need to undo the transformation
+        # that HF does from the original Meta weights:
         if bool(trans_required_pattern.match(new_name)):
             temp = new_sd[new_name]
             # nheads is used in the transformation required for hf->fms
