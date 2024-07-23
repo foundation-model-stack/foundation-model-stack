@@ -158,8 +158,8 @@ if args.compile:
 
 def ids_for_prompt(prompt):
     tokens = tokenizer.tokenize(prompt)
-    tokens = ["<s>"] + tokens
     ids = tokenizer.convert_tokens_to_ids(tokens)
+    ids = [tokenizer.bos_token_id] + ids
     ids = torch.tensor(ids, dtype=torch.long, device=device)
     return ids
 
