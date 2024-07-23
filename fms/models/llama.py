@@ -541,6 +541,15 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
         new_sd[new_name] = param
 
         # hf -> fms requires a transpose operation for the query and key
+        # weight and bias parameters
+        # This transpose is due to the different implementation of RoPE in
+        # HF and FMS. While FMS follows the original RoPE paper
+        # (https://arxiv.org/abs/2104.09864), HF has its own implementation
+        # that doesn't respect the order of outputs. This is OK as long as you
+        # transpose the weights of the query and key projections, as the
+        # combination projection + RoPE ends up producing the same outputs.
+        # Therefore, to make FMS produce the correct order of outputs when
+        # loading from an HF checkpoint, we need to do the following transformation:
         if bool(trans_required_pattern.match(new_name)):
             temp = new_sd[new_name]
             # nheads is used in the transformation required for hf->fms
@@ -550,9 +559,9 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
                 head_size = 128  # every other Llama model in existence
             nheads = int(temp.size(0) / head_size)
 
-            if temp.dim() == 2:
+            if temp.dim() == 2:  # weight
                 temp_view = temp.view(nheads, 2, -1, temp.size(1))
-            else:
+            else:  # bias
                 temp_view = temp.view(nheads, 2, -1)
             temp = temp_view.transpose(1, 2).reshape(*temp.size())
 
