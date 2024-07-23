@@ -1,8 +1,6 @@
-import inspect
 from typing import Any, Callable, List, MutableMapping, Optional, Tuple, Union
 
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
 
 
@@ -244,4 +242,16 @@ def truncate_after_eos(
     if eos_index.shape[0] >= 1:
         index = eos_index[0]
         result = result[: index + 1]
+    return result
+
+
+def trim_prefix(result: torch.Tensor) -> torch.Tensor:
+    """
+    Helper function to return a trimmed sequence of token IDs where
+    all padding tokens (always 0 on our code) are removed.
+    """
+    output_diff = result.diff()
+    first_real_token_idx = torch.where(output_diff != 0)
+    bos_index = first_real_token_idx[0][0]
+    result = result[bos_index + 1 :]
     return result
