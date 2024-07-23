@@ -404,6 +404,39 @@ _8b_llama3_config = LLaMAConfig(
     rope_theta=500_000.0,
 )
 
+# Granite configs
+_granite_7b_config = LLaMAConfig(
+    src_vocab_size=32008,
+)
+
+_granite_3b_code_config = LLaMAConfig(
+    src_vocab_size=49152,
+    emb_dim=2560,
+    pad_id=0,
+    hidden_grow_factor=10240 / 2560,
+    multiple_of=1,
+    p_dropout=0.1,
+    max_expected_seq_len=2048,
+    attn_bias=True,
+    mlp_bias=True,
+    tie_heads=True,
+)
+
+_granite_8b_code_config = LLaMAConfig(
+    src_vocab_size=49152,
+    emb_dim=4096,
+    kvheads=8,
+    nlayers=36,
+    pad_id=0,
+    hidden_grow_factor=14336 / 4096,
+    multiple_of=1,
+    p_dropout=0.1,
+    max_expected_seq_len=4096,
+    attn_bias=True,
+    mlp_bias=True,
+    tie_heads=True,
+)
+
 _architecture_name = "llama"
 
 
@@ -421,7 +454,22 @@ models.register_model(_architecture_name, "7b", _llama_factory_factory(_7b_confi
 models.register_model(_architecture_name, "13b", _llama_factory_factory(_13b_config))
 models.register_model(_architecture_name, "70b", _llama_factory_factory(_70b_config))
 models.register_model(
-    _architecture_name, "llama3.8b", _llama_factory_factory((_8b_llama3_config))
+    _architecture_name, "3.8b", _llama_factory_factory((_8b_llama3_config))
+)
+
+# Granite
+models.register_model(
+    _architecture_name, "granite.7b", _llama_factory_factory((_granite_7b_config))
+)
+models.register_model(
+    _architecture_name,
+    "granite.code.3b",
+    _llama_factory_factory((_granite_3b_code_config)),
+)
+models.register_model(
+    _architecture_name,
+    "granite.code.8b",
+    _llama_factory_factory((_granite_8b_code_config)),
 )
 
 
@@ -488,9 +536,11 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
         if bool(trans_required_pattern.match(new_name)):
             temp = new_sd[new_name]
             # nheads is used in the transformation required for hf->fms
-            # here we are using 128 as this value fits with all popular models
-            #   7B, 13B, 70B to recover the number of heads
-            nheads = int(temp.size(0) / 128)
+            if temp.size(0) == 2560:
+                head_size = 80  # granite 3b code
+            else:
+                head_size = 128  # every other Llama model in existence
+            nheads = int(temp.size(0) / head_size)
 
             temp = (
                 temp.view(nheads, 2, -1, temp.size(1))
