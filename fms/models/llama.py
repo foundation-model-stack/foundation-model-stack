@@ -313,14 +313,10 @@ class LLaMA(nn.Module):
 
         # if mask is none, we need to specify causal mask
         if mask is None:
-            # we are caching and can assume all 1s in the mask
-            if use_cache and klen != 1 and qlen == 1:
-                # b x h x qlen x kvlen
-                is_causal_mask = False
-            else:
-                is_causal_mask = True
-        else:
-            is_causal_mask = False
+            mask = torch.tril(
+                torch.ones((256, 256), device=x_in.device, dtype=torch.bool)
+            )[None, None, position_ids[0]]
+        is_causal_mask = False
 
         x_in = self.shared(x_in)
 

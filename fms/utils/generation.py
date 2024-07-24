@@ -10,8 +10,8 @@ import torch.profiler
 from fms import distributed
 
 
-
 past_key_value_states_g = None
+
 
 def pad_input_ids(
     input_ids_list: List[torch.Tensor], min_pad_length: int = 0

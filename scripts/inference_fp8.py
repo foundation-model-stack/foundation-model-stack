@@ -10,8 +10,8 @@ import torch._inductor.config
 from torch import distributed as dist
 
 from fms.models import get_model
-from fms.utils import generation, tokenizers
-from fms.utils.generation import generate
+from fms.utils import fusion, generation, tokenizers
+from fms.utils.generation import generate, pad_input_ids
 
 
 # This example script validates the LLaMA implementation by running inference on a couple of prompts.
@@ -59,6 +59,11 @@ parser.add_argument(
     help="Disable the kv-cache (on by default)",
 )
 parser.add_argument(
+    "--unfuse_weights",
+    action="store_true",
+    help="If set to True, this will unfuse any fused weight modules that support the unfuse_weights method",
+)
+parser.add_argument(
     "--fp8",
     action="store_true",
     help="Use float8_experimental Float8Linear to swap linear layers",
@@ -67,7 +72,7 @@ parser.add_argument(
     "--fp8_linear_type",
     type=str,
     default="dasw",
-    choices=["dadw", "dasw", "sw", "ns"],
+    choices=["dadw", "dasw", "sasw"],
     help="Choose the float8 linear type",
 )
 parser.add_argument(
@@ -97,6 +102,17 @@ parser.add_argument(
     action="store_true",
     help="This is a distributed job (multiple instances run with RANK+WORLD_SIZE)",
 )
+parser.add_argument(
+    "--batch_input",
+    action="store_true",
+    help="use a batch of prompts as input",
+)
+parser.add_argument(
+    "--min_pad_length",
+    type=int,
+    help="Pad inputs to a minimum specified length. If any prompt is larger than the specified length, padding will be determined by the largest prompt",
+    default=0,
+)
 parser.add_argument("--context_file", type=str, default=None, help="File to summarize")
 parser.add_argument("--max_new_tokens", type=int, default=2048)
 parser.add_argument("--max_seq_len", type=int, default=128)
@@ -117,6 +133,10 @@ torch.set_default_dtype(torch.bfloat16)
 
 # requires setting environment variable: `CUBLAS_WORKSPACE_CONFIG=:4096:8`
 if args.deterministic:
+    SEED = 42
+    random.seed(SEED)
+    torch.manual_seed(SEED)  # pytorch random seed
+    np.random.seed(SEED)  # numpy random seed
     torch.use_deterministic_algorithms(True)
 
 if args.distributed:
@@ -146,6 +166,11 @@ model = get_model(
     distributed_strategy=distr_param,
     group=dist.group.WORLD,
 )
+
+if args.unfuse_weights:
+    print("unfusing weights")
+    model = fusion.apply_unfuse_weights(model)
+
 tokenizer = tokenizers.get_tokenizer(args.tokenizer)
 model.eval()
 torch.set_grad_enabled(False)
@@ -155,24 +180,44 @@ prefill_model = model
 decode_model = model
 
 if args.fp8:
-    from float8_experimental.float8_linear import (
-        Float8DASWLinear,
-        Float8Linear,
-        Float8SWLinear,
-    )
-    from float8_experimental.float8_linear_utils import swap_linear_with_float8_linear
+    from float8_experimental.float8_linear import Float8Linear
+    from float8_experimental.float8_linear_utils import \
+        swap_linear_with_float8_linear
+    from float8_experimental.inference import (ActivationCasting, QuantConfig,
+                                               quantize_to_float8)
 
-    fp8LinearDict = {
-        "dadw": Float8Linear,
-        "dasw": Float8DASWLinear,
-        "sw": Float8SWLinear,
-        "ns": None,
+    fp8_linear_dict = {
+        "dadw": {"swap_func": "training", "class": Float8Linear},
+        "dasw": {
+            "swap_func": "inference",
+            "config": QuantConfig(activation_casting=ActivationCasting.DYNAMIC),
+        },
+        "sasw": {
+            "swap_func": "inference",
+            "config": QuantConfig(
+                activation_casting=ActivationCasting.STATIC,
+                static_quantization_scale=torch.tensor(
+                    1.0, dtype=torch.float32, device=device
+                ),
+            ),
+        },
     }
     print("casting the model weights to FP8")
-    skip_fqn_list = [f"layers.{i}.ff_sub_layer.w2" for i in [1, 30]] + ["shared.head"]
-    model = swap_linear_with_float8_linear(
-        model, fp8LinearDict[args.fp8_linear_type], skip_fqn_list=skip_fqn_list
-    )
+    skip_fqn_list_llama_2 = [f"layers.{i}.ff_sub_layer.w2" for i in [1, 30]] + [
+        "shared.head"
+    ]
+    if fp8_linear_dict[args.fp8_linear_type]["swap_func"] == "training":
+        model = swap_linear_with_float8_linear(
+            model,
+            fp8_linear_dict[args.fp8_linear_type]["class"],
+            skip_fqn_list=skip_fqn_list_llama_2,
+        )
+    elif fp8_linear_dict[args.fp8_linear_type]["swap_func"] == "inference":
+        model = quantize_to_float8(
+            model,
+            fp8_linear_dict[args.fp8_linear_type]["config"],
+            module_filter_fn=lambda name, module: name not in skip_fqn_list_llama_2,
+        )
 
 if args.compile:
     print("compiling model")
@@ -185,20 +230,10 @@ if args.compile:
 
 def ids_for_prompt(prompt):
     tokens = tokenizer.tokenize(prompt)
-    tokens = ["<s>"] + tokens
     ids = tokenizer.convert_tokens_to_ids(tokens)
+    ids = [tokenizer.bos_token_id] + ids
     ids = torch.tensor(ids, dtype=torch.long, device=device)
     return ids
-
-
-def pad_prompt(prompt, pad_len, pad_token="<unk>"):
-    to_pad = pad_len - len(prompt)
-    if to_pad == 0:
-        return prompt
-
-    pad_id = tokenizer.convert_tokens_to_ids(pad_token)
-    pad_ids = [pad_id] * to_pad
-    return torch.cat((torch.tensor(pad_ids, device=device), prompt))
 
 
 if args.context_file is not None:
@@ -234,15 +269,16 @@ max_len = max([len(prompt) for prompt in [prompt1, prompt2]])
 # ids = torch.randint(0, 32000, (1, 1024), device=device)
 # ids = torch.randint(0, 32000, (256, 128), device=device)
 ids = torch.randint(0, 32000, (args.batch_size, args.max_seq_len), device=device)
+_, padding_kwargs = pad_input_ids([ids], min_pad_length=0)
+padding_kwargs.pop("mask")
+
 
 
 def print_result(result):
     if local_rank != 0:
         return
     # stop at EOS token if present
-    result = generation.truncate_after_eos(
-        result, tokenizer.convert_tokens_to_ids("</s>")
-    )
+    result = generation.truncate_after_eos(result, tokenizer.eos_token_id)
     # print(result)
     # print(tokenizer.convert_ids_to_tokens(result))
     print(tokenizer.convert_tokens_to_string(tokenizer.convert_ids_to_tokens(result)))
@@ -270,6 +306,7 @@ def infer(use_cache, do_sample):
         use_cache=use_cache,
         do_sample=do_sample,
         max_seq_len=max_seq_len,
+        extra_kwargs=padding_kwargs,
     )
     # for i in range(result.shape[0]):
     #    print_result(result[i])
