@@ -419,9 +419,9 @@ class MultiHeadAttention(nn.Module):
                 values, self.fp8_kv_scale, torch.float8_e5m2
             )
             # To ensure torch.cat works
-            if use_cache and past_key_value_state is not None:
-                keys._linear_mm_config = past_key_value_state[0]._linear_mm_config
-                values._linear_mm_config = past_key_value_state[1]._linear_mm_config
+            # if use_cache and past_key_value_state is not None:
+            #     keys._linear_mm_config = past_key_value_state[0]._linear_mm_config
+            #     values._linear_mm_config = past_key_value_state[1]._linear_mm_config
 
         # if you want to use caching and past_key_value_state is not None meaning you have values in your cache
         if (
