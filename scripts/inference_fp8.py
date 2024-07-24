@@ -1,18 +1,17 @@
 import argparse
+import gc
 import itertools
 import logging
 import os
-import random
+from re import M
 
-import numpy as np
 import torch
-import torch._dynamo.config
 import torch._inductor.config
 from torch import distributed as dist
 
 from fms.models import get_model
-from fms.utils import fusion, generation, tokenizers
-from fms.utils.generation import generate, pad_input_ids
+from fms.utils import generation, tokenizers
+from fms.utils.generation import generate
 
 
 # This example script validates the LLaMA implementation by running inference on a couple of prompts.
@@ -60,9 +59,16 @@ parser.add_argument(
     help="Disable the kv-cache (on by default)",
 )
 parser.add_argument(
-    "--unfuse_weights",
+    "--fp8",
     action="store_true",
-    help="If set to True, this will unfuse any fused weight modules that support the unfuse_weights method",
+    help="Use float8_experimental Float8Linear to swap linear layers",
+)
+parser.add_argument(
+    "--fp8_linear_type",
+    type=str,
+    default="dasw",
+    choices=["dadw", "dasw", "sw", "ns"],
+    help="Choose the float8 linear type",
 )
 parser.add_argument(
     "--compile",
@@ -74,7 +80,12 @@ parser.add_argument(
     type=str,
     help="Mode for compilation",
     default="default",
-    choices=["default", "reduce-overhead", "max-autotune"],
+    choices=[
+        "default",
+        "reduce-overhead",
+        "max-autotune",
+        "max-autotune-no-cudagraphs",
+    ],
 )
 parser.add_argument(
     "--deterministic",
@@ -86,20 +97,13 @@ parser.add_argument(
     action="store_true",
     help="This is a distributed job (multiple instances run with RANK+WORLD_SIZE)",
 )
-parser.add_argument(
-    "--batch_input",
-    action="store_true",
-    help="use a batch of prompts as input",
-)
-parser.add_argument(
-    "--min_pad_length",
-    type=int,
-    help="Pad inputs to a minimum specified length. If any prompt is larger than the specified length, padding will be determined by the largest prompt",
-    default=0,
-)
 parser.add_argument("--context_file", type=str, default=None, help="File to summarize")
-
+parser.add_argument("--max_new_tokens", type=int, default=2048)
+parser.add_argument("--max_seq_len", type=int, default=128)
+parser.add_argument("--batch_size", type=int, default=128)
+parser.add_argument("--reps", type=int, default=10)
 args = parser.parse_args()
+print(args)
 
 local_rank = int(os.getenv("LOCAL_RANK", 0))
 world_size = int(os.getenv("WORLD_SIZE", 1))
@@ -109,17 +113,15 @@ if args.device_type == "cuda":
 else:
     device = torch.device(args.device_type)
 
-torch.set_default_dtype(torch.float16)
+torch.set_default_dtype(torch.bfloat16)
 
 # requires setting environment variable: `CUBLAS_WORKSPACE_CONFIG=:4096:8`
 if args.deterministic:
-    SEED = 42
-    random.seed(SEED)
-    torch.manual_seed(SEED)  # pytorch random seed
-    np.random.seed(SEED)  # numpy random seed
     torch.use_deterministic_algorithms(True)
 
 if args.distributed:
+    os.environ["MASTER_ADDR"] = "127.0.0.1"
+    os.environ["MASTER_PORT"] = "29508"
     dist.init_process_group()
     # Fix until PT 2.3
     torch._C._distributed_c10d._register_process_group("default", dist.group.WORLD)
@@ -132,20 +134,18 @@ else:
         distr_param = "mp"
     else:
         distr_param = None
+
+# torch.cuda.memory._record_memory_history(max_entries=500000)
+
 model = get_model(
     args.architecture,
     args.variant,
-    # model_path=args.model_path,
+    model_path=args.model_path,
     device_type=args.device_type,
     source=args.model_source,
     distributed_strategy=distr_param,
     group=dist.group.WORLD,
 )
-
-if args.unfuse_weights:
-    print("unfusing weights")
-    model = fusion.apply_unfuse_weights(model)
-
 tokenizer = tokenizers.get_tokenizer(args.tokenizer)
 model.eval()
 torch.set_grad_enabled(False)
@@ -154,22 +154,51 @@ print("loading complete on rank", local_rank)
 prefill_model = model
 decode_model = model
 
+if args.fp8:
+    from float8_experimental.float8_linear import (
+        Float8DASWLinear,
+        Float8Linear,
+        Float8SWLinear,
+    )
+    from float8_experimental.float8_linear_utils import swap_linear_with_float8_linear
+
+    fp8LinearDict = {
+        "dadw": Float8Linear,
+        "dasw": Float8DASWLinear,
+        "sw": Float8SWLinear,
+        "ns": None,
+    }
+    print("casting the model weights to FP8")
+    skip_fqn_list = [f"layers.{i}.ff_sub_layer.w2" for i in [1, 30]] + ["shared.head"]
+    model = swap_linear_with_float8_linear(
+        model, fp8LinearDict[args.fp8_linear_type], skip_fqn_list=skip_fqn_list
+    )
+
 if args.compile:
     print("compiling model")
     # compiling can make first inference pass slow
     # torch._inductor.config.allow_buffer_reuse = False
     torch._inductor.config.fx_graph_cache = True
-    torch._inductor.config.coordinate_descent_tuning = True
     prefill_model = torch.compile(model, fullgraph=True)
     decode_model = torch.compile(model, mode=args.compile_mode, fullgraph=True)
 
 
 def ids_for_prompt(prompt):
     tokens = tokenizer.tokenize(prompt)
+    tokens = ["<s>"] + tokens
     ids = tokenizer.convert_tokens_to_ids(tokens)
-    ids = [tokenizer.bos_token_id] + ids
     ids = torch.tensor(ids, dtype=torch.long, device=device)
     return ids
+
+
+def pad_prompt(prompt, pad_len, pad_token="<unk>"):
+    to_pad = pad_len - len(prompt)
+    if to_pad == 0:
+        return prompt
+
+    pad_id = tokenizer.convert_tokens_to_ids(pad_token)
+    pad_ids = [pad_id] * to_pad
+    return torch.cat((torch.tensor(pad_ids, device=device), prompt))
 
 
 if args.context_file is not None:
@@ -193,27 +222,27 @@ else:
 
 prompt1 = ids_for_prompt(prompt1)
 prompt2 = ids_for_prompt(prompt2)
+
 max_len = max([len(prompt) for prompt in [prompt1, prompt2]])
+# prompt1 = pad_prompt(prompt1, max_len)
+# LLaMA 7B did better on the spanish prompt vs 13B.
+# TODO: add a better english prompt to demonstrate padding/batching.
+# prompt2 = pad_prompt(prompt2, max_len)
+# ids = torch.stack((prompt2, prompt1), dim=0)
 
 # ids = prompt1.unsqueeze(0)
-ids = torch.randint(0, 32000, (384, 128), device=device)
-
-if args.batch_input:
-    ids = [prompt1, prompt2]
-    ids, padding_kwargs = pad_input_ids(ids, min_pad_length=args.min_pad_length)
-else:
-    ids = prompt1
-    if args.min_pad_length != 0:
-        ids, padding_kwargs = pad_input_ids([ids], min_pad_length=args.min_pad_length)
-    else:
-        padding_kwargs = None
+# ids = torch.randint(0, 32000, (1, 1024), device=device)
+# ids = torch.randint(0, 32000, (256, 128), device=device)
+ids = torch.randint(0, 32000, (args.batch_size, args.max_seq_len), device=device)
 
 
 def print_result(result):
     if local_rank != 0:
         return
     # stop at EOS token if present
-    result = generation.truncate_after_eos(result, tokenizer.eos_token_id)
+    result = generation.truncate_after_eos(
+        result, tokenizer.convert_tokens_to_ids("</s>")
+    )
     # print(result)
     # print(tokenizer.convert_ids_to_tokens(result))
     print(tokenizer.convert_tokens_to_string(tokenizer.convert_ids_to_tokens(result)))
@@ -237,17 +266,17 @@ def infer(use_cache, do_sample):
         prefill_model,
         decode_model,
         ids,
-        max_new_tokens=128,
+        max_new_tokens=args.max_new_tokens,
         use_cache=use_cache,
         do_sample=do_sample,
         max_seq_len=max_seq_len,
-        extra_kwargs=padding_kwargs,
     )
-    if len(result.shape) == 1:
-        result = result.unsqueeze(0)
+    # for i in range(result.shape[0]):
+    #    print_result(result[i])
 
-    for i in range(result.shape[0]):
-        print_result(result[i])
+
+# input("Press Enter to continue...")
+import time
 
 
 print("generating output", local_rank)
@@ -255,7 +284,42 @@ do_sample = [False]
 use_cache = [
     args.no_use_cache
 ]  # True/False are identical with greedy iff `torch.use_deterministic_algorithms(True)`
-for sample, cache in itertools.product(do_sample, use_cache):
-    infer(cache, sample)
-    infer(cache, sample)
-    infer(cache, sample)
+torch.cuda.profiler.start()
+
+try:
+    with torch.no_grad():
+        for sample, cache in itertools.product(do_sample, use_cache):
+            # with torch.profiler.profile(
+            #     activities=[
+            #         torch.profiler.ProfilerActivity.CPU,
+            #         torch.profiler.ProfilerActivity.CUDA,
+            #     ],
+            #     profile_memory=True,
+            #     #schedule=torch.profiler.schedule(
+            #     #        wait=1,
+            #     #        warmup=1,
+            #     #        active=1,
+            #     #        repeat=1),
+            # ) as prof:
+            for _ in range(args.reps):
+                # for _ in [1]:
+                # input("Press Enter to continue...")
+                torch.compiler.cudagraph_mark_step_begin()
+                t0 = time.time_ns()
+                infer(cache, sample)
+                torch.cuda.synchronize()
+                t1 = time.time_ns()
+                dt = float(t1 - t0) / 1e9
+                print("total inference time: ", dt)
+                torch.cuda.empty_cache()
+                # prof.step()
+                # input("Press Enter to continue...")
+        # print(prof.key_averages().table(sort_by="self_cuda_memory_usage",row_limit=10))
+        # prof.export_chrome_trace("trace.json")
+except torch.cuda.OutOfMemoryError as e:
+    print(e)
+finally:
+    # prof.step()
+    torch.cuda.profiler.stop()
+
+    # torch.cuda.memory._dump_snapshot("./fp8_memory.pickle")

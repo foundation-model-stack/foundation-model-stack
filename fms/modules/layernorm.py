@@ -56,17 +56,32 @@ class LayerNormParameterized(nn.Module):
         if self.elementwise_shift:
             self.bias.data.zero_()
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor, inplace=False):
+        if not inplace:
+            if self.use_mean:
+                x = x - x.mean(-1, keepdim=True)
+            # x = F.normalize(x, dim=-1)*math.sqrt(x.size(-1))
+            xf = x
+            if self.use_high_precision_pow:
+                xf = x.float()
+            xf = xf * torch.rsqrt(xf.pow(2).mean(-1, keepdim=True) + self.eps)
+            x = xf.type_as(x)
+            if self.elementwise_scale:
+                x = self.weight * x
+            if self.elementwise_shift:
+                x = x + self.bias
+            return x
+
         if self.use_mean:
-            x = x - x.mean(-1, keepdim=True)
-        # x = F.normalize(x, dim=-1)*math.sqrt(x.size(-1))
+            x.copy_(x - x.mean(-1, keepdim=True))
+            # x = F.normalize(x, dim=-1)*math.sqrt(x.size(-1))
         xf = x
         if self.use_high_precision_pow:
             xf = x.float()
-        xf = xf * torch.rsqrt(xf.pow(2).mean(-1, keepdim=True) + self.eps)
+        xf.copy_(xf * torch.rsqrt(xf.pow(2).mean(-1, keepdim=True) + self.eps))
         x = xf.type_as(x)
         if self.elementwise_scale:
-            x = self.weight * x
+            x.copy_(self.weight * x)
         if self.elementwise_shift:
-            x = x + self.bias
+            x.copy_(x + self.bias)
         return x
