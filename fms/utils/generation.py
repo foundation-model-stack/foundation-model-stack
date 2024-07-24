@@ -198,10 +198,8 @@ def generate(
         # iteration 0 is the prefill step (cache has not been filled yet), so no need to extend the mask/position_ids
         if i > 0:
             kwargs = __update_padding_kwargs(use_cache, kwargs)
-            print(kwargs)
             output = decode_model(input_ids, **kwargs)
         else:
-            print(kwargs)
             output = prefill_model(input_ids, **kwargs)
         if use_cache:
             logits, past_key_value_states = output
