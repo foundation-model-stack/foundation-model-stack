@@ -181,10 +181,12 @@ decode_model = model
 
 if args.fp8:
     from float8_experimental.float8_linear import Float8Linear
-    from float8_experimental.float8_linear_utils import \
-        swap_linear_with_float8_linear
-    from float8_experimental.inference import (ActivationCasting, QuantConfig,
-                                               quantize_to_float8)
+    from float8_experimental.float8_linear_utils import swap_linear_with_float8_linear
+    from float8_experimental.inference import (
+        ActivationCasting,
+        QuantConfig,
+        quantize_to_float8,
+    )
 
     fp8_linear_dict = {
         "dadw": {"swap_func": "training", "class": Float8Linear},
@@ -269,9 +271,20 @@ max_len = max([len(prompt) for prompt in [prompt1, prompt2]])
 # ids = torch.randint(0, 32000, (1, 1024), device=device)
 # ids = torch.randint(0, 32000, (256, 128), device=device)
 ids = torch.randint(0, 32000, (args.batch_size, args.max_seq_len), device=device)
-_, padding_kwargs = pad_input_ids([ids], min_pad_length=0)
+_, padding_kwargs = pad_input_ids([ids[0]], min_pad_length=0)
 padding_kwargs.pop("mask")
 
+
+if args.batch_input:
+    ids = [prompt1, prompt2]
+    ids, padding_kwargs = pad_input_ids(ids, min_pad_length=args.min_pad_length)
+else:
+    ids = prompt1
+    if args.min_pad_length != 0:
+        ids, padding_kwargs = pad_input_ids([ids], min_pad_length=args.min_pad_length)
+    else:
+        _, padding_kwargs = pad_input_ids([ids], min_pad_length=0)
+        padding_kwargs.pop("mask")
 
 
 def print_result(result):
@@ -308,8 +321,11 @@ def infer(use_cache, do_sample):
         max_seq_len=max_seq_len,
         extra_kwargs=padding_kwargs,
     )
-    # for i in range(result.shape[0]):
-    #    print_result(result[i])
+    if len(result.shape) == 1:
+        result = result.unsqueeze(0)
+
+    for i in range(result.shape[0]):
+        print_result(result[i])
 
 
 # input("Press Enter to continue...")
