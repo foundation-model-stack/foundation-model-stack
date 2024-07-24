@@ -53,6 +53,7 @@ class LLaMAConfig(ModelConfig):
     attn_bias: bool = False
     mlp_bias: bool = False
     tie_heads: bool = False
+    rope_theta: float = 10_000.0
 
 
 class LLaMABlock(nn.Module):
@@ -195,6 +196,7 @@ class LLaMA(nn.Module):
             dim=self.config.emb_dim // self.config.nheads,
             ntk_scaling=self.config.ntk_scaling,
             max_seq_len=self.config.max_expected_seq_len,
+            ratio=self.config.rope_theta,
         )
         # RoPE init
         if isinstance(self.distributed_strategy, UniformModelParallelStrategy):
@@ -389,6 +391,19 @@ _70b_config = LLaMAConfig(
     hidden_grow_factor=(1.3 * 8 / 3),
 )
 
+_8b_llama3_config = LLaMAConfig(
+    src_vocab_size=128256,
+    emb_dim=4096,
+    norm_eps=1e-5,
+    nheads=32,
+    kvheads=8,
+    nlayers=32,
+    hidden_grow_factor=3.5,
+    multiple_of=1024,
+    max_expected_seq_len=8192,
+    rope_theta=500_000.0,
+)
+
 _architecture_name = "llama"
 
 
@@ -405,6 +420,9 @@ models.register_model(
 models.register_model(_architecture_name, "7b", _llama_factory_factory(_7b_config))
 models.register_model(_architecture_name, "13b", _llama_factory_factory(_13b_config))
 models.register_model(_architecture_name, "70b", _llama_factory_factory(_70b_config))
+models.register_model(
+    _architecture_name, "llama3.8b", _llama_factory_factory((_8b_llama3_config))
+)
 
 
 _convert_to_fused = lambda sd: serialization._legacy_mlp_glu_unfused_to_fused_adapter(
@@ -525,6 +543,7 @@ def convert_hf_llama(hf_model: "LlamaForCausalLM") -> LLaMA:  # type: ignore
         multiple_of=1,  # this is set to 1 as it is encoded in the hidden dimension
         activation_fn=hf_model.config.hidden_act,
         max_expected_seq_len=hf_model.config.max_position_embeddings,
+        rope_theta=hf_model.config.rope_theta,
     )
     model = LLaMA(config)
     count_parameters = lambda m: sum(p.numel() for p in m.parameters())

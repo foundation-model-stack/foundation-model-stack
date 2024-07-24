@@ -4,7 +4,7 @@ import torch.nn.functional as F
 from torch import nn
 
 from fms.models import get_model
-from fms.utils.generation import generate, truncate_after_eos
+from fms.utils.generation import generate, pad_input_ids, truncate_after_eos
 from fms.utils.tokenizers import get_tokenizer
 
 
@@ -83,9 +83,12 @@ def test_batched_heterogeneous():
         tokenizer.convert_tokens_to_ids(tokenizer.tokenize("CDEFGHIJKL")),
         dtype=torch.long,
     )
-    ids = [first, second]
+
     # use_cache=False
-    result = generate(_model_mock, ids, max_new_tokens=5, do_sample=False)
+    ids, padding_kwargs = pad_input_ids([first, second])
+    result = generate(
+        _model_mock, ids, max_new_tokens=5, do_sample=False, extra_kwargs=padding_kwargs
+    )
     result1_batched = result[0]
     result2_batched = result[1]
 
@@ -96,9 +99,16 @@ def test_batched_heterogeneous():
 
     result2 = generate(_model_mock, second, max_new_tokens=5, do_sample=False)
     torch.testing.assert_close(result2, result2_batched)
+
     # use_cache=True
+    ids, padding_kwargs = pad_input_ids([first, second])
     result = generate(
-        _model_mock, ids, max_new_tokens=5, do_sample=False, use_cache=True
+        _model_mock,
+        ids,
+        max_new_tokens=5,
+        do_sample=False,
+        use_cache=True,
+        extra_kwargs=padding_kwargs,
     )
     result1_batched = result[0]
     result2_batched = result[1]
@@ -123,3 +133,54 @@ def test_truncate():
     expected = torch.ones(11)
     expected[10] = 5
     torch.testing.assert_close(result, expected)
+
+
+def test_pad_input_ids():
+    input_ids = [
+        torch.arange(1, 5, dtype=torch.long),
+        torch.arange(1, 10, dtype=torch.long),
+    ]
+
+    padded_input_ids, padding_kwargs = pad_input_ids(input_ids)
+
+    expected_input_ids = torch.tensor(
+        [([0] * 5) + [i for i in range(1, 5)], [i for i in range(1, 10)]],
+        dtype=torch.long,
+    )
+
+    expected_position_ids = torch.tensor(
+        [([0] * 5) + [i for i in range(0, 4)], [i for i in range(0, 9)]],
+        dtype=torch.long,
+    )
+
+    expected_mask = torch.tensor(
+        [([0] * 5) + [1 for _ in range(0, 4)], [1 for _ in range(0, 9)]],
+        dtype=torch.bool,
+    )
+    expected_mask = (expected_mask.unsqueeze(-1) == expected_mask.unsqueeze(-2)).tril()
+
+    torch.testing.assert_close(padded_input_ids, expected_input_ids)
+    torch.testing.assert_close(padding_kwargs["position_ids"], expected_position_ids)
+    torch.testing.assert_close(padding_kwargs["mask"], expected_mask)
+
+    padded_input_ids, padding_kwargs = pad_input_ids(input_ids, min_pad_length=64)
+
+    expected_input_ids = torch.tensor(
+        [([0] * 60) + [i for i in range(1, 5)], ([0] * 55) + [i for i in range(1, 10)]],
+        dtype=torch.long,
+    )
+
+    expected_position_ids = torch.tensor(
+        [([0] * 60) + [i for i in range(0, 4)], ([0] * 55) + [i for i in range(0, 9)]],
+        dtype=torch.long,
+    )
+
+    expected_mask = torch.tensor(
+        [([0] * 60) + [1 for _ in range(0, 4)], ([0] * 55) + [1 for _ in range(0, 9)]],
+        dtype=torch.bool,
+    )
+    expected_mask = (expected_mask.unsqueeze(-1) == expected_mask.unsqueeze(-2)).tril()
+
+    torch.testing.assert_close(padded_input_ids, expected_input_ids)
+    torch.testing.assert_close(padding_kwargs["position_ids"], expected_position_ids)
+    torch.testing.assert_close(padding_kwargs["mask"], expected_mask)

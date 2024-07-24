@@ -10,7 +10,7 @@ from torch import distributed as dist
 
 from fms.models import get_model
 from fms.utils import fusion, generation, tokenizers
-from fms.utils.generation import generate
+from fms.utils.generation import generate, pad_input_ids
 
 
 # This example script validates the LLaMA implementation by running inference on a couple of prompts.
@@ -89,6 +89,12 @@ parser.add_argument(
     action="store_true",
     help="use a batch of prompts as input",
 )
+parser.add_argument(
+    "--min_pad_length",
+    type=int,
+    help="Pad inputs to a minimum specified length. If any prompt is larger than the specified length, padding will be determined by the largest prompt",
+    default=0,
+)
 parser.add_argument("--context_file", type=str, default=None, help="File to summarize")
 
 args = parser.parse_args()
@@ -152,8 +158,8 @@ if args.compile:
 
 def ids_for_prompt(prompt):
     tokens = tokenizer.tokenize(prompt)
-    tokens = ["<s>"] + tokens
     ids = tokenizer.convert_tokens_to_ids(tokens)
+    ids = [tokenizer.bos_token_id] + ids
     ids = torch.tensor(ids, dtype=torch.long, device=device)
     return ids
 
@@ -184,8 +190,13 @@ max_len = max([len(prompt) for prompt in [prompt1, prompt2]])
 
 if args.batch_input:
     ids = [prompt1, prompt2]
+    ids, padding_kwargs = pad_input_ids(ids, min_pad_length=args.min_pad_length)
 else:
     ids = prompt1
+    if args.min_pad_length != 0:
+        ids, padding_kwargs = pad_input_ids([ids], min_pad_length=args.min_pad_length)
+    else:
+        padding_kwargs = None
 
 
 def print_result(result):
@@ -219,6 +230,7 @@ def infer(use_cache, do_sample):
         use_cache=use_cache,
         do_sample=do_sample,
         max_seq_len=max_seq_len,
+        extra_kwargs=padding_kwargs,
     )
     if len(result.shape) == 1:
         result = result.unsqueeze(0)
