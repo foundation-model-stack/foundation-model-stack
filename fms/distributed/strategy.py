@@ -1,3 +1,4 @@
+import os
 from abc import abstractmethod
 from typing import Any, List, Mapping
 
@@ -8,9 +9,20 @@ from torch import nn
 from fms.utils import tp_wrapping
 
 
+if "DISTRIBUTED_STRATEGY_IGNORE_MODULES" in os.environ:
+    _distributed_strategy_ignore_modules = os.environ[
+        "DISTRIBUTED_STRATEGY_IGNORE_MODULES"
+    ].split(",")
+else:
+    _distributed_strategy_ignore_modules = []
+
+
 class DistributedStrategy:
     def __init__(self, from_meta=False):
         self.from_meta = from_meta
+
+    def __should_distribute(self, module_name: str) -> bool:
+        return module_name not in _distributed_strategy_ignore_modules
 
     def distribute_module(
         self, module: nn.Module, final_layers: bool = False
@@ -19,12 +31,37 @@ class DistributedStrategy:
         Optionally a distributed strategy may distribute modules that are not
         numbered layers
         """
-        return module
+        module_name = type(module).__name__
+        if self.__should_distribute(module_name):
+            return self._distribute_module(module, final_layers)
+        else:
+            print(f"ignoring module={module_name} when distributing module")
+            return module
 
-    @abstractmethod
     def distribute_layer(self, block: nn.Module, layer: int) -> nn.Module:
         """
         Distribute each layer as-appropriate
+        """
+        block_name = type(block).__name__
+        if self.__should_distribute(block_name):
+            return self._distribute_layer(block, layer)
+        else:
+            print(f"ignoring block={block_name} when distributing layer")
+            return block
+
+    @abstractmethod
+    def _distribute_module(
+        self, module: nn.Module, final_layers: bool = False
+    ) -> nn.Module:
+        """
+        Distribute modules that are not numbered layers
+        """
+        pass
+
+    @abstractmethod
+    def _distribute_layer(self, block: nn.Module, layer: int) -> nn.Module:
+        """
+        Distribute each layer
         """
         pass
 
@@ -33,12 +70,12 @@ class NotDistributed(DistributedStrategy):
     def __init__(self, from_meta=False):
         super().__init__(from_meta)
 
-    def distribute_module(
+    def _distribute_module(
         self, module: nn.Module, final_layers: bool = False
     ) -> nn.Module:
         return module
 
-    def distribute_layer(self, block: nn.Module, layer: int) -> nn.Module:
+    def _distribute_layer(self, block: nn.Module, layer: int) -> nn.Module:
         return block
 
 
@@ -88,7 +125,7 @@ class UniformModelParallelStrategy(DistributedStrategy):
                 layer_id = layer_id + 1
                 remainder -= 1
 
-    def distribute_layer(self, block: nn.Module, layer: int) -> nn.Module:
+    def _distribute_layer(self, block: nn.Module, layer: int) -> nn.Module:
         device = self.layer_to_device[layer]
         if self.from_meta:
             # https://github.com/pytorch/pytorch/pull/113647
@@ -96,7 +133,7 @@ class UniformModelParallelStrategy(DistributedStrategy):
         wrapped = DeviceMover(block, device)
         return wrapped
 
-    def distribute_module(
+    def _distribute_module(
         self, module: nn.Module, final_layers: bool = False
     ) -> nn.Module:
         if final_layers:
@@ -115,10 +152,10 @@ class TensorParallelStrategy(DistributedStrategy):
         assert torch.distributed.is_initialized(), "must initialize a process group"
         self.group = group if group is not None else torch.distributed.GroupMember.WORLD
 
-    def distribute_module(
+    def _distribute_module(
         self, module: nn.Module, final_layers: bool = False
     ) -> nn.Module:
         return tp_wrapping.apply_tp(module, self.group)
 
-    def distribute_layer(self, block: nn.Module, layer: int) -> nn.Module:
+    def _distribute_layer(self, block: nn.Module, layer: int) -> nn.Module:
         return tp_wrapping.apply_tp(block, self.group)

@@ -7,25 +7,29 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-def __prepare_list_input(
-    input_ids_list: List[torch.Tensor], model: Union[Callable, torch.nn.Module]
+def pad_input_ids(
+    input_ids_list: List[torch.Tensor], min_pad_length: int = 0
 ) -> Tuple[torch.Tensor, MutableMapping[str, Any]]:
     """
-    Convert the list of Tensors to a rectangular tensor. Return extra kwargs for the position_ids and mask, since this
-    will be required to properly handle the rectangular tensor for certain models.
+    Convert a list of Tensors to a rectangular tensor. Return extra padding kwargs for the position_ids and mask, since
+    this will be required to properly handle the rectangular tensor for certain models.
+
+    Parameters
+    ----------
+    input_ids_list: List[torch.Tensor]
+        a list of Tensors of varied length
+    min_pad_length: int
+        pad to a min length provided. If the min_pad_length is less than the largest input_ids in the input_ids_list,
+        padding will be determined based on the largest length input_ids.
+
+    Returns
+    -------
+    Tuple[torch.Tensor, MutableMapping[str, Any]]
+        A rectangular 2d padded tensor and a mapping containing the mask and position_ids typically used in forward pass
+        in fms models
+        A mapping from mask to a 3d causal mask and from position_ids to a 2d rectangular position_ids tensor
     """
-    min_len = min([seq.size(0) for seq in input_ids_list])
-    max_len = max([seq.size(0) for seq in input_ids_list])
-
-    if isinstance(model, nn.Module):
-        forward_function = model.forward
-    else:
-        forward_function = model
-
-    params = inspect.signature(forward_function).parameters.keys()
-    extra_kwargs = {}
-    needs_mask = "mask" in params and min_len != max_len
-    needs_position_ids = "position_ids" in params and min_len != max_len
+    max_len = max([min_pad_length] + [seq.size(0) for seq in input_ids_list])
 
     padded_input_ids_list = []
     mask_list = []
@@ -51,17 +55,16 @@ def __prepare_list_input(
         position_ids_list.append(torch.cat((pos_ids_pads, pos_ids_seq)))
 
     input_ids = torch.stack(padded_input_ids_list)
-    if needs_mask:
-        mask = torch.stack(mask_list)
-        # this is a causal mask for generation
-        mask = (mask.unsqueeze(-1) == mask.unsqueeze(-2)).tril()
-        extra_kwargs["mask"] = mask
+    padding_kwargs = {}
+    mask = torch.stack(mask_list)
+    # this is a causal mask for generation
+    mask = (mask.unsqueeze(-1) == mask.unsqueeze(-2)).tril()
+    padding_kwargs["mask"] = mask
 
-    if needs_position_ids:
-        position_ids = torch.stack(position_ids_list)
-        extra_kwargs["position_ids"] = position_ids
+    position_ids = torch.stack(position_ids_list)
+    padding_kwargs["position_ids"] = position_ids
 
-    return input_ids, extra_kwargs
+    return input_ids, padding_kwargs
 
 
 def __update_padding_kwargs(
@@ -129,18 +132,19 @@ def generate(
     use_cache: bool = False,
     contiguous_cache: bool = False,
     eos_token_id: Optional[int] = None,
+    extra_kwargs: Optional[MutableMapping[str, Any]] = None,
 ):
     """
     A trivial generate function that can be used for validation/testing in
     cases where HF is not available.
     We could add implementations for other types of generation, but this is
     enough for making sure a model is working.
-    Does not implement batching nor beam search, but those could be added.
+    Does not implement beam search, but this can be added.
 
     Args:
         model: A function or nn.Module that takes a batch of input_ids and
             returns logits
-        prefix: A tensor of token IDs.
+        input_ids: a rectangular tensor of input_ids (batch x seq)
         max_seq_len: the sequence length of the model
         max_new_tokens: max tokens to generate
         temperature: temperature of softmax when sampling
@@ -149,25 +153,25 @@ def generate(
         num_beams: TODO: support beam search
         use_cache: requires that the model accept use_cache and
             past_key_value_states args in forward method.
+        eos_token_id: the optional token id representing the end of sequence
+        extra_kwargs: an optional mapping of additional kwargs to pass to the model.
+            For example: if extra_kwargs contains position_ids and mask keys, these
+            model parameters will be updated as-appropriate for each token generated.
     """
     if num_beams != 1:
         raise NotImplementedError("generate() does yet not support beam search")
 
     kwargs: MutableMapping[str, Any] = dict()
-    # if the inputs are a tensor, we assume they are all non-pad ids and include entire context length
+    if extra_kwargs is not None:
+        kwargs.update(extra_kwargs)
+
     if isinstance(input_ids, torch.Tensor):
         is_batch = len(input_ids.shape) > 1
         # our model requires batch dimension
         if not is_batch:
             input_ids = input_ids.unsqueeze(0)
-    # if the inputs are a list, they may be made up of differently sized tensors
-    # in the case where the tensors are of different sizes, proper position ids and pads will be created
-    elif isinstance(input_ids, List):
-        is_batch = len(input_ids) > 1
-        input_ids, kwargs = __prepare_list_input(input_ids, prefill_model)
     else:
         raise TypeError("input_ids must be one of Tensor or List")
-
     eos_found = torch.zeros(
         input_ids.shape[0], dtype=torch.bool, device=input_ids.device
     )
@@ -194,8 +198,10 @@ def generate(
         # iteration 0 is the prefill step (cache has not been filled yet), so no need to extend the mask/position_ids
         if i > 0:
             kwargs = __update_padding_kwargs(use_cache, kwargs)
+            print(kwargs)
             output = decode_model(input_ids, **kwargs)
         else:
+            print(kwargs)
             output = prefill_model(input_ids, **kwargs)
         if use_cache:
             logits, past_key_value_states = output
@@ -234,7 +240,6 @@ def generate(
             next_input = next_val
         else:
             next_input = result
-        kwargs["position_ids"] = kwargs["position_ids"][:, -1:] + 1
 
     torch.cuda.synchronize()
     total_time = time.time() - total_start

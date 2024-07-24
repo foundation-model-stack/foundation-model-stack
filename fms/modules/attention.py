@@ -359,9 +359,9 @@ class MultiHeadAttention(nn.Module):
                 keys_c = past_key_value_state[0]
                 values_c = past_key_value_state[1]
         else:
-            B, _, H, E = keys.shape
-            keys_c = torch.zeros((B, 256, H, E), device=keys.device, dtype=keys.dtype)
-            values_c = torch.zeros((B, 256, H, E), device=keys.device, dtype=keys.dtype)
+            B, H, _, E = keys.shape
+            keys_c = torch.zeros((B, H, 256, E), device=keys.device, dtype=keys.dtype)
+            values_c = torch.zeros((B, H, 256, E), device=values.device, dtype=values.dtype)
             keys_c[:, :, position_ids[0]] = keys
             values_c[:, :, position_ids[0]] = values
 

@@ -1,13 +1,17 @@
+import os.path
 from typing import Union
 
 import torch
 import torch.nn as nn
+from huggingface_hub import snapshot_download
 from transformers import (
     AutoConfig,
     AutoModel,
     AutoModelForCausalLM,
     AutoModelForMaskedLM,
 )
+
+from fms.models import get_model, list_variants
 
 
 def register_fms_models():
@@ -130,3 +134,100 @@ def to_hf_api(model: nn.Module, **override_config_kwargs) -> "HFModelArchitectur
 
     hf_adapted_cls = _fms_to_hf_adapt_map[model_type]
     return hf_adapted_cls.from_fms_model(model, **override_config_kwargs)
+
+
+def as_fms_model(
+    model_id_or_path: Union[str, os.PathLike], device: Union[str, torch.device] = "cpu"
+) -> nn.Module:
+    """
+    get an FMS model from a huggingface checkpoint
+
+    Parameters
+    ----------
+    model_id_or_path: Union[str, os.PathLike]
+        The huggingface hub model id or a local path. If the local path exists, the model will be loaded directly from
+        the local path, otherwise the huggingface cache will be checked. If the huggingface cache does not contain the
+        model, then the weights will be downloaded and stored into the huggingface cache
+    device: Union[str, torch.device]
+        the device to load the model weights to
+
+    Returns
+    -------
+    nn.Module
+        an fms equivalent implementation of an HF model
+    """
+    # if the path does not exist, download it from huggingface and get the local path
+    if not os.path.exists(model_id_or_path):
+        # mixtral saves safetensors expert sharded, so we will need their pt checkpoints
+        # ideally this should be fixed in the adapter in the future
+        ignore_patterns = None
+        if model_id_or_path.startswith("mistralai/Mixtral"):
+            ignore_patterns = ["*.safetensors"]
+        model_path = snapshot_download(
+            repo_id=model_id_or_path, ignore_patterns=ignore_patterns
+        )
+    else:
+        model_path = model_id_or_path
+
+    config = AutoConfig.from_pretrained(model_path)
+
+    architecture = config.architectures[0]
+    config_params = {}
+
+    if architecture == "LlamaForCausalLM":
+        inner_dim = config.intermediate_size
+        architecture = "llama"
+        config_params["attn_bias"] = getattr(config, "attention_bias", False)
+        config_params["mlp_bias"] = getattr(config, "mlp_bias", False)
+        config_params["kv_heads"] = config.num_key_value_heads
+        config_params["norm_eps"] = config.rms_norm_eps
+        config_params["multiple_of"] = 1
+        config_params["emb_dim"] = config.hidden_size
+        config_params["max_expected_seq_len"] = config.max_position_embeddings
+    elif architecture == "GPTBigCodeForCausalLM":
+        inner_dim = config.n_inner
+        architecture = "gpt_bigcode"
+        config_params["ln_eps"] = config.layer_norm_epsilon
+        config_params["multiquery_attn"] = config.multi_query
+        config_params["emb_dim"] = config.hidden_size
+        config_params["max_expected_seq_len"] = config.n_positions
+    elif architecture == "MixtralForCausalLM":
+        inner_dim = config.intermediate_size
+        architecture = "mixtral"
+        config_params["dim"] = config.hidden_size
+        config_params["hidden_dim"] = inner_dim
+        config_params["norm_eps"] = config.rms_norm_eps
+        config_params["kv_heads"] = config.num_key_value_heads
+        config_params["num_experts"] = config.num_local_experts
+        config_params["top_k_experts"] = config.num_experts_per_tok
+        config_params["rope_base"] = config.rope_theta
+        config_params["max_expected_seq_len"] = config.max_position_embeddings
+    elif architecture == "RobertaForMaskedLM":
+        inner_dim = config.intermediate_size
+        architecture = "roberta"
+        config_params["emb_dim"] = config.hidden_size
+        config_params["pad_id"] = config.pad_token_id
+        config_params["max_pos"] = config.max_position_embeddings - 2
+        config_params["p_dropout"] = 0.0  # config.hidden_dropout_prob
+        config_params["norm_eps"] = config.layer_norm_eps
+        config_params["activation_fn"] = config.hidden_act
+    else:
+        raise ValueError(
+            "FMS model implementations currently only support LlamaForCausalLM, GPTBigCodeForCausalLM, MixtralForCausalLM, and RobertaForMaskedLM"
+        )
+
+    # infer common params
+    config_params["src_vocab_size"] = config.vocab_size
+    config_params["nheads"] = config.num_attention_heads
+    config_params["nlayers"] = config.num_hidden_layers
+    config_params["hidden_grow_factor"] = inner_dim / config.hidden_size
+    config_params["tie_heads"] = config.tie_word_embeddings
+
+    return get_model(
+        architecture=architecture,
+        variant=list_variants(architecture)[0],
+        model_path=model_path,
+        source="hf",
+        device_type=device.type if isinstance(device, torch.device) else device,
+        **config_params,
+    )
