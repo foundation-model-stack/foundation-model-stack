@@ -1,4 +1,5 @@
 import inspect
+import time
 from typing import Any, Callable, List, MutableMapping, Optional, Tuple, Union
 
 import torch
@@ -115,9 +116,13 @@ def _make_cache_contiguous(past_key_value_states):
     return n_kv_s
 
 
+past_key_value_states_g = None
+
+
 def generate(
-    model: Union[Callable, torch.nn.Module],
-    input_ids: torch.Tensor,
+    prefill_model: Union[Callable, torch.nn.Module],
+    decode_model: Union[Callable, torch.nn.Module],
+    input_ids: Union[torch.Tensor, List[torch.Tensor]],
     max_seq_len: int = 4096,
     max_new_tokens: int = 256,
     temperature: float = 1.0,
@@ -167,7 +172,6 @@ def generate(
             input_ids = input_ids.unsqueeze(0)
     else:
         raise TypeError("input_ids must be one of Tensor or List")
-
     eos_found = torch.zeros(
         input_ids.shape[0], dtype=torch.bool, device=input_ids.device
     )
@@ -176,6 +180,17 @@ def generate(
     next_input = input_ids
     kwargs["past_key_value_states"] = None
     kwargs["use_cache"] = use_cache
+
+    global past_key_value_states_g
+
+    if past_key_value_states_g is not None:
+        for layer_idx, cache_layer in enumerate(past_key_value_states_g):
+            for tensor_idx, kv_tensor in enumerate(cache_layer):
+                kv_tensor.fill_(0)
+        kwargs["past_key_value_states"] = past_key_value_states_g
+    
+    total_start = time.time()
+
     for i in range(max_new_tokens):
         input_ids = next_input[:, -max_seq_len:]
 
@@ -183,18 +198,18 @@ def generate(
         # iteration 0 is the prefill step (cache has not been filled yet), so no need to extend the mask/position_ids
         if i > 0:
             kwargs = __update_padding_kwargs(use_cache, kwargs)
-
-        output = model(input_ids, **kwargs)
+            output = decode_model(input_ids, **kwargs)
+        else:
+            output = prefill_model(input_ids, **kwargs)
         if use_cache:
             logits, past_key_value_states = output
-            # TODO: this should go away when reduce-overhead issues are fixed, or
-            # maybe could be moved into model code to be more portable.
-            if contiguous_cache:
-                kwargs["past_key_value_states"] = _make_cache_contiguous(
-                    past_key_value_states
-                )
-            else:
-                kwargs["past_key_value_states"] = past_key_value_states
+            if i == 0:
+                if past_key_value_states_g is None:
+                    past_key_value_states_g = past_key_value_states
+                    for cache_layer in past_key_value_states_g:
+                        for kv_tensor in cache_layer:
+                            torch._dynamo.mark_static_address(kv_tensor)
+            kwargs["past_key_value_states"] = past_key_value_states
         else:
             logits = output
         logits = logits[:, -1, :]
@@ -224,6 +239,10 @@ def generate(
         else:
             next_input = result
 
+    torch.cuda.synchronize()
+    total_time = time.time() - total_start
+
+    print(f"Total time: {total_time}")
     if not is_batch:
         result = result[0]
     return result
