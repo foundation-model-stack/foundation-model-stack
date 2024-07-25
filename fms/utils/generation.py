@@ -222,7 +222,6 @@ def generate(
             next_input = next_val
         else:
             next_input = result
-        kwargs["position_ids"] = kwargs["position_ids"][:, -1:] + 1
 
     torch.cuda.synchronize()
 

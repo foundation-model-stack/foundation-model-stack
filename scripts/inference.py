@@ -6,8 +6,8 @@ import random
 
 import numpy as np
 import torch
-import torch._inductor.config
 import torch._dynamo.config
+import torch._inductor.config
 from torch import distributed as dist
 
 from fms.models import get_model
