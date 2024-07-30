@@ -249,9 +249,21 @@ def trim_prefix(result: torch.Tensor, pad_token_id: int = 0) -> torch.Tensor:
     """
     Helper function to return a trimmed sequence of token IDs where
     all padding tokens (always 0 on our code) are removed.
+
+    Examples:
+    [0 0 0 0 1 2 3 4] with pad_token_id = 0 returns [1 2 3 4]
+    [0 0 0 0 1 2 3 4] with pad_token_id = 5 returns [0 0 0 0 1 2 3 4]
+    [1 2 3 4 0 1] with pad_token_id = 0 returns [1 2 3 4 0 1]
+
+    Args:
+    result: A 1D sequence of tokens
+    pad_token_id: Token ID that will be trimmed from the start of the
+        sequence
     """
+    if result[0] != pad_token_id:
+        return result
     output_diff = (result != pad_token_id).diff()
-    first_real_token_idx = torch.where(output_diff != 0)
+    first_real_token_idx = torch.where(output_diff > 0)
     if first_real_token_idx[0].numel() == 0:
         return result
     bos_index = first_real_token_idx[0][0]
