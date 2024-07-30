@@ -4,7 +4,12 @@ import torch.nn.functional as F
 from torch import nn
 
 from fms.models import get_model
-from fms.utils.generation import generate, pad_input_ids, truncate_after_eos
+from fms.utils.generation import (
+    generate,
+    pad_input_ids,
+    trim_prefix,
+    truncate_after_eos,
+)
 from fms.utils.tokenizers import get_tokenizer
 
 
@@ -184,3 +189,11 @@ def test_pad_input_ids():
     torch.testing.assert_close(padded_input_ids, expected_input_ids)
     torch.testing.assert_close(padding_kwargs["position_ids"], expected_position_ids)
     torch.testing.assert_close(padding_kwargs["mask"], expected_mask)
+
+
+def test_trimming():
+    sentence = torch.cat((torch.zeros((10,)), torch.ones((20,))), dim=0)
+    result = trim_prefix(sentence)
+    torch.testing.assert_close(result, torch.ones((20,)))
+    result = trim_prefix(sentence, pad_token_id=2)
+    torch.testing.assert_close(result, sentence)
