@@ -245,15 +245,11 @@ def truncate_after_eos(
     return result
 
 
-def trim_prefix(
-    result: torch.Tensor, pad_token_id: Optional[int] = None
-) -> torch.Tensor:
+def trim_prefix(result: torch.Tensor, pad_token_id: int = 0) -> torch.Tensor:
     """
     Helper function to return a trimmed sequence of token IDs where
     all padding tokens (always 0 on our code) are removed.
     """
-    if pad_token_id is None:
-        pad_token_id = 0
     output_diff = (result != pad_token_id).diff()
     first_real_token_idx = torch.where(output_diff != 0)
     if first_real_token_idx[0].numel() == 0:
