@@ -1,3 +1,4 @@
+import time
 from typing import Any, Callable, List, MutableMapping, Optional, Tuple, Union
 
 import torch
@@ -148,8 +149,8 @@ def generate(
         use_cache: requires that the model accept use_cache and
             past_key_value_states args in forward method.
         eos_token_id: the optional token id representing the end of sequence
-        timing: whether to measure timings: "per-token" for time to first token and
-            inter-token latency, "e2e" for full generation loop
+        timing: whether to measure timings: "per-token" for each token generation time,
+            "e2e" for full generation loop
         extra_kwargs: an optional mapping of additional kwargs to pass to the model.
             For example: if extra_kwargs contains position_ids and mask keys, these
             model parameters will be updated as-appropriate for each token generated.
@@ -229,22 +230,23 @@ def generate(
             next_input = result
 
         if timing == "per-token":
-            torch.cuda.synchronize()
+            if input_ids.device.type == "cuda":
+                torch.cuda.synchronize()
             current_token_time = time.time() - start_time
             times.append(current_token_time)
             start_time = time.time()
 
-    if timing == "per-token":
-        ttft = times[0]
-        itl = statistics.mean(times[1:])
-        print(f"TTFT: {ttft*1000:.3f} ms, ITL: {itl*1000:.3f} ms")
-    elif timing == "e2e":
-        torch.cuda.synchronize()
+    if timing == "e2e":
+        if input_ids.device.type == "cuda":
+            torch.cuda.synchronize()
         e2e_time = time.time() - start_time
-        print(f"Total generation time: {e2e_time:.3f} s")
+        times = e2e_time
 
     if not is_batch:
         result = result[0]
+
+    if timing != "":
+        return result, times
     return result
 
 
