@@ -179,7 +179,7 @@ decode_model = model
 
 if args.fp8:
     from float8_experimental.float8_linear import Float8Linear
-    from float8_experimental.float8_linear_utils import swap_linear_with_float8_linear
+    from float8_experimental.float8_linear_utils import convert_to_float8_training
     from float8_experimental.inference import (
         ActivationCasting,
         QuantConfig,
@@ -207,10 +207,10 @@ if args.fp8:
         "shared.head"
     ]
     if fp8_linear_dict[args.fp8_linear_type]["swap_func"] == "training":
-        model = swap_linear_with_float8_linear(
+        model = convert_to_float8_training(
             model,
-            fp8_linear_dict[args.fp8_linear_type]["class"],
-            skip_fqn_list=skip_fqn_list_llama_2,
+            module_filter_fn=lambda name, module: name not in skip_fqn_list_llama_2,
+            # TODO: need config
         )
     elif fp8_linear_dict[args.fp8_linear_type]["swap_func"] == "inference":
         model = quantize_to_float8(
