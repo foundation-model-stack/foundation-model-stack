@@ -591,6 +591,7 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
         position_encoder: Optional[PositionEncoder] = None,
         fused: bool = True,
         group: Optional[ProcessGroup] = None,
+        use_fp8_kvcache: bool = False,
     ):
         assert torch.distributed.is_initialized()
 
@@ -612,6 +613,7 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
             use_bias,
             position_encoder,
             fused,
+            use_fp8_kvcache,
         )
         self.pre_tp_nheads = nheads
         self.pre_tp_kvheads = kvheads
@@ -737,6 +739,7 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
             position_encoder=mha.position_encoder,
             group=group,
             fused=mha.fused,
+            use_fp8_kvcache=mha.use_fp8_kvcache,
         )
         return tp_mha
 
