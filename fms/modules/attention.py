@@ -3,7 +3,7 @@ from typing import Dict, List, Optional, Set, Tuple
 
 import torch
 import torch.distributed
-from float8_experimental import Float8Tensor
+from float8_experimental.float8_tensor import hp_tensor_and_scale_to_float8
 from torch import Tensor, nn
 from torch.distributed.distributed_c10d import ProcessGroup
 from torch.nn import functional as F
@@ -414,8 +414,8 @@ class MultiHeadAttention(nn.Module):
                         ),
                     )
                 )
-            keys = Float8Tensor.to_float8(keys, self.fp8_kv_scale, torch.float8_e5m2)
-            values = Float8Tensor.to_float8(
+            keys = hp_tensor_and_scale_to_float8(keys, self.fp8_kv_scale, torch.float8_e5m2)
+            values = hp_tensor_and_scale_to_float8(
                 values, self.fp8_kv_scale, torch.float8_e5m2
             )
             # To ensure torch.cat works
@@ -440,12 +440,12 @@ class MultiHeadAttention(nn.Module):
         else:
             B, H, _, E = keys.shape
             if self.use_fp8_kvcache:
-                keys_c = Float8Tensor.to_float8(
+                keys_c = hp_tensor_and_scale_to_float8(
                     torch.zeros((B, H, 256, E), device=keys.device, dtype=keys.dtype),
                     self.fp8_kv_scale,
                     torch.float8_e5m2,
                 )
-                values_c = Float8Tensor.to_float8(
+                values_c = hp_tensor_and_scale_to_float8(
                     torch.zeros((B, H, 256, E), device=keys.device, dtype=values.dtype),
                     self.fp8_kv_scale,
                     torch.float8_e5m2,
