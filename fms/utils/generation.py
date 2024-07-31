@@ -1,3 +1,4 @@
+import time
 from typing import Any, Callable, List, MutableMapping, Optional, Tuple, Union
 
 import torch
@@ -125,6 +126,7 @@ def generate(
     use_cache: bool = False,
     contiguous_cache: bool = False,
     eos_token_id: Optional[int] = None,
+    timing: str = "",
     extra_kwargs: Optional[MutableMapping[str, Any]] = None,
 ):
     """
@@ -147,6 +149,11 @@ def generate(
         use_cache: requires that the model accept use_cache and
             past_key_value_states args in forward method.
         eos_token_id: the optional token id representing the end of sequence
+        timing: whether to measure timings: "per-token" for each token generation time,
+            "e2e" for full generation loop. Both options make `generate` return a tuple
+            with the following information:
+            - "per-token": Array with `max_new_tokens` time measurements (in s)
+            - "e2e": Array with a single e2e generation loop time measurement (in s)
         extra_kwargs: an optional mapping of additional kwargs to pass to the model.
             For example: if extra_kwargs contains position_ids and mask keys, these
             model parameters will be updated as-appropriate for each token generated.
@@ -174,6 +181,9 @@ def generate(
     next_input = input_ids
     kwargs["past_key_value_states"] = None
     kwargs["use_cache"] = use_cache
+    if timing != "":
+        times: List[float] = []
+        start_time = time.time()
     for i in range(max_new_tokens):
         input_ids = next_input[:, -max_seq_len:]
 
@@ -222,8 +232,24 @@ def generate(
         else:
             next_input = result
 
+        if timing == "per-token":
+            if input_ids.device.type == "cuda":
+                torch.cuda.synchronize()
+            current_token_time = time.time() - start_time
+            times.append(current_token_time)
+            start_time = time.time()
+
+    if timing == "e2e":
+        if input_ids.device.type == "cuda":
+            torch.cuda.synchronize()
+        e2e_time = time.time() - start_time
+        times.append(e2e_time)
+
     if not is_batch:
         result = result[0]
+
+    if timing != "":
+        return result, times
     return result
 
 
