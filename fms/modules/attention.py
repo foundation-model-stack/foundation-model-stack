@@ -15,6 +15,57 @@ from fms.distributed.tensorparallel import (
 from fms.modules.positions import PositionEncoder
 from fms.modules.tp import TPModule
 
+from fms.utils.gptq import GPTQConfig, custom_linear_repr
+
+try:
+    from auto_gptq.utils.import_utils import dynamically_import_QuantLinear
+    IS_AUTOGPTQ_AVAILABLE=True
+except:
+    IS_AUTOGPTQ_AVAILABLE=False
+
+
+def get_linear(
+    in_features: int,
+    out_features: int,
+    bias: bool,
+    gptq_config: Optional[GPTQConfig] = None,
+):
+    if gptq_config:
+        if not IS_AUTOGPTQ_AVAILABLE:
+            raise ImportError("AutoGPTQ dynamic QuantLinear could not be imported")
+
+        linear_class = dynamically_import_QuantLinear(
+            use_triton=gptq_config.use_triton,
+            desc_act=gptq_config.desc_act,
+            group_size=gptq_config.group_size,
+            bits=gptq_config.bits,
+            disable_exllama=gptq_config.disable_exllama,
+            disable_exllamav2=gptq_config.disable_exllamav2,
+            use_qigen=gptq_config.use_qigen,
+            use_marlin=gptq_config.use_marlin,
+            use_tritonv2=gptq_config.use_tritonv2,
+        )
+        linear = linear_class(
+            bits=gptq_config.bits,
+            group_size=gptq_config.group_size,
+            infeatures=in_features,
+            outfeatures=out_features,
+            bias=bias,
+        )
+
+        # add attributes for compatibility with nn.Linear
+        setattr(linear, "in_features", linear.infeatures)
+        setattr(linear, "out_features", linear.outfeatures)
+        setattr(linear, "desc_act", gptq_config.desc_act)
+
+        # improve barebone AutoGPTQ representation (only one call needed)
+        if linear.__class__.__repr__ != custom_linear_repr:
+            linear.__class__.__repr__ = custom_linear_repr
+
+        return linear
+    else:
+        return nn.Linear(in_features, out_features, bias)
+
 
 class QKV(nn.Module, metaclass=abc.ABCMeta):
     """Simple module for applying qkv in attention"""
@@ -85,6 +136,8 @@ class UnfusedQKV(QKV):
         *args,
         **kwargs,
     ):
+        gptq_config = kwargs.pop("gptq_config") if "gptq_config" in kwargs else None
+
         super().__init__(
             emb_dim,
             nheads,
@@ -95,14 +148,24 @@ class UnfusedQKV(QKV):
             *args,
             **kwargs,
         )
-        self.query = nn.Linear(
-            self.emb_dim, self.nheads * self.emb_kq_per_head, bias=use_bias
+
+        self.query = get_linear(
+            self.emb_dim,
+            self.nheads * self.emb_kq_per_head,
+            bias=use_bias,
+            gptq_config=gptq_config,
         )
-        self.key = nn.Linear(
-            self.emb_dim, self.kvheads * self.emb_kq_per_head, bias=use_bias
+        self.key = get_linear(
+            self.emb_dim,
+            self.kvheads * self.emb_kq_per_head,
+            bias=use_bias,
+            gptq_config=gptq_config,
         )
-        self.value = nn.Linear(
-            self.emb_dim, self.kvheads * self.emb_v_per_head, bias=use_bias
+        self.value = get_linear(
+            self.emb_dim,
+            self.kvheads * self.emb_v_per_head,
+            bias=use_bias,
+            gptq_config=gptq_config,
         )
 
     def reset_parameters(self):
@@ -146,6 +209,8 @@ class FusedQKV(QKV):
         *args,
         **kwargs,
     ):
+        gptq_config = kwargs.pop("gptq_config") if "gptq_config" in kwargs else None
+
         super().__init__(
             emb_dim,
             nheads,
@@ -162,10 +227,11 @@ class FusedQKV(QKV):
             self.kvheads * self.emb_v_per_head,
         ]
 
-        self.qkv_fused = nn.Linear(
+        self.qkv_fused = get_linear(
             self.emb_dim,
             sum(self.splits),
             bias=self.use_bias,
+            gptq_config=gptq_config,
         )
 
     def unfuse_weights(self):
@@ -223,7 +289,7 @@ class MultiHeadAttention(nn.Module):
         Dropout probability. Must be in range [0,1]. If 0 or None, dropout will not be used.
     use_bias : bool
         Include bias terms in fully-connected sublayers?
-    fused: bool
+    fused : bool
         if True, qkv weights will be fused, otherwise qkv weights will be unfused
     """
 
@@ -238,6 +304,7 @@ class MultiHeadAttention(nn.Module):
         use_bias=False,
         position_encoder: Optional[PositionEncoder] = None,
         fused: bool = True,
+        gptq_config: Optional[GPTQConfig] = None,
     ):
         super(MultiHeadAttention, self).__init__()
         self.nheads = nheads
@@ -248,6 +315,7 @@ class MultiHeadAttention(nn.Module):
         self.p_dropout = p_dropout if p_dropout is not None else 0.0
         self.use_bias = use_bias
         self.fused = fused
+        self.gptq_config = gptq_config
 
         self.in_proj: QKV = (FusedQKV if self.fused else UnfusedQKV)(
             self.emb_dim,
@@ -256,11 +324,16 @@ class MultiHeadAttention(nn.Module):
             self.emb_kq_per_head,
             self.emb_v_per_head,
             self.use_bias,
+            gptq_config=gptq_config,
         )
 
-        self.dense = nn.Linear(
-            self.nheads * self.emb_v_per_head, self.emb_dim, bias=use_bias
+        self.dense = get_linear(
+            self.nheads * self.emb_v_per_head,
+            self.emb_dim,
+            bias=use_bias,
+            gptq_config=gptq_config,
         )
+
         if self.p_dropout:
             self.attn_dropout = nn.Dropout(self.p_dropout)
         self.position_encoder = position_encoder
@@ -452,6 +525,7 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
         position_encoder: Optional[PositionEncoder] = None,
         fused: bool = True,
         group: Optional[ProcessGroup] = None,
+        gptq_config: Optional[GPTQConfig] = None,
     ):
         assert torch.distributed.is_initialized()
 
@@ -473,6 +547,7 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
             use_bias,
             position_encoder,
             fused,
+            gptq_config,
         )
         self.pre_tp_nheads = nheads
         self.pre_tp_kvheads = kvheads
@@ -583,6 +658,113 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
                     self.dense.bias, dense_bias, 1, [self.world_size], False
                 )
 
+    def load_qparams(
+        self,
+        tensor_values: Dict[str, torch.Tensor],
+    ):
+        """
+        Copy sharded quantization parameters onto sharded linear modules
+
+                          |     GPU     |
+        module | qparam   | shard | dim |
+        -------+----------+-------+-----|
+        QKV    | qweight  |   Y   |  1  |
+               | bias     |   Y   |  0  |
+               | scales   |   Y   |  1  |
+               | qzeros   |   Y   |  1  |
+               | g_idx    |   N   |  -  |
+        -------+----------+-------+-----|
+        dense  | qweight  |   Y   |  0  |
+               | bias     |   N   |  -  |
+               | scales   |   Y   |  0  |
+               | qzeros   |   Y   |  0  |
+               | g_idx    |   Y   |  0  |
+        """
+
+        if self.fused:
+            modules = ["qkv_fused", "dense"]
+        else:
+            modules = ["query", "value", "key", "dense"]
+        qparams = ["qweight", "scales", "qzeros", "g_idx"]
+        if self.use_bias:
+            qparams.append("bias")
+        all_params = {}
+        used_keys: Set[str] = set()
+
+        # Collect quantization parameters to copy on sharded module
+        tensor_device = None
+        for module in modules:
+            for qparam in qparams:
+                # TODO: reusing method '_get_sd_weight' but consider changing function name
+                if module not in all_params:
+                    all_params[module] = {}
+                all_params[module][qparam] = self._get_sd_weight(
+                    tensor_values, used_keys, [module, qparam]
+                )
+                if tensor_device is None:
+                    tensor_device = all_params[module][qparam].device
+
+        # Define sharding parameters
+        if self.fused:
+            name_to_module = {
+                "qkv_fused": self.in_proj.qkv_fused,
+                "dense": self.dense,
+            }
+            shard_dim = {
+                "qkv_fused": 1,
+                "dense": 0,
+            }
+            max_partition = {
+                "qkv_fused": [self.pre_tp_nheads, self.pre_tp_kvheads, self.pre_tp_kvheads],
+                "dense": [self.world_size],
+            }
+        else:
+            name_to_module = {
+                "query": self.in_proj.query,
+                "value": self.in_proj.value,
+                "key": self.in_proj.key,
+                "dense": self.dense,
+                }
+            shard_dim = {
+                "query": 1,
+                "value": 1,
+                "key": 1,
+                "dense": 0,
+            }
+            max_partition = {
+                "query": [self.pre_tp_nheads],
+                "value": [self.pre_tp_kvheads],
+                "key": [self.pre_tp_kvheads],
+                "dense": [self.world_size],
+            }
+
+        # Shard module, one parameter at the time
+        for module in modules:
+            for qparam in qparams:
+                module_qparam = getattr(name_to_module[module], qparam)
+                if module_qparam.device == torch.device("meta"):  # TODO: improve cast (no Parameters here, only buffers)
+                    setattr(name_to_module[module], qparam, torch.empty_like(module_qparam, device=tensor_device))
+                    module_qparam = getattr(name_to_module[module], qparam)
+                is_sharded = (
+                    False
+                    if (
+                        (qparam == "bias" and module == "dense") or
+                        (qparam == "g_idx" and module != "dense")
+                    )
+                    else True
+                )
+
+                shard_dim_qparam = shard_dim[module]
+                if qparam in ["bias", "g_idx"]:
+                    shard_dim_qparam = 0
+
+                self.sharded_copy(
+                    param=module_qparam,
+                    tensor_value=all_params[module][qparam],
+                    dim=shard_dim_qparam,
+                    max_partition_sizes=max_partition[module],
+                    is_sharded=is_sharded,
+                )
     @staticmethod
     def import_module(
         mha: MultiHeadAttention, group: ProcessGroup
@@ -598,6 +780,7 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
             position_encoder=mha.position_encoder,
             group=group,
             fused=mha.fused,
+            gptq_config=mha.gptq_config,
         )
         return tp_mha
 
