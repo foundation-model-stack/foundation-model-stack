@@ -66,7 +66,7 @@ parser.add_argument(
 parser.add_argument(
     "--fp8",
     action="store_true",
-    help="Use float8_experimental Float8Linear to swap linear layers",
+    help="Use torchao.float8 Float8Linear to swap linear layers",
 )
 parser.add_argument(
     "--fp8_linear_type",
@@ -178,9 +178,9 @@ prefill_model = model
 decode_model = model
 
 if args.fp8:
-    from float8_experimental.float8_linear import Float8Linear
-    from float8_experimental.float8_linear_utils import convert_to_float8_training
-    from float8_experimental.inference import (
+    from torchao.float8.float8_linear import Float8Linear
+    from torchao.float8.float8_linear_utils import convert_to_float8_training
+    from torchao.float8.inference import (
         ActivationCasting,
         QuantConfig,
         quantize_to_float8,

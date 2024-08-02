@@ -3,7 +3,7 @@ from typing import Dict, List, Optional, Set, Tuple
 
 import torch
 import torch.distributed
-from float8_experimental.float8_tensor import hp_tensor_and_scale_to_float8
+from torchao.float8.float8_tensor import hp_tensor_and_scale_to_float8
 from torch import Tensor, nn
 from torch.distributed.distributed_c10d import ProcessGroup
 from torch.nn import functional as F
