@@ -66,7 +66,7 @@ parser.add_argument(
 parser.add_argument(
     "--fp8",
     action="store_true",
-    help="Use float8_experimental Float8Linear to swap linear layers",
+    help="Use torchao.float8 Float8Linear to swap linear layers",
 )
 parser.add_argument(
     "--fp8_linear_type",
@@ -140,8 +140,6 @@ if args.deterministic:
     torch.use_deterministic_algorithms(True)
 
 if args.distributed:
-    os.environ["MASTER_ADDR"] = "127.0.0.1"
-    os.environ["MASTER_PORT"] = "29508"
     dist.init_process_group()
     # Fix until PT 2.3
     torch._C._distributed_c10d._register_process_group("default", dist.group.WORLD)
@@ -180,9 +178,9 @@ prefill_model = model
 decode_model = model
 
 if args.fp8:
-    from float8_experimental.float8_linear import Float8Linear
-    from float8_experimental.float8_linear_utils import swap_linear_with_float8_linear
-    from float8_experimental.inference import (
+    from torchao.float8.float8_linear import Float8Linear
+    from torchao.float8.float8_linear_utils import convert_to_float8_training
+    from torchao.float8.inference import (
         ActivationCasting,
         QuantConfig,
         quantize_to_float8,
@@ -209,10 +207,10 @@ if args.fp8:
         "shared.head"
     ]
     if fp8_linear_dict[args.fp8_linear_type]["swap_func"] == "training":
-        model = swap_linear_with_float8_linear(
+        model = convert_to_float8_training(
             model,
-            fp8_linear_dict[args.fp8_linear_type]["class"],
-            skip_fqn_list=skip_fqn_list_llama_2,
+            module_filter_fn=lambda name, module: name not in skip_fqn_list_llama_2,
+            # TODO: need config
         )
     elif fp8_linear_dict[args.fp8_linear_type]["swap_func"] == "inference":
         model = quantize_to_float8(
