@@ -13,6 +13,8 @@ from fms.utils import serialization
 from fms.utils.activation import str_to_activation
 from fms.utils.config import ModelConfig
 
+from fms.utils.gptq import GPTQConfig
+
 
 @dataclass
 class GPTBigCodeConfig(ModelConfig):
@@ -30,6 +32,7 @@ class GPTBigCodeConfig(ModelConfig):
     emb_dropout: float = 0.0
     multiquery_attn: bool = True
     ln_eps: float = 1e-5
+    gptq_config: Optional[GPTQConfig] = None
 
 
 class GPTBigCodeBlock(nn.Module):
@@ -48,6 +51,7 @@ class GPTBigCodeBlock(nn.Module):
             kvheads=1 if self.config.multiquery_attn else self.config.nheads,
             p_dropout=self.config.p_dropout,
             use_bias=True,
+            gptq_config=self.config.gptq_config,
         )
 
         self.ff_sub_layer = FeedForwardBlock(
@@ -56,6 +60,7 @@ class GPTBigCodeBlock(nn.Module):
             activation_fn=str_to_activation(self.config.activation_fn),
             p_dropout=self.config.p_dropout,
             use_bias=True,
+            gptq_config=self.config.gptq_config,
         )
 
         if self.config.p_dropout != 0:
@@ -280,6 +285,13 @@ class GPTBigCode(nn.Module):
         self.config = self.config.updated(**kwargs)
         self.distributed_strategy = distributed_strategy
 
+        gptq_config_dict = kwargs.get('gptq_config', None)
+        if gptq_config_dict:
+            gptq_config = GPTQConfig(**gptq_config_dict)
+            self.config = self.config.updated(gptq_config=gptq_config)
+            if gptq_config.desc_act:
+                raise NotImplementedError("Activation reordering (desc_act=True) not currently supported")
+
         self.base_model = GPTBigCodeHeadless(self.config, self.distributed_strategy)
         self.head = nn.Linear(
             self.config.emb_dim, self.config.src_vocab_size, bias=False
@@ -457,3 +469,4 @@ serialization.register_adapter(_architecture_name, "hf", _hf_sd_to_fms_sd)
 serialization.register_adapter(
     _architecture_name, "fms.pre0.0.6", _convert_to_fused_qkv
 )
+serialization.register_adapter(_architecture_name, "gptq_hf", _hf_sd_to_fms_sd)

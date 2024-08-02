@@ -14,6 +14,9 @@ from fms.distributed.tensorparallel import (
 )
 from fms.modules.tp import TPModule
 
+from fms.utils.gptq import GPTQConfig
+from fms.modules.attention import get_linear
+
 
 class FeedForwardBlock(nn.Module):
     """
@@ -44,6 +47,7 @@ class FeedForwardBlock(nn.Module):
         activation_fn=nn.ReLU(),
         p_dropout=0.1,
         use_bias=True,
+        gptq_config: Optional[GPTQConfig] = None,
     ):
         super(FeedForwardBlock, self).__init__()
         self.hidden_dim = int(hidden_grow_factor * emb_dim)
@@ -51,13 +55,24 @@ class FeedForwardBlock(nn.Module):
             self.hidden_dim = multiple_of * (
                 (self.hidden_dim + multiple_of - 1) // multiple_of
             )
-        self.w1 = nn.Linear(emb_dim, self.hidden_dim, bias=use_bias)
+        self.w1 = get_linear(
+            emb_dim,
+            self.hidden_dim,
+            bias=use_bias,
+            gptq_config=gptq_config,
+            )
         self.a = activation_fn
         self.p_dropout = p_dropout
         if p_dropout:
             self.d = nn.Dropout(p_dropout)
-        self.w2 = nn.Linear(self.hidden_dim, emb_dim, bias=use_bias)
+        self.w2 = get_linear(
+            self.hidden_dim,
+            emb_dim,
+            bias=use_bias,
+            gptq_config=gptq_config,
+        )
         self.use_bias = use_bias
+        self.gptq_config = gptq_config
 
     def reset_parameters(self):
         for layer in ["w1", "w2"]:
@@ -103,6 +118,7 @@ class TPFeedForwardBlock(FeedForwardBlock, TPModule):
         p_dropout=0.1,
         use_bias=True,
         group: Optional[ProcessGroup] = None,
+        gptq_config: Optional[GPTQConfig] = None,
     ):
         assert torch.distributed.is_initialized()
         hidden_dim = int(hidden_grow_factor * emb_dim)
@@ -120,6 +136,7 @@ class TPFeedForwardBlock(FeedForwardBlock, TPModule):
             activation_fn,
             p_dropout,
             use_bias,
+            gptq_config,
         )
         self.setup_tp(rank, world_size)
 
@@ -147,6 +164,95 @@ class TPFeedForwardBlock(FeedForwardBlock, TPModule):
             self.sharded_copy(self.w1.bias, w1_bias, 0, [self.world_size])
             self.sharded_copy(self.w2.bias, w2_bias, 1, [self.world_size], False)
 
+    def load_qparams(
+        self,
+        tensor_values: Dict[str, torch.Tensor],
+    ):
+        """
+        Copy sharded quantization parameters onto sharded linear modules
+
+                          |     GPU     |
+        module | qparam   | shard | dim |
+        -------+----------+-------+-----|
+        w1     | qweight  |   Y   |  1  |
+               | bias     |   Y   |  0  |
+               | scales   |   Y   |  1  |
+               | qzeros   |   Y   |  1  |
+               | g_idx    |   N   |  -  |
+        -------+----------+-------+-----|
+        w2     | qweight  |   Y   |  0  |
+               | bias     |   N   |  -  |
+               | scales   |   Y   |  0  |
+               | qzeros   |   Y   |  0  |
+               | g_idx    |   Y   |  0  |
+        """
+
+        modules = ["w1", "w2",]
+        qparams = ["qweight", "scales", "qzeros", "g_idx"]
+        if self.use_bias:
+            qparams.append("bias")
+        all_params = {}
+        used_keys: Set[str] = set()
+
+        # Collect quantization parameters to copy on sharded module
+        tensor_device = None
+        for module in modules:
+            for qparam in qparams:
+                # reusing method '_get_sd_weight' but consider changing its name
+                if module not in all_params:
+                    all_params[module] = {}
+                all_params[module][qparam] = self._get_sd_weight(
+                    tensor_values, used_keys, [module, qparam]
+                )
+                if tensor_device is None:
+                    tensor_device = all_params[module][qparam].device
+
+        # Define sharding parameters
+        name_to_module ={
+            "w1": self.w1,
+            "w2": self.w2,
+        }
+        shard_dim = {
+            "w1": 1,
+            "w2": 0,
+        }
+        max_partition = {
+            "w1": [self.world_size],
+            "w2": [self.world_size],
+        }
+
+        # Shard module, one parameter at the time
+        for module in modules:
+            for qparam in qparams:
+                module_qparam = getattr(name_to_module[module], qparam)
+                if module_qparam.device == torch.device("meta"):  # TODO: improve cast (no Parameters here, only buffers)
+                    setattr(
+                        name_to_module[module],
+                        qparam,
+                        torch.empty_like(module_qparam, device=tensor_device)
+                    )
+                    module_qparam = getattr(name_to_module[module], qparam)
+                is_sharded = (
+                    False
+                    if (
+                        (qparam == "bias" and module == "w2") or
+                        (qparam == "g_idx" and module == "w1")
+                    )
+                    else True
+                )
+
+                shard_dim_qparam = shard_dim[module]
+                if qparam in ["bias", "g_idx"]:
+                    shard_dim_qparam = 0
+
+                self.sharded_copy(
+                    param=module_qparam,
+                    tensor_value=all_params[module][qparam],
+                    dim=shard_dim_qparam,
+                    max_partition_sizes=max_partition[module],
+                    is_sharded=is_sharded,
+                )
+
     @staticmethod
     def import_module(
         ffb: FeedForwardBlock, group: ProcessGroup
@@ -159,6 +265,7 @@ class TPFeedForwardBlock(FeedForwardBlock, TPModule):
             p_dropout=ffb.p_dropout,
             use_bias=ffb.use_bias,
             group=group,
+            gptq_config=ffb.gptq_config,
         )
         return tp_ffb
 
