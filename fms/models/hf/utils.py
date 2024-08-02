@@ -179,7 +179,7 @@ def as_fms_model(
         architecture = "llama"
         config_params["attn_bias"] = getattr(config, "attention_bias", False)
         config_params["mlp_bias"] = getattr(config, "mlp_bias", False)
-        config_params["kv_heads"] = config.num_key_value_heads
+        config_params["kvheads"] = config.num_key_value_heads
         config_params["norm_eps"] = config.rms_norm_eps
         config_params["multiple_of"] = 1
         config_params["emb_dim"] = config.hidden_size
