@@ -276,7 +276,7 @@ def load_state_dict(
             glob_pattern_list = [glob_pattern]
         elif source == "meta":
             glob_pattern_list = ["*.pth", "*.safetensors"]
-        elif source == "hf":
+        elif source == "hf" or source == 'gptq_hf':
             glob_pattern_list = ["*.bin", "*.safetensors", "*.pt"]
         else:
             glob_pattern_list = ["*.safetensors", "*.pth", "*.bin"]
@@ -375,6 +375,7 @@ def load_state_dict_into_model(
     distributed_strategy: Optional[str] = None,
     checkpoint_sharding: Optional[str] = None,
     initial_device: torch.device = torch.device("cpu"),
+    extra_args: dict = {},
 ) -> None:
     """
     This function loads state_dict into model in the most efficient way possible,
@@ -398,6 +399,11 @@ def load_state_dict_into_model(
     initial_device: where the weights will be loaded from disk.
     """
 
+    gptq_config_dict = extra_args.get('gptq_config', None)
+    if gptq_config_dict and source != "gptq_hf":
+        raise NotImplementedError(
+            f"GPTQ configuration provided, but source `{source}` is unsupported"
+        )
     # 1. Get the adapter from checkpoint sd to fms sd
     adapter = _get_adapter(architecture, source)
 
@@ -426,7 +432,7 @@ def load_state_dict_into_model(
                 if partial_sd[psd_key].device != initial_device:
                     partial_sd[psd_key] = partial_sd[psd_key].to(device=initial_device)
             fms_partial_sd = adapter(partial_sd)
-            _load_partial_state_dict(model, fms_partial_sd, needs_tp_sharding)
+            _load_partial_state_dict(model, fms_partial_sd, needs_tp_sharding, source)
             # Be aggressive in removing weights to save as much memory as possible
             for p_key in partial_sd.keys():
                 if isinstance(state_dict, ChainMap):
@@ -446,6 +452,7 @@ def _load_partial_state_dict(
     model: torch.nn.Module,
     state_dict,
     needs_tp_sharding: bool,
+    source: str,
 ):
     unused_params = []
     seen_tp_modules = set()
@@ -484,10 +491,20 @@ def _load_partial_state_dict(
             # into the model
             if not needs_tp_sharding or tp_module is None:
                 param = getattr(target_module, key_steps[-1])
+                if param.device == torch.device("meta"):  # TODO: improve this clunky cast from meta to cpu/gpu
+                    if isinstance(param, torch.nn.Parameter):
+                        param = torch.nn.Parameter(torch.empty_like(param, device=tensor_value.device))
+                    else:
+                        param = torch.empty_like(param, device=tensor_value.device)
+                    setattr(target_module, key_steps[-1], param)
+                    param = getattr(target_module, key_steps[-1])
                 param.copy_(tensor_value, non_blocking=True)
             elif tp_module is not None and tp_module not in seen_tp_modules:
                 seen_tp_modules.add(tp_module)
                 tensor_values = {k: v for k, v in state_dict.items() if tp_prefix in k}
-                tp_module.load_weights(tensor_values)
+                if "gptq_hf" in source:
+                    tp_module.load_qparams(tensor_values)
+                else:
+                    tp_module.load_weights(tensor_values)
         except AttributeError:
             unused_params.append(key)
