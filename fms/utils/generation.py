@@ -225,13 +225,13 @@ def generate(
 
         # Golden reference replacement
         if validation_ids is not None:
-            next_correct_val = validation_ids[:, len(result)].unsqueeze(1)
-            for s_idx, (val, correct_val) in zip(
-                next_val.tolist(), next_correct_val.tolist()
+            next_correct_val = validation_ids[:, result.shape[1]].unsqueeze(1)
+            for s_idx, (val, correct_val) in enumerate(
+                zip(next_val.tolist(), next_correct_val.tolist())
             ):
                 if val != correct_val:
                     logging.warning(
-                        f"In sentence {s_idx}, token {len(result)}, we outputted {val} instead of {correct_val}"
+                        f"In sentence {s_idx+1}/{result.shape[0]}, token {result.shape[1]}, we outputted {val} instead of {correct_val}"
                     )
             next_val = next_correct_val
 
