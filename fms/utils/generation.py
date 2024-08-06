@@ -1,3 +1,4 @@
+import logging
 import time
 from typing import Any, Callable, List, MutableMapping, Optional, Tuple, Union
 
@@ -127,6 +128,7 @@ def generate(
     contiguous_cache: bool = False,
     eos_token_id: Optional[int] = None,
     timing: str = "",
+    validation_ids: Optional[torch.Tensor] = None,
     extra_kwargs: Optional[MutableMapping[str, Any]] = None,
 ):
     """
@@ -154,6 +156,8 @@ def generate(
             with the following information:
             - "per-token": Array with `max_new_tokens` time measurements (in s)
             - "e2e": Array with a single e2e generation loop time measurement (in s)
+        validation_ids: if not None, replace the result of generation with the corresponding
+            token(s) in validation_ids, and issue a warning for each needed replacement
         extra_kwargs: an optional mapping of additional kwargs to pass to the model.
             For example: if extra_kwargs contains position_ids and mask keys, these
             model parameters will be updated as-appropriate for each token generated.
@@ -218,6 +222,18 @@ def generate(
             next_val = torch.multinomial(probs, num_samples=1)
         else:
             next_val = torch.argmax(logits, dim=-1).unsqueeze(0).t()
+
+        # Golden reference replacement
+        if validation_ids is not None:
+            next_correct_val = validation_ids[:, len(result)].unsqueeze(1)
+            for s_idx, (val, correct_val) in zip(
+                next_val.tolist(), next_correct_val.tolist()
+            ):
+                if val != correct_val:
+                    logging.warning(
+                        f"In sentence {s_idx}, token {len(result)}, we outputted {val} instead of {correct_val}"
+                    )
+            next_val = next_correct_val
 
         result = torch.cat((result, next_val), dim=-1)
 
