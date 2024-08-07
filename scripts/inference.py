@@ -154,7 +154,7 @@ print("loading complete on rank", local_rank)
 if args.compile:
     print("compiling model")
     # compiling can make first inference pass slow
-    model.compile(mode=args.compile_mode, dynamic=False)
+    model.compile(mode=args.compile_mode)
 
 
 def ids_for_prompt(prompt):
