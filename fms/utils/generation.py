@@ -175,7 +175,7 @@ class ExportedModule(torch.nn.Module):
             self.__append_tensor_shape_or_constant(key, kwarg_key, kwarg_value)
         return str(key)
 
-    def _update(self, key, exported_program):
+    def __update(self, key, exported_program):
         # todo: we will need this in order to only save a single version of the state dict, but for now it's not
         #  possible as the state_dict is a property of the ExportedProgram
         # if len(self.exported_file_map) != 0:
@@ -192,7 +192,7 @@ class ExportedModule(torch.nn.Module):
         if key not in self.exported_program_map:
             if self._base_module is not None:
                 exported_program = export(self._base_module, args=args, kwargs=kwargs)
-                self._update(key, exported_program)
+                self.__update(key, exported_program)
                 return self._base_module(*args, **kwargs)
             else:
                 raise AttributeError(
