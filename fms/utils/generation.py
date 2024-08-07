@@ -115,7 +115,7 @@ def _make_cache_contiguous(past_key_value_states):
     return n_kv_s
 
 
-class ExportedModuleMap(torch.nn.Module):
+class ExportedModule(torch.nn.Module):
 
     def __init__(
         self, module: torch.nn.Module, dynamic_shapes: bool = False, *args, **kwargs
@@ -127,32 +127,60 @@ class ExportedModuleMap(torch.nn.Module):
         self.config = (
             self._base_module.config if hasattr(self._base_module, "config") else None
         )
+        # todo: we will need this in order to only save a single version of the state dict, but for now it's not
+        #  possible as the state_dict is a property of the ExportedProgram
+        # self._key_with_state_dict = None
+
+        # todo: dynamic shapes
+        #  This will involve fixing certain dimensions of the key that are marked as dynamic
+        #  also inferring the dynamic shapes input for export based on some attributes of the _base_module
 
     def __getstate__(self):
-        return self.exported_file_map
+        return {
+            "exported_file_map": self.exported_file_map,
+            "key_with_state_dict": self._key_with_state_dict,
+        }
 
     def __setstate__(self, d):
-        self.exported_file_map = d
+        self._base_module = None
+        self.exported_file_map = d["exported_file_map"]
+        # todo: we will need this in order to only save a single version of the state dict, but for now it's not
+        #  possible as the state_dict is a property of the ExportedProgram
+        # self._key_with_state_dict = d["key_with_state_dict"]
+
         for k, v in self.exported_file_map.items():
             self.exported_program_map[k] = load(v)
 
-    def __append_tensor_shape(self, key, param_key, param_value):
+    def __append_tensor_shape_or_constant(self, key, param_key, param_value):
         if isinstance(param_value, torch.Tensor):
             key[param_key] = tuple(param_value.shape)
+        elif isinstance(param_value, (bool, int, float)):
+            key[param_key] = param_value
         elif isinstance(param_value, (list, tuple)):
             for v in param_value:
-                self.__append_tensor_shape(key, param_key, v)
+                self.__append_tensor_shape_or_constant(key, param_key, v)
+        elif isinstance(param_value, dict):
+            for k, v in param_value.items():
+                self.__append_tensor_shape_or_constant(key, f"{param_key}_{k}", v)
 
     def _get_key(self, *args, **kwargs):
         key = {}
         for i, arg in enumerate(args):
-            self.__append_tensor_shape(key, f"arg{i}", arg)
+            self.__append_tensor_shape_or_constant(key, f"arg{i}", arg)
 
         for kwarg_key, kwarg_value in kwargs.items():
-            self.__append_tensor_shape(key, kwarg_key, kwarg_value)
+            self.__append_tensor_shape_or_constant(key, kwarg_key, kwarg_value)
         return str(key)
 
     def _update(self, key, exported_program):
+        # todo: we will need this in order to only save a single version of the state dict, but for now it's not
+        #  possible as the state_dict is a property of the ExportedProgram
+        # if len(self.exported_file_map) != 0:
+        #     exported_program.state_dict = {}
+        # else:
+        #     self._key_with_state_dict = key
+
+        # todo: this cannot be saved yet as per https://github.com/pytorch/pytorch/issues/130152
         # save(exported_program, f"{key}.pt2")
         self.exported_file_map[key] = f"{key}.pt2"
         self.exported_program_map[key] = exported_program
@@ -168,9 +196,12 @@ class ExportedModuleMap(torch.nn.Module):
                 raise AttributeError(
                     "this ExportedModuleMap has not seen the given inputs, and is not backed by a module"
                 )
-        return self.exported_program_map[self._get_key(*args, **kwargs)].module()(
-            *args, **kwargs
-        )
+
+        exported_program = self.exported_program_map[key]
+        # todo: we will need this in order to only save a single version of the state dict, but for now it's not
+        #  possible as the state_dict is a property of the ExportedProgram
+        # exported_program.state_dict = self.exported_program_map[self._key_with_state_dict].state_dict
+        return exported_program.module()(*args, **kwargs)
 
 
 def generate(

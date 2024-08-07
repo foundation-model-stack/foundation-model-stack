@@ -11,7 +11,7 @@ from torch import distributed as dist
 
 from fms.models import get_model
 from fms.utils import fusion, generation, tokenizers
-from fms.utils.generation import ExportedModuleMap, generate, pad_input_ids
+from fms.utils.generation import ExportedModule, generate, pad_input_ids
 
 
 # This example script validates the LLaMA implementation by running inference on a couple of prompts.
@@ -243,7 +243,7 @@ def infer(use_cache, do_sample):
 
 
 max_new_tokens = 20
-model = ExportedModuleMap(model)
+model = ExportedModule(model)
 
 print("generating output", local_rank)
 do_sample = [False]
