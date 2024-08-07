@@ -2,6 +2,7 @@ import argparse
 import itertools
 import os
 import random
+import time
 
 import numpy as np
 import torch
@@ -10,7 +11,7 @@ from torch import distributed as dist
 
 from fms.models import get_model
 from fms.utils import fusion, generation, tokenizers
-from fms.utils.generation import generate, pad_input_ids
+from fms.utils.generation import ExportedModuleMap, generate, pad_input_ids
 
 
 # This example script validates the LLaMA implementation by running inference on a couple of prompts.
@@ -153,7 +154,7 @@ print("loading complete on rank", local_rank)
 if args.compile:
     print("compiling model")
     # compiling can make first inference pass slow
-    model.compile(mode=args.compile_mode)
+    model.compile(mode=args.compile_mode, dynamic=False)
 
 
 def ids_for_prompt(prompt):
@@ -223,15 +224,17 @@ def infer(use_cache, do_sample):
         # without ntk scaling, extending the seq length too far gives bogus results.
         max_seq_len = model.config.max_expected_seq_len
 
-    result = generate(
+    result, per_token_time = generate(
         model,
         ids,
-        max_new_tokens=100,
+        max_new_tokens=max_new_tokens,
         use_cache=use_cache,
         do_sample=do_sample,
         max_seq_len=max_seq_len,
         extra_kwargs=padding_kwargs,
+        timing="per-token",
     )
+    print(per_token_time)
     if len(result.shape) == 1:
         result = result.unsqueeze(0)
 
@@ -239,10 +242,14 @@ def infer(use_cache, do_sample):
         print_result(result[i])
 
 
+max_new_tokens = 20
+model = ExportedModuleMap(model)
+
 print("generating output", local_rank)
 do_sample = [False]
 use_cache = [
     args.no_use_cache
 ]  # True/False are identical with greedy iff `torch.use_deterministic_algorithms(True)`
 for sample, cache in itertools.product(do_sample, use_cache):
+    infer(cache, sample)
     infer(cache, sample)

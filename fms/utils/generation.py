@@ -1,8 +1,9 @@
 import time
-from typing import Any, Callable, List, MutableMapping, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, MutableMapping, Optional, Tuple, Union
 
 import torch
 import torch.nn.functional as F
+from torch.export import ExportedProgram, export, load, save
 
 
 def pad_input_ids(
@@ -112,6 +113,64 @@ def _make_cache_contiguous(past_key_value_states):
             )
             # torch._dynamo.mark_dynamic(n_kv_s[layer_idx][tensor_idx], 2)
     return n_kv_s
+
+
+class ExportedModuleMap(torch.nn.Module):
+
+    def __init__(
+        self, module: torch.nn.Module, dynamic_shapes: bool = False, *args, **kwargs
+    ):
+        super().__init__(*args, **kwargs)
+        self.exported_file_map: Dict[str, str] = {}
+        self.exported_program_map: Dict[str, ExportedProgram] = {}
+        self._base_module = module
+        self.config = (
+            self._base_module.config if hasattr(self._base_module, "config") else None
+        )
+
+    def __getstate__(self):
+        return self.exported_file_map
+
+    def __setstate__(self, d):
+        self.exported_file_map = d
+        for k, v in self.exported_file_map.items():
+            self.exported_program_map[k] = load(v)
+
+    def __append_tensor_shape(self, key, param_key, param_value):
+        if isinstance(param_value, torch.Tensor):
+            key[param_key] = tuple(param_value.shape)
+        elif isinstance(param_value, (list, tuple)):
+            for v in param_value:
+                self.__append_tensor_shape(key, param_key, v)
+
+    def _get_key(self, *args, **kwargs):
+        key = {}
+        for i, arg in enumerate(args):
+            self.__append_tensor_shape(key, f"arg{i}", arg)
+
+        for kwarg_key, kwarg_value in kwargs.items():
+            self.__append_tensor_shape(key, kwarg_key, kwarg_value)
+        return str(key)
+
+    def _update(self, key, exported_program):
+        # save(exported_program, f"{key}.pt2")
+        self.exported_file_map[key] = f"{key}.pt2"
+        self.exported_program_map[key] = exported_program
+
+    def forward(self, *args, **kwargs):
+        key = self._get_key(*args, **kwargs)
+        if key not in self.exported_program_map:
+            if self._base_module is not None:
+                exported_program = export(self._base_module, args=args, kwargs=kwargs)
+                self._update(key, exported_program)
+                return self._base_module(*args, **kwargs)
+            else:
+                raise AttributeError(
+                    "this ExportedModuleMap has not seen the given inputs, and is not backed by a module"
+                )
+        return self.exported_program_map[self._get_key(*args, **kwargs)].module()(
+            *args, **kwargs
+        )
 
 
 def generate(
