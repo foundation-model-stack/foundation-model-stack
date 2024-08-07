@@ -1,3 +1,4 @@
+import pickle
 import time
 from typing import Any, Callable, Dict, List, MutableMapping, Optional, Tuple, Union
 
@@ -124,9 +125,6 @@ class ExportedModule(torch.nn.Module):
         self.exported_file_map: Dict[str, str] = {}
         self.exported_program_map: Dict[str, ExportedProgram] = {}
         self._base_module = module
-        self.config = (
-            self._base_module.config if hasattr(self._base_module, "config") else None
-        )
         # todo: we will need this in order to only save a single version of the state dict, but for now it's not
         #  possible as the state_dict is a property of the ExportedProgram
         # self._key_with_state_dict = None
@@ -135,21 +133,26 @@ class ExportedModule(torch.nn.Module):
         #  This will involve fixing certain dimensions of the key that are marked as dynamic
         #  also inferring the dynamic shapes input for export based on some attributes of the _base_module
 
-    def __getstate__(self):
-        return {
-            "exported_file_map": self.exported_file_map,
-            "key_with_state_dict": self._key_with_state_dict,
-        }
+    def compile(self, *args, **kwargs):
+        for k, v in self.exported_program_map.items():
+            v.module().compile(*args, **kwargs)
+        return self
 
-    def __setstate__(self, d):
-        self._base_module = None
-        self.exported_file_map = d["exported_file_map"]
-        # todo: we will need this in order to only save a single version of the state dict, but for now it's not
-        #  possible as the state_dict is a property of the ExportedProgram
-        # self._key_with_state_dict = d["key_with_state_dict"]
+    @classmethod
+    def load(cls, path):
+        import pickle
 
-        for k, v in self.exported_file_map.items():
-            self.exported_program_map[k] = load(v)
+        with open(path, "rb") as f:
+            exported_file_map = pickle.load(f)["exported_file_map"]
+        model = cls(None)
+        model.exported_file_map = exported_file_map
+        for k, v in model.exported_file_map.items():
+            model.exported_program_map[k] = load(v)
+        return model
+
+    def save(self, path: str):
+        with open(path, "wb") as f:
+            pickle.dump({"exported_file_map": self.exported_file_map}, f)
 
     def __append_tensor_shape_or_constant(self, key, param_key, param_value):
         if isinstance(param_value, torch.Tensor):
@@ -181,7 +184,7 @@ class ExportedModule(torch.nn.Module):
         #     self._key_with_state_dict = key
 
         # todo: this cannot be saved yet as per https://github.com/pytorch/pytorch/issues/130152
-        # save(exported_program, f"{key}.pt2")
+        save(exported_program, f"{key}.pt2")
         self.exported_file_map[key] = f"{key}.pt2"
         self.exported_program_map[key] = exported_program
 
