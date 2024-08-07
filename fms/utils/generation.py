@@ -183,7 +183,6 @@ class ExportedModule(torch.nn.Module):
         # else:
         #     self._key_with_state_dict = key
 
-        # todo: this cannot be saved yet as per https://github.com/pytorch/pytorch/issues/130152
         save(exported_program, f"{key}.pt2")
         self.exported_file_map[key] = f"{key}.pt2"
         self.exported_program_map[key] = exported_program
