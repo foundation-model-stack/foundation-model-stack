@@ -17,6 +17,7 @@ from fms.distributed.strategy import (
     TensorParallelStrategy,
     UniformModelParallelStrategy,
 )
+from fms.models.llama import LLaMABlock, LLaMAConfig
 from fms.modules.attention import MultiHeadAttention
 from fms.modules.embedding import WordEmbedding
 from fms.modules.feedforward import GatedLinearUnit
@@ -24,7 +25,6 @@ from fms.modules.layernorm import LayerNormParameterized
 from fms.modules.positions import RotaryEmbedding
 from fms.utils import serialization
 from fms.utils.activation import str_to_activation
-from fms.models.llama import LLaMAConfig, LLaMABlock
 from fms.utils.tokenizers import _has_hf, get_tokenizer
 
 from mamba_ssm.modules.mamba2 import Mamba2
