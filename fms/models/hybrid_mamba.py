@@ -4,6 +4,7 @@ import os
 import re
 from collections import OrderedDict
 from dataclasses import dataclass
+from mamba_ssm.modules.mamba2 import Mamba2
 from pathlib import Path
 from typing import Mapping, Optional
 
@@ -25,9 +26,8 @@ from fms.modules.layernorm import LayerNormParameterized
 from fms.modules.positions import RotaryEmbedding
 from fms.utils import serialization
 from fms.utils.activation import str_to_activation
+from fms.utils.config import ModelConfig
 from fms.utils.tokenizers import _has_hf, get_tokenizer
-
-from mamba_ssm.modules.mamba2 import Mamba2
 
 
 @dataclass
