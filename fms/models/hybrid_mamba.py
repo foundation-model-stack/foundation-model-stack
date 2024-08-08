@@ -29,11 +29,12 @@ from fms.utils.tokenizers import _has_hf, get_tokenizer
 
 from mamba_ssm.modules.mamba2 import Mamba2
 
+
 @dataclass
 class HybridConfig(LLaMAConfig):
     # extends the llama config to include mamba-2 parameters
     use_mamba: bool = True
-    mamba_d_model: int = 4096 # same as emb_dim
+    mamba_d_model: int = 4096  # same as emb_dim
     mamba_d_state: int = 128
     mamba_d_conv: int = 4
     mamba_conv_init = None
@@ -53,6 +54,7 @@ class HybridConfig(LLaMAConfig):
     mamba_conv_bias: bool = True
     mamba_chunk_size: int = 256
     mamba_use_mem_eff_path: bool = True
+
 
 # creating a hybrid block that can switch between attention and mamba-2 blocks
 # when training set dtype to torch.float32
@@ -112,6 +114,7 @@ class HybridBlock(nn.Module):
                 is_causal_mask=is_causal_mask,
                 attn_algorithm=attn_algorithm,
             )
+
 
 # modifying the llama model to use the HybridBlock
 class HybridLLaMA(nn.Module):
@@ -312,6 +315,7 @@ class HybridLLaMA(nn.Module):
         else:
             return preds
 
+
 # Register common LLaMA variants with the model registration API
 
 # a micro llama model to use with a char-level tokenizer
@@ -330,10 +334,13 @@ def hybrid_mamba_factory_factory(config):
 
     return factory
 
+
 models.register_model(
     _architecture_name, "micro", hybrid_mamba_factory_factory(_micro_char_config)
 )
-models.register_model(_architecture_name, "7b", hybrid_mamba_factory_factory(_7b_config))
+models.register_model(
+    _architecture_name, "7b", hybrid_mamba_factory_factory(_7b_config)
+)
 
 
 _convert_to_fused = lambda sd: serialization._legacy_mlp_glu_unfused_to_fused_adapter(
