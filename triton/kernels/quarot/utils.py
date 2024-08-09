@@ -1,3 +1,4 @@
+import token
 import torch
 from scipy.linalg import hadamard
 import random
@@ -131,7 +132,7 @@ stat_formulas = [
     lambda x, x_q, abs_diff, rel_diff: torch.nn.functional.mse_loss(x_q, x) * 1000000,
 ]
 
-def print_test_results(results, test_name, embedding_weights, tokenizer):
+def print_test_results(results, test_name, embedding_weights=None, tokenizer=None):
     stat_vals = [0] * len(stat_names)
     for result in results:
         x, x_q = result
@@ -149,7 +150,8 @@ def print_test_results(results, test_name, embedding_weights, tokenizer):
     for stat_name, stat_val in zip(stat_names, stat_vals):
         print(f"avg {stat_name}: {float(stat_val):0.10f}")
         stat_dict[stat_name] = stat_val
-    print(f"token: {unembed(x_q, embedding_weights, tokenizer)}, correct token: {unembed(x, embedding_weights, tokenizer)}")
+    if embedding_weights is not None and tokenizer is not None:
+        print(f"token: {unembed(x_q, embedding_weights, tokenizer)}, correct token: {unembed(x, embedding_weights, tokenizer)}")
     print("==========================")
 
     # try:
