@@ -30,7 +30,7 @@ class GPTBigCodeConfig(ModelConfig):
     emb_dropout: float = 0.0
     multiquery_attn: bool = True
     ln_eps: float = 1e-5
-    linear_config: Optional[Mapping[str, Any]] = None
+    linear_config: Mapping[str, Any] | None = None
 
 
 class GPTBigCodeBlock(nn.Module):

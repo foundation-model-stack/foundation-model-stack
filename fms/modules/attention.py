@@ -1,5 +1,5 @@
 import abc
-from typing import Mapping, List, Optional, Set, Tuple, Any
+from typing import Mapping, Optional, Set, Tuple, Any
 
 import torch
 import torch.distributed
@@ -14,41 +14,7 @@ from fms.distributed.tensorparallel import (
 )
 from fms.modules.positions import PositionEncoder
 from fms.modules.tp import TPModule
-from fms.modules.linear import get_gptq_linear
-
-
-LINEAR_MAPPING = {}
-LINEAR_MAPPING["TORCH_LINEAR"] = nn.Linear
-LINEAR_MAPPING["GPTQ"] = get_gptq_linear
-# TODO: how to register additional mappings into this selection?
-
-
-def _get_linear_type(linear_config: Optional[Mapping[str, Any]]) -> str:
-    if not linear_config:
-        return "TORCH_LINEAR"
-    linear_type = linear_config.get("linear_type", None)
-    if not linear_type:
-        return "TORCH_LINEAR"
-    if not isinstance(linear_type, str):
-        raise TypeError("linear_type in linear_config must be string")
-    if linear_type not in LINEAR_MAPPING:
-        raise ValueError(f"Unsupported linear_type in linear_config: `{linear_type}`")
-    return linear_type.upper()
-
-
-def get_linear(
-    in_features: int,
-    out_features: int,
-    bias: bool,
-    linear_config: Optional[Mapping[str, Any]] = None,
-):
-    linear_type = _get_linear_type(linear_config)
-
-    # TODO: how to merge these calls?
-    if linear_type == "TORCH_LINEAR":
-        return LINEAR_MAPPING[linear_type](in_features, out_features, bias)
-    else:
-        return LINEAR_MAPPING[linear_type](in_features, out_features, bias, linear_config)
+from fms.modules.linear import get_linear
 
 
 class QKV(nn.Module, metaclass=abc.ABCMeta):
@@ -288,7 +254,7 @@ class MultiHeadAttention(nn.Module):
         use_bias=False,
         position_encoder: Optional[PositionEncoder] = None,
         fused: bool = True,
-        linear_config: Optional[Mapping[str, Any]] = None,
+        linear_config: Mapping[str, Any] | None = None,
     ):
         super(MultiHeadAttention, self).__init__()
         self.nheads = nheads
@@ -509,7 +475,7 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
         position_encoder: Optional[PositionEncoder] = None,
         fused: bool = True,
         group: Optional[ProcessGroup] = None,
-        linear_config: Optional[Dict[LinearEnum, Any]] = None,
+        linear_config: Mapping[str, Any] | None = None,
     ):
         assert torch.distributed.is_initialized()
 
