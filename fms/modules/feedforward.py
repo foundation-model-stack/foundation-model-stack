@@ -1,4 +1,4 @@
-from typing import Dict, Optional, Set
+from typing import Dict, Optional, Set, Mapping, Any
 
 import torch
 import torch.distributed
@@ -13,9 +13,7 @@ from fms.distributed.tensorparallel import (
     reduce_from_tensor_model_parallel_region,
 )
 from fms.modules.tp import TPModule
-
-from fms.utils.gptq import GPTQConfig
-from fms.modules.attention import get_linear
+from fms.modules.linear import get_linear
 
 
 class FeedForwardBlock(nn.Module):
@@ -47,7 +45,7 @@ class FeedForwardBlock(nn.Module):
         activation_fn=nn.ReLU(),
         p_dropout=0.1,
         use_bias=True,
-        gptq_config: Optional[GPTQConfig] = None,
+        linear_config: Mapping[str, Any] | None = None,
     ):
         super(FeedForwardBlock, self).__init__()
         self.hidden_dim = int(hidden_grow_factor * emb_dim)
@@ -59,7 +57,7 @@ class FeedForwardBlock(nn.Module):
             emb_dim,
             self.hidden_dim,
             bias=use_bias,
-            gptq_config=gptq_config,
+            linear_config=linear_config,
             )
         self.a = activation_fn
         self.p_dropout = p_dropout
@@ -69,10 +67,10 @@ class FeedForwardBlock(nn.Module):
             self.hidden_dim,
             emb_dim,
             bias=use_bias,
-            gptq_config=gptq_config,
+            linear_config=linear_config,
         )
         self.use_bias = use_bias
-        self.gptq_config = gptq_config
+        self.linear_config = linear_config
 
     def reset_parameters(self):
         for layer in ["w1", "w2"]:
@@ -118,7 +116,7 @@ class TPFeedForwardBlock(FeedForwardBlock, TPModule):
         p_dropout=0.1,
         use_bias=True,
         group: Optional[ProcessGroup] = None,
-        gptq_config: Optional[GPTQConfig] = None,
+        linear_config: Mapping[str, Any] | None = None,
     ):
         assert torch.distributed.is_initialized()
         hidden_dim = int(hidden_grow_factor * emb_dim)
@@ -136,7 +134,7 @@ class TPFeedForwardBlock(FeedForwardBlock, TPModule):
             activation_fn,
             p_dropout,
             use_bias,
-            gptq_config,
+            linear_config,
         )
         self.setup_tp(rank, world_size)
 
@@ -166,7 +164,7 @@ class TPFeedForwardBlock(FeedForwardBlock, TPModule):
 
     def load_qparams(
         self,
-        tensor_values: Dict[str, torch.Tensor],
+        tensor_values: dict[str, torch.Tensor],
     ):
         """
         Copy sharded quantization parameters onto sharded linear modules
@@ -265,7 +263,7 @@ class TPFeedForwardBlock(FeedForwardBlock, TPModule):
             p_dropout=ffb.p_dropout,
             use_bias=ffb.use_bias,
             group=group,
-            gptq_config=ffb.gptq_config,
+            linear_config=ffb.linear_config,
         )
         return tp_ffb
 
