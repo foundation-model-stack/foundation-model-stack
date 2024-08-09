@@ -1,6 +1,6 @@
 import math
 from dataclasses import dataclass
-from typing import List, Mapping, Optional, Tuple
+from typing import List, Mapping, Optional, Tuple, Any
 
 import torch
 import torch.nn as nn
@@ -12,8 +12,6 @@ from fms.modules.feedforward import FeedForwardBlock
 from fms.utils import serialization
 from fms.utils.activation import str_to_activation
 from fms.utils.config import ModelConfig
-
-from fms.utils.gptq import GPTQConfig
 
 
 @dataclass
@@ -32,7 +30,7 @@ class GPTBigCodeConfig(ModelConfig):
     emb_dropout: float = 0.0
     multiquery_attn: bool = True
     ln_eps: float = 1e-5
-    gptq_config: Optional[GPTQConfig] = None
+    linear_config: Optional[Mapping[str, Any]] = None
 
 
 class GPTBigCodeBlock(nn.Module):
@@ -51,7 +49,7 @@ class GPTBigCodeBlock(nn.Module):
             kvheads=1 if self.config.multiquery_attn else self.config.nheads,
             p_dropout=self.config.p_dropout,
             use_bias=True,
-            gptq_config=self.config.gptq_config,
+            linear_config=self.config.linear_config,
         )
 
         self.ff_sub_layer = FeedForwardBlock(
@@ -60,7 +58,7 @@ class GPTBigCodeBlock(nn.Module):
             activation_fn=str_to_activation(self.config.activation_fn),
             p_dropout=self.config.p_dropout,
             use_bias=True,
-            gptq_config=self.config.gptq_config,
+            linear_config=self.config.linear_config,
         )
 
         if self.config.p_dropout != 0:
@@ -282,15 +280,8 @@ class GPTBigCode(nn.Module):
             self.config = config
         else:
             self.config = GPTBigCodeConfig()
-        self.config = self.config.updated(**kwargs)
+        self.config = self.config.updated(**kwargs)  # pass linear_config as {"linear_type": str, <other kwargs>}
         self.distributed_strategy = distributed_strategy
-
-        gptq_config_dict = kwargs.get('gptq_config', None)
-        if gptq_config_dict:
-            gptq_config = GPTQConfig(**gptq_config_dict)
-            self.config = self.config.updated(gptq_config=gptq_config)
-            if gptq_config.desc_act:
-                raise NotImplementedError("Activation reordering (desc_act=True) not currently supported")
 
         self.base_model = GPTBigCodeHeadless(self.config, self.distributed_strategy)
         self.head = nn.Linear(
