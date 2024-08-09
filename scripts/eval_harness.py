@@ -143,8 +143,6 @@ if args.compile:
 
 lm_obj = evaluation.FMSEvalHarnessLM(model=model, tokenizer=tokenizer, device=device)
 
-lm_eval.tasks.initialize_tasks()
-
 results = lm_eval.simple_evaluate(
     model=lm_obj,
     tasks=args.tasks.split(","),
