@@ -2,6 +2,7 @@ import argparse
 import itertools
 import os
 import random
+import time
 
 import numpy as np
 import torch
@@ -10,7 +11,7 @@ from torch import distributed as dist
 
 from fms.models import get_model
 from fms.utils import fusion, generation, tokenizers
-from fms.utils.generation import generate, pad_input_ids
+from fms.utils.generation import ExportedModule, generate, pad_input_ids
 
 
 # This example script validates the LLaMA implementation by running inference on a couple of prompts.
@@ -96,6 +97,7 @@ parser.add_argument(
     default=0,
 )
 parser.add_argument("--context_file", type=str, default=None, help="File to summarize")
+parser.add_argument("--graph_path", type=str, default=None)
 
 args = parser.parse_args()
 
@@ -131,26 +133,35 @@ else:
     else:
         distr_param = None
 
-model = get_model(
-    args.architecture,
-    args.variant,
-    model_path=args.model_path,
-    device_type=args.device_type,
-    source=args.model_source,
-    distributed_strategy=distr_param,
-    group=dist.group.WORLD,
-)
+graph_exists = args.graph_path is not None and os.path.isfile(args.graph_path)
+if graph_exists:
+    print("loading graphs")
+    model = ExportedModule.load(args.graph_path)
+else:
+    model = get_model(
+        args.architecture,
+        args.variant,
+        model_path=args.model_path,
+        device_type=args.device_type,
+        source=args.model_source,
+        distributed_strategy=distr_param,
+        group=dist.group.WORLD,
+    )
 
-if args.unfuse_weights:
-    print("unfusing weights")
-    model = fusion.apply_unfuse_weights(model)
+    if args.unfuse_weights:
+        print("unfusing weights")
+        model = fusion.apply_unfuse_weights(model)
+
+    if args.graph_path is not None:
+        model = ExportedModule(model)
 
 tokenizer = tokenizers.get_tokenizer(args.tokenizer)
 model.eval()
 torch.set_grad_enabled(False)
+
 print("loading complete on rank", local_rank)
 
-if args.compile:
+if args.compile and args.graph_path is None:
     print("compiling model")
     # compiling can make first inference pass slow
     model.compile(mode=args.compile_mode)
@@ -217,27 +228,26 @@ def infer(use_cache, do_sample):
     if local_rank == 0:
         print("use_cache", use_cache, ";; do_sample", do_sample)
         print("==================")
-    if model.config.ntk_scaling:
-        max_seq_len = max(max_len, model.config.max_expected_seq_len)
-    else:
-        # without ntk scaling, extending the seq length too far gives bogus results.
-        max_seq_len = model.config.max_expected_seq_len
 
-    result = generate(
+    result, per_token_time = generate(
         model,
         ids,
-        max_new_tokens=100,
+        max_new_tokens=max_new_tokens,
         use_cache=use_cache,
         do_sample=do_sample,
-        max_seq_len=max_seq_len,
+        max_seq_len=max_len,
         extra_kwargs=padding_kwargs,
+        timing="per-token",
     )
+    print(per_token_time)
     if len(result.shape) == 1:
         result = result.unsqueeze(0)
 
     for i in range(result.shape[0]):
         print_result(result[i])
 
+
+max_new_tokens = 3
 
 print("generating output", local_rank)
 do_sample = [False]
@@ -246,3 +256,8 @@ use_cache = [
 ]  # True/False are identical with greedy iff `torch.use_deterministic_algorithms(True)`
 for sample, cache in itertools.product(do_sample, use_cache):
     infer(cache, sample)
+    infer(cache, sample)
+    infer(cache, sample)
+
+if args.graph_path is not None and not graph_exists:
+    model.save(args.graph_path)
