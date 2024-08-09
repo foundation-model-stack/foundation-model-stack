@@ -1,9 +1,11 @@
+import functools
 import pickle
 import time
 from typing import Any, Callable, Dict, List, MutableMapping, Optional, Tuple, Union
 
 import torch
 import torch.nn.functional as F
+from torch._C._profiler import ProfilerActivity
 from torch.export import ExportedProgram, export, load, save
 
 
@@ -123,6 +125,7 @@ class ExportedModule(torch.nn.Module):
     ):
         super().__init__(*args, **kwargs)
         self.exported_file_map: Dict[str, str] = {}
+        self.exported_module_map: Dict[str, torch.nn.Module] = {}
         self.exported_program_map: Dict[str, ExportedProgram] = {}
         self._base_module = module
         # todo: we will need this in order to only save a single version of the state dict, but for now it's not
@@ -133,14 +136,10 @@ class ExportedModule(torch.nn.Module):
         #  This will involve fixing certain dimensions of the key that are marked as dynamic
         #  also inferring the dynamic shapes input for export based on some attributes of the _base_module
 
-    def compile(self, *args, **kwargs):
-        for k, v in self.exported_program_map.items():
-            v.module().compile(*args, **kwargs)
-        return self
-
     @classmethod
     def load(cls, path):
         import pickle
+        torch._inductor.config.fx_graph_cache = True
 
         with open(path, "rb") as f:
             exported_file_map = pickle.load(f)["exported_file_map"]
@@ -148,9 +147,13 @@ class ExportedModule(torch.nn.Module):
         model.exported_file_map = exported_file_map
         for k, v in model.exported_file_map.items():
             model.exported_program_map[k] = load(v)
+            model.exported_module_map[k] = model.exported_program_map[k].module()
+            model.exported_module_map[k].compile()
         return model
 
     def save(self, path: str):
+        for k, v in self.exported_program_map.items():
+            save(v, f"{k}.pt2")
         with open(path, "wb") as f:
             pickle.dump({"exported_file_map": self.exported_file_map}, f)
 
@@ -183,28 +186,28 @@ class ExportedModule(torch.nn.Module):
         # else:
         #     self._key_with_state_dict = key
 
-        save(exported_program, f"{key}.pt2")
         self.exported_file_map[key] = f"{key}.pt2"
         self.exported_program_map[key] = exported_program
+        self.exported_module_map[key] = exported_program.module()
+        # export doesnt include inductor, so we must compile
+        self.exported_module_map[key].compile()
 
     def forward(self, *args, **kwargs):
         key = self._get_key(*args, **kwargs)
-        if key not in self.exported_program_map:
+        if key not in self.exported_module_map:
             if self._base_module is not None:
                 exported_program = export(self._base_module, args=args, kwargs=kwargs)
                 self.__update(key, exported_program)
-                return self._base_module(*args, **kwargs)
             else:
                 raise AttributeError(
                     "this ExportedModuleMap has not seen the given inputs, and is not backed by a module"
                 )
 
-        exported_program = self.exported_program_map[key]
+        exported_module = self.exported_module_map[key]
         # todo: we will need this in order to only save a single version of the state dict, but for now it's not
         #  possible as the state_dict is a property of the ExportedProgram
         # exported_program.state_dict = self.exported_program_map[self._key_with_state_dict].state_dict
-        return exported_program.module()(*args, **kwargs)
-
+        return exported_module(*args, **kwargs)
 
 def generate(
     model: Union[Callable, torch.nn.Module],
@@ -276,6 +279,21 @@ def generate(
     if timing != "":
         times: List[float] = []
         start_time = time.time()
+
+    # with torch.profiler.profile(
+    #         activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
+    #         schedule=torch.profiler.schedule(
+    #             skip_first=5,
+    #             wait=0,
+    #             warmup=3,
+    #             active=1,
+    #             repeat=1,
+    #         ),
+    #         on_trace_ready=functools.partial(trace_handler, output_path="/data/jmrosenk/trace_generate", extra_name="0"),
+    #         with_stack=True,
+    #         profile_memory=True,
+    #         record_shapes=True,
+    # ) as prof:
     for i in range(max_new_tokens):
         input_ids = next_input[:, -max_seq_len:]
 
@@ -330,6 +348,8 @@ def generate(
             current_token_time = time.time() - start_time
             times.append(current_token_time)
             start_time = time.time()
+
+            # prof.step()
 
     if timing == "e2e":
         if input_ids.device.type == "cuda":

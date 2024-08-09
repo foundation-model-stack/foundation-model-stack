@@ -161,7 +161,7 @@ torch.set_grad_enabled(False)
 
 print("loading complete on rank", local_rank)
 
-if args.compile or graph_exists:
+if args.compile and args.graph_path is None:
     print("compiling model")
     # compiling can make first inference pass slow
     model.compile(mode=args.compile_mode)
@@ -257,6 +257,7 @@ use_cache = [
 for sample, cache in itertools.product(do_sample, use_cache):
     infer(cache, sample)
     infer(cache, sample)
+    infer(cache, sample)
 
-if not graph_exists:
+if args.graph_path is not None and not graph_exists:
     model.save(args.graph_path)
