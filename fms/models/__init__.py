@@ -285,15 +285,9 @@ def get_model(
                 devices, _guess_num_layers(lazy_sd)
             )
 
-    # Enforce meta device for GPTQ model instances
-    model_device = (
-        torch.device('meta') if 'gptq_config' in extra_args
-        else initial_device
-    )
-
     # Create the model
     fms_model = _get_model_instance(
-        architecture, variant, device=model_device, extra_args=extra_args
+        architecture, variant, device=torch.device('meta'), extra_args=extra_args
     )
 
     # Choose when to wrap and load the model weights based on the combination

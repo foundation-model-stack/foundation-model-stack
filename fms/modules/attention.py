@@ -1,5 +1,5 @@
 import abc
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Mapping, List, Optional, Set, Tuple, Any
 
 import torch
 import torch.distributed
@@ -14,57 +14,41 @@ from fms.distributed.tensorparallel import (
 )
 from fms.modules.positions import PositionEncoder
 from fms.modules.tp import TPModule
+from fms.modules.linear import get_gptq_linear
 
-from fms.utils.gptq import GPTQConfig, custom_linear_repr
 
-try:
-    from auto_gptq.utils.import_utils import dynamically_import_QuantLinear
-    IS_AUTOGPTQ_AVAILABLE=True
-except:
-    IS_AUTOGPTQ_AVAILABLE=False
+LINEAR_MAPPING = {}
+LINEAR_MAPPING["TORCH_LINEAR"] = nn.Linear
+LINEAR_MAPPING["GPTQ"] = get_gptq_linear
+# TODO: how to register additional mappings into this selection?
+
+
+def _get_linear_type(linear_config: Optional[Mapping[str, Any]]) -> str:
+    if not linear_config:
+        return "TORCH_LINEAR"
+    linear_type = linear_config.get("linear_type", None)
+    if not linear_type:
+        return "TORCH_LINEAR"
+    if not isinstance(linear_type, str):
+        raise TypeError("linear_type in linear_config must be string")
+    if linear_type not in LINEAR_MAPPING:
+        raise ValueError(f"Unsupported linear_type in linear_config: `{linear_type}`")
+    return linear_type.upper()
 
 
 def get_linear(
     in_features: int,
     out_features: int,
     bias: bool,
-    gptq_config: Optional[GPTQConfig] = None,
+    linear_config: Optional[Mapping[str, Any]] = None,
 ):
-    if gptq_config:
-        if not IS_AUTOGPTQ_AVAILABLE:
-            raise ImportError("AutoGPTQ dynamic QuantLinear could not be imported")
+    linear_type = _get_linear_type(linear_config)
 
-        linear_class = dynamically_import_QuantLinear(
-            use_triton=gptq_config.use_triton,
-            desc_act=gptq_config.desc_act,
-            group_size=gptq_config.group_size,
-            bits=gptq_config.bits,
-            disable_exllama=gptq_config.disable_exllama,
-            disable_exllamav2=gptq_config.disable_exllamav2,
-            use_qigen=gptq_config.use_qigen,
-            use_marlin=gptq_config.use_marlin,
-            use_tritonv2=gptq_config.use_tritonv2,
-        )
-        linear = linear_class(
-            bits=gptq_config.bits,
-            group_size=gptq_config.group_size,
-            infeatures=in_features,
-            outfeatures=out_features,
-            bias=bias,
-        )
-
-        # add attributes for compatibility with nn.Linear
-        setattr(linear, "in_features", linear.infeatures)
-        setattr(linear, "out_features", linear.outfeatures)
-        setattr(linear, "desc_act", gptq_config.desc_act)
-
-        # improve barebone AutoGPTQ representation (only one call needed)
-        if linear.__class__.__repr__ != custom_linear_repr:
-            linear.__class__.__repr__ = custom_linear_repr
-
-        return linear
+    # TODO: how to merge these calls?
+    if linear_type == "TORCH_LINEAR":
+        return LINEAR_MAPPING[linear_type](in_features, out_features, bias)
     else:
-        return nn.Linear(in_features, out_features, bias)
+        return LINEAR_MAPPING[linear_type](in_features, out_features, bias, linear_config)
 
 
 class QKV(nn.Module, metaclass=abc.ABCMeta):
@@ -136,7 +120,7 @@ class UnfusedQKV(QKV):
         *args,
         **kwargs,
     ):
-        gptq_config = kwargs.pop("gptq_config") if "gptq_config" in kwargs else None
+        linear_config = kwargs.pop("linear_config") if "linear_config" in kwargs else None
 
         super().__init__(
             emb_dim,
@@ -153,19 +137,19 @@ class UnfusedQKV(QKV):
             self.emb_dim,
             self.nheads * self.emb_kq_per_head,
             bias=use_bias,
-            gptq_config=gptq_config,
+            linear_config=linear_config,
         )
         self.key = get_linear(
             self.emb_dim,
             self.kvheads * self.emb_kq_per_head,
             bias=use_bias,
-            gptq_config=gptq_config,
+            linear_config=linear_config,
         )
         self.value = get_linear(
             self.emb_dim,
             self.kvheads * self.emb_v_per_head,
             bias=use_bias,
-            gptq_config=gptq_config,
+            linear_config=linear_config,
         )
 
     def reset_parameters(self):
@@ -209,7 +193,7 @@ class FusedQKV(QKV):
         *args,
         **kwargs,
     ):
-        gptq_config = kwargs.pop("gptq_config") if "gptq_config" in kwargs else None
+        linear_config = kwargs.pop("linear_config") if "linear_config" in kwargs else None
 
         super().__init__(
             emb_dim,
@@ -231,7 +215,7 @@ class FusedQKV(QKV):
             self.emb_dim,
             sum(self.splits),
             bias=self.use_bias,
-            gptq_config=gptq_config,
+            linear_config=linear_config,
         )
 
     def unfuse_weights(self):
@@ -304,7 +288,7 @@ class MultiHeadAttention(nn.Module):
         use_bias=False,
         position_encoder: Optional[PositionEncoder] = None,
         fused: bool = True,
-        gptq_config: Optional[GPTQConfig] = None,
+        linear_config: Optional[Mapping[str, Any]] = None,
     ):
         super(MultiHeadAttention, self).__init__()
         self.nheads = nheads
@@ -315,7 +299,7 @@ class MultiHeadAttention(nn.Module):
         self.p_dropout = p_dropout if p_dropout is not None else 0.0
         self.use_bias = use_bias
         self.fused = fused
-        self.gptq_config = gptq_config
+        self.linear_config = linear_config
 
         self.in_proj: QKV = (FusedQKV if self.fused else UnfusedQKV)(
             self.emb_dim,
@@ -324,14 +308,14 @@ class MultiHeadAttention(nn.Module):
             self.emb_kq_per_head,
             self.emb_v_per_head,
             self.use_bias,
-            gptq_config=gptq_config,
+            linear_config=linear_config,
         )
 
         self.dense = get_linear(
             self.nheads * self.emb_v_per_head,
             self.emb_dim,
             bias=use_bias,
-            gptq_config=gptq_config,
+            linear_config=linear_config,
         )
 
         if self.p_dropout:
@@ -525,7 +509,7 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
         position_encoder: Optional[PositionEncoder] = None,
         fused: bool = True,
         group: Optional[ProcessGroup] = None,
-        gptq_config: Optional[GPTQConfig] = None,
+        linear_config: Optional[Dict[LinearEnum, Any]] = None,
     ):
         assert torch.distributed.is_initialized()
 
@@ -547,7 +531,7 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
             use_bias,
             position_encoder,
             fused,
-            gptq_config,
+            linear_config,
         )
         self.pre_tp_nheads = nheads
         self.pre_tp_kvheads = kvheads
@@ -780,7 +764,7 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
             position_encoder=mha.position_encoder,
             group=group,
             fused=mha.fused,
-            gptq_config=mha.gptq_config,
+            linear_config=mha.linear_config,
         )
         return tp_mha
 
