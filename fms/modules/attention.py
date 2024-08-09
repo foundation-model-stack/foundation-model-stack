@@ -505,7 +505,7 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
 
     def load_weights(
         self,
-        tensor_values: Dict[str, torch.Tensor],
+        tensor_values: dict[str, torch.Tensor],
     ):
         used_keys: Set[str] = set()
         dense_weight = self._get_sd_weight(
@@ -610,7 +610,7 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
 
     def load_qparams(
         self,
-        tensor_values: Dict[str, torch.Tensor],
+        tensor_values: dict[str, torch.Tensor],
     ):
         """
         Copy sharded quantization parameters onto sharded linear modules
