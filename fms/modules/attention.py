@@ -14,7 +14,11 @@ from fms.distributed.tensorparallel import (
 )
 from fms.modules.positions import PositionEncoder
 from fms.modules.tp import TPModule
-from fms.modules.linear import get_linear
+from fms.modules.linear import (
+    get_linear,
+    get_linear_type,
+    get_all_linear_type_to_sharding_maps,
+)
 
 
 class QKV(nn.Module, metaclass=abc.ABCMeta):
@@ -266,6 +270,7 @@ class MultiHeadAttention(nn.Module):
         self.use_bias = use_bias
         self.fused = fused
         self.linear_config = linear_config
+        self.linear_type = get_linear_type(linear_config)
 
         self.in_proj: QKV = (FusedQKV if self.fused else UnfusedQKV)(
             self.emb_dim,
@@ -503,183 +508,155 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
         self.pre_tp_kvheads = kvheads
         self.setup_tp(rank, world_size)
 
+    # def load_weights(
+    #     self,
+    #     tensor_values: dict[str, torch.Tensor],
+    # ):
+    #     used_keys: Set[str] = set()
+    #     dense_weight = self._get_sd_weight(
+    #         tensor_values, used_keys, ["dense", "weight"]
+    #     )
+    #     if self.use_bias:
+    #         dense_bias = self._get_sd_weight(
+    #             tensor_values, used_keys, ["dense", "bias"]
+    #         )
+
+    #     # 1. Grab the weights from tensor_values
+    #     if self.fused:
+    #         qkv_weight = self._get_sd_weight(
+    #             tensor_values, used_keys, ["qkv_fused", "weight"]
+    #         )
+    #         if self.use_bias:
+    #             qkv_bias = self._get_sd_weight(
+    #                 tensor_values, used_keys, ["qkv_fused", "bias"]
+    #             )
+
+    #         # 2. Raise exceptions
+    #         if len(tensor_values) > (4 if self.use_bias else 2):
+    #             unused_keys = set(tensor_values.keys()).difference(used_keys)
+    #             raise AttributeError(f"Unused weight(s): {', '.join(unused_keys)}")
+
+    #         # 3. Load and shard the weights
+    #         # The number in max_partition_sizes will signify the largest world size
+    #         # til we need to duplicate.  For instance if we have nheads=16 and
+    #         # world_size=32, then first 2 ranks will get first 1/16th of query
+    #         self.sharded_copy(
+    #             self.in_proj.qkv_fused.weight,
+    #             qkv_weight,
+    #             0,
+    #             [self.pre_tp_nheads, self.pre_tp_kvheads, self.pre_tp_kvheads],
+    #         )
+    #         self.sharded_copy(self.dense.weight, dense_weight, 1, [self.world_size])
+    #         if self.use_bias:
+    #             self.sharded_copy(
+    #                 self.in_proj.qkv_fused.bias,
+    #                 qkv_bias,
+    #                 0,
+    #                 [self.pre_tp_nheads, self.pre_tp_kvheads, self.pre_tp_kvheads],
+    #             )
+    #             self.sharded_copy(
+    #                 self.dense.bias, dense_bias, 1, [self.world_size], False
+    #             )
+
+    #     else:
+    #         query_weight = self._get_sd_weight(
+    #             tensor_values, used_keys, ["query", "weight"]
+    #         )
+    #         key_weight = self._get_sd_weight(
+    #             tensor_values, used_keys, ["key", "weight"]
+    #         )
+    #         value_weight = self._get_sd_weight(
+    #             tensor_values, used_keys, ["value", "weight"]
+    #         )
+
+    #         if self.use_bias:
+    #             query_bias = self._get_sd_weight(
+    #                 tensor_values, used_keys, ["query", "bias"]
+    #             )
+    #             key_bias = self._get_sd_weight(
+    #                 tensor_values, used_keys, ["key", "bias"]
+    #             )
+    #             value_bias = self._get_sd_weight(
+    #                 tensor_values, used_keys, ["value", "bias"]
+    #             )
+
+    #         # 2. Raise exceptions
+    #         if len(tensor_values) > (8 if self.use_bias else 4):
+    #             unused_keys = set(tensor_values.keys()).difference(used_keys)
+    #             raise AttributeError(f"Unused weight(s): {', '.join(unused_keys)}")
+
+    #         # 3. Load and shard the weights
+
+    #         self.sharded_copy(
+    #             self.in_proj.query.weight, query_weight, 0, [self.pre_tp_nheads]
+    #         )
+    #         self.sharded_copy(
+    #             self.in_proj.key.weight, key_weight, 0, [self.pre_tp_kvheads]
+    #         )
+    #         self.sharded_copy(
+    #             self.in_proj.value.weight, value_weight, 0, [self.pre_tp_kvheads]
+    #         )
+    #         self.sharded_copy(self.dense.weight, dense_weight, 1, [self.world_size])
+    #         if self.use_bias:
+    #             self.sharded_copy(
+    #                 self.in_proj.query.bias, query_bias, 0, [self.pre_tp_nheads]
+    #             )
+    #             self.sharded_copy(
+    #                 self.in_proj.key.bias, key_bias, 0, [self.pre_tp_kvheads]
+    #             )
+    #             self.sharded_copy(
+    #                 self.in_proj.value.bias, value_bias, 0, [self.pre_tp_kvheads]
+    #             )
+    #             self.sharded_copy(
+    #                 self.dense.bias, dense_bias, 1, [self.world_size], False
+    #             )
+
     def load_weights(
         self,
         tensor_values: dict[str, torch.Tensor],
-    ):
-        used_keys: Set[str] = set()
-        dense_weight = self._get_sd_weight(
-            tensor_values, used_keys, ["dense", "weight"]
-        )
-        if self.use_bias:
-            dense_bias = self._get_sd_weight(
-                tensor_values, used_keys, ["dense", "bias"]
-            )
+        linear_type: str,
+    ) -> None:
+        """Define name of MHA modules to TP-shard, their name-to-module mapping,
+        per-module base sharding dimension, and per-module max partition size.
 
-        # 1. Grab the weights from tensor_values
-        if self.fused:
-            qkv_weight = self._get_sd_weight(
-                tensor_values, used_keys, ["qkv_fused", "weight"]
-            )
-            if self.use_bias:
-                qkv_bias = self._get_sd_weight(
-                    tensor_values, used_keys, ["qkv_fused", "bias"]
-                )
+        `module_base_shard_dim` is sharding dimension of the `weights` parameter
+        of nn.Linear. Other parameters may differ.
 
-            # 2. Raise exceptions
-            if len(tensor_values) > (4 if self.use_bias else 2):
-                unused_keys = set(tensor_values.keys()).difference(used_keys)
-                raise AttributeError(f"Unused weight(s): {', '.join(unused_keys)}")
-
-            # 3. Load and shard the weights
-            # The number in max_partition_sizes will signify the largest world size
-            # til we need to duplicate.  For instance if we have nheads=16 and
-            # world_size=32, then first 2 ranks will get first 1/16th of query
-            self.sharded_copy(
-                self.in_proj.qkv_fused.weight,
-                qkv_weight,
-                0,
-                [self.pre_tp_nheads, self.pre_tp_kvheads, self.pre_tp_kvheads],
-            )
-            self.sharded_copy(self.dense.weight, dense_weight, 1, [self.world_size])
-            if self.use_bias:
-                self.sharded_copy(
-                    self.in_proj.qkv_fused.bias,
-                    qkv_bias,
-                    0,
-                    [self.pre_tp_nheads, self.pre_tp_kvheads, self.pre_tp_kvheads],
-                )
-                self.sharded_copy(
-                    self.dense.bias, dense_bias, 1, [self.world_size], False
-                )
-
-        else:
-            query_weight = self._get_sd_weight(
-                tensor_values, used_keys, ["query", "weight"]
-            )
-            key_weight = self._get_sd_weight(
-                tensor_values, used_keys, ["key", "weight"]
-            )
-            value_weight = self._get_sd_weight(
-                tensor_values, used_keys, ["value", "weight"]
-            )
-
-            if self.use_bias:
-                query_bias = self._get_sd_weight(
-                    tensor_values, used_keys, ["query", "bias"]
-                )
-                key_bias = self._get_sd_weight(
-                    tensor_values, used_keys, ["key", "bias"]
-                )
-                value_bias = self._get_sd_weight(
-                    tensor_values, used_keys, ["value", "bias"]
-                )
-
-            # 2. Raise exceptions
-            if len(tensor_values) > (8 if self.use_bias else 4):
-                unused_keys = set(tensor_values.keys()).difference(used_keys)
-                raise AttributeError(f"Unused weight(s): {', '.join(unused_keys)}")
-
-            # 3. Load and shard the weights
-            # The number in max_partition_sizes will signify the largest world size
-            # til we need to duplicate.  For instance if we have nheads=16 and
-            # world_size=32, then first 2 ranks will get first 1/16th of query
-            self.sharded_copy(
-                self.in_proj.query.weight, query_weight, 0, [self.pre_tp_nheads]
-            )
-            self.sharded_copy(
-                self.in_proj.key.weight, key_weight, 0, [self.pre_tp_kvheads]
-            )
-            self.sharded_copy(
-                self.in_proj.value.weight, value_weight, 0, [self.pre_tp_kvheads]
-            )
-            self.sharded_copy(self.dense.weight, dense_weight, 1, [self.world_size])
-            if self.use_bias:
-                self.sharded_copy(
-                    self.in_proj.query.bias, query_bias, 0, [self.pre_tp_nheads]
-                )
-                self.sharded_copy(
-                    self.in_proj.key.bias, key_bias, 0, [self.pre_tp_kvheads]
-                )
-                self.sharded_copy(
-                    self.in_proj.value.bias, value_bias, 0, [self.pre_tp_kvheads]
-                )
-                self.sharded_copy(
-                    self.dense.bias, dense_bias, 1, [self.world_size], False
-                )
-
-    def load_qparams(
-        self,
-        tensor_values: dict[str, torch.Tensor],
-    ):
-        """
-        Copy sharded quantization parameters onto sharded linear modules
-
-                          |     GPU     |
-        module | qparam   | shard | dim |
-        -------+----------+-------+-----|
-        QKV    | qweight  |   Y   |  1  |
-               | bias     |   Y   |  0  |
-               | scales   |   Y   |  1  |
-               | qzeros   |   Y   |  1  |
-               | g_idx    |   N   |  -  |
-        -------+----------+-------+-----|
-        dense  | qweight  |   Y   |  0  |
-               | bias     |   N   |  -  |
-               | scales   |   Y   |  0  |
-               | qzeros   |   Y   |  0  |
-               | g_idx    |   Y   |  0  |
+        The numbers in max_partition signify the largest world size
+        til we need to duplicate. For instance if we have nheads=16 and
+        world_size=32, then first 2 ranks will get first 1/16th of query
         """
 
+        # TODO: consider changing to {'module_name': (module_obj, shard_dim, max_partition)}
+        # or to a nested dictionary
+        # is_sharded depends on parameter though, so it must be set later on
         if self.fused:
             modules = ["qkv_fused", "dense"]
-        else:
-            modules = ["query", "value", "key", "dense"]
-        qparams = ["qweight", "scales", "qzeros", "g_idx"]
-        if self.use_bias:
-            qparams.append("bias")
-        all_params = {}
-        used_keys: Set[str] = set()
-
-        # Collect quantization parameters to copy on sharded module
-        tensor_device = None
-        for module in modules:
-            for qparam in qparams:
-                # TODO: reusing method '_get_sd_weight' but consider changing function name
-                if module not in all_params:
-                    all_params[module] = {}
-                all_params[module][qparam] = self._get_sd_weight(
-                    tensor_values, used_keys, [module, qparam]
-                )
-                if tensor_device is None:
-                    tensor_device = all_params[module][qparam].device
-
-        # Define sharding parameters
-        if self.fused:
             name_to_module = {
                 "qkv_fused": self.in_proj.qkv_fused,
                 "dense": self.dense,
             }
-            shard_dim = {
-                "qkv_fused": 1,
-                "dense": 0,
+            module_base_shard_dim = {
+                "qkv_fused": 0,
+                "dense": 1,
             }
             max_partition = {
                 "qkv_fused": [self.pre_tp_nheads, self.pre_tp_kvheads, self.pre_tp_kvheads],
                 "dense": [self.world_size],
             }
         else:
+            modules = ["query", "value", "key", "dense"]
             name_to_module = {
                 "query": self.in_proj.query,
                 "value": self.in_proj.value,
                 "key": self.in_proj.key,
                 "dense": self.dense,
                 }
-            shard_dim = {
-                "query": 1,
-                "value": 1,
-                "key": 1,
-                "dense": 0,
+            module_base_shard_dim = {
+                "query": 0,
+                "value": 0,
+                "key": 0,
+                "dense": 1,
             }
             max_partition = {
                 "query": [self.pre_tp_nheads],
@@ -688,33 +665,16 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
                 "dense": [self.world_size],
             }
 
-        # Shard module, one parameter at the time
-        for module in modules:
-            for qparam in qparams:
-                module_qparam = getattr(name_to_module[module], qparam)
-                if module_qparam.device == torch.device("meta"):  # TODO: improve cast (no Parameters here, only buffers)
-                    setattr(name_to_module[module], qparam, torch.empty_like(module_qparam, device=tensor_device))
-                    module_qparam = getattr(name_to_module[module], qparam)
-                is_sharded = (
-                    False
-                    if (
-                        (qparam == "bias" and module == "dense") or
-                        (qparam == "g_idx" and module != "dense")
-                    )
-                    else True
-                )
+        type_sharding_map = get_all_linear_type_to_sharding_maps()
+        type_sharding_map[linear_type](
+            tensor_values,
+            self,
+            modules,
+            name_to_module,
+            module_base_shard_dim,
+            max_partition,
+        )
 
-                shard_dim_qparam = shard_dim[module]
-                if qparam in ["bias", "g_idx"]:
-                    shard_dim_qparam = 0
-
-                self.sharded_copy(
-                    param=module_qparam,
-                    tensor_value=all_params[module][qparam],
-                    dim=shard_dim_qparam,
-                    max_partition_sizes=max_partition[module],
-                    is_sharded=is_sharded,
-                )
     @staticmethod
     def import_module(
         mha: MultiHeadAttention, group: ProcessGroup

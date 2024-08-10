@@ -1,6 +1,13 @@
 from dataclasses import dataclass
 from typing import Mapping, Any
+import torch
+import torch.nn as nn
 from fms.utils.config import ModelConfig
+from fms.modules.linear import (
+    register_linear_type_to_module_map,
+    register_linear_type_to_sharding_map,
+    shard_base_linear,
+)
 
 try:
     from auto_gptq.utils.import_utils import dynamically_import_QuantLinear
@@ -88,3 +95,70 @@ def get_gptq_linear(
         linear.__class__.__repr__ = custom_linear_repr
 
     return linear
+
+
+def shard_gptq_linear(
+    tensor_values: torch.Tensor,
+    self,  # hint should be: type(TPMultiHeadAttention) | type(TPFeedForwardBlock)
+    modules: list[str],
+    params: list[str],
+    name_to_module: dict[str, nn.Module],
+    module_base_shard_dim: dict[str, int],
+    max_partition: dict [str, str],
+) -> None:
+    """
+    Set up GPTQ quantization parameters to be sharded onto linear modules
+
+                         |     GPU     |
+    module    | qparam   | shard | dim |
+    ----------+----------+-------+-----|
+    QKV, w1   | qweight  |   Y   |  1  |
+              | bias     |   Y   |  0  |
+              | scales   |   Y   |  1  |
+              | qzeros   |   Y   |  1  |
+              | g_idx    |   N   |  -  |
+    ----------+----------+-------+-----|
+    dense, w2 | qweight  |   Y   |  0  |
+              | bias     |   N   |  -  |
+              | scales   |   Y   |  0  |
+              | qzeros   |   Y   |  0  |
+              | g_idx    |   Y   |  0  |
+    """
+
+    params = ["qweight", "scales", "qzeros", "g_idx"]
+    if self.use_bias:
+        params.append("bias")
+
+    # GPTQ qweights are transposed compared to nn.Linear weights
+    module_base_shard_dim_gptq = {}
+    for name, dim in module_base_shard_dim.items():
+        module_base_shard_dim_gptq[name] = 1 - dim
+
+    # TODO: improve this
+    # List of tuples (module, param) that won't be sharded
+    if "qkv_fused" in modules:  # MHA fused
+        unsharded = [("qkv_fused", "g_idx")]
+    if "query" in modules:      # MHA unfused
+        unsharded = [
+            ("query", "g_idx"),
+            ("key", "g_idx"),
+            ("value", "g_idx"),
+        ]
+    if "w1" in modules:  # FFN
+        unsharded = [("w1", "g_idx")]
+        unsharded = [("w2", "bias")]
+
+    shard_base_linear(
+        tensor_values,
+        self,
+        modules,
+        params,
+        name_to_module,
+        module_base_shard_dim_gptq,
+        max_partition,
+        unsharded,
+    )
+
+
+register_linear_type_to_module_map("gptq", get_gptq_linear)
+register_linear_type_to_sharding_map("gptq", shard_gptq_linear)

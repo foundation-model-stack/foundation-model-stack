@@ -13,7 +13,7 @@ from fms.distributed.tensorparallel import (
     reduce_from_tensor_model_parallel_region,
 )
 from fms.modules.tp import TPModule
-from fms.modules.linear import get_linear
+from fms.modules.linear import get_linear, get_all_linear_type_to_sharding_maps
 
 
 class FeedForwardBlock(nn.Module):
@@ -138,118 +138,65 @@ class TPFeedForwardBlock(FeedForwardBlock, TPModule):
         )
         self.setup_tp(rank, world_size)
 
+    # def load_weights(
+    #     self,
+    #     tensor_values: dict[str, torch.Tensor],
+    # ):
+    #     # 1. Grab the weights from tensor_values
+    #     used_keys: Set[str] = set()
+    #     w1_weight = self._get_sd_weight(tensor_values, used_keys, ["w1", "weight"])
+    #     w2_weight = self._get_sd_weight(tensor_values, used_keys, ["w2", "weight"])
+    #     if self.use_bias:
+    #         w1_bias = self._get_sd_weight(tensor_values, used_keys, ["w1", "bias"])
+    #         w2_bias = self._get_sd_weight(tensor_values, used_keys, ["w2", "bias"])
+
+    #     # 2. Raise exceptions for extra weights in tensor_values
+    #     if len(tensor_values) > (4 if self.use_bias else 2):
+    #         unused_keys = set(tensor_values.keys()).difference(used_keys)
+    #         raise AttributeError(f"Unused weight(s): {', '.join(unused_keys)}")
+
+    #     # 3. Load and shard the weights
+    #     self.sharded_copy(self.w1.weight, w1_weight, 0, [self.world_size])
+    #     self.sharded_copy(self.w2.weight, w2_weight, 1, [self.world_size])
+    #     if self.use_bias:
+    #         self.sharded_copy(self.w1.bias, w1_bias, 0, [self.world_size])
+    #         self.sharded_copy(self.w2.bias, w2_bias, 1, [self.world_size], False)
+
     def load_weights(
         self,
         tensor_values: dict[str, torch.Tensor],
-    ):
-        # 1. Grab the weights from tensor_values
-        used_keys: Set[str] = set()
-        w1_weight = self._get_sd_weight(tensor_values, used_keys, ["w1", "weight"])
-        w2_weight = self._get_sd_weight(tensor_values, used_keys, ["w2", "weight"])
-        if self.use_bias:
-            w1_bias = self._get_sd_weight(tensor_values, used_keys, ["w1", "bias"])
-            w2_bias = self._get_sd_weight(tensor_values, used_keys, ["w2", "bias"])
-
-        # 2. Raise exceptions for extra weights in tensor_values
-        if len(tensor_values) > (4 if self.use_bias else 2):
-            unused_keys = set(tensor_values.keys()).difference(used_keys)
-            raise AttributeError(f"Unused weight(s): {', '.join(unused_keys)}")
-
-        # 3. Load and shard the weights
-        self.sharded_copy(self.w1.weight, w1_weight, 0, [self.world_size])
-        self.sharded_copy(self.w2.weight, w2_weight, 1, [self.world_size])
-        if self.use_bias:
-            self.sharded_copy(self.w1.bias, w1_bias, 0, [self.world_size])
-            self.sharded_copy(self.w2.bias, w2_bias, 1, [self.world_size], False)
-
-    def load_qparams(
-        self,
-        tensor_values: dict[str, torch.Tensor],
-    ):
-        """
-        Copy sharded quantization parameters onto sharded linear modules
-
-                          |     GPU     |
-        module | qparam   | shard | dim |
-        -------+----------+-------+-----|
-        w1     | qweight  |   Y   |  1  |
-               | bias     |   Y   |  0  |
-               | scales   |   Y   |  1  |
-               | qzeros   |   Y   |  1  |
-               | g_idx    |   N   |  -  |
-        -------+----------+-------+-----|
-        w2     | qweight  |   Y   |  0  |
-               | bias     |   N   |  -  |
-               | scales   |   Y   |  0  |
-               | qzeros   |   Y   |  0  |
-               | g_idx    |   Y   |  0  |
+        linear_type: str,
+    ) -> None:
+        """Define name of FFN modules to TP-shard, their name-to-module mapping,
+        per-module base sharding dimension, and per-module max partition size.
         """
 
-        modules = ["w1", "w2",]
-        qparams = ["qweight", "scales", "qzeros", "g_idx"]
-        if self.use_bias:
-            qparams.append("bias")
-        all_params = {}
-        used_keys: Set[str] = set()
+        # TODO: consider changing to {'module_name': (module_obj, shard_dim, max_partition)}
+        # or to a nested dictionary
+        if self.fused:
+            modules = ["w1", "w2"]
+            name_to_module = {
+                "w1": self.w1,
+                "w2": self.w2,
+            }
+            module_base_shard_dim = {
+                "w1": 0,
+                "w2": 1,
+            }
+            max_partition = {
+                "w1": [self.world_size],
+                "w2": [self.world_size],
+            }
 
-        # Collect quantization parameters to copy on sharded module
-        tensor_device = None
-        for module in modules:
-            for qparam in qparams:
-                # reusing method '_get_sd_weight' but consider changing its name
-                if module not in all_params:
-                    all_params[module] = {}
-                all_params[module][qparam] = self._get_sd_weight(
-                    tensor_values, used_keys, [module, qparam]
-                )
-                if tensor_device is None:
-                    tensor_device = all_params[module][qparam].device
-
-        # Define sharding parameters
-        name_to_module ={
-            "w1": self.w1,
-            "w2": self.w2,
-        }
-        shard_dim = {
-            "w1": 1,
-            "w2": 0,
-        }
-        max_partition = {
-            "w1": [self.world_size],
-            "w2": [self.world_size],
-        }
-
-        # Shard module, one parameter at the time
-        for module in modules:
-            for qparam in qparams:
-                module_qparam = getattr(name_to_module[module], qparam)
-                if module_qparam.device == torch.device("meta"):  # TODO: improve cast (no Parameters here, only buffers)
-                    setattr(
-                        name_to_module[module],
-                        qparam,
-                        torch.empty_like(module_qparam, device=tensor_device)
-                    )
-                    module_qparam = getattr(name_to_module[module], qparam)
-                is_sharded = (
-                    False
-                    if (
-                        (qparam == "bias" and module == "w2") or
-                        (qparam == "g_idx" and module == "w1")
-                    )
-                    else True
-                )
-
-                shard_dim_qparam = shard_dim[module]
-                if qparam in ["bias", "g_idx"]:
-                    shard_dim_qparam = 0
-
-                self.sharded_copy(
-                    param=module_qparam,
-                    tensor_value=all_params[module][qparam],
-                    dim=shard_dim_qparam,
-                    max_partition_sizes=max_partition[module],
-                    is_sharded=is_sharded,
-                )
+        type_sharding_map = get_all_linear_type_to_sharding_maps()
+        type_sharding_map[linear_type](
+            tensor_values,
+            self,
+            modules,
+            name_to_module,
+            module_base_shard_dim,
+            max_partition,
+        )
 
     @staticmethod
     def import_module(
