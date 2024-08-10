@@ -1,26 +1,44 @@
+import torch
 import torch.nn as nn
-from fms.utils.gptq import get_gptq_linear
-from typing import Mapping, Any
+from typing import Callable, Mapping, Any
 
 
-# TODO: selection of Linear needs to be updatable from external calls
-# how to register additional mappings into this?
-TYPE_FACTORY_MAP = {}
-TYPE_FACTORY_MAP["torch_linear"] = nn.Linear
-TYPE_FACTORY_MAP["gptq"] = get_gptq_linear
-# TYPE_FACTORY_MAP["fp8"]
+__type_factory_map: Mapping[str, Callable] = {}
+__type_sharding_map : Mapping[str, Callable] = {}
 
 
-def _get_linear_type(linear_config: Mapping[str, Any] | None) -> str:
+def register_linear_type_to_module_map(linear_type: str, factory: Callable) -> None:
+    if linear_type in __type_factory_map:
+        raise KeyError(
+            f"Module mapping of linear type `{linear_type}` already registered"
+        )
+    __type_factory_map[linear_type] = factory
+
+
+def register_linear_type_to_sharding_map(linear_type: str, factory: Callable) -> None:
+    if linear_type in __type_sharding_map:
+        raise KeyError(
+            f"Sharding map of linear type `{linear_type}` already registered"
+        )
+    __type_sharding_map[linear_type] = factory
+
+
+def get_all_linear_type_to_sharding_maps() -> dict[str, Callable]:
+    return __type_sharding_map
+
+
+def get_linear_type(linear_config: Mapping[str, Any] | None) -> str:
     if not linear_config:
         return "torch_linear"
+
     linear_type = linear_config.get("linear_type", None)
     if not linear_type:
         return "torch_linear"
     if not isinstance(linear_type, str):
         raise TypeError("linear_type in linear_config must be string")
-    if linear_type not in TYPE_FACTORY_MAP:
-        raise ValueError(f"Unsupported linear_type in linear_config: `{linear_type}`")
+    if linear_type.lower() not in __type_factory_map:
+        raise ValueError(f"Unsupported linear_type `{linear_type}` in linear_config")
+
     return linear_type.lower()
 
 
@@ -30,15 +48,118 @@ def get_linear(
     bias: bool,
     linear_config: Mapping[str, Any] | None = None,
 ) -> nn.Module:
-    linear_type = _get_linear_type(linear_config)
+    linear_type = get_linear_type(linear_config)
 
     # TODO: how to merge these calls that get different arguments?
-    if linear_type in TYPE_FACTORY_MAP:
+    if linear_type in __type_factory_map:
         if linear_type == "torch_linear":
-            return TYPE_FACTORY_MAP[linear_type](in_features, out_features, bias)
+            return __type_factory_map[linear_type](in_features, out_features, bias)
         else:
-            return TYPE_FACTORY_MAP[linear_type](
+            return __type_factory_map[linear_type](
                 in_features, out_features, bias, linear_config
             )
     else:
-        raise TypeError(f"Unsupported linear type `{linear_type}`")
+        raise KeyError(f"Unsupported linear type `{linear_type}`")
+
+
+def shard_base_linear(
+    tensor_values: torch.Tensor,
+    self,  # hint should be: type(TPMultiHeadAttention) | type(TPFeedForwardBlock)
+    modules: list[str],
+    params: list[str],
+    name_to_module: dict[str, nn.Module],
+    module_base_shard_dim: dict[str, int],
+    max_partition: dict[str, str],
+    unsharded: list[tuple[str, str]],
+) -> None:
+    all_params = {}
+    used_keys: set[str] = set()
+
+    # Collect quantization parameters to copy on sharded module
+    tensor_device = None
+    for module in modules:
+        for param in params:
+            if module not in all_params:
+                all_params[module] = {}
+            # TODO: reusing method '_get_sd_weight' but consider changing its name
+            all_params[module][param] = self._get_sd_weight(
+                tensor_values, used_keys, [module, param]
+            )
+            if tensor_device is None:
+                tensor_device = all_params[module][param].device
+
+    # TODO: fix used_keys validation
+    # if len(tensor_values) > (8 if self.use_bias else 4):
+    #     unused_keys = set(tensor_values.keys()).difference(used_keys)
+    #     raise AttributeError(f"Unused weight(s): {', '.join(unused_keys)}")
+
+    # Shard module, one parameter at the time
+    for module in modules:
+        for param in params:
+            module_qparam = getattr(name_to_module[module], param)
+            if module_qparam.device == torch.device("meta"):
+                setattr(
+                    name_to_module[module],
+                    param,
+                    torch.empty_like(module_qparam, device=tensor_device)
+                )
+                module_qparam = getattr(name_to_module[module], param)
+
+            is_sharded = not any([m == module and p == param for (m, p) in unsharded])
+
+            shard_dim_param = module_base_shard_dim[module]
+            # TODO: need to bring this into shard_torch_linear and shard_gptq_linear... HOW?
+            if param in ["bias", "g_idx"]:
+                shard_dim_param = 0
+
+            self.sharded_copy(
+                param=module_qparam,
+                tensor_value=all_params[module][param],
+                dim=shard_dim_param,
+                max_partition_sizes=max_partition[module],
+                is_sharded=is_sharded,
+            )
+
+
+def shard_torch_linear(
+    tensor_values: torch.Tensor,
+    self,  # hint should be: type(TPMultiHeadAttention) | type(TPFeedForwardBlock)
+    modules: list[str],
+    name_to_module: dict[str, nn.Module],
+    module_base_shard_dim: dict[str, int],
+    max_partition: dict [str, str],
+) -> None:
+    """
+                         |     GPU     |
+    module    | qparam   | shard | dim |
+    ----------+----------+-------+-----|
+    QKV, w1   | weight   |   Y   |  0  |
+              | bias     |   Y   |  1  |
+    ----------+----------+-------+-----|
+    dense, w2 | weight   |   Y   |  1  |
+              | bias     |   N   |  -  |
+    """
+    params = ["weight"]
+    if self.use_bias:
+        params.append("bias")
+
+    # List of tuples (module, param) that won't be sharded
+    if "dense" in modules:
+        unsharded = [("dense", "bias")]
+    elif "w2" in modules:
+        unsharded = [("w2", "bias")]
+
+    shard_base_linear(
+        tensor_values,
+        self,
+        modules,
+        params,
+        name_to_module,
+        module_base_shard_dim,
+        max_partition,
+        unsharded,
+    )
+
+
+register_linear_type_to_module_map("torch_linear", nn.Linear)
+register_linear_type_to_sharding_map("torch_linear", shard_torch_linear)
