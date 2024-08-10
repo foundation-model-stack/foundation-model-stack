@@ -116,7 +116,6 @@ def shard_base_linear(
             if param_name in ["bias", "g_idx"]:
                 shard_dim_param = 0
 
-            # print(f"{module_name=} | {list(module_param.size())} vs. {list(all_params[module_name][param_name].size())} | {shard_dim_param=} | part={max_partition} | {is_sharded=}")
             self.sharded_copy(
                 param=module_param,
                 tensor_value=all_params[module_name][param_name],

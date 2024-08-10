@@ -2,7 +2,7 @@ import os
 from typing import Optional
 
 from torch.distributed import ProcessGroup
-
+from fms.utils import gptq
 
 def print0(*args, group: Optional[ProcessGroup] = None):
     """

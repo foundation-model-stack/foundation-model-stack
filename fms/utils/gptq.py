@@ -34,6 +34,9 @@ class GPTQConfig(ModelConfig):
     use_marlin: bool = False
     use_tritonv2: bool = False
 
+    # identifier
+    linear_type: str = "gptq"
+
 
 def custom_linear_repr(self):
     """Updated representation for AutoGPTQ QuantLinear class"""
@@ -86,8 +89,8 @@ def get_gptq_linear(
     )
 
     # provide AutoGPTQ QuantLinear attributes in nn.Linear form
-    setattr(linear, "in_features", lambda: linear.infeatures)
-    setattr(linear, "out_features", lambda: linear.outfeatures)
+    setattr(linear, "in_features", linear.infeatures)
+    setattr(linear, "out_features", linear.outfeatures)
     setattr(linear, "desc_act", gptq_config.desc_act)
 
     # improve barebone AutoGPTQ representation (only one call needed)
@@ -101,7 +104,6 @@ def shard_gptq_linear(
     tensor_values: torch.Tensor,
     self,  # hint should be: type(TPMultiHeadAttention) | type(TPFeedForwardBlock)
     modules: list[str],
-    params: list[str],
     name_to_module: dict[str, nn.Module],
     module_base_shard_dim: dict[str, int],
     max_partition: dict [str, str],
@@ -137,16 +139,22 @@ def shard_gptq_linear(
     # TODO: improve this
     # List of tuples (module, param) that won't be sharded
     if "qkv_fused" in modules:  # MHA fused
-        unsharded = [("qkv_fused", "g_idx")]
-    if "query" in modules:      # MHA unfused
+        unsharded = [
+            ("qkv_fused", "g_idx"),
+            ("dense", "bias"),
+        ]
+    if "query" in modules:  # MHA unfused
         unsharded = [
             ("query", "g_idx"),
             ("key", "g_idx"),
             ("value", "g_idx"),
+            ("dense", "bias")
         ]
-    if "w1" in modules:  # FFN
-        unsharded = [("w1", "g_idx")]
-        unsharded = [("w2", "bias")]
+    if "w1" in modules:  # FFN (no fusion)
+        unsharded = [
+            ("w1", "g_idx"),
+            ("w2", "bias"),
+        ]
 
     shard_base_linear(
         tensor_values,
