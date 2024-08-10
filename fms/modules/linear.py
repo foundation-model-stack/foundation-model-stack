@@ -77,16 +77,16 @@ def shard_base_linear(
 
     # Collect quantization parameters to copy on sharded module
     tensor_device = None
-    for module in modules:
-        for param in params:
-            if module not in all_params:
-                all_params[module] = {}
+    for module_name in modules:
+        for param_name in params:
+            if module_name not in all_params:
+                all_params[module_name] = {}
             # TODO: reusing method '_get_sd_weight' but consider changing its name
-            all_params[module][param] = self._get_sd_weight(
-                tensor_values, used_keys, [module, param]
+            all_params[module_name][param_name] = self._get_sd_weight(
+                tensor_values, used_keys, [module_name, param_name]
             )
             if tensor_device is None:
-                tensor_device = all_params[module][param].device
+                tensor_device = all_params[module_name][param_name].device
 
     # TODO: fix used_keys validation
     # if len(tensor_values) > (8 if self.use_bias else 4):
@@ -94,29 +94,34 @@ def shard_base_linear(
     #     raise AttributeError(f"Unused weight(s): {', '.join(unused_keys)}")
 
     # Shard module, one parameter at the time
-    for module in modules:
-        for param in params:
-            module_qparam = getattr(name_to_module[module], param)
-            if module_qparam.device == torch.device("meta"):
+    for module_name in modules:
+        for param_name in params:
+            module_param = getattr(name_to_module[module_name], param_name)
+            if module_param.device == torch.device("meta"):
+                if isinstance(module_param, nn.Parameter):
+                    module_param = nn.Parameter(torch.empty_like(module_param, device=tensor_device))
+                else:
+                    module_param = torch.empty_like(module_param, device=tensor_device)
                 setattr(
-                    name_to_module[module],
-                    param,
-                    torch.empty_like(module_qparam, device=tensor_device)
+                    name_to_module[module_name],
+                    param_name,
+                    module_param
                 )
-                module_qparam = getattr(name_to_module[module], param)
+                module_param = getattr(name_to_module[module_name], param_name)
 
-            is_sharded = not any([m == module and p == param for (m, p) in unsharded])
+            is_sharded = not any([m == module_name and p == param_name for (m, p) in unsharded])
 
-            shard_dim_param = module_base_shard_dim[module]
+            shard_dim_param = module_base_shard_dim[module_name]
             # TODO: need to bring this into shard_torch_linear and shard_gptq_linear... HOW?
-            if param in ["bias", "g_idx"]:
+            if param_name in ["bias", "g_idx"]:
                 shard_dim_param = 0
 
+            # print(f"{module_name=} | {list(module_param.size())} vs. {list(all_params[module_name][param_name].size())} | {shard_dim_param=} | part={max_partition} | {is_sharded=}")
             self.sharded_copy(
-                param=module_qparam,
-                tensor_value=all_params[module][param],
+                param=module_param,
+                tensor_value=all_params[module_name][param_name],
                 dim=shard_dim_param,
-                max_partition_sizes=max_partition[module],
+                max_partition_sizes=max_partition[module_name],
                 is_sharded=is_sharded,
             )
 
@@ -131,10 +136,10 @@ def shard_torch_linear(
 ) -> None:
     """
                          |     GPU     |
-    module    | qparam   | shard | dim |
+    module    | param    | shard | dim |
     ----------+----------+-------+-----|
     QKV, w1   | weight   |   Y   |  0  |
-              | bias     |   Y   |  1  |
+              | bias     |   Y   |  0  |
     ----------+----------+-------+-----|
     dense, w2 | weight   |   Y   |  1  |
               | bias     |   N   |  -  |

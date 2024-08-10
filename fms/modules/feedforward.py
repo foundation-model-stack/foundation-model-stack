@@ -173,20 +173,19 @@ class TPFeedForwardBlock(FeedForwardBlock, TPModule):
 
         # TODO: consider changing to {'module_name': (module_obj, shard_dim, max_partition)}
         # or to a nested dictionary
-        if self.fused:
-            modules = ["w1", "w2"]
-            name_to_module = {
-                "w1": self.w1,
-                "w2": self.w2,
-            }
-            module_base_shard_dim = {
-                "w1": 0,
-                "w2": 1,
-            }
-            max_partition = {
-                "w1": [self.world_size],
-                "w2": [self.world_size],
-            }
+        modules = ["w1", "w2"]
+        name_to_module = {
+            "w1": self.w1,
+            "w2": self.w2,
+        }
+        module_base_shard_dim = {
+            "w1": 0,
+            "w2": 1,
+        }
+        max_partition = {
+            "w1": [self.world_size],
+            "w2": [self.world_size],
+        }
 
         type_sharding_map = get_all_linear_type_to_sharding_maps()
         type_sharding_map[linear_type](

@@ -20,7 +20,7 @@ from typing import (
 import torch
 
 from fms.modules.tp import TPModule
-from fms.modules.linear import _get_linear_type
+from fms.modules.linear import get_linear_type
 
 
 __adapters: MutableMapping[str, MutableMapping[str, Callable[[Mapping], Mapping]]] = {}
@@ -400,7 +400,7 @@ def load_state_dict_into_model(
     initial_device: where the weights will be loaded from disk.
     """
 
-    linear_type = _get_linear_type(extra_args.get('linear_config', None))
+    linear_type = get_linear_type(extra_args.get('linear_config', None))
 
     # TODO: move this check elsewhere
     # if gptq_config_dict and source != "gptq_hf":
