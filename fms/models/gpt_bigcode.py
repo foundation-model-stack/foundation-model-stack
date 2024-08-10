@@ -460,4 +460,3 @@ serialization.register_adapter(_architecture_name, "hf", _hf_sd_to_fms_sd)
 serialization.register_adapter(
     _architecture_name, "fms.pre0.0.6", _convert_to_fused_qkv
 )
-serialization.register_adapter(_architecture_name, "gptq_hf", _hf_sd_to_fms_sd)
