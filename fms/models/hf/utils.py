@@ -138,7 +138,6 @@ def to_hf_api(model: nn.Module, **override_config_kwargs) -> "HFModelArchitectur
 
 def as_fms_model(
     model_id_or_path: Union[str, os.PathLike],
-    device: Union[str, torch.device] = "cpu",
     **get_model_params,
 ) -> nn.Module:
     """
@@ -151,9 +150,9 @@ def as_fms_model(
         the local path, otherwise the huggingface cache will be checked. If the huggingface cache does not contain the
         model, then the weights will be downloaded and stored into the huggingface cache
     get_model_params
-        extra arguments to pass to get_model. Note: if an argument is specified in get_model_params and is also
-        inferred in this function based on the hf config, it will be overwritten. If you do not want this feature,
-        please use get_model directly
+        extra arguments to pass to get_model. Note: if an argument is specified by the user in get_model_params and is
+        also inferred in this function based on the hf config, the user's specified argument will be ignored. If you do
+        not want this feature, please use get_model directly
 
     Returns
     -------
