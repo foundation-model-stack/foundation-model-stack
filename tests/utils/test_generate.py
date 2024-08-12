@@ -76,59 +76,65 @@ def test_batched_homogeneous():
 
 
 def test_batched_heterogeneous():
-    torch.set_grad_enabled(False)
-    _model_mock = get_model("gpt_bigcode", "micro")
-    _model_mock.reset_parameters()
-    _model_mock.eval()
-    tokenizer = get_tokenizer("char_tokenizer")
-    first = torch.tensor(
-        tokenizer.convert_tokens_to_ids(tokenizer.tokenize("ABCDE")), dtype=torch.long
-    )
-    second = torch.tensor(
-        tokenizer.convert_tokens_to_ids(tokenizer.tokenize("CDEFGHIJKL")),
-        dtype=torch.long,
-    )
+    torch.manual_seed(0)
+    with torch.no_grad():
+        _model_mock = get_model("gpt_bigcode", "micro")
+        _model_mock.reset_parameters()
+        _model_mock.eval()
+        tokenizer = get_tokenizer("char_tokenizer")
+        first = torch.tensor(
+            tokenizer.convert_tokens_to_ids(tokenizer.tokenize("ABCDE")),
+            dtype=torch.long,
+        )
+        second = torch.tensor(
+            tokenizer.convert_tokens_to_ids(tokenizer.tokenize("CDEFGHIJKL")),
+            dtype=torch.long,
+        )
 
-    # use_cache=False
-    ids, padding_kwargs = pad_input_ids([first, second])
-    result = generate(
-        _model_mock, ids, max_new_tokens=5, do_sample=False, extra_kwargs=padding_kwargs
-    )
-    result1_batched = result[0]
-    result2_batched = result[1]
+        # use_cache=False
+        ids, padding_kwargs = pad_input_ids([first, second])
+        result = generate(
+            _model_mock,
+            ids,
+            max_new_tokens=5,
+            do_sample=False,
+            extra_kwargs=padding_kwargs,
+        )
+        result1_batched = result[0]
+        result2_batched = result[1]
 
-    result1 = generate(_model_mock, first, max_new_tokens=5, do_sample=False)
-    torch.testing.assert_close(
-        result1, result1_batched[second.size(0) - first.size(0) :]
-    )
+        result1 = generate(_model_mock, first, max_new_tokens=5, do_sample=False)
+        torch.testing.assert_close(
+            result1, result1_batched[second.size(0) - first.size(0) :]
+        )
 
-    result2 = generate(_model_mock, second, max_new_tokens=5, do_sample=False)
-    torch.testing.assert_close(result2, result2_batched)
+        result2 = generate(_model_mock, second, max_new_tokens=5, do_sample=False)
+        torch.testing.assert_close(result2, result2_batched)
 
-    # use_cache=True
-    ids, padding_kwargs = pad_input_ids([first, second])
-    result = generate(
-        _model_mock,
-        ids,
-        max_new_tokens=5,
-        do_sample=False,
-        use_cache=True,
-        extra_kwargs=padding_kwargs,
-    )
-    result1_batched = result[0]
-    result2_batched = result[1]
+        # use_cache=True
+        ids, padding_kwargs = pad_input_ids([first, second])
+        result = generate(
+            _model_mock,
+            ids,
+            max_new_tokens=5,
+            do_sample=False,
+            use_cache=True,
+            extra_kwargs=padding_kwargs,
+        )
+        result1_batched = result[0]
+        result2_batched = result[1]
 
-    result1 = generate(
-        _model_mock, first, max_new_tokens=5, do_sample=False, use_cache=True
-    )
-    torch.testing.assert_close(
-        result1, result1_batched[second.size(0) - first.size(0) :]
-    )
+        result1 = generate(
+            _model_mock, first, max_new_tokens=5, do_sample=False, use_cache=True
+        )
+        torch.testing.assert_close(
+            result1, result1_batched[second.size(0) - first.size(0) :]
+        )
 
-    result2 = generate(
-        _model_mock, second, max_new_tokens=5, do_sample=False, use_cache=True
-    )
-    torch.testing.assert_close(result2, result2_batched)
+        result2 = generate(
+            _model_mock, second, max_new_tokens=5, do_sample=False, use_cache=True
+        )
+        torch.testing.assert_close(result2, result2_batched)
 
 
 def test_truncate():
