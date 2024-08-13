@@ -1,4 +1,3 @@
-import logging
 import time
 from typing import Any, Callable, List, MutableMapping, Optional, Tuple, Union
 
@@ -230,7 +229,6 @@ def generate(
         else:
             next_val = torch.argmax(logits, dim=-1).unsqueeze(0).t()
 
-        # Golden reference replacement
         if post_iteration_hook is not None:
             next_val, kwargs = post_iteration_hook(logits, next_val, kwargs)
 
