@@ -128,7 +128,12 @@ def generate(
     contiguous_cache: bool = False,
     eos_token_id: Optional[int] = None,
     timing: str = "",
-    validation_ids: Optional[torch.Tensor] = None,
+    post_iteration_hook: Optional[
+        Callable[
+            [torch.Tensor, torch.Tensor, MutableMapping[str, Any]],
+            Tuple[torch.Tensor, MutableMapping[str, Any]],
+        ]
+    ] = None,
     extra_kwargs: Optional[MutableMapping[str, Any]] = None,
 ):
     """
@@ -156,8 +161,10 @@ def generate(
             with the following information:
             - "per-token": Array with `max_new_tokens` time measurements (in s)
             - "e2e": Array with a single e2e generation loop time measurement (in s)
-        validation_ids: if not None, replace the result of generation with the corresponding
-            token(s) in validation_ids, and issue a warning for each needed replacement
+        post_iteration_hook: a function that will get called after each iteration.
+            It must have the following signature: f(Tensor logits, Tensor next_val, Dict kwargs) ->
+            Tuple[Tensor next_val, Dict kwargs]. If it is defined, will replace next_val
+            and kwargs based on the contents of the function.
         extra_kwargs: an optional mapping of additional kwargs to pass to the model.
             For example: if extra_kwargs contains position_ids and mask keys, these
             model parameters will be updated as-appropriate for each token generated.
@@ -224,16 +231,8 @@ def generate(
             next_val = torch.argmax(logits, dim=-1).unsqueeze(0).t()
 
         # Golden reference replacement
-        if validation_ids is not None:
-            next_correct_val = validation_ids[:, result.shape[1]].unsqueeze(1)
-            for s_idx, (val, correct_val) in enumerate(
-                zip(next_val.tolist(), next_correct_val.tolist())
-            ):
-                if val != correct_val:
-                    logging.warning(
-                        f"In sentence {s_idx+1}/{result.shape[0]}, token {result.shape[1]}, we outputted {val} instead of {correct_val}"
-                    )
-            next_val = next_correct_val
+        if post_iteration_hook is not None:
+            next_val, kwargs = post_iteration_hook(logits, next_val, kwargs)
 
         result = torch.cat((result, next_val), dim=-1)
 
