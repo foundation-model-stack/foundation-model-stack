@@ -150,7 +150,10 @@ def generate(
             past_key_value_states args in forward method.
         eos_token_id: the optional token id representing the end of sequence
         timing: whether to measure timings: "per-token" for each token generation time,
-            "e2e" for full generation loop
+            "e2e" for full generation loop. Both options make `generate` return a tuple
+            with the following information:
+            - "per-token": Array with `max_new_tokens` time measurements (in s)
+            - "e2e": Array with a single e2e generation loop time measurement (in s)
         extra_kwargs: an optional mapping of additional kwargs to pass to the model.
             For example: if extra_kwargs contains position_ids and mask keys, these
             model parameters will be updated as-appropriate for each token generated.
@@ -179,7 +182,7 @@ def generate(
     kwargs["past_key_value_states"] = None
     kwargs["use_cache"] = use_cache
     if timing != "":
-        times = []
+        times: List[float] = []
         start_time = time.time()
     for i in range(max_new_tokens):
         input_ids = next_input[:, -max_seq_len:]
@@ -240,7 +243,7 @@ def generate(
         if input_ids.device.type == "cuda":
             torch.cuda.synchronize()
         e2e_time = time.time() - start_time
-        times = e2e_time
+        times.append(e2e_time)
 
     if not is_batch:
         result = result[0]
