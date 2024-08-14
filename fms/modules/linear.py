@@ -63,7 +63,7 @@ def get_linear(
 
 
 def shard_base_linear(
-    tensor_values: torch.Tensor,
+    tensor_values: dict[str, torch.Tensor],
     tp_module,  # hint should be: type(TPMultiHeadAttention) | type(TPFeedForwardBlock)
     modules: list[str],
     params: list[str],
@@ -126,7 +126,7 @@ def shard_base_linear(
 
 
 def shard_torch_linear(
-    tensor_values: torch.Tensor,
+    tensor_values: dict[str, torch.Tensor],
     tp_module,  # hint should be: type(TPMultiHeadAttention) | type(TPFeedForwardBlock)
     modules: list[str],
     name_to_module: dict[str, nn.Module],

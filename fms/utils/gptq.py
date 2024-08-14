@@ -101,7 +101,7 @@ def get_gptq_linear(
 
 
 def shard_gptq_linear(
-    tensor_values: torch.Tensor,
+    tensor_values: dict[str, torch.Tensor],
     self,  # hint should be: type(TPMultiHeadAttention) | type(TPFeedForwardBlock)
     modules: list[str],
     name_to_module: dict[str, nn.Module],
