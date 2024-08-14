@@ -19,7 +19,7 @@ except:
 # simplified from AutoGPTQ quantization config
 # see: https://github.com/AutoGPTQ/AutoGPTQ/blob/caf343b1826301c15f90e2e119cabd0347acfcdf/auto_gptq/quantization/config.py#L60
 @dataclass
-class GPTQConfig(ModelConfig):
+class GPTQLinearConfig(ModelConfig):
     # quantization parameters
     bits: int = 4
     group_size: int = -1
@@ -60,7 +60,7 @@ def get_gptq_linear(
     bias: bool,
     linear_config: Mapping[str, Any] | None = None,
 ):
-    gptq_config = GPTQConfig(**linear_config)
+    gptq_config = GPTQLinearConfig(**linear_config)
 
     if not IS_AUTOGPTQ_AVAILABLE:
         raise ImportError("AutoGPTQ dynamic QuantLinear could not be imported")
