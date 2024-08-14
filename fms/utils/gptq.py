@@ -3,6 +3,7 @@ from typing import Mapping, Any
 import torch
 import torch.nn as nn
 from fms.utils.config import ModelConfig
+from fms.modules.tp import TPModule
 from fms.modules.linear import (
     register_linear_type_to_module_map,
     register_linear_type_to_sharding_map,
@@ -102,7 +103,7 @@ def get_gptq_linear(
 
 def shard_gptq_linear(
     tensor_values: dict[str, torch.Tensor],
-    tp_module,  # hint should be: type(TPMultiHeadAttention) | type(TPFeedForwardBlock)
+    tp_module: TPModule,
     modules: list[str],
     name_to_module: dict[str, nn.Module],
     module_base_shard_dim: dict[str, int],
