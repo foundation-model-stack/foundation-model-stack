@@ -137,7 +137,8 @@ def to_hf_api(model: nn.Module, **override_config_kwargs) -> "HFModelArchitectur
 
 
 def as_fms_model(
-    model_id_or_path: Union[str, os.PathLike], device: Union[str, torch.device] = "cpu"
+    model_id_or_path: Union[str, os.PathLike],
+    **get_model_params,
 ) -> nn.Module:
     """
     get an FMS model from a huggingface checkpoint
@@ -148,8 +149,10 @@ def as_fms_model(
         The huggingface hub model id or a local path. If the local path exists, the model will be loaded directly from
         the local path, otherwise the huggingface cache will be checked. If the huggingface cache does not contain the
         model, then the weights will be downloaded and stored into the huggingface cache
-    device: Union[str, torch.device]
-        the device to load the model weights to
+    get_model_params
+        extra arguments to pass to get_model. Note: if an argument is specified by the user in get_model_params and is
+        also inferred in this function based on the hf config, the user's specified argument will be ignored. If you do
+        not want this feature, please use get_model directly
 
     Returns
     -------
@@ -172,7 +175,7 @@ def as_fms_model(
     config = AutoConfig.from_pretrained(model_path)
 
     architecture = config.architectures[0]
-    config_params = {}
+    config_params = {**get_model_params}
 
     if architecture == "LlamaForCausalLM":
         inner_dim = config.intermediate_size
@@ -228,6 +231,5 @@ def as_fms_model(
         variant=list_variants(architecture)[0],
         model_path=model_path,
         source="hf",
-        device_type=device.type if isinstance(device, torch.device) else device,
         **config_params,
     )
