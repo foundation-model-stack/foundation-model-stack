@@ -138,29 +138,6 @@ class TPFeedForwardBlock(FeedForwardBlock, TPModule):
         )
         self.setup_tp(rank, world_size)
 
-    # def load_weights(
-    #     self,
-    #     tensor_values: dict[str, torch.Tensor],
-    # ):
-    #     # 1. Grab the weights from tensor_values
-    #     used_keys: Set[str] = set()
-    #     w1_weight = self._get_sd_weight(tensor_values, used_keys, ["w1", "weight"])
-    #     w2_weight = self._get_sd_weight(tensor_values, used_keys, ["w2", "weight"])
-    #     if self.use_bias:
-    #         w1_bias = self._get_sd_weight(tensor_values, used_keys, ["w1", "bias"])
-    #         w2_bias = self._get_sd_weight(tensor_values, used_keys, ["w2", "bias"])
-
-    #     # 2. Raise exceptions for extra weights in tensor_values
-    #     if len(tensor_values) > (4 if self.use_bias else 2):
-    #         unused_keys = set(tensor_values.keys()).difference(used_keys)
-    #         raise AttributeError(f"Unused weight(s): {', '.join(unused_keys)}")
-
-    #     # 3. Load and shard the weights
-    #     self.sharded_copy(self.w1.weight, w1_weight, 0, [self.world_size])
-    #     self.sharded_copy(self.w2.weight, w2_weight, 1, [self.world_size])
-    #     if self.use_bias:
-    #         self.sharded_copy(self.w1.bias, w1_bias, 0, [self.world_size])
-    #         self.sharded_copy(self.w2.bias, w2_bias, 1, [self.world_size], False)
 
     def load_weights(
         self,
