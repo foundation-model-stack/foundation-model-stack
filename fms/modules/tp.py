@@ -190,22 +190,6 @@ class TPModule(nn.Module, metaclass=ABCMeta):
         """
         pass
 
-    def load_qparams(
-        self,
-        tensor_values: Dict[str, torch.Tensor],
-    ):
-        """Load GPTQ quantization parameters into a TP module
-
-        Override this method to load weights into a TP module.
-        Equivalent to `load_weights` but for GPTQ.
-
-        Args:
-            tensor_values: Dict[str, torch.Tensor]
-                a state dict containing all the quantization
-                parameters for a GPTQ TP module
-        """
-        pass
-
     @staticmethod
     @abstractmethod
     def import_module(module, group: ProcessGroup):
