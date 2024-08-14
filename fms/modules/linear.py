@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 from typing import Callable, Mapping, Any
+from fms.modules.tp import TPModule
 
 
 __type_factory_map: Mapping[str, Callable] = {}
@@ -64,7 +65,7 @@ def get_linear(
 
 def shard_base_linear(
     tensor_values: dict[str, torch.Tensor],
-    tp_module,  # hint should be: type(TPMultiHeadAttention) | type(TPFeedForwardBlock)
+    tp_module: TPModule,
     modules: list[str],
     params: list[str],
     name_to_module: dict[str, nn.Module],
