@@ -102,7 +102,7 @@ def get_gptq_linear(
 
 def shard_gptq_linear(
     tensor_values: dict[str, torch.Tensor],
-    self,  # hint should be: type(TPMultiHeadAttention) | type(TPFeedForwardBlock)
+    tp_module,  # hint should be: type(TPMultiHeadAttention) | type(TPFeedForwardBlock)
     modules: list[str],
     name_to_module: dict[str, nn.Module],
     module_base_shard_dim: dict[str, int],
@@ -128,7 +128,7 @@ def shard_gptq_linear(
     """
 
     params = ["qweight", "scales", "qzeros", "g_idx"]
-    if self.use_bias:
+    if tp_module.use_bias:
         params.append("bias")
 
     # GPTQ qweights are transposed compared to nn.Linear weights
@@ -158,7 +158,7 @@ def shard_gptq_linear(
 
     shard_base_linear(
         tensor_values,
-        self,
+        tp_module,
         modules,
         params,
         name_to_module,
