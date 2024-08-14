@@ -400,8 +400,6 @@ def load_state_dict_into_model(
     initial_device: where the weights will be loaded from disk.
     """
 
-    linear_type = get_linear_type(extra_args.get('linear_config', None))
-
     # TODO: move this check elsewhere
     # if gptq_config_dict and source != "gptq_hf":
     #     raise NotImplementedError(
@@ -436,7 +434,7 @@ def load_state_dict_into_model(
                 if partial_sd[psd_key].device != initial_device:
                     partial_sd[psd_key] = partial_sd[psd_key].to(device=initial_device)
             fms_partial_sd = adapter(partial_sd)
-            _load_partial_state_dict(model, fms_partial_sd, needs_tp_sharding, linear_type)
+            _load_partial_state_dict(model, fms_partial_sd, needs_tp_sharding)
             # Be aggressive in removing weights to save as much memory as possible
             for p_key in partial_sd.keys():
                 if isinstance(state_dict, ChainMap):
@@ -455,8 +453,7 @@ def _copy_if_present(parameter, tensor_value):
 def _load_partial_state_dict(
     model: torch.nn.Module,
     state_dict,
-    needs_tp_sharding: bool,
-    linear_type: str,
+    needs_tp_sharding: bool
 ):
     unused_params = []
     seen_tp_modules = set()
@@ -509,6 +506,6 @@ def _load_partial_state_dict(
             elif tp_module is not None and tp_module not in seen_tp_modules:
                 seen_tp_modules.add(tp_module)
                 tensor_values = {k: v for k, v in state_dict.items() if tp_prefix in k}
-                tp_module.load_weights(tensor_values, linear_type)
+                tp_module.load_weights(tensor_values)
         except AttributeError:
             unused_params.append(key)

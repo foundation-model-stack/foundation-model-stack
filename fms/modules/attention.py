@@ -512,7 +512,6 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
     def load_weights(
         self,
         tensor_values: dict[str, torch.Tensor],
-        linear_type: str,
     ) -> None:
         """Define name of MHA modules to TP-shard, their name-to-module mapping,
         per-module base sharding dimension, and per-module max partition size.
@@ -564,7 +563,7 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
             }
 
         type_sharding_map = get_all_linear_type_to_sharding_maps()
-        type_sharding_map[linear_type](
+        type_sharding_map[self.linear_type](
             tensor_values,
             self,
             modules,

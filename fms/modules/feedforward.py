@@ -13,7 +13,11 @@ from fms.distributed.tensorparallel import (
     reduce_from_tensor_model_parallel_region,
 )
 from fms.modules.tp import TPModule
-from fms.modules.linear import get_linear, get_all_linear_type_to_sharding_maps
+from fms.modules.linear import (
+    get_linear,
+    get_linear_type,
+    get_all_linear_type_to_sharding_maps,
+)
 
 
 class FeedForwardBlock(nn.Module):
@@ -71,6 +75,7 @@ class FeedForwardBlock(nn.Module):
         )
         self.use_bias = use_bias
         self.linear_config = linear_config
+        self.linear_type = get_linear_type(linear_config)
 
     def reset_parameters(self):
         for layer in ["w1", "w2"]:
@@ -142,7 +147,6 @@ class TPFeedForwardBlock(FeedForwardBlock, TPModule):
     def load_weights(
         self,
         tensor_values: dict[str, torch.Tensor],
-        linear_type: str,
     ) -> None:
         """Define name of FFN modules to TP-shard, their name-to-module mapping,
         per-module base sharding dimension, and per-module max partition size.
@@ -165,7 +169,7 @@ class TPFeedForwardBlock(FeedForwardBlock, TPModule):
         }
 
         type_sharding_map = get_all_linear_type_to_sharding_maps()
-        type_sharding_map[linear_type](
+        type_sharding_map[self.linear_type](
             tensor_values,
             self,
             modules,
