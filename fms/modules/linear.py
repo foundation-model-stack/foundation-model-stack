@@ -64,7 +64,7 @@ def get_linear(
 
 def shard_base_linear(
     tensor_values: torch.Tensor,
-    self,  # hint should be: type(TPMultiHeadAttention) | type(TPFeedForwardBlock)
+    tp_module,  # hint should be: type(TPMultiHeadAttention) | type(TPFeedForwardBlock)
     modules: list[str],
     params: list[str],
     name_to_module: dict[str, nn.Module],
@@ -82,7 +82,7 @@ def shard_base_linear(
             if module_name not in all_params:
                 all_params[module_name] = {}
             # TODO: reusing method '_get_sd_weight' but consider changing its name
-            all_params[module_name][param_name] = self._get_sd_weight(
+            all_params[module_name][param_name] = tp_module._get_sd_weight(
                 tensor_values, used_keys, [module_name, param_name]
             )
             if tensor_device is None:
@@ -116,7 +116,7 @@ def shard_base_linear(
             if param_name in ["bias", "g_idx"]:
                 shard_dim_param = 0
 
-            self.sharded_copy(
+            tp_module.sharded_copy(
                 param=module_param,
                 tensor_value=all_params[module_name][param_name],
                 dim=shard_dim_param,
@@ -127,7 +127,7 @@ def shard_base_linear(
 
 def shard_torch_linear(
     tensor_values: torch.Tensor,
-    self,  # hint should be: type(TPMultiHeadAttention) | type(TPFeedForwardBlock)
+    tp_module,  # hint should be: type(TPMultiHeadAttention) | type(TPFeedForwardBlock)
     modules: list[str],
     name_to_module: dict[str, nn.Module],
     module_base_shard_dim: dict[str, int],
@@ -144,7 +144,7 @@ def shard_torch_linear(
               | bias     |   N   |  -  |
     """
     params = ["weight"]
-    if self.use_bias:
+    if tp_module.use_bias:
         params.append("bias")
 
     # List of tuples (module, param) that won't be sharded
@@ -155,7 +155,7 @@ def shard_torch_linear(
 
     shard_base_linear(
         tensor_values,
-        self,
+        tp_module,
         modules,
         params,
         name_to_module,
