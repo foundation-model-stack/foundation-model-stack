@@ -30,6 +30,7 @@ class GPTBigCodeConfig(ModelConfig):
     emb_dropout: float = 0.0
     multiquery_attn: bool = True
     ln_eps: float = 1e-5
+    # pass linear_config as {"linear_type": str, <other kwargs>}
     linear_config: Mapping[str, Any] | None = None
 
 
@@ -280,7 +281,7 @@ class GPTBigCode(nn.Module):
             self.config = config
         else:
             self.config = GPTBigCodeConfig()
-        self.config = self.config.updated(**kwargs)  # pass linear_config as {"linear_type": str, <other kwargs>}
+        self.config = self.config.updated(**kwargs)
         self.distributed_strategy = distributed_strategy
 
         self.base_model = GPTBigCodeHeadless(self.config, self.distributed_strategy)
