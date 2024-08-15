@@ -32,6 +32,7 @@ class QKV(nn.Module, metaclass=abc.ABCMeta):
         emb_kq_per_head: int,
         emb_v_per_head: int,
         use_bias: bool,
+        linear_config: Mapping[str, Any] | None = None,
         *args,
         **kwargs,
     ):
@@ -42,6 +43,7 @@ class QKV(nn.Module, metaclass=abc.ABCMeta):
         self.emb_kq_per_head = emb_kq_per_head
         self.emb_v_per_head = emb_v_per_head
         self.use_bias = use_bias
+        self.linear_config = linear_config
 
     @abc.abstractmethod
     def forward(
@@ -87,11 +89,10 @@ class UnfusedQKV(QKV):
         emb_kq_per_head: int,
         emb_v_per_head: int,
         use_bias: bool,
+        linear_config: Mapping[str, Any] | None = None,
         *args,
         **kwargs,
     ):
-        linear_config = kwargs.pop("linear_config") if "linear_config" in kwargs else None
-
         super().__init__(
             emb_dim,
             nheads,
@@ -99,6 +100,7 @@ class UnfusedQKV(QKV):
             emb_kq_per_head,
             emb_v_per_head,
             use_bias,
+            linear_config,
             *args,
             **kwargs,
         )
@@ -160,11 +162,10 @@ class FusedQKV(QKV):
         emb_kq_per_head: int,
         emb_v_per_head: int,
         use_bias: bool,
+        linear_config: Mapping[str, Any] | None = None,
         *args,
         **kwargs,
     ):
-        linear_config = kwargs.pop("linear_config") if "linear_config" in kwargs else None
-
         super().__init__(
             emb_dim,
             nheads,
@@ -172,6 +173,7 @@ class FusedQKV(QKV):
             emb_kq_per_head,
             emb_v_per_head,
             use_bias,
+            linear_config,
             *args,
             **kwargs,
         )
@@ -524,52 +526,31 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
         world_size=32, then first 2 ranks will get first 1/16th of query
         """
 
-        # TODO: consider changing to {'module_name': (module_obj, shard_dim, max_partition)}
-        # or to a nested dictionary
+        # sharding modules struct: {'module_name': (module_obj, shard_dim, max_partition, shard_params)}
         # is_sharded depends on parameter though, so it must be set later on
+        shard_params_colwise = [("weight", 0, True)]
+        shard_params_rowwise = [("weight", 1, True)]
+        if self.use_bias:
+            shard_params_colwise.append(("bias", 0, True))
+            shard_params_rowwise.append(("bias", 1, False))
         if self.fused:
-            modules = ["qkv_fused", "dense"]
-            name_to_module = {
-                "qkv_fused": self.in_proj.qkv_fused,
-                "dense": self.dense,
-            }
-            module_base_shard_dim = {
-                "qkv_fused": 0,
-                "dense": 1,
-            }
-            max_partition = {
-                "qkv_fused": [self.pre_tp_nheads, self.pre_tp_kvheads, self.pre_tp_kvheads],
-                "dense": [self.world_size],
+            module_sharding_info = {
+                "qkv_fused": (self.in_proj.qkv_fused, [self.pre_tp_nheads, self.pre_tp_kvheads, self.pre_tp_kvheads], shard_params_colwise),
+                "dense": (self.dense, [self.world_size], shard_params_rowwise),
             }
         else:
-            modules = ["query", "value", "key", "dense"]
-            name_to_module = {
-                "query": self.in_proj.query,
-                "value": self.in_proj.value,
-                "key": self.in_proj.key,
-                "dense": self.dense,
-                }
-            module_base_shard_dim = {
-                "query": 0,
-                "value": 0,
-                "key": 0,
-                "dense": 1,
-            }
-            max_partition = {
-                "query": [self.pre_tp_nheads],
-                "value": [self.pre_tp_kvheads],
-                "key": [self.pre_tp_kvheads],
-                "dense": [self.world_size],
+            module_sharding_info = {
+                "query": (self.in_proj.query, [self.pre_tp_nheads], shard_params_colwise),
+                "key": (self.in_proj.key, [self.pre_tp_kvheads], shard_params_colwise),
+                "value": (self.in_proj.value, [self.pre_tp_kvheads], shard_params_colwise),
+                "dense": (self.dense, [self.world_size], shard_params_rowwise),
             }
 
         type_sharding_map = get_all_linear_type_to_sharding_maps()
         type_sharding_map[self.linear_type](
             tensor_values,
             self,
-            modules,
-            name_to_module,
-            module_base_shard_dim,
-            max_partition,
+            module_sharding_info,
         )
 
     @staticmethod
