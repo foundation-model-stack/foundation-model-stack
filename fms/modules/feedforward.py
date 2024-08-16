@@ -155,7 +155,7 @@ class TPFeedForwardBlock(FeedForwardBlock, TPModule):
         # sharding modules struct: {'module_name': (module_obj, sharding_dim, max_partition)}
         module_sharing_info = {
             "w1": LinearModuleShardingInfo(self.w1, 0, [self.world_size]),
-            "w2": LinearModuleShardingInfo(self.w1, 0, [self.world_size]),
+            "w2": LinearModuleShardingInfo(self.w2, 1, [self.world_size]),
         }
 
         type_sharding_map = get_all_linear_type_to_sharding_maps()
