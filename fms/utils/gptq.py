@@ -131,7 +131,7 @@ def shard_gptq_linear(
     """
     param_sharding_info: Dict[str, Dict[str, LinearParameterShardingInfo]] = {}
     for module_name, module_info in module_sharding_info.items():
-        linear_mod: torch.nn.Linear = module_info.linear_module
+        gptq_mod = module_info.linear_module
         params: Dict[str, LinearParameterShardingInfo] = {
             "qweight": LinearParameterShardingInfo(
                 1 - module_info.sharding_dim, ShardType.SHARD
@@ -146,7 +146,7 @@ def shard_gptq_linear(
                 module_info.sharding_dim, ShardType.CLONE
             ),
         }
-        if linear_mod.bias is not None:
+        if gptq_mod.bias is not None:
             params["bias"] = LinearParameterShardingInfo(
                 module_info.sharding_dim,
                 ShardType.SHARD if module_info.sharding_dim == 0 else ShardType.RANK0,
