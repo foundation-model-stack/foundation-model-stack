@@ -143,7 +143,8 @@ def shard_gptq_linear(
                 1 - module_info.sharding_dim, ShardType.SHARD
             ),
             "g_idx": LinearParameterShardingInfo(
-                module_info.sharding_dim, ShardType.CLONE
+                0,
+                ShardType.CLONE if module_info.sharding_dim == 0 else ShardType.SHARD,
             ),
         }
         if gptq_mod.bias is not None:
