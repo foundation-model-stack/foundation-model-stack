@@ -14,6 +14,7 @@ from fms.distributed.tensorparallel import (
 )
 from fms.modules.tp import TPModule
 from fms.modules.linear import (
+    LinearModuleShardingInfo,
     get_linear,
     get_linear_type,
     get_all_linear_type_to_sharding_maps,
@@ -151,30 +152,17 @@ class TPFeedForwardBlock(FeedForwardBlock, TPModule):
         per-module base sharding dimension, and per-module max partition size.
         """
 
-        # TODO: consider changing to {'module_name': (module_obj, shard_dim, max_partition)}
-        # or to a nested dictionary
-        modules = ["w1", "w2"]
-        name_to_module = {
-            "w1": self.w1,
-            "w2": self.w2,
-        }
-        module_base_shard_dim = {
-            "w1": 0,
-            "w2": 1,
-        }
-        max_partition = {
-            "w1": [self.world_size],
-            "w2": [self.world_size],
+        # sharding modules struct: {'module_name': (module_obj, sharding_dim, max_partition)}
+        module_sharing_info = {
+            "w1": LinearModuleShardingInfo(self.w1, 0, [self.world_size]),
+            "w2": LinearModuleShardingInfo(self.w1, 0, [self.world_size]),
         }
 
         type_sharding_map = get_all_linear_type_to_sharding_maps()
         type_sharding_map[self.linear_type](
             tensor_values,
             self,
-            modules,
-            name_to_module,
-            module_base_shard_dim,
-            max_partition,
+            module_sharing_info,
         )
 
     @staticmethod
