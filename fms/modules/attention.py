@@ -15,6 +15,7 @@ from fms.distributed.tensorparallel import (
 from fms.modules.positions import PositionEncoder
 from fms.modules.tp import TPModule
 from fms.modules.linear import (
+    LinearModuleShardingInfo,
     get_linear,
     get_linear_type,
     get_all_linear_type_to_sharding_maps,
@@ -510,7 +511,6 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
         self.pre_tp_kvheads = kvheads
         self.setup_tp(rank, world_size)
 
-
     def load_weights(
         self,
         tensor_values: dict[str, torch.Tensor],
@@ -526,24 +526,28 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
         world_size=32, then first 2 ranks will get first 1/16th of query
         """
 
-        # sharding modules struct: {'module_name': (module_obj, shard_dim, max_partition, shard_params)}
-        # is_sharded depends on parameter though, so it must be set later on
-        shard_params_colwise = [("weight", 0, True)]
-        shard_params_rowwise = [("weight", 1, True)]
-        if self.use_bias:
-            shard_params_colwise.append(("bias", 0, True))
-            shard_params_rowwise.append(("bias", 1, False))
+        # sharding modules struct: {'module_name': (module_obj, sharding_dim, max_partition)}
         if self.fused:
             module_sharding_info = {
-                "qkv_fused": (self.in_proj.qkv_fused, [self.pre_tp_nheads, self.pre_tp_kvheads, self.pre_tp_kvheads], shard_params_colwise),
-                "dense": (self.dense, [self.world_size], shard_params_rowwise),
+                "qkv_fused": LinearModuleShardingInfo(
+                    self.in_proj.qkv_fused,
+                    0,
+                    [self.pre_tp_nheads, self.pre_tp_kvheads, self.pre_tp_kvheads],
+                ),
+                "dense": LinearModuleShardingInfo(self.dense, 1, [self.world_size]),
             }
         else:
             module_sharding_info = {
-                "query": (self.in_proj.query, [self.pre_tp_nheads], shard_params_colwise),
-                "key": (self.in_proj.key, [self.pre_tp_kvheads], shard_params_colwise),
-                "value": (self.in_proj.value, [self.pre_tp_kvheads], shard_params_colwise),
-                "dense": (self.dense, [self.world_size], shard_params_rowwise),
+                "query": LinearModuleShardingInfo(
+                    self.in_proj.query, 0, [self.pre_tp_nheads]
+                ),
+                "key": LinearModuleShardingInfo(
+                    self.in_proj.key, 0, [self.pre_tp_kvheads]
+                ),
+                "value": LinearModuleShardingInfo(
+                    self.in_proj.value, 0, [self.pre_tp_kvheads]
+                ),
+                "dense": LinearModuleShardingInfo(self.dense, 1, [self.world_size]),
             }
 
         type_sharding_map = get_all_linear_type_to_sharding_maps()
