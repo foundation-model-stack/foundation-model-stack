@@ -277,7 +277,7 @@ def load_state_dict(
             glob_pattern_list = [glob_pattern]
         elif source == "meta":
             glob_pattern_list = ["*.pth", "*.safetensors"]
-        elif source == "hf" or source == 'gptq_hf':
+        elif source == "hf" or source == "gptq_hf":
             glob_pattern_list = ["*.bin", "*.safetensors", "*.pt"]
         else:
             glob_pattern_list = ["*.safetensors", "*.pth", "*.bin"]
@@ -457,9 +457,7 @@ def _copy_if_present(parameter, tensor_value):
 
 
 def _load_partial_state_dict(
-    model: torch.nn.Module,
-    state_dict,
-    needs_tp_sharding: bool
+    model: torch.nn.Module, state_dict, needs_tp_sharding: bool
 ):
     unused_params = []
     seen_tp_modules = set()
@@ -502,7 +500,9 @@ def _load_partial_state_dict(
                 # cast module parameter to non-meta device
                 if param.device == torch.device("meta"):
                     if isinstance(param, torch.nn.Parameter):
-                        param = torch.nn.Parameter(torch.empty_like(param, device=tensor_value.device))
+                        param = torch.nn.Parameter(
+                            torch.empty_like(param, device=tensor_value.device)
+                        )
                     else:
                         param = torch.empty_like(param, device=tensor_value.device)
                     setattr(target_module, key_steps[-1], param)
