@@ -285,9 +285,9 @@ def get_model(
                 devices, _guess_num_layers(lazy_sd)
             )
 
-    # Create the model
+    # Create the model on meta device to allocate weights lazily
     fms_model = _get_model_instance(
-        architecture, variant, device=torch.device('meta'), extra_args=extra_args
+        architecture, variant, device=torch.device("meta"), extra_args=extra_args
     )
 
     # Choose when to wrap and load the model weights based on the combination

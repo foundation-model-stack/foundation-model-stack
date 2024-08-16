@@ -4,6 +4,7 @@ from typing import Optional
 from torch.distributed import ProcessGroup
 from fms.utils import gptq
 
+
 def print0(*args, group: Optional[ProcessGroup] = None):
     """
     Print *args to stdout on rank 0 of the default process group, or an

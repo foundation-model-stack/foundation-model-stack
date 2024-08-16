@@ -62,7 +62,7 @@ class FeedForwardBlock(nn.Module):
             self.hidden_dim,
             bias=use_bias,
             linear_config=linear_config,
-            )
+        )
         self.a = activation_fn
         self.p_dropout = p_dropout
         if p_dropout:
@@ -142,7 +142,6 @@ class TPFeedForwardBlock(FeedForwardBlock, TPModule):
             linear_config,
         )
         self.setup_tp(rank, world_size)
-
 
     def load_weights(
         self,
