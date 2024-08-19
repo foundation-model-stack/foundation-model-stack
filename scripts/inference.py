@@ -7,7 +7,6 @@ import numpy as np
 import torch
 import torch._inductor.config
 from torch import distributed as dist
-from torchvision.models.feature_extraction import create_feature_extractor
 
 from fms.models import get_model
 from fms.utils import fusion, generation, tokenizers
