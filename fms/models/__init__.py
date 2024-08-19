@@ -224,9 +224,9 @@ def get_model(
 
     Args:
     architecture: the model architecture, e.g. llama. See
-                `models.list_models()`.
+                `models.list_models()`. If None is provided, the model configuration will be inferred
     variant: the configuration of the model, e.g. 7b. See
-                `models.list_variants(architecture)`
+                `models.list_variants(architecture)`. Only required when architecture is provided.
     model_path: the path to the state_dict of weights. If None, don't load.
     device_type: where to load the model
     distributed_strategy: None, 'fsdp', 'hsdp', 'tp', or 'mp'.
