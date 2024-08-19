@@ -1,5 +1,5 @@
 import abc
-from typing import Mapping, Optional, Set, Tuple, Any
+from typing import Any, Mapping, Optional, Set, Tuple
 
 import torch
 import torch.distributed
@@ -12,14 +12,14 @@ from fms.distributed.tensorparallel import (
     copy_to_tensor_model_parallel_region,
     reduce_from_tensor_model_parallel_region,
 )
-from fms.modules.positions import PositionEncoder
-from fms.modules.tp import TPModule
 from fms.modules.linear import (
     LinearModuleShardingInfo,
+    get_all_linear_type_to_sharding_maps,
     get_linear,
     get_linear_type,
-    get_all_linear_type_to_sharding_maps,
 )
+from fms.modules.positions import PositionEncoder
+from fms.modules.tp import TPModule
 
 
 class QKV(nn.Module, metaclass=abc.ABCMeta):
@@ -513,7 +513,7 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
 
     def load_weights(
         self,
-        tensor_values: dict[str, torch.Tensor],
+        tensor_values: Dict[str, torch.Tensor],
     ) -> None:
         """Define name of MHA modules to TP-shard, their name-to-module mapping,
         per-module base sharding dimension, and per-module max partition size.

@@ -1,4 +1,4 @@
-from typing import Optional, Set, Mapping, Any
+from typing import Any, Mapping, Optional, Set
 
 import torch
 import torch.distributed
@@ -12,13 +12,13 @@ from fms.distributed.tensorparallel import (
     copy_to_tensor_model_parallel_region,
     reduce_from_tensor_model_parallel_region,
 )
-from fms.modules.tp import TPModule
 from fms.modules.linear import (
     LinearModuleShardingInfo,
+    get_all_linear_type_to_sharding_maps,
     get_linear,
     get_linear_type,
-    get_all_linear_type_to_sharding_maps,
 )
+from fms.modules.tp import TPModule
 
 
 class FeedForwardBlock(nn.Module):
@@ -146,7 +146,7 @@ class TPFeedForwardBlock(FeedForwardBlock, TPModule):
 
     def load_weights(
         self,
-        tensor_values: dict[str, torch.Tensor],
+        tensor_values: Dict[str, torch.Tensor],
     ) -> None:
         """Define name of FFN modules to TP-shard, their name-to-module mapping,
         per-module base sharding dimension, and per-module max partition size.
@@ -350,7 +350,7 @@ class TPGatedLinearUnit(GatedLinearUnit, TPModule):
 
     def load_weights(
         self,
-        tensor_values: dict[str, torch.Tensor],
+        tensor_values: Dict[str, torch.Tensor],
     ):
         # 1. Grab the weights from tensor_values
         used_keys: Set[str] = set()
@@ -560,7 +560,7 @@ class TPConditionalFeedForward(ConditionalFeedForward, TPModule):
 
     def load_weights(
         self,
-        tensor_values: dict[str, torch.Tensor],
+        tensor_values: Dict[str, torch.Tensor],
     ):
         # 1. Grab the weights from tensor_values
         used_keys: Set[str] = set()

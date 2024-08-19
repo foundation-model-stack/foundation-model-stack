@@ -19,8 +19,8 @@ from typing import (
 
 import torch
 
-from fms.modules.tp import TPModule
 from fms.modules.linear import get_linear_type
+from fms.modules.tp import TPModule
 
 
 __adapters: MutableMapping[str, MutableMapping[str, Callable[[Mapping], Mapping]]] = {}
@@ -376,7 +376,7 @@ def load_state_dict_into_model(
     distributed_strategy: Optional[str] = None,
     checkpoint_sharding: Optional[str] = None,
     initial_device: torch.device = torch.device("cpu"),
-    extra_args: dict = {},
+    extra_args: Dict = {},
 ) -> None:
     """
     This function loads state_dict into model in the most efficient way possible,

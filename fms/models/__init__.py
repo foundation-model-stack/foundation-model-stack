@@ -321,6 +321,11 @@ def get_model(
     if pre_load:
         fms_model = model_wrap(fms_model)
 
+    # Call post-init to take care of post-wrapping/device-mapping initialization
+    # Examples include tying weights, init Rope embeddings
+    if getattr(fms_model, "post_init", None):
+        fms_model.post_init()
+
     return fms_model
 
 

@@ -1,7 +1,9 @@
 from dataclasses import dataclass
+from typing import Any, Callable, Dict, List, Mapping
+
 import torch
 import torch.nn as nn
-from typing import Callable, Dict, List, Mapping, Any
+
 from fms.modules.tp import ShardType, TPModule
 
 
@@ -78,7 +80,7 @@ class LinearParameterShardingInfo:
 
 
 def shard_base_linear(
-    tensor_values: dict[str, torch.Tensor],
+    tensor_values: Dict[str, torch.Tensor],
     tp_module: TPModule,
     module_sharding_info: Dict[str, LinearModuleShardingInfo],
     param_sharding_info: Dict[str, Dict[str, LinearParameterShardingInfo]],

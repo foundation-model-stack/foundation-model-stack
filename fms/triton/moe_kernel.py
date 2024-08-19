@@ -1,5 +1,5 @@
 import pathlib
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional
 
 import torch
 import triton  # type: ignore[import-untyped]
@@ -130,7 +130,7 @@ def invoke_fused_moe_kernel(
     expert_block_mapping: torch.Tensor,
     total_padded_tokens: torch.Tensor,
     top_k: int,
-    config: dict,
+    config: Dict,
 ):
     assert A.is_contiguous()
     assert B.is_contiguous()
