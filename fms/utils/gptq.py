@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Any, Dict, Mapping
+from typing import Any, Dict, Mapping, Optional
 
 import torch
 import torch.nn as nn
@@ -65,7 +65,7 @@ def get_gptq_linear(
     in_features: int,
     out_features: int,
     bias: bool,
-    linear_config: Mapping[str, Any] | None = None,
+    linear_config: Optional[Mapping[str, Any]] = None,
 ):
     gptq_config = GPTQLinearConfig(**linear_config)
 

@@ -50,7 +50,7 @@ class FeedForwardBlock(nn.Module):
         activation_fn=nn.ReLU(),
         p_dropout=0.1,
         use_bias=True,
-        linear_config: Mapping[str, Any] | None = None,
+        linear_config:  Optional[Mapping[str, Any]] = None,
     ):
         super(FeedForwardBlock, self).__init__()
         self.hidden_dim = int(hidden_grow_factor * emb_dim)
@@ -122,7 +122,7 @@ class TPFeedForwardBlock(FeedForwardBlock, TPModule):
         p_dropout=0.1,
         use_bias=True,
         group: Optional[ProcessGroup] = None,
-        linear_config: Mapping[str, Any] | None = None,
+        linear_config:  Optional[Mapping[str, Any]] = None,
     ):
         assert torch.distributed.is_initialized()
         hidden_dim = int(hidden_grow_factor * emb_dim)
@@ -146,7 +146,7 @@ class TPFeedForwardBlock(FeedForwardBlock, TPModule):
 
     def load_weights(
         self,
-        tensor_values: Dict[str, torch.Tensor],
+        tensor_values: dict[str, torch.Tensor],
     ) -> None:
         """Define name of FFN modules to TP-shard, their name-to-module mapping,
         per-module base sharding dimension, and per-module max partition size.
@@ -350,7 +350,7 @@ class TPGatedLinearUnit(GatedLinearUnit, TPModule):
 
     def load_weights(
         self,
-        tensor_values: Dict[str, torch.Tensor],
+        tensor_values: dict[str, torch.Tensor],
     ):
         # 1. Grab the weights from tensor_values
         used_keys: Set[str] = set()
@@ -560,7 +560,7 @@ class TPConditionalFeedForward(ConditionalFeedForward, TPModule):
 
     def load_weights(
         self,
-        tensor_values: Dict[str, torch.Tensor],
+        tensor_values: dict[str, torch.Tensor],
     ):
         # 1. Grab the weights from tensor_values
         used_keys: Set[str] = set()

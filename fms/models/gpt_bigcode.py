@@ -31,7 +31,7 @@ class GPTBigCodeConfig(ModelConfig):
     multiquery_attn: bool = True
     ln_eps: float = 1e-5
     # pass linear_config as {"linear_type": str, <other kwargs>}
-    linear_config: Mapping[str, Any] | None = None
+    linear_config: Optional[Mapping[str, Any]] = None
 
 
 class GPTBigCodeBlock(nn.Module):

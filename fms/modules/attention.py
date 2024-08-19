@@ -33,7 +33,7 @@ class QKV(nn.Module, metaclass=abc.ABCMeta):
         emb_kq_per_head: int,
         emb_v_per_head: int,
         use_bias: bool,
-        linear_config: Mapping[str, Any] | None = None,
+        linear_config: Optional[Mapping[str, Any]] = None,
         *args,
         **kwargs,
     ):
@@ -90,7 +90,7 @@ class UnfusedQKV(QKV):
         emb_kq_per_head: int,
         emb_v_per_head: int,
         use_bias: bool,
-        linear_config: Mapping[str, Any] | None = None,
+        linear_config:  Optional[Mapping[str, Any]] = None,
         *args,
         **kwargs,
     ):
@@ -163,7 +163,7 @@ class FusedQKV(QKV):
         emb_kq_per_head: int,
         emb_v_per_head: int,
         use_bias: bool,
-        linear_config: Mapping[str, Any] | None = None,
+        linear_config:  Optional[Mapping[str, Any]] = None,
         *args,
         **kwargs,
     ):
@@ -261,7 +261,7 @@ class MultiHeadAttention(nn.Module):
         use_bias=False,
         position_encoder: Optional[PositionEncoder] = None,
         fused: bool = True,
-        linear_config: Mapping[str, Any] | None = None,
+        linear_config:  Optional[Mapping[str, Any]] = None,
     ):
         super(MultiHeadAttention, self).__init__()
         self.nheads = nheads
@@ -483,7 +483,7 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
         position_encoder: Optional[PositionEncoder] = None,
         fused: bool = True,
         group: Optional[ProcessGroup] = None,
-        linear_config: Mapping[str, Any] | None = None,
+        linear_config:  Optional[Mapping[str, Any]] = None,
     ):
         assert torch.distributed.is_initialized()
 
@@ -513,7 +513,7 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
 
     def load_weights(
         self,
-        tensor_values: Dict[str, torch.Tensor],
+        tensor_values: dict[str, torch.Tensor],
     ) -> None:
         """Define name of MHA modules to TP-shard, their name-to-module mapping,
         per-module base sharding dimension, and per-module max partition size.

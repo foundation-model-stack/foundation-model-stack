@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Mapping
+from typing import Any, Callable, Dict, List, Mapping, Optional
 
 import torch
 import torch.nn as nn
@@ -31,7 +31,7 @@ def get_all_linear_type_to_sharding_maps() -> dict[str, Callable]:
     return __type_sharding_map
 
 
-def get_linear_type(linear_config: Mapping[str, Any] | None) -> str:
+def get_linear_type(linear_config:  Optional[Mapping[str, Any]]) -> str:
     if not linear_config:
         return "torch_linear"
 
@@ -50,7 +50,7 @@ def get_linear(
     in_features: int,
     out_features: int,
     bias: bool,
-    linear_config: Mapping[str, Any] | None = None,
+    linear_config:  Optional[Mapping[str, Any]] = None,
 ) -> nn.Module:
     linear_type = get_linear_type(linear_config)
 
