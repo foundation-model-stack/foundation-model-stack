@@ -217,12 +217,13 @@ def infer(use_cache, do_sample):
     if local_rank == 0:
         print("use_cache", use_cache, ";; do_sample", do_sample)
         print("==================")
-    if model.config.ntk_scaling:
+    if getattr(model.config, "ntk_scaling", None) is not None and model.config.ntk_scaling:
         max_seq_len = max(max_len, model.config.max_expected_seq_len)
     else:
         # without ntk scaling, extending the seq length too far gives bogus results.
         max_seq_len = model.config.max_expected_seq_len
 
+    print(ids, max_seq_len, padding_kwargs)
     result = generate(
         model,
         ids,
@@ -232,6 +233,7 @@ def infer(use_cache, do_sample):
         max_seq_len=max_seq_len,
         extra_kwargs=padding_kwargs,
     )
+    print("Rsult", result)
     if len(result.shape) == 1:
         result = result.unsqueeze(0)
 

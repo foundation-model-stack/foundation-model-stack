@@ -315,8 +315,15 @@ def get_model(
             initial_device,
             extra_args=extra_args,
         )
-    elif hasattr(fms_model, "reset_parameters"):
-        fms_model.reset_parameters()
+        # Make sure any uninitialized tensors are at least moved to device
+        if initial_device != torch.device("meta"):
+            fms_model._apply(lambda t: torch.empty_like(t, device=initial_device) if t.device == torch.device("meta") else t)
+    else:
+        # move from meta device 
+        if initial_device != torch.device("meta"):
+            fms_model.to_empty(device=initial_device)
+        if hasattr(fms_model, "reset_parameters"):
+            fms_model.reset_parameters()
 
     if pre_load:
         fms_model = model_wrap(fms_model)

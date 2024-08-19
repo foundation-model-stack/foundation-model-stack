@@ -146,7 +146,7 @@ class TPFeedForwardBlock(FeedForwardBlock, TPModule):
 
     def load_weights(
         self,
-        tensor_values: Dict[str, torch.Tensor],
+        tensor_values: dict[str, torch.Tensor],
     ) -> None:
         """Define name of FFN modules to TP-shard, their name-to-module mapping,
         per-module base sharding dimension, and per-module max partition size.
@@ -350,7 +350,7 @@ class TPGatedLinearUnit(GatedLinearUnit, TPModule):
 
     def load_weights(
         self,
-        tensor_values: Dict[str, torch.Tensor],
+        tensor_values: dict[str, torch.Tensor],
     ):
         # 1. Grab the weights from tensor_values
         used_keys: Set[str] = set()
@@ -560,7 +560,7 @@ class TPConditionalFeedForward(ConditionalFeedForward, TPModule):
 
     def load_weights(
         self,
-        tensor_values: Dict[str, torch.Tensor],
+        tensor_values: dict[str, torch.Tensor],
     ):
         # 1. Grab the weights from tensor_values
         used_keys: Set[str] = set()

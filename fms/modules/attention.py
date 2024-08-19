@@ -513,7 +513,7 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
 
     def load_weights(
         self,
-        tensor_values: Dict[str, torch.Tensor],
+        tensor_values: dict[str, torch.Tensor],
     ) -> None:
         """Define name of MHA modules to TP-shard, their name-to-module mapping,
         per-module base sharding dimension, and per-module max partition size.
