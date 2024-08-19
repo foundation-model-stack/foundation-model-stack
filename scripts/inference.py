@@ -145,6 +145,11 @@ if args.unfuse_weights:
     print("unfusing weights")
     model = fusion.apply_unfuse_weights(model)
 
+for name, param in model.named_parameters():
+    print(name, param)
+for name, param in model.named_buffers():
+    print(name, param)
+
 tokenizer = tokenizers.get_tokenizer(args.tokenizer)
 model.eval()
 torch.set_grad_enabled(False)
@@ -217,7 +222,10 @@ def infer(use_cache, do_sample):
     if local_rank == 0:
         print("use_cache", use_cache, ";; do_sample", do_sample)
         print("==================")
-    if getattr(model.config, "ntk_scaling", None) is not None and model.config.ntk_scaling:
+    if (
+        getattr(model.config, "ntk_scaling", None) is not None
+        and model.config.ntk_scaling
+    ):
         max_seq_len = max(max_len, model.config.max_expected_seq_len)
     else:
         # without ntk scaling, extending the seq length too far gives bogus results.

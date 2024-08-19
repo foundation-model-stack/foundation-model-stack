@@ -313,15 +313,12 @@ def get_model(
             distributed_strategy,
             checkpoint_sharding,
             initial_device,
-            extra_args=extra_args,
         )
-        # Make sure any uninitialized tensors are at least moved to device
-        if initial_device != torch.device("meta"):
-            fms_model._apply(lambda t: torch.empty_like(t, device=initial_device) if t.device == torch.device("meta") else t)
     else:
-        # move from meta device 
+        # move from meta device to real device
         if initial_device != torch.device("meta"):
             fms_model.to_empty(device=initial_device)
+        # randomly initialize the model
         if hasattr(fms_model, "reset_parameters"):
             fms_model.reset_parameters()
 
@@ -332,6 +329,17 @@ def get_model(
     # Examples include tying weights, init Rope embeddings
     if getattr(fms_model, "post_init", None):
         fms_model.post_init()
+
+    # Make sure any uninitialized tensors are at least moved to device
+    if initial_device != torch.device("meta"):
+
+        def verbose_empty(t):
+            if t.device == torch.device("meta"):
+                print(f"Calling empty_like on {t}")
+                return torch.empty_like(t, device=initial_device)
+            return t
+
+        fms_model._apply(verbose_empty)
 
     return fms_model
 

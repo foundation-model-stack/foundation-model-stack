@@ -376,7 +376,6 @@ def load_state_dict_into_model(
     distributed_strategy: Optional[str] = None,
     checkpoint_sharding: Optional[str] = None,
     initial_device: torch.device = torch.device("cpu"),
-    extra_args: Dict = {},
 ) -> None:
     """
     This function loads state_dict into model in the most efficient way possible,
@@ -501,7 +500,6 @@ def _load_partial_state_dict(
                         param = torch.empty_like(param, device=tensor_value.device)
                     setattr(target_module, key_steps[-1], param)
                     param = getattr(target_module, key_steps[-1])
-
                 param.copy_(tensor_value, non_blocking=True)
             elif tp_module is not None and tp_module not in seen_tp_modules:
                 seen_tp_modules.add(tp_module)
