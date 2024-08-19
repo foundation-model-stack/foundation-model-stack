@@ -218,6 +218,7 @@ class GatedLinearUnit(nn.Module):
         p_dropout=0.1,
         use_bias=True,
         fused: bool = True,
+        linear_config:  Optional[Mapping[str, Any]] = None,
     ):
         super(GatedLinearUnit, self).__init__()
         self.hidden_dim = int(hidden_grow_factor * emb_dim)
@@ -228,15 +229,35 @@ class GatedLinearUnit(nn.Module):
                 (self.hidden_dim + multiple_of - 1) // multiple_of
             )
         if self.fused:
-            self.wg1_fused = nn.Linear(emb_dim, 2 * self.hidden_dim, bias=use_bias)
+            self.wg1_fused = get_linear(
+            emb_dim,
+            2 * self.hidden_dim,
+            bias=use_bias,
+            linear_config=linear_config,
+        )
         else:
-            self.w1 = nn.Linear(emb_dim, self.hidden_dim, bias=use_bias)
-            self.wg = nn.Linear(emb_dim, self.hidden_dim, bias=use_bias)
+            self.w1 = get_linear(
+                emb_dim,
+                self.hidden_dim,
+                bias=use_bias,
+                linear_config=linear_config,
+            )
+            self.wg = get_linear(
+                emb_dim,
+                self.hidden_dim,
+                bias=use_bias,
+                linear_config=linear_config,
+            )
         self.a = activation_fn
         self.p_dropout = p_dropout
         if p_dropout:
             self.d = nn.Dropout(p_dropout)
-        self.w2 = nn.Linear(self.hidden_dim, emb_dim, bias=use_bias)
+        self.w2 = get_linear(
+            self.hidden_dim,
+            emb_dim,
+            bias=use_bias,
+            linear_config=linear_config,
+        )
         self.use_bias = use_bias
         self.width = emb_dim
         self.grow_factor = hidden_grow_factor
@@ -326,6 +347,7 @@ class TPGatedLinearUnit(GatedLinearUnit, TPModule):
         use_bias=True,
         group: Optional[ProcessGroup] = None,
         fused: bool = True,
+        linear_config:  Optional[Mapping[str, Any]] = None,
     ):
         assert torch.distributed.is_initialized()
         rank, world_size = distributed.rank_and_world(group)
@@ -345,6 +367,7 @@ class TPGatedLinearUnit(GatedLinearUnit, TPModule):
             p_dropout,
             use_bias,
             fused,
+            linear_config,
         )
         self.setup_tp(rank, world_size)
 
@@ -352,58 +375,25 @@ class TPGatedLinearUnit(GatedLinearUnit, TPModule):
         self,
         tensor_values: dict[str, torch.Tensor],
     ):
-        # 1. Grab the weights from tensor_values
-        used_keys: Set[str] = set()
-        if self.fused:
-            wg_weight = self._get_sd_weight(
-                tensor_values, used_keys, ["wg1_fused", "weight"]
-            )
-        else:
-            w1_weight = self._get_sd_weight(tensor_values, used_keys, ["w1", "weight"])
-            wg_weight = self._get_sd_weight(tensor_values, used_keys, ["wg", "weight"])
-        w2_weight = self._get_sd_weight(tensor_values, used_keys, ["w2", "weight"])
-        if self.use_bias:
-            if self.fused:
-                wg_bias = self._get_sd_weight(
-                    tensor_values, used_keys, ["wg1_fused", "bias"]
-                )
-            else:
-                w1_bias = self._get_sd_weight(tensor_values, used_keys, ["w1", "bias"])
-                wg_bias = self._get_sd_weight(tensor_values, used_keys, ["wg", "bias"])
-            w2_bias = self._get_sd_weight(tensor_values, used_keys, ["w2", "bias"])
 
-        # 2. Raise exceptions
-        num_weights = 2 if self.fused else 3
-        if len(tensor_values) > (num_weights * 2 if self.use_bias else num_weights):
-            unused_keys = set(tensor_values.keys()).difference(used_keys)
-            raise AttributeError(f"Unused weight(s): {', '.join(unused_keys)}")
-
-        # 3. Load and shard the weights
+        # sharding modules struct: {'module_name': (module_obj, sharding_dim, max_partition)}
         if self.fused:
-            self.sharded_copy(
-                self.wg1_fused.weight, wg_weight, 0, [self.world_size, self.world_size]
-            )
+            module_sharing_info = {
+                "wg1_fused": LinearModuleShardingInfo(self.wq1_fused, 0, [self.world_size, self.world_size]),
+            }
         else:
-            self.sharded_copy(
-                self.w1.weight, w1_weight, 0, [self.world_size, self.world_size]
-            )
-            self.sharded_copy(
-                self.wg.weight, wg_weight, 0, [self.world_size, self.world_size]
-            )
-        self.sharded_copy(self.w2.weight, w2_weight, 1, [self.world_size])
-        if self.use_bias:
-            if self.fused:
-                self.sharded_copy(
-                    self.wg1_fused.bias, wg_bias, 0, [self.world_size, self.world_size]
-                )
-            else:
-                self.sharded_copy(
-                    self.w1.bias, w1_bias, 0, [self.world_size, self.world_size]
-                )
-                self.sharded_copy(
-                    self.wg.bias, wg_bias, 0, [self.world_size, self.world_size]
-                )
-            self.sharded_copy(self.w2.bias, w2_bias, 1, [self.world_size], False)
+            module_sharing_info = {
+                "w1": LinearModuleShardingInfo(self.w1, 0, [self.world_size, self.world_size]),
+                "wg": LinearModuleShardingInfo(self.w1, 0, [self.world_size, self.world_size]),
+            }
+        module_sharing_info.update({"w2": LinearModuleShardingInfo(self.w2, 1, [self.world_size])})
+
+        type_sharding_map = get_all_linear_type_to_sharding_maps()
+        type_sharding_map[self.linear_type](
+            tensor_values,
+            self,
+            module_sharing_info,
+        )
 
     @staticmethod
     def import_module(glu: GatedLinearUnit, group: ProcessGroup) -> "TPGatedLinearUnit":
