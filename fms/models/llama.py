@@ -199,15 +199,11 @@ class LLaMA(nn.Module):
             ratio=self.config.rope_theta,
         )
         # RoPE init
-        if isinstance(self.distributed_strategy, UniformModelParallelStrategy):
-            for dev_idx in set(self.distributed_strategy.layer_to_device):
-                self.rot_emb.compute_freqs_cis(
-                    torch.device("cuda", dev_idx), self.config.max_expected_seq_len
-                )
-        else:
-            self.rot_emb.compute_freqs_cis(
-                self.shared.emb.weight.device, self.config.max_expected_seq_len
-            )
+        for device in set(
+            [param.device for param in self.parameters()]
+            + [buffer.device for buffer in self.buffers()]
+        ):
+            self.rot_emb.compute_freqs_cis(device, self.config.max_expected_seq_len)
 
         layers = []
         for i in range(self.config.nlayers):
@@ -282,6 +278,24 @@ class LLaMA(nn.Module):
                     check_close(m.key.weight)
                     check_close(m.value.weight)
                     check_close(m.dense.weight)
+
+    def post_init(self):
+        # This function is called in `get_model` after the model is fully initalized in the correct device
+
+        # if this model ties weights, so we tie here
+        if self.config.tie_heads:
+            # make sure you assign the non-meta weights to the meta parameters
+            if self.shared.head.weight.device == torch.device("meta"):
+                self.shared.head.weight = self.shared.emb.weight
+            else:
+                self.shared.emb.weight = self.shared.head.weight
+
+        # init RoPE on the right device(s)
+        for device in set(
+            [param.device for param in self.parameters()]
+            + [buffer.device for buffer in self.buffers()]
+        ):
+            self.rot_emb.compute_freqs_cis(device, self.config.max_expected_seq_len)
 
     def _helper(
         self,

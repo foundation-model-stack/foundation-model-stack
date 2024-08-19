@@ -1,6 +1,6 @@
 import math
 from dataclasses import dataclass
-from typing import List, Mapping, Optional, Tuple, Any
+from typing import Any, List, Mapping, Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -314,6 +314,16 @@ class GPTBigCode(nn.Module):
                     mean=0.0,
                     std=self.config.emb_dim**-0.5,
                 )
+
+    def post_init(self):
+        # This function is called in `get_model` after the model is fully initalized in the correct device
+
+        # this model ties weights, so we tie here
+        # make sure you assign the non-meta weights to the meta parameters
+        if self.head.weight.device == torch.device("meta"):
+            self.head.weight = self.base_model.embedding.weight
+        else:
+            self.base_model.embedding.weight = self.head.weight
 
     def forward(
         self,

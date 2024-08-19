@@ -1,9 +1,9 @@
 from dataclasses import dataclass
-from typing import Dict, Mapping, Any
+from typing import Any, Dict, Mapping
+
 import torch
 import torch.nn as nn
-from fms.utils.config import ModelConfig
-from fms.modules.tp import ShardType, TPModule
+
 from fms.modules.linear import (
     LinearModuleShardingInfo,
     LinearParameterShardingInfo,
@@ -11,6 +11,9 @@ from fms.modules.linear import (
     register_linear_type_to_sharding_map,
     shard_base_linear,
 )
+from fms.modules.tp import ShardType, TPModule
+from fms.utils.config import ModelConfig
+
 
 try:
     from auto_gptq.utils.import_utils import dynamically_import_QuantLinear
@@ -107,7 +110,7 @@ def get_gptq_linear(
 
 
 def shard_gptq_linear(
-    tensor_values: dict[str, torch.Tensor],
+    tensor_values: Dict[str, torch.Tensor],
     tp_module: TPModule,
     module_sharding_info: Dict[str, LinearModuleShardingInfo],
 ) -> None:

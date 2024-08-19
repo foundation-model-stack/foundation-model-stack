@@ -1,6 +1,6 @@
-from enum import Enum
 import itertools
 from abc import ABCMeta, abstractmethod
+from enum import Enum
 from typing import Dict, List, Set, Type, Union
 
 import torch
