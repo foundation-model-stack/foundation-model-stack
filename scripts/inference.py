@@ -7,6 +7,7 @@ import numpy as np
 import torch
 import torch._inductor.config
 from torch import distributed as dist
+from torchvision.models.feature_extraction import create_feature_extractor
 
 from fms.models import get_model
 from fms.utils import fusion, generation, tokenizers
@@ -27,13 +28,13 @@ parser.add_argument("--device_type", type=str, default="cuda")
 parser.add_argument(
     "--architecture",
     type=str,
-    default="llama",
+    default=None,
     help="The model architecture to benchmark",
 )
 parser.add_argument(
     "--variant",
     type=str,
-    default="7b",
+    default=None,
     help="The model variant (configuration) to benchmark. E.g. 7b, 13b, 70b.",
 )
 parser.add_argument(

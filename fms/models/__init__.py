@@ -1,3 +1,4 @@
+import logging
 from contextlib import nullcontext
 from functools import partial
 from typing import Any, Callable, MutableMapping, Optional
@@ -208,8 +209,8 @@ def _is_dp(distributed_strategy):
 
 
 def get_model(
-    architecture: str,
-    variant: str,
+    architecture: Optional[str] = None,
+    variant: Optional[str] = None,
     model_path: Optional[str] = None,
     source: Optional[str] = None,
     device_type: str = "cpu",
@@ -236,6 +237,48 @@ def get_model(
                 See `serialization.list_sources(architecture)`
     group: ProcessGroup The PG to use for any model distribution
     """
+    if architecture is None:
+        if variant is not None:
+            logging.warning(
+                f"architecture was set to None which implies the model configuration is being inferred (variant={variant} will be ignored)"
+            )
+
+        if model_path is None:
+            raise ValueError(
+                "the model_path parameter is required to be set in order to infer the model configuration when architecture=None"
+            )
+
+        logging.info(f"inferring model configuration from checkpoint at {model_path}")
+
+        if source is None:
+            raise ValueError(
+                "the model source parameter is required to be set in order to infer the model configuration when architecture=None"
+            )
+        elif source == "hf":
+            if len(kwargs) > 0:
+                logging.warning(
+                    f"ignoring the following parameters as the configuration is being inferred: {list(kwargs.keys())}"
+                )
+
+            from fms.models.hf import as_fms_model
+
+            return as_fms_model(
+                model_path,
+                device_type=device_type,
+                distributed_strategy=distributed_strategy,
+                checkpoint_sharding=checkpoint_sharding,
+                group=group,
+            )
+        else:
+            raise NotImplementedError(
+                f"Cannot infer model configuration from source={source}"
+            )
+
+    if variant is None:
+        raise ValueError(
+            "When not inferring the configuration, a variant must be given"
+        )
+
     rank, world_size = distributed.rank_and_world(group)
     local_rank = distributed.local_rank()
 
