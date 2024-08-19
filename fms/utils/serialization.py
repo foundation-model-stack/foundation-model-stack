@@ -376,7 +376,6 @@ def load_state_dict_into_model(
     distributed_strategy: Optional[str] = None,
     checkpoint_sharding: Optional[str] = None,
     initial_device: torch.device = torch.device("cpu"),
-    extra_args: Dict = {},
 ) -> None:
     """
     This function loads state_dict into model in the most efficient way possible,
