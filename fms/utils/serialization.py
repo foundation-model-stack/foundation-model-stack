@@ -445,12 +445,6 @@ def load_state_dict_into_model(
             del partial_sd
             del fms_partial_sd
 
-    # temporary hardcoded patch
-    if architecture == "gpt_bigcode":
-        # param = model.base_model.embedding.weight
-        # model.head.weight = torch.nn.Parameter(torch.empty_like(param, device=param.device))
-        model.head.weight = model.base_model.embedding.weight
-
 
 def _copy_if_present(parameter, tensor_value):
     parameter.copy_(tensor_value, non_blocking=True)
