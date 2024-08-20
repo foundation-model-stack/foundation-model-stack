@@ -260,7 +260,7 @@ def get_model(
                     f"ignoring the following parameters as the configuration is being inferred: {list(kwargs.keys())}"
                 )
 
-            from fms.models.hf import as_fms_model
+            from fms.models.hf import as_fms_model  # type: ignore[import-untyped]
 
             return as_fms_model(
                 model_path,
