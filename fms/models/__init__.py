@@ -259,7 +259,6 @@ def get_model(
                 logging.warning(
                     f"ignoring the following parameters as the configuration is being inferred: {list(kwargs.keys())}"
                 )
-
             from fms.models.hf import as_fms_model  # type: ignore
 
             return as_fms_model(
