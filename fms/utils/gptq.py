@@ -161,6 +161,12 @@ def shard_gptq_linear(
         tensor_values, tp_module, module_sharding_info, param_sharding_info
     )
 
+    # If desc_act=False, correct the g_idx
+    for module_name, module_info in module_sharding_info.items():
+        if module_info.linear_module.desc_act == False:
+            g_idx_param = module_info.linear_module.g_idx
+            module_info.linear_module.g_idx = g_idx_param - g_idx_param.min()
+
 
 register_linear_type_to_module_map("gptq", get_gptq_linear)
 register_linear_type_to_sharding_map("gptq", shard_gptq_linear)
