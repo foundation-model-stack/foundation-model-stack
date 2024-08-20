@@ -379,7 +379,7 @@ class TPGatedLinearUnit(GatedLinearUnit, TPModule):
         # sharding modules struct: {'module_name': (module_obj, sharding_dim, max_partition)}
         if self.fused:
             module_sharding_info = {
-                "wg1_fused": LinearModuleShardingInfo(self.wq1_fused, 0, [self.world_size, self.world_size]),
+                "wg1_fused": LinearModuleShardingInfo(self.wg1_fused, 0, [self.world_size, self.world_size]),
             }
         else:
             module_sharding_info = {
