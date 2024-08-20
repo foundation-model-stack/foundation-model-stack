@@ -261,6 +261,8 @@ class GatedLinearUnit(nn.Module):
         self.use_bias = use_bias
         self.width = emb_dim
         self.grow_factor = hidden_grow_factor
+        self.linear_config = linear_config
+        self.linear_type = get_linear_type(linear_config)
 
     def reset_parameters(self):
         layers = ["w2"]
