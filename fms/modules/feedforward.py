@@ -153,7 +153,7 @@ class TPFeedForwardBlock(FeedForwardBlock, TPModule):
         """
 
         # sharding modules struct: {'module_name': (module_obj, sharding_dim, max_partition)}
-        module_sharing_info = {
+        module_sharding_info = {
             "w1": LinearModuleShardingInfo(self.w1, 0, [self.world_size]),
             "w2": LinearModuleShardingInfo(self.w2, 1, [self.world_size]),
         }
@@ -162,7 +162,7 @@ class TPFeedForwardBlock(FeedForwardBlock, TPModule):
         type_sharding_map[self.linear_type](
             tensor_values,
             self,
-            module_sharing_info,
+            module_sharding_info,
         )
 
     @staticmethod
@@ -378,21 +378,21 @@ class TPGatedLinearUnit(GatedLinearUnit, TPModule):
 
         # sharding modules struct: {'module_name': (module_obj, sharding_dim, max_partition)}
         if self.fused:
-            module_sharing_info = {
+            module_sharding_info = {
                 "wg1_fused": LinearModuleShardingInfo(self.wq1_fused, 0, [self.world_size, self.world_size]),
             }
         else:
-            module_sharing_info = {
+            module_sharding_info = {
                 "w1": LinearModuleShardingInfo(self.w1, 0, [self.world_size, self.world_size]),
                 "wg": LinearModuleShardingInfo(self.w1, 0, [self.world_size, self.world_size]),
             }
-        module_sharing_info.update({"w2": LinearModuleShardingInfo(self.w2, 1, [self.world_size])})
+        module_sharding_info.update({"w2": LinearModuleShardingInfo(self.w2, 1, [self.world_size])})
 
         type_sharding_map = get_all_linear_type_to_sharding_maps()
         type_sharding_map[self.linear_type](
             tensor_values,
             self,
-            module_sharing_info,
+            module_sharding_info,
         )
 
     @staticmethod
