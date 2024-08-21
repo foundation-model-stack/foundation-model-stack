@@ -256,12 +256,14 @@ def get_fp8_linear(
     
     linear_class = map_type_to_linear[fp8_linear_config.linear_type]
 
-    return linear_class(
+    linear = linear_class(
         quant_config=fp8_linear_config,
         in_features=in_features,
         out_features=out_features,
         bias=bias,
     )
+    assert hasattr(linear, "in_features") and hasattr(linear, "out_features")
+    return linear
 
 def shard_fp8_linear(
     tensor_values: Dict[str, torch.Tensor],
@@ -288,15 +290,16 @@ def shard_fp8_linear(
     for module_name, module_info in module_sharding_info.items():
         linear_module = module_info.linear_module
         params: Dict[str, LinearParameterShardingInfo] = {
-            "weight": LinearParameterShardingInfo(
-                1 - module_info.sharding_dim, ShardType.SHARD
-            ),
             "weight_scale": LinearParameterShardingInfo(
-                1 - module_info.sharding_dim, ShardType.SHARD
+                0,
+                ShardType.CLONE,
             ),
             "input_scale": LinearParameterShardingInfo(
                 0,
-                ShardType.CLONE if module_info.sharding_dim == 0 else ShardType.SHARD,
+                ShardType.CLONE,
+            ),
+            "weight": LinearParameterShardingInfo(
+                module_info.sharding_dim, ShardType.SHARD
             ),
         }
         if linear_module.bias is not None:
