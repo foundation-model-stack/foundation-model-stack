@@ -463,7 +463,7 @@ def _move_to_real_device(param, real_device):
 def _load_partial_state_dict(
     model: torch.nn.Module, state_dict, needs_tp_sharding: bool
 ):
-    unused_params = []
+    unused_params = set()
     seen_tp_modules = set()
     for key, tensor_value in state_dict.items():
         target_module = model
@@ -491,7 +491,7 @@ def _load_partial_state_dict(
                     tp_module = target_module
                     tp_prefix = prefix
             except AttributeError:
-                unused_params.append(key)
+                unused_params.add(key)
                 break
 
         # Check if target_module has the Parameter/buffer
@@ -514,4 +514,4 @@ def _load_partial_state_dict(
                 tp_module._apply(lambda t: _move_to_real_device(t, tensor_value.device))
                 tp_module.load_weights(tensor_values)
         except AttributeError:
-            unused_params.append(key)
+            unused_params.add(key)
