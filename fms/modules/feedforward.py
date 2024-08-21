@@ -407,6 +407,7 @@ class TPGatedLinearUnit(GatedLinearUnit, TPModule):
             p_dropout=glu.p_dropout,
             use_bias=glu.use_bias,
             group=group,
+            linear_config=glu.linear_config,
         )
 
         return tp_glu

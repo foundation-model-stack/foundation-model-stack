@@ -5,7 +5,7 @@ import re
 from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping, Optional
+from typing import Mapping, Optional, Any
 
 import torch
 import torch.nn as nn
@@ -54,6 +54,7 @@ class LLaMAConfig(ModelConfig):
     mlp_bias: bool = False
     tie_heads: bool = False
     rope_theta: float = 10_000.0
+    linear_config: Optional[Mapping[str, Any]] = None
 
 
 class LLaMABlock(nn.Module):
@@ -95,6 +96,7 @@ class LLaMABlock(nn.Module):
             p_dropout=self.config.p_dropout,
             use_bias=self.config.attn_bias,
             position_encoder=rotary_emb,
+            linear_config=self.config.linear_config,
         )
         self.ff_sub_layer = GatedLinearUnit(
             self.config.emb_dim,
@@ -103,6 +105,7 @@ class LLaMABlock(nn.Module):
             activation_fn=str_to_activation(self.config.activation_fn),
             p_dropout=self.config.p_dropout,
             use_bias=self.config.mlp_bias,
+            linear_config=self.config.linear_config,
         )
 
         if self.config.p_dropout != 0:

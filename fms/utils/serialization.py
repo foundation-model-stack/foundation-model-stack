@@ -413,6 +413,7 @@ def load_state_dict_into_model(
 
     # 3. Iterate over the weights and load them into the model
     used_keys = set()
+    unused_keys = set()
     sd_keys = set(state_dict.keys())
 
     with torch.no_grad():
@@ -433,7 +434,8 @@ def load_state_dict_into_model(
                 if partial_sd[psd_key].device != initial_device:
                     partial_sd[psd_key] = partial_sd[psd_key].to(device=initial_device)
             fms_partial_sd = adapter(partial_sd)
-            _load_partial_state_dict(model, fms_partial_sd, needs_tp_sharding)
+            unused_keys_partial = _load_partial_state_dict(model, fms_partial_sd, needs_tp_sharding)
+            unused_keys.update(unused_keys_partial)
             # Be aggressive in removing weights to save as much memory as possible
             for p_key in partial_sd.keys():
                 if isinstance(state_dict, ChainMap):
@@ -443,6 +445,8 @@ def load_state_dict_into_model(
                     state_dict.pop(p_key)
             del partial_sd
             del fms_partial_sd
+    # TODO: we may return or print full set of unused_keys
+    # should not raise error but a warning would be useful
 
 
 def _copy_if_present(parameter, tensor_value):
@@ -462,8 +466,8 @@ def _move_to_real_device(param, real_device):
 
 def _load_partial_state_dict(
     model: torch.nn.Module, state_dict, needs_tp_sharding: bool
-):
-    unused_params = set()
+) -> set:
+    unused_keys = set()
     seen_tp_modules = set()
     for key, tensor_value in state_dict.items():
         target_module = model
@@ -491,7 +495,7 @@ def _load_partial_state_dict(
                     tp_module = target_module
                     tp_prefix = prefix
             except AttributeError:
-                unused_params.add(key)
+                unused_keys.add(key)
                 break
 
         # Check if target_module has the Parameter/buffer
@@ -514,4 +518,6 @@ def _load_partial_state_dict(
                 tp_module._apply(lambda t: _move_to_real_device(t, tensor_value.device))
                 tp_module.load_weights(tensor_values)
         except AttributeError:
-            unused_params.add(key)
+            unused_keys.add(key)
+
+    return unused_keys
