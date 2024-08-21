@@ -241,9 +241,9 @@ def get_model(
     rank, world_size = distributed.rank_and_world(group)
     local_rank = distributed.local_rank()
 
-    #if distributed_strategy is None or distributed_strategy == "":
-    #    if world_size > 1:
-    #        distributed_strategy = "tp"
+    if distributed_strategy is None or distributed_strategy == "":
+        if world_size > 1:
+            distributed_strategy = "tp"
 
     if device_type == "cuda":
         device = torch.device(device_type, local_rank)
