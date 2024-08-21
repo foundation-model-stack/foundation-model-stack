@@ -30,8 +30,8 @@ class GPTBigCodeConfig(ModelConfig):
     emb_dropout: float = 0.0
     multiquery_attn: bool = True
     ln_eps: float = 1e-5
-    # pass linear_config as {"linear_type": str, <other kwargs>}
-    linear_config: Optional[Mapping[str, Any]] = None
+    linear_config: Optional[Mapping[str, Any]] = None  # pass as {"linear_type": str, <other kwargs>}
+    unfuse_strategy: Optional[str] = None  # TODO: could be an Enum
 
 
 class GPTBigCodeBlock(nn.Module):
@@ -50,6 +50,7 @@ class GPTBigCodeBlock(nn.Module):
             kvheads=1 if self.config.multiquery_attn else self.config.nheads,
             p_dropout=self.config.p_dropout,
             use_bias=True,
+            fused=(self.config.unfuse_strategy != "pre"),
             linear_config=self.config.linear_config,
         )
 
@@ -59,6 +60,7 @@ class GPTBigCodeBlock(nn.Module):
             activation_fn=str_to_activation(self.config.activation_fn),
             p_dropout=self.config.p_dropout,
             use_bias=True,
+            fused=(self.config.unfuse_strategy != "pre"),
             linear_config=self.config.linear_config,
         )
 

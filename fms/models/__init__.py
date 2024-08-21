@@ -207,6 +207,22 @@ def _is_dp(distributed_strategy):
     return distributed_strategy in {"fsdp", "hsdp", "ddp"}
 
 
+def _validate_unfuse_strategy(extra_args):
+    """
+    ckpt       target_model   unfuse_strategy
+    -----------------------------------------
+    fused      fused          None
+    fused      unfused        post
+    unfused    fused          pre + fuse (?)
+    unfused    unfused        pre
+    """
+    unfuse = extra_args["unfuse_strategy"]
+    if unfuse is not None and unfuse not in ["post", "pre"]:
+        raise ValueError(
+            f"Unsupported unfuse strategy `{unfuse}`. Choose between [None, `post`, `pre`]"
+        )
+
+
 def get_model(
     architecture: str,
     variant: str,
@@ -285,6 +301,9 @@ def get_model(
                 devices, _guess_num_layers(lazy_sd)
             )
 
+    if "unfuse_strategy" in extra_args:
+        _validate_unfuse_strategy(extra_args)
+
     # Create the model on meta device to allocate weights lazily
     fms_model = _get_model_instance(
         architecture, variant, device=torch.device("meta"), extra_args=extra_args
@@ -331,6 +350,7 @@ def get_model(
         fms_model.post_init()
 
     # Make sure any uninitialized tensors are at least moved to device
+    # TODO: should we raise a warning? are uninitialized tensors ever acceptable?
     if initial_device != torch.device("meta"):
         fms_model._apply(lambda t: torch.empty_like(t, device=initial_device) if t.device == torch.device("meta") else t)
 

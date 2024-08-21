@@ -399,14 +399,10 @@ def load_state_dict_into_model(
     initial_device: where the weights will be loaded from disk.
     """
 
-    # TODO: move this check elsewhere
-    # if gptq_config_dict and source != "gptq_hf":
-    #     raise NotImplementedError(
-    #         f"GPTQ configuration provided, but source `{source}` is unsupported"
-    #     )
-
     # 1. Get the adapter from checkpoint sd to fms sd
-    adapter = _get_adapter(architecture, source)  # `source = hf` for gptq on gpu
+    # TODO: could create custom source based on the unfuse_strategy, and call corresponding adapter
+    # TODO: adapter now always convert to fused... need a separate one or customize this
+    adapter = _get_adapter(architecture, source)
 
     # 2. Decide if model needs sharding and how (for now only TP)
     needs_tp_sharding = checkpoint_sharding != "tp" and distributed_strategy == "tp"

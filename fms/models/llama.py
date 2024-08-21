@@ -55,6 +55,7 @@ class LLaMAConfig(ModelConfig):
     tie_heads: bool = False
     rope_theta: float = 10_000.0
     linear_config: Optional[Mapping[str, Any]] = None
+    unfuse_strategy: Optional[str] = None  # TODO: could be an Enum
 
 
 class LLaMABlock(nn.Module):
@@ -96,6 +97,7 @@ class LLaMABlock(nn.Module):
             p_dropout=self.config.p_dropout,
             use_bias=self.config.attn_bias,
             position_encoder=rotary_emb,
+            fused=(self.config.unfuse_strategy != "pre"),
             linear_config=self.config.linear_config,
         )
         self.ff_sub_layer = GatedLinearUnit(
@@ -105,6 +107,7 @@ class LLaMABlock(nn.Module):
             activation_fn=str_to_activation(self.config.activation_fn),
             p_dropout=self.config.p_dropout,
             use_bias=self.config.mlp_bias,
+            fused=(self.config.unfuse_strategy != "pre"),
             linear_config=self.config.linear_config,
         )
 
