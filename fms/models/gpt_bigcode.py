@@ -60,7 +60,6 @@ class GPTBigCodeBlock(nn.Module):
             activation_fn=str_to_activation(self.config.activation_fn),
             p_dropout=self.config.p_dropout,
             use_bias=True,
-            fused=(self.config.unfuse_strategy != "pre"),
             linear_config=self.config.linear_config,
         )
 
