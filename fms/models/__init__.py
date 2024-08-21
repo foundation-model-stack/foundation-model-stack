@@ -278,8 +278,10 @@ def get_model(
     extra_args = kwargs
     if "distributed_strategy" not in extra_args:
         if distributed_strategy == "tp":
+            print("using tensor parallel")
             extra_args["distributed_strategy"] = TensorParallelStrategy(group)
         elif distributed_strategy == "mp":
+            print("using model parallel")
             devices = [i for i in range(torch.cuda.device_count())]
             extra_args["distributed_strategy"] = UniformModelParallelStrategy(
                 devices, _guess_num_layers(lazy_sd)
