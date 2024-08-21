@@ -1,14 +1,19 @@
 from dataclasses import dataclass
-from typing import Mapping, Any
+from typing import Any, Dict, Mapping, Optional
+
 import torch
 import torch.nn as nn
-from fms.utils.config import ModelConfig
+
 from fms.modules.linear import (
+    LinearModuleShardingInfo,
+    LinearParameterShardingInfo,
     register_linear_type_to_module_map,
     register_linear_type_to_sharding_map,
     shard_base_linear,
-    get_linear_type,
 )
+from fms.modules.tp import ShardType, TPModule
+from fms.utils.config import ModelConfig
+
 from torchao.float8.float8_utils import to_fp8_saturated
 HAS_FBGEMM_EXPERIMENTAL = False
 try:
@@ -241,30 +246,27 @@ def get_fp8_linear(
     in_features: int,
     out_features: int,
     bias: bool,
-    linear_config: Mapping[str, Any] | None = None,
+    linear_config: Optional[Mapping[str, Any]] = None
 ):
-    linear_type = get_linear_type(linear_config)
-    
+    fp8_linear_config = Fp8LinearConfig(**linear_config)
     map_type_to_linear = {
         "auto_fp8": AutoFp8InferenceLinear,
         "fbgemm_fp8": Fp8InferenceLinear,
     }
     
-    return map_type_to_linear[linear_type](
-        quant_config=Fp8LinearConfig(**linear_config),
+    linear_class = map_type_to_linear[fp8_linear_config.linear_type]
+
+    return linear_class(
+        quant_config=fp8_linear_config,
         in_features=in_features,
         out_features=out_features,
         bias=bias,
     )
 
-# Assume auto_fp8 for now
 def shard_fp8_linear(
-    tensor_values: torch.Tensor,
-    tp_modoule,  
-    modules: list[str],
-    name_to_module: dict[str, nn.Module],
-    module_base_shard_dim: dict[str, int],
-    max_partition: dict [str, str],
+    tensor_values: Dict[str, torch.Tensor],
+    tp_module: TPModule,
+    module_sharding_info: Dict[str, LinearModuleShardingInfo],
 ) -> None:
     """
     Set up FP8 quantization parameters to be sharded onto linear modules
@@ -275,46 +277,39 @@ def shard_fp8_linear(
               | bias         |   Y   |  0  |
               | input_scale  |   N   |  -  | (per-tensor scalar copy)
               | weight_scale |   Y   |  1  | (per-channel)
-              | weight_scale |   N   |  -  | (per-tensor - expand to per-channel)
 
     ----------+--------------+-------+-----|
     dense, w2 | weight       |   Y   |  0  |
               | bias         |   N   |  -  |
               | input_scale  |   N   |  -  | (per-tensor scalar copy)
               | weight_scale |   N   |  -  | (per-channel)
-              | weight_scale |   N   |  -  | (per-tensor - expand to per-channel)
     """
+    param_sharding_info: Dict[str, Dict[str, LinearParameterShardingInfo]] = {}
+    for module_name, module_info in module_sharding_info.items():
+        linear_module = module_info.linear_module
+        params: Dict[str, LinearParameterShardingInfo] = {
+            "weight": LinearParameterShardingInfo(
+                1 - module_info.sharding_dim, ShardType.SHARD
+            ),
+            "weight_scale": LinearParameterShardingInfo(
+                1 - module_info.sharding_dim, ShardType.SHARD
+            ),
+            "input_scale": LinearParameterShardingInfo(
+                0,
+                ShardType.CLONE if module_info.sharding_dim == 0 else ShardType.SHARD,
+            ),
+        }
+        if linear_module.bias is not None:
+            params["bias"] = LinearParameterShardingInfo(
+                module_info.sharding_dim,
+                ShardType.SHARD if module_info.sharding_dim == 0 else ShardType.RANK0,
+            )
+        param_sharding_info[module_name] = params
 
-    params = ["weight"]
-    if tp_modoule.use_bias:
-        params.append("bias")
-
-    # List of tuples (module, param) that won't be sharded
-    if "qkv_fused" in modules or "query" in modules:  # MHA
-        unsharded = [
-            ("dense", "bias"),
-        ]
-    if "w1" in modules:  # FFN
-        unsharded = [
-            ("w2", "bias"),
-        ]
-
-    # Deal with weight and bias 
     shard_base_linear(
-        tensor_values,
-        tp_modoule,
-        modules,
-        params,
-        name_to_module,
-        module_base_shard_dim,
-        max_partition,
-        unsharded,
+        tensor_values, tp_module, module_sharding_info, param_sharding_info
     )
-    
-    #TODO: load_scales()
-    # per-tensor input_scale - copy scalar
-    # per-tensor weight_scale - copy scalar and expand to vector
-    # per-channel weight_scale - copy or sharded copy
+
 
 register_linear_type_to_module_map("auto_fp8", get_fp8_linear)
 register_linear_type_to_sharding_map("auto_fp8", shard_fp8_linear)

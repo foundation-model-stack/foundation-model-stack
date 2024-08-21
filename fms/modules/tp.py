@@ -133,7 +133,12 @@ class TPModule(nn.Module, metaclass=ABCMeta):
             tensors_to_cat = [
                 tensor_value[tp_shard_index] for tp_shard_index in tp_shard_indices
             ]
-            tensor = torch.cat(tensors_to_cat, dim=dim)
+            # FIXME: temporary workaround for fp8 tensor cat
+            if tensors_to_cat and tensors_to_cat[0].dtype == torch.float8_e4m3fn:
+                tensor = torch.cat([t.to(torch.bfloat16) for t in tensors_to_cat], dim=dim)
+                tensor = tensor.to(torch.flfloat8_e4m3fn)
+            else:
+                tensor = torch.cat(tensors_to_cat, dim=dim)
             param.copy_(tensor, non_blocking=True)
         elif shard_type == ShardType.RANK0:
             if self.rank == 0:
