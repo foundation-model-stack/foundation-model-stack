@@ -14,10 +14,8 @@ from fms.modules.linear import (
 from fms.modules.tp import ShardType, TPModule
 from fms.utils.config import ModelConfig
 
-
 try:
     from auto_gptq.utils.import_utils import dynamically_import_QuantLinear
-
     IS_AUTOGPTQ_AVAILABLE = True
 except:
     IS_AUTOGPTQ_AVAILABLE = False

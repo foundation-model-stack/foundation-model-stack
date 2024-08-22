@@ -18,7 +18,7 @@ from fms.distributed.strategy import (
     TensorParallelStrategy,
     UniformModelParallelStrategy,
 )
-from fms.utils import serialization
+from fms.utils import serialization, fusion
 
 
 __models: MutableMapping[str, MutableMapping[str, Callable[[], nn.Module]]] = {}
@@ -304,7 +304,7 @@ def get_model(
 
     # TODO: detect if ckpt is unfused, customize source accordingly (?)
     # TODO: apply `pre` strategy to GPTQ only
-    if "unfuse_strategy" in extra_args:
+    if extra_args.get("unfuse_strategy", None):
         _validate_unfuse_strategy(extra_args)
 
     # Create the model on meta device to allocate weights lazily
@@ -356,6 +356,9 @@ def get_model(
     # TODO: should we raise a warning? are uninitialized tensors ever acceptable?
     if initial_device != torch.device("meta"):
         fms_model._apply(lambda t: torch.empty_like(t, device=initial_device) if t.device == torch.device("meta") else t)
+
+    if extra_args.get("unfuse_strategy", None) == "post":
+        fms_model = fusion.apply_unfuse_weights(fms_model)
 
     return fms_model
 
