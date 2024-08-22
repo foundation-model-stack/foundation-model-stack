@@ -180,7 +180,6 @@ class Fp8InferenceLinear(Fp8InferenceLinearBase):
         # 1 or N
         self.register_parameter(
             "weight_scale",
-            # nn.Parameter(torch.empty((self.out_features,), dtype=torch.float32)), # per-channel
             nn.Parameter(
                 (torch.tensor(0.0, dtype=torch.float32) 
                     if self.weight_casting == "static-per-tensor"
@@ -265,36 +264,17 @@ def get_fp8_linear(
     assert hasattr(linear, "in_features") and hasattr(linear, "out_features")
     return linear
 
-def shard_fp8_linear(
+
+def shard_auto_fp8_linear(
     tensor_values: Dict[str, torch.Tensor],
     tp_module: TPModule,
     module_sharding_info: Dict[str, LinearModuleShardingInfo],
 ) -> None:
-    """
-    Set up FP8 quantization parameters to be sharded onto linear modules
-                             |     GPU     |
-    module    | params       | shard | dim |
-    ----------+--------------+-------+-----|
-    QKV, w1   | weight       |   Y   |  1  |
-              | bias         |   Y   |  0  |
-              | input_scale  |   N   |  -  | (per-tensor scalar copy)
-              | weight_scale |   Y   |  1  | (per-channel)
-
-    ----------+--------------+-------+-----|
-    dense, w2 | weight       |   Y   |  0  |
-              | bias         |   N   |  -  |
-              | input_scale  |   N   |  -  | (per-tensor scalar copy)
-              | weight_scale |   N   |  -  | (per-channel)
-    """
     param_sharding_info: Dict[str, Dict[str, LinearParameterShardingInfo]] = {}
     for module_name, module_info in module_sharding_info.items():
         linear_module = module_info.linear_module
         params: Dict[str, LinearParameterShardingInfo] = {
-            "weight_scale": LinearParameterShardingInfo(
-                0,
-                ShardType.CLONE,
-            ),
-            "input_scale": LinearParameterShardingInfo(
+            "weight_scale": LinearParameterShardingInfo( # per-tensor
                 0,
                 ShardType.CLONE,
             ),
@@ -307,15 +287,53 @@ def shard_fp8_linear(
                 module_info.sharding_dim,
                 ShardType.SHARD if module_info.sharding_dim == 0 else ShardType.RANK0,
             )
+        if linear_module.input_scale is not None:
+            params["input_scale"] = LinearParameterShardingInfo( # per-tensor
+                0,
+                ShardType.CLONE,
+            )
         param_sharding_info[module_name] = params
 
     shard_base_linear(
         tensor_values, tp_module, module_sharding_info, param_sharding_info
     )
 
+def shard_fbgemm_fp8_linear(
+    tensor_values: Dict[str, torch.Tensor],
+    tp_module: TPModule,
+    module_sharding_info: Dict[str, LinearModuleShardingInfo],
+) -> None:
+    param_sharding_info: Dict[str, Dict[str, LinearParameterShardingInfo]] = {}
+    for module_name, module_info in module_sharding_info.items():
+        linear_module = module_info.linear_module
+        params: Dict[str, LinearParameterShardingInfo] = {
+            # FIXME: should either shard or clone depending on the checkpoint weight_scale
+            "weight_scale": LinearParameterShardingInfo(
+                0,
+                ShardType.CLONE,
+            ),
+            "weight": LinearParameterShardingInfo(
+                module_info.sharding_dim, ShardType.SHARD
+            ),
+        }
+        if linear_module.bias is not None:
+            params["bias"] = LinearParameterShardingInfo(
+                module_info.sharding_dim,
+                ShardType.SHARD if module_info.sharding_dim == 0 else ShardType.RANK0,
+            )
+        if linear_module.input_scale is not None:
+            params["input_scale"] = LinearParameterShardingInfo( # per-tensor
+                0,
+                ShardType.CLONE,
+            )
+        param_sharding_info[module_name] = params
+
+    shard_base_linear(
+        tensor_values, tp_module, module_sharding_info, param_sharding_info
+    )
 
 register_linear_type_to_module_map("auto_fp8", get_fp8_linear)
-register_linear_type_to_sharding_map("auto_fp8", shard_fp8_linear)
+register_linear_type_to_sharding_map("auto_fp8", shard_auto_fp8_linear)
 
 register_linear_type_to_module_map("fbgemm_fp8", get_fp8_linear)
-register_linear_type_to_sharding_map("fbgemm_fp8", shard_fp8_linear)
+register_linear_type_to_sharding_map("fbgemm_fp8", shard_fbgemm_fp8_linear)
