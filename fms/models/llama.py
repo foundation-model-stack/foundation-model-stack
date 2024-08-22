@@ -593,9 +593,66 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
     return fused_sd
 
 
+# TODO: merge with standard _hf_sd_to_fms_sd adapter
+# Very similar except:
+# 1) add in_proj to q,k,v
+# 2) qparams to transpose are qweight|scales|qzeros (not weight|bias)
+# 3) fully transpose params before & after processing
+def _gptq_unfused_sd_to_fms_unfused_sd(hf_sd: Mapping) -> Mapping:
+    replacements = [
+        (r"^lm_head.weight", "shared.head.weight"),
+        (r"^model.embed_tokens.weight", "shared.emb.weight"),
+        (r"^model.norm", "dec_norm"),
+        (r"^model.layers", "layers"),
+        (r"self_attn\.k_proj", "attn.in_proj.key"),
+        (r"self_attn\.v_proj", "attn.in_proj.value"),
+        (r"self_attn\.q_proj", "attn.in_proj.query"),
+        (r"self_attn\.o_proj", "attn.dense"),
+        (r"mlp\.gate_proj", "ff_sub_layer.wg"),
+        (r"mlp\.up_proj", "ff_sub_layer.w1"),
+        (r"mlp\.down_proj", "ff_sub_layer.w2"),
+        (r"input_layernorm", "ln"),
+        (r"post_attention_layernorm", "ff_ln"),
+    ]
+    fms_unfused_sd = {}
+    trans_required_pattern = re.compile(
+        "layers.[0-9]+.attn.in_proj.(query|key).(qweight|scales|qzeros)"
+    )
+    for hf_name, param in hf_sd.items():
+        fms_name = hf_name
+        for pattern, repl in replacements:
+            fms_name = re.sub(pattern, repl, fms_name)
+        fms_unfused_sd[fms_name] = param
+
+        # hf -> fms requires a transpose operation for the query and key
+        # weight and bias parameters
+        # Differently from hf-to-fms conversion, GPTQ qweights are [in_feat, out_feat]
+        # and are fully transposed before & after process
+        # FIXME: is unpack/transpose/repack for qweight and qzeros also needed?!?
+        if bool(trans_required_pattern.match(fms_name)):
+            param_t_size = param.t().size()
+
+            # TODO: less hardcoded way to determine head_size?
+            if param_t_size[1] == 2560:
+                head_size = 80  # granite 3b code
+            else:
+                head_size = 128  # every other Llama model in existence
+            nheads = int(param_t_size[0] / head_size)
+
+            fms_unfused_sd[fms_name] = (
+                param.t().view(nheads, 2, -1, param_t_size[1])
+                .transpose(1, 2)
+                .reshape(*param_t_size).t()
+            )
+    return fms_unfused_sd
+
+
 serialization.register_adapter("llama", "meta", _rename_meta_weights_to_fms)
 serialization.register_adapter("llama", "hf", _hf_sd_to_fms_sd)
 serialization.register_adapter("llama", "fms.pre0.0.6", _convert_to_fused)
+serialization.register_adapter(
+    "llama", "gptq_hf_unfused", _gptq_unfused_sd_to_fms_unfused_sd
+)
 
 
 def convert_hf_llama(hf_model: "LlamaForCausalLM") -> LLaMA:  # type: ignore

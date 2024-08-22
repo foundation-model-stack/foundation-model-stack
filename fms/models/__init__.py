@@ -209,12 +209,13 @@ def _is_dp(distributed_strategy):
 
 def _validate_unfuse_strategy(extra_args):
     """
-    ckpt       target_model   unfuse_strategy
-    -----------------------------------------
-    fused      fused          None
-    fused      unfused        post
-    unfused    fused          pre + fuse (?)
-    unfused    unfused        pre
+    ckpt       target_model   unfuse_strategy     task
+    -------------------------------------------------------------------------------------------------------
+    fused      fused          None                copy param from ckpt into fused model
+    fused      unfused        post                copy param from ckpt into fused model, then unfuse model
+    unfused    fused          pre + fuse (?)      instantiate unfused model, copy param from ckpt into unfused model, then fuse model OR
+                                                  fuse ckpt and copy param into fused model
+    unfused    unfused        pre                 instantiate unfused model, copy param from ckpt into unfused model
     """
     unfuse = extra_args["unfuse_strategy"]
     if unfuse is not None and unfuse not in ["post", "pre"]:
@@ -301,6 +302,8 @@ def get_model(
                 devices, _guess_num_layers(lazy_sd)
             )
 
+    # TODO: detect if ckpt is unfused, customize source accordingly (?)
+    # TODO: apply `pre` strategy to GPTQ only
     if "unfuse_strategy" in extra_args:
         _validate_unfuse_strategy(extra_args)
 

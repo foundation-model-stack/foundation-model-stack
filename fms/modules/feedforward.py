@@ -386,7 +386,7 @@ class TPGatedLinearUnit(GatedLinearUnit, TPModule):
         else:
             module_sharding_info = {
                 "w1": LinearModuleShardingInfo(self.w1, 0, [self.world_size, self.world_size]),
-                "wg": LinearModuleShardingInfo(self.w1, 0, [self.world_size, self.world_size]),
+                "wg": LinearModuleShardingInfo(self.wg, 0, [self.world_size, self.world_size]),
             }
         module_sharding_info.update({"w2": LinearModuleShardingInfo(self.w2, 1, [self.world_size])})
 
@@ -407,6 +407,7 @@ class TPGatedLinearUnit(GatedLinearUnit, TPModule):
             p_dropout=glu.p_dropout,
             use_bias=glu.use_bias,
             group=group,
+            fused=glu.fused,
             linear_config=glu.linear_config,
         )
 
@@ -425,7 +426,7 @@ class TPGatedLinearUnit(GatedLinearUnit, TPModule):
             self.a,
             self.p_dropout,
             self.use_bias,
-            fused=False,
+            fused=self.fused,
         ).to(self.w2.weight.device)
 
 

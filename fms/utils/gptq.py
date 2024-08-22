@@ -157,6 +157,8 @@ def shard_gptq_linear(
             )
         param_sharding_info[module_name] = params
 
+    # NOTE: gptq ckpt may have ZERO bias in the ckpt tensors, while model has None
+    # OK to ignore bias but we can't raise an error or computation will stop
     shard_base_linear(
         tensor_values, tp_module, module_sharding_info, param_sharding_info
     )

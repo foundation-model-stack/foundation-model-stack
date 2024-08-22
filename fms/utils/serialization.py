@@ -277,7 +277,7 @@ def load_state_dict(
             glob_pattern_list = [glob_pattern]
         elif source == "meta":
             glob_pattern_list = ["*.pth", "*.safetensors"]
-        elif source == "hf" or source == "gptq_hf":
+        elif source == "hf" or "gptq_hf" in source:
             glob_pattern_list = ["*.bin", "*.safetensors", "*.pt"]
         else:
             glob_pattern_list = ["*.safetensors", "*.pth", "*.bin"]
@@ -376,6 +376,7 @@ def load_state_dict_into_model(
     distributed_strategy: Optional[str] = None,
     checkpoint_sharding: Optional[str] = None,
     initial_device: torch.device = torch.device("cpu"),
+    is_sd_unfused: bool = False,
 ) -> None:
     """
     This function loads state_dict into model in the most efficient way possible,
@@ -402,6 +403,7 @@ def load_state_dict_into_model(
     # 1. Get the adapter from checkpoint sd to fms sd
     # TODO: could create custom source based on the unfuse_strategy, and call corresponding adapter
     # TODO: adapter now always convert to fused... need a separate one or customize this
+    # source="gptq_hf_unfused"  # !!! DEBUG: hardcode source
     adapter = _get_adapter(architecture, source)
 
     # 2. Decide if model needs sharding and how (for now only TP)
@@ -476,6 +478,11 @@ def _load_partial_state_dict(
         # Navigate the model tree to find the module where the parameter is
         # located and whether there is a TPModule in the way in case the
         # parameter requires sharding
+
+        # import torch.distributed as dist
+        # if dist.get_rank() == 0:
+        #     breakpoint()
+
         while key_step < len(key_steps) - 1:
             try:
                 target_module = getattr(target_module, key_steps[key_step])
@@ -513,7 +520,12 @@ def _load_partial_state_dict(
                 tensor_values = {k: v for k, v in state_dict.items() if tp_prefix in k}
                 tp_module._apply(lambda t: _move_to_real_device(t, tensor_value.device))
                 tp_module.load_weights(tensor_values)
+
         except AttributeError:
+            # FIXME: error catch is incorrect, it will record `key` but the code
+            # may have failed when processing one or more of this key's neighbors
+            # (e.g., missing bias)
             unused_keys.add(key)
 
+    # dist.barrier()
     return unused_keys

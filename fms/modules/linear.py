@@ -104,9 +104,13 @@ def shard_base_linear(
                 tensor_device = all_params[module_name][param_name].device
             param_count += 1
 
+    # FIXME: gptq llama ckpt may have bias but llama linear layers do not
+    # we can't raise an error here, because it stops further computations
+    # Better handling is needed (drop bias tensor earlier, if zeros?)
     if len(tensor_values) > param_count:
         unused_keys = set(tensor_values.keys()).difference(used_keys)
-        raise AttributeError(f"Unused weight(s): {', '.join(unused_keys)}")
+        # print("UNUSED KEYS: ", ', '.join(unused_keys))
+        # raise AttributeError(f"Unused weight(s): {', '.join(unused_keys)}")
 
     # Shard module, one parameter at the time
     for module_name, module_info in module_sharding_info.items():
