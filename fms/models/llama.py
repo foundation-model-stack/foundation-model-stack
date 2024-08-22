@@ -49,6 +49,7 @@ class LLaMAConfig(ModelConfig):
     attn_bias: bool = False
     mlp_bias: bool = False
     tie_heads: bool = False
+    rope_theta: float = 10_000.0
 
 
 @dataclass
@@ -188,6 +189,7 @@ class LLaMAHeadless(nn.Module):
             dim=self.config.emb_dim // self.config.nheads,
             ntk_scaling=self.config.ntk_scaling,
             max_seq_len=self.config.max_expected_seq_len,
+            ratio=self.config.rope_theta,
         )
 
         layers = []
@@ -526,35 +528,46 @@ _70b_config = LLaMAConfig(
     hidden_grow_factor=(1.3 * 8 / 3),
 )
 
-_granite_3b_code_base_config = LLaMAConfig(
-    src_vocab_size=49152,
-    emb_dim=2560,
+_8b_llama3_config = LLaMAConfig(
+    src_vocab_size=128256,
+    emb_dim=4096,
     norm_eps=1e-5,
     nheads=32,
-    kvheads=32,
+    kvheads=8,
     nlayers=32,
+    hidden_grow_factor=3.5,
+    multiple_of=1024,
+    max_expected_seq_len=8192,
+    rope_theta=500_000.0,
+)
+
+# Granite configs
+_granite_7b_config = LLaMAConfig(
+    src_vocab_size=32008,
+)
+_granite_7b_classification_config = LLaMAForClassificationConfig(
+    src_vocab_size=32008,
+    num_classes=2,
+)
+
+_granite_3b_code_config = LLaMAConfig(
+    src_vocab_size=49152,
+    emb_dim=2560,
     pad_id=0,
     hidden_grow_factor=10240 / 2560,
     multiple_of=1,
-    activation_fn="swish",
     p_dropout=0.1,
     max_expected_seq_len=2048,
     attn_bias=True,
     mlp_bias=True,
     tie_heads=True,
 )
-
-_granite_3b_code_base_classification_config = LLaMAForClassificationConfig(
+_granite_3b_code_classification_config = LLaMAForClassificationConfig(
     src_vocab_size=49152,
     emb_dim=2560,
-    norm_eps=1e-5,
-    nheads=32,
-    kvheads=32,
-    nlayers=32,
     pad_id=0,
     hidden_grow_factor=10240 / 2560,
     multiple_of=1,
-    activation_fn="swish",
     p_dropout=0.1,
     max_expected_seq_len=2048,
     attn_bias=True,
@@ -563,7 +576,20 @@ _granite_3b_code_base_classification_config = LLaMAForClassificationConfig(
     num_classes=2,
 )
 
-_granite_7b_base_classification_config = LLaMAForClassificationConfig(pad_id=0)
+_granite_8b_code_config = LLaMAConfig(
+    src_vocab_size=49152,
+    emb_dim=4096,
+    kvheads=8,
+    nlayers=36,
+    pad_id=0,
+    hidden_grow_factor=14336 / 4096,
+    multiple_of=1,
+    p_dropout=0.1,
+    max_expected_seq_len=4096,
+    attn_bias=True,
+    mlp_bias=True,
+    tie_heads=True,
+)
 
 _architecture_name = "llama"
 
@@ -585,24 +611,45 @@ def _llama_classification_factory_factory(config):
 models.register_model(
     _architecture_name, "micro", _llama_factory_factory(_micro_char_config)
 )
+# Backwards compat
 models.register_model(_architecture_name, "7b", _llama_factory_factory(_7b_config))
 models.register_model(_architecture_name, "13b", _llama_factory_factory(_13b_config))
 models.register_model(_architecture_name, "70b", _llama_factory_factory(_70b_config))
+
+# LLama 2 family
+models.register_model(_architecture_name, "2-7b", _llama_factory_factory(_7b_config))
+models.register_model(_architecture_name, "2-13b", _llama_factory_factory(_13b_config))
+models.register_model(_architecture_name, "2-70b", _llama_factory_factory(_70b_config))
+
+# LLama 3 family
+models.register_model(
+    _architecture_name, "3-8b", _llama_factory_factory((_8b_llama3_config))
+)
+
+# Granite family
+models.register_model(
+    _architecture_name, "granite-7b", _llama_factory_factory((_granite_7b_config))
+)
+models.register_model(
+    "llama_classifier",
+    "granite-7b",
+    _llama_classification_factory_factory(_granite_7b_classification_config),
+)
 models.register_model(
     _architecture_name,
-    "ibm.granite.3b.code.base",
-    _llama_factory_factory(_granite_3b_code_base_config),
+    "granite.code-3b",
+    _llama_factory_factory((_granite_3b_code_config)),
+)
+models.register_model(
+    "llama_classifier",
+    "granite.code-3b",
+    _llama_classification_factory_factory(_granite_3b_code_classification_config),
 )
 
 models.register_model(
-    "llama_classifier",
-    "ibm.granite.3b.code.base",
-    _llama_classification_factory_factory(_granite_3b_code_base_classification_config),
-)
-models.register_model(
-    "llama_classifier",
-    "ibm.granite.7b.base",
-    _llama_classification_factory_factory(_granite_7b_base_classification_config),
+    _architecture_name,
+    "granite.code-8b",
+    _llama_factory_factory((_granite_8b_code_config)),
 )
 
 
@@ -658,7 +705,7 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
     ]
     new_sd = {}
 
-    trans_required_pattern = re.compile("layers.[0-9]+.attn.(query|key).weight")
+    trans_required_pattern = re.compile("layers.[0-9]+.attn.(query|key).(weight|bias)")
     for name, param in hf_sd.items():
         new_name = name
         for pattern, repl in replacements:
@@ -666,18 +713,30 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
         new_sd[new_name] = param
 
         # hf -> fms requires a transpose operation for the query and key
+        # weight and bias parameters
+        # This transpose is due to the different implementation of RoPE in
+        # HF and FMS. While FMS follows the original RoPE paper
+        # (https://arxiv.org/abs/2104.09864), HF has its own implementation
+        # that doesn't respect the order of outputs. This is OK as long as you
+        # rearrange the weights of the query and key projections, as the
+        # combination projection + RoPE ends up producing the same outputs.
+        # Therefore, to make FMS produce the correct order of outputs when
+        # loading from an HF checkpoint, we need to undo the transformation
+        # that HF does from the original Meta weights:
         if bool(trans_required_pattern.match(new_name)):
             temp = new_sd[new_name]
             # nheads is used in the transformation required for hf->fms
-            # here we are using 128 as this value fits with all popular models
-            #   7B, 13B, 70B to recover the number of heads
-            nheads = int(temp.size(0) / 128)
+            if temp.size(0) == 2560:
+                head_size = 80  # granite 3b code
+            else:
+                head_size = 128  # every other Llama model in existence
+            nheads = int(temp.size(0) / head_size)
 
-            temp = (
-                temp.view(nheads, 2, -1, temp.size(1))
-                .transpose(1, 2)
-                .reshape(*temp.size())
-            )
+            if temp.dim() == 2:  # weight
+                temp_view = temp.view(nheads, 2, -1, temp.size(1))
+            else:  # bias
+                temp_view = temp.view(nheads, 2, -1)
+            temp = temp_view.transpose(1, 2).reshape(*temp.size())
 
             new_sd[new_name] = temp
 
@@ -725,6 +784,7 @@ def convert_hf_llama(hf_model: "LlamaForCausalLM") -> LLaMA:  # type: ignore
         multiple_of=1,  # this is set to 1 as it is encoded in the hidden dimension
         activation_fn=hf_model.config.hidden_act,
         max_expected_seq_len=hf_model.config.max_position_embeddings,
+        rope_theta=hf_model.config.rope_theta,
     )
     model = LLaMA(config)
     count_parameters = lambda m: sum(p.numel() for p in m.parameters())

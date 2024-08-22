@@ -32,6 +32,7 @@ class RoBERTaConfig(ModelConfig):
     norm_eps: float = 1e-12
     tie_heads: bool = False
 
+
 @dataclass
 class RoBERTaClassificationConfig(RoBERTaConfig):
     num_classes: int = 2
@@ -273,6 +274,7 @@ class RoBERTa(nn.Module):
                 ),
             )
 
+
 class RoBERTaForClassification(nn.Module):
     def __init__(
         self,
@@ -301,7 +303,7 @@ class RoBERTaForClassification(nn.Module):
                 dropout=self.config.p_dropout,
                 apply_pooling_fn=True,
                 dense_bias=False,
-                head_bias=False
+                head_bias=False,
             ),
             final_layers=True,
         )
@@ -323,7 +325,9 @@ class RoBERTaForClassification(nn.Module):
         return x
 
     @classmethod
-    def from_config(cls, config: RoBERTaClassificationConfig) -> "RoBERTaForClassification":
+    def from_config(
+        cls, config: RoBERTaClassificationConfig
+    ) -> "RoBERTaForClassification":
         return cls(config)
 
     def get_config(self) -> RoBERTaClassificationConfig:
@@ -333,10 +337,7 @@ class RoBERTaForClassification(nn.Module):
         self.base_model.reset_parameters()
         self.classification_head.head.weight.data.normal_(
             0,
-            1
-            / math.sqrt(
-                math.sqrt(self.config.emb_dim * self.config.src_vocab_size)
-            ),
+            1 / math.sqrt(math.sqrt(self.config.emb_dim * self.config.src_vocab_size)),
         )
 
 
@@ -352,8 +353,7 @@ _bert_base_config = RoBERTaConfig(
 )
 
 _bert_base_classification_config = RoBERTaClassificationConfig(
-    **_bert_base_config.__dict__,
-    num_classes=2
+    **_bert_base_config.__dict__, num_classes=2
 )
 
 _architecture_name = "roberta"
@@ -380,12 +380,12 @@ models.register_model(
     _architecture_name, "base", _roberta_factory_factory(_base_config)
 )
 
-models.register_model(
-    "bert", "base", _roberta_factory_factory(_bert_base_config)
-)
+models.register_model("bert", "base", _roberta_factory_factory(_bert_base_config))
 
 models.register_model(
-    "bert_classification", "base", _roberta_classification_factory_factory(_bert_base_classification_config)
+    "bert_classification",
+    "base",
+    _roberta_classification_factory_factory(_bert_base_classification_config),
 )
 
 _convert_to_fused_qkv = serialization._legacy_attn_unfused_to_fused_adapter
@@ -426,7 +426,6 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping[Any, Any]) -> Mapping[Any, Any]:
     fused_sd = _convert_to_fused_qkv(new_sd)
 
     return fused_sd
-
 
 
 serialization.register_adapter("bert", "hf", _hf_sd_to_fms_sd)

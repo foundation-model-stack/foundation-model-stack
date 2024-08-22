@@ -13,7 +13,7 @@ from fms.models.hf.roberta.modeling_roberta_hf import (
     HFAdaptedRoBERTaForMaskedLM,
     HFAdaptedRoBERTaHeadless,
 )
-from fms.models.hf.utils import register_fms_models, to_hf_api
+from fms.models.hf.utils import as_fms_model, register_fms_models, to_hf_api
 from fms.models.llama import LLaMA
 from fms.models.mixtral import Mixtral, MixtralHeadless
 from fms.models.roberta import RoBERTa, RoBERTaHeadless

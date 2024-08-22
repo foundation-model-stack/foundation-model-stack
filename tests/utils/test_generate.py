@@ -1,8 +1,15 @@
+import pytest
 import torch
 import torch.nn.functional as F
 from torch import nn
 
-from fms.utils.generation import generate, truncate_after_eos
+from fms.models import get_model
+from fms.utils.generation import (
+    generate,
+    pad_input_ids,
+    trim_prefix,
+    truncate_after_eos,
+)
 from fms.utils.tokenizers import get_tokenizer
 
 
@@ -44,7 +51,7 @@ def test_generate():
     assert result != "ABCDEFGHIJ"
 
 
-def test_batched():
+def test_batched_homogeneous():
     _model_mock = ModelMock()
     tokenizer = get_tokenizer("char_tokenizer")
     ids = tokenizer.convert_tokens_to_ids(tokenizer.tokenize("ABCDE"))
@@ -68,6 +75,68 @@ def test_batched():
     assert result == "ABCDEFGHIJ"
 
 
+def test_batched_heterogeneous():
+    torch.manual_seed(0)
+    with torch.no_grad():
+        _model_mock = get_model("gpt_bigcode", "micro")
+        _model_mock.reset_parameters()
+        _model_mock.eval()
+        tokenizer = get_tokenizer("char_tokenizer")
+        first = torch.tensor(
+            tokenizer.convert_tokens_to_ids(tokenizer.tokenize("ABCDE")),
+            dtype=torch.long,
+        )
+        second = torch.tensor(
+            tokenizer.convert_tokens_to_ids(tokenizer.tokenize("CDEFGHIJKL")),
+            dtype=torch.long,
+        )
+
+        # use_cache=False
+        ids, padding_kwargs = pad_input_ids([first, second])
+        result = generate(
+            _model_mock,
+            ids,
+            max_new_tokens=5,
+            do_sample=False,
+            extra_kwargs=padding_kwargs,
+        )
+        result1_batched = result[0]
+        result2_batched = result[1]
+
+        result1 = generate(_model_mock, first, max_new_tokens=5, do_sample=False)
+        torch.testing.assert_close(
+            result1, result1_batched[second.size(0) - first.size(0) :]
+        )
+
+        result2 = generate(_model_mock, second, max_new_tokens=5, do_sample=False)
+        torch.testing.assert_close(result2, result2_batched)
+
+        # use_cache=True
+        ids, padding_kwargs = pad_input_ids([first, second])
+        result = generate(
+            _model_mock,
+            ids,
+            max_new_tokens=5,
+            do_sample=False,
+            use_cache=True,
+            extra_kwargs=padding_kwargs,
+        )
+        result1_batched = result[0]
+        result2_batched = result[1]
+
+        result1 = generate(
+            _model_mock, first, max_new_tokens=5, do_sample=False, use_cache=True
+        )
+        torch.testing.assert_close(
+            result1, result1_batched[second.size(0) - first.size(0) :]
+        )
+
+        result2 = generate(
+            _model_mock, second, max_new_tokens=5, do_sample=False, use_cache=True
+        )
+        torch.testing.assert_close(result2, result2_batched)
+
+
 def test_truncate():
     result = torch.ones(20)
     result[10] = 5
@@ -75,3 +144,62 @@ def test_truncate():
     expected = torch.ones(11)
     expected[10] = 5
     torch.testing.assert_close(result, expected)
+
+
+def test_pad_input_ids():
+    input_ids = [
+        torch.arange(1, 5, dtype=torch.long),
+        torch.arange(1, 10, dtype=torch.long),
+    ]
+
+    padded_input_ids, padding_kwargs = pad_input_ids(input_ids)
+
+    expected_input_ids = torch.tensor(
+        [([0] * 5) + [i for i in range(1, 5)], [i for i in range(1, 10)]],
+        dtype=torch.long,
+    )
+
+    expected_position_ids = torch.tensor(
+        [([0] * 5) + [i for i in range(0, 4)], [i for i in range(0, 9)]],
+        dtype=torch.long,
+    )
+
+    expected_mask = torch.tensor(
+        [([0] * 5) + [1 for _ in range(0, 4)], [1 for _ in range(0, 9)]],
+        dtype=torch.bool,
+    )
+    expected_mask = (expected_mask.unsqueeze(-1) == expected_mask.unsqueeze(-2)).tril()
+
+    torch.testing.assert_close(padded_input_ids, expected_input_ids)
+    torch.testing.assert_close(padding_kwargs["position_ids"], expected_position_ids)
+    torch.testing.assert_close(padding_kwargs["mask"], expected_mask)
+
+    padded_input_ids, padding_kwargs = pad_input_ids(input_ids, min_pad_length=64)
+
+    expected_input_ids = torch.tensor(
+        [([0] * 60) + [i for i in range(1, 5)], ([0] * 55) + [i for i in range(1, 10)]],
+        dtype=torch.long,
+    )
+
+    expected_position_ids = torch.tensor(
+        [([0] * 60) + [i for i in range(0, 4)], ([0] * 55) + [i for i in range(0, 9)]],
+        dtype=torch.long,
+    )
+
+    expected_mask = torch.tensor(
+        [([0] * 60) + [1 for _ in range(0, 4)], ([0] * 55) + [1 for _ in range(0, 9)]],
+        dtype=torch.bool,
+    )
+    expected_mask = (expected_mask.unsqueeze(-1) == expected_mask.unsqueeze(-2)).tril()
+
+    torch.testing.assert_close(padded_input_ids, expected_input_ids)
+    torch.testing.assert_close(padding_kwargs["position_ids"], expected_position_ids)
+    torch.testing.assert_close(padding_kwargs["mask"], expected_mask)
+
+
+def test_trimming():
+    sentence = torch.cat((torch.zeros((10,)), torch.ones((20,))), dim=0)
+    result = trim_prefix(sentence)
+    torch.testing.assert_close(result, torch.ones((20,)))
+    result = trim_prefix(sentence, pad_token_id=2)
+    torch.testing.assert_close(result, sentence)
