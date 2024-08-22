@@ -385,8 +385,8 @@ class TPGatedLinearUnit(GatedLinearUnit, TPModule):
             }
         else:
             module_sharding_info = {
-                "w1": LinearModuleShardingInfo(self.w1, 0, [self.world_size, self.world_size]),
-                "wg": LinearModuleShardingInfo(self.wg, 0, [self.world_size, self.world_size]),
+                "w1": LinearModuleShardingInfo(self.w1, 0, [self.world_size]),
+                "wg": LinearModuleShardingInfo(self.wg, 0, [self.world_size]),
             }
         module_sharding_info.update({"w2": LinearModuleShardingInfo(self.w2, 1, [self.world_size])})
 

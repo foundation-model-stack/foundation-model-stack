@@ -105,7 +105,7 @@ def shard_base_linear(
             param_count += 1
 
     # FIXME: gptq llama ckpt may have bias but llama linear layers do not
-    # we can't raise an error here, because it stops further computations
+    # We can't raise an error here, because it stops further computations
     # Better handling is needed (drop bias tensor earlier, if zeros?)
     if len(tensor_values) > param_count:
         unused_keys = set(tensor_values.keys()).difference(used_keys)

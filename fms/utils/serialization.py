@@ -527,5 +527,4 @@ def _load_partial_state_dict(
             # (e.g., missing bias)
             unused_keys.add(key)
 
-    # dist.barrier()
     return unused_keys

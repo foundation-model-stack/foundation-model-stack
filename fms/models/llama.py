@@ -593,6 +593,59 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
     return fused_sd
 
 
+# TODO: this adapter is not called, it's for reference of
+# non-gptq unfused-ckpt-to-unfused-model process
+# Similar to _hf_sd_to_fms_sd, except:
+# 1) loads self_attn into attn.in_proj (not just attn)
+# 2) transpose pattern of attn.in_proj
+# 3) does not FUSE parameters at the end
+def _hf_unfused_sd_to_fms_unfused_sd(hf_sd: Mapping) -> Mapping:
+    replacements = [
+        (r"^lm_head.weight", "shared.head.weight"),
+        (r"^model.embed_tokens.weight", "shared.emb.weight"),
+        (r"^model.norm", "dec_norm"),
+        (r"^model.layers", "layers"),
+        (r"self_attn\.k_proj", "attn.in_proj.key"),
+        (r"self_attn\.v_proj", "attn.in_proj.value"),
+        (r"self_attn\.q_proj", "attn.in_proj.query"),
+        (r"self_attn\.o_proj", "attn.dense"),
+        (r"mlp\.gate_proj", "ff_sub_layer.wg"),
+        (r"mlp\.up_proj", "ff_sub_layer.w1"),
+        (r"mlp\.down_proj", "ff_sub_layer.w2"),
+        (r"input_layernorm", "ln"),
+        (r"post_attention_layernorm", "ff_ln"),
+    ]
+    new_sd = {}
+
+    trans_required_pattern = re.compile("layers.[0-9]+.attn.in_proj.(query|key).(weight|bias)")
+    for name, param in hf_sd.items():
+        new_name = name
+        for pattern, repl in replacements:
+            new_name = re.sub(pattern, repl, new_name)
+        new_sd[new_name] = param
+
+        # hf -> fms requires a transpose operation for the query and key
+        # weight and bias parameters
+        if bool(trans_required_pattern.match(new_name)):
+            temp = new_sd[new_name]
+            # nheads is used in the transformation required for hf->fms
+            if temp.size(0) == 2560:
+                head_size = 80  # granite 3b code
+            else:
+                head_size = 128  # every other Llama model in existence
+            nheads = int(temp.size(0) / head_size)
+
+            if temp.dim() == 2:  # weight
+                temp_view = temp.view(nheads, 2, -1, temp.size(1))
+            else:  # bias
+                temp_view = temp.view(nheads, 2, -1)
+            temp = temp_view.transpose(1, 2).reshape(*temp.size())
+
+            new_sd[new_name] = temp
+
+    return new_sd
+
+
 # TODO: merge with standard _hf_sd_to_fms_sd adapter
 # Very similar except:
 # 1) add in_proj to q,k,v
@@ -628,7 +681,8 @@ def _gptq_unfused_sd_to_fms_unfused_sd(hf_sd: Mapping) -> Mapping:
         # weight and bias parameters
         # Differently from hf-to-fms conversion, GPTQ qweights are [in_feat, out_feat]
         # and are fully transposed before & after process
-        # FIXME: is unpack/transpose/repack for qweight and qzeros also needed?!?
+        # FIXME: is unpack/transpose/repack for qweight and qzeros also needed?
+        # is there any combination of group quantization that requires unpacking?
         if bool(trans_required_pattern.match(fms_name)):
             param_t_size = param.t().size()
 
