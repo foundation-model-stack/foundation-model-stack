@@ -127,6 +127,12 @@ def generate(
     contiguous_cache: bool = False,
     eos_token_id: Optional[int] = None,
     timing: str = "",
+    post_iteration_hook: Optional[
+        Callable[
+            [int, torch.Tensor, torch.Tensor, MutableMapping[str, Any]],
+            Tuple[torch.Tensor, MutableMapping[str, Any]],
+        ]
+    ] = None,
     extra_kwargs: Optional[MutableMapping[str, Any]] = None,
 ):
     """
@@ -154,6 +160,10 @@ def generate(
             with the following information:
             - "per-token": Array with `max_new_tokens` time measurements (in s)
             - "e2e": Array with a single e2e generation loop time measurement (in s)
+        post_iteration_hook: a function that will get called after each iteration.
+            It must have the following signature: f(int token_position, Tensor logits, Tensor next_val, Dict kwargs) ->
+            Tuple[Tensor next_val, Dict kwargs]. If it is defined, will replace next_val
+            and kwargs based on the contents of the function.
         extra_kwargs: an optional mapping of additional kwargs to pass to the model.
             For example: if extra_kwargs contains position_ids and mask keys, these
             model parameters will be updated as-appropriate for each token generated.
@@ -181,9 +191,13 @@ def generate(
     next_input = input_ids
     kwargs["past_key_value_states"] = None
     kwargs["use_cache"] = use_cache
+
+    prompt_length = input_ids.shape[1]
+
     if timing != "":
         times: List[float] = []
         start_time = time.time()
+
     for i in range(max_new_tokens):
         input_ids = next_input[:, -max_seq_len:]
 
@@ -218,6 +232,11 @@ def generate(
             next_val = torch.multinomial(probs, num_samples=1)
         else:
             next_val = torch.argmax(logits, dim=-1).unsqueeze(0).t()
+
+        if post_iteration_hook is not None:
+            next_val, kwargs = post_iteration_hook(
+                i + prompt_length, logits, next_val, kwargs
+            )
 
         result = torch.cat((result, next_val), dim=-1)
 
