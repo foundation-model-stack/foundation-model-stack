@@ -78,7 +78,6 @@ def _legacy_attn_unfused_to_fused_adapter(orig_sd):
         # if the name is part of removed_params, we no longer want to process it
         if name in removed_params:
             continue
-
         if "attn.query" in name or "attn.key" in name or "attn.value" in name:
             # weight_type denotes weight or bias
             weight_type = name.split(".")[-1]
@@ -106,9 +105,13 @@ def _legacy_attn_unfused_to_fused_adapter(orig_sd):
                 f"attn.in_proj.qkv_fused.{weight_type}",
                 name,
             )
-            new_sd[new_name] = torch.cat(
-                [orig_sd.pop(w) for w in unfused_weights], dim=0
-            )
+            to_fuse = [orig_sd.pop(w) for w in unfused_weights]
+            revert_to_dtype = None
+            if to_fuse[0].dtype == torch.float8_e4m3fn:
+                to_fuse = [w.to(torch.bfloat16) for w in to_fuse]
+                revert_to_dtype = torch.float8_e4m3fn
+            fused = torch.cat(to_fuse, dim=0)
+            new_sd[new_name] = fused if revert_to_dtype is None else fused.to(revert_to_dtype)
         else:
             new_sd[name] = orig_sd.pop(name)
     return new_sd
@@ -149,9 +152,16 @@ def _legacy_mlp_glu_unfused_to_fused_adapter(orig_sd):
                 f"ff_sub_layer.wg1_fused.{weight_type}",
                 name,
             )
-            new_sd[new_name] = torch.cat(
-                [orig_sd.pop(w) for w in unfused_weights], dim=0
-            )
+            # new_sd[new_name] = torch.cat(
+            #     [orig_sd.pop(w) for w in unfused_weights], dim=0
+            # )
+            to_fuse = [orig_sd.pop(w) for w in unfused_weights]
+            revert_to_dtype = None
+            if to_fuse[0].dtype == torch.float8_e4m3fn:
+                to_fuse = [w.to(torch.bfloat16) for w in to_fuse]
+                revert_to_dtype = torch.float8_e4m3fn
+            fused = torch.cat(to_fuse, dim=0)
+            new_sd[new_name] = fused if revert_to_dtype is None else fused.to(revert_to_dtype)
         else:
             new_sd[name] = orig_sd.pop(name)
     return new_sd
@@ -532,6 +542,8 @@ def _load_partial_state_dict(
                     )
                     setattr(target_module, key_steps[-1], param)
                     param = getattr(target_module, key_steps[-1])
+                if param.dim() == 0: # fp8 per-tensor scale handling
+                    tensor_value = tensor_value.item()
                 param.copy_(tensor_value, non_blocking=True)
 
             elif tp_module is not None and tp_module not in seen_tp_modules:

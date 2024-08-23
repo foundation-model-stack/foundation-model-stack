@@ -229,6 +229,7 @@ class Fp8InferenceLinear(Fp8InferenceLinearBase):
         else: # per-row A and per-row B
             assert "static-per-row" == self.weight_casting
             assert "dynamic-per-row" == self.activation_casting
+            
             output = torch.ops.fbgemm.f8f8bf16_rowwise(
                         aq, wq, 
                         ascale, # per-row
@@ -236,6 +237,17 @@ class Fp8InferenceLinear(Fp8InferenceLinearBase):
                         self.bias,
                         use_fast_accum=self.use_fast_accum,
                     )
+            
+            # # DEBUG implementation with torch scaled mm
+            # output = torch._scaled_mm(aq, wq.T,
+            #                           out_dtype=input.dtype,
+            #                           scale_a=torch.tensor(1.0, dtype=torch.float32, device=aq.device), 
+            #                           scale_b=torch.tensor(1.0, dtype=torch.float32, device=aq.device))
+            
+            # scales = ascale.view((output.shape[0],1)) @ wscale.view(1, output.shape[1])
+            # # print(f"{scales=}, {scales.shape=}")
+            # output = (output * scales).to(torch.bfloat16)
+            # print(f"{output=}, {output.shape=}")
         if bs is not None:
             output = output.reshape(bs, -1, output.shape[1])
 
@@ -309,8 +321,8 @@ def shard_fbgemm_fp8_linear(
         params: Dict[str, LinearParameterShardingInfo] = {
             # FIXME: should either shard or clone depending on the checkpoint weight_scale
             "weight_scale": LinearParameterShardingInfo(
-                0,
-                ShardType.CLONE,
+                module_info.sharding_dim,
+                ShardType.SHARD if module_info.sharding_dim == 0 else ShardType.CLONE,
             ),
             "weight": LinearParameterShardingInfo(
                 module_info.sharding_dim, ShardType.SHARD

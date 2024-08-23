@@ -96,7 +96,11 @@ parser.add_argument(
     default=0,
 )
 parser.add_argument("--context_file", type=str, default=None, help="File to summarize")
-
+parser.add_argument(
+    "--unfuse",
+    action="store_true",
+    help="instantiate unfused model instance`",
+)
 args = parser.parse_args()
 
 local_rank = int(os.getenv("LOCAL_RANK", 0))
@@ -131,11 +135,11 @@ else:
     else:
         distr_param = None
 
-linear_config = {"linear_type": "auto_fp8", "activation_quantization": "static-per-tensor"}
+# linear_config = {"linear_type": "auto_fp8", "activation_quantization": "static-per-tensor"}
 # linear_config = {"linear_type": "auto_fp8", "activation_quantization": "dynamic-per-tensor"}
-# linear_config = {"linear_type": "fbgemm_fp8", "activation_quantization": "dynamic-per-tensor", "weight_quantization": "static-per-tensor"}
-# linear_config = {"linear_type": "fbgemm_fp8", "activation_quantization": "static-per-tensor", "weight_quantization": "static-per-tensor"}
-# linear_config = {"linear_type": "fbgemm_fp8", "activation_quantization": "dynamic-per-row", "weight_quantization": "static-per-row"}
+# linear_config = {"linear_type": "fbgemm_fp8", "activation_quantization": "dynamic-per-tensor", "weight_quantization": "static-per-tensor"} # won't work for llama3-fp8
+# linear_config = {"linear_type": "fbgemm_fp8", "activation_quantization": "static-per-tensor", "weight_quantization": "static-per-tensor"}  # won't work for llama3-fp8
+linear_config = {"linear_type": "fbgemm_fp8", "activation_quantization": "dynamic-per-row", "weight_quantization": "static-per-row"}
 
 model = get_model(
     args.architecture,
@@ -146,7 +150,9 @@ model = get_model(
     distributed_strategy=distr_param,
     group=dist.group.WORLD,
     linear_config=linear_config,
+    unfuse_strategy="pre" if args.unfuse else None,
 )
+print(model)
 
 # print("----parameters----")
 # for name, p in model.named_parameters():
@@ -211,9 +217,8 @@ prompt1 = "def sqrt(x): "
 prompt2 = prompt1
 
 prompt1 = ids_for_prompt(prompt1)
-prompt1 = torch.tensor([[589, 17058,    26,   106,   711,   225]], dtype=torch.int64, device='cuda')
 prompt2 = ids_for_prompt(prompt2)
-# print(f"{prompt1=}")
+print(f"{prompt1=}")
 # print(f"{prompt2=}")
 max_len = max([len(prompt) for prompt in [prompt1, prompt2]])
 
