@@ -146,6 +146,8 @@ class TPModule(nn.Module, metaclass=ABCMeta):
             else:
                 param.zero_()
         else:  # ShardType.CLONE
+            if param.dim() == 0: # fp8 per-tensor scale handling
+                tensor_value = tensor_value.item()
             param.copy_(tensor_value, non_blocking=True)
 
     def _get_sd_weight(

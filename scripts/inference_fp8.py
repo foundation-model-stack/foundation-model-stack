@@ -135,11 +135,13 @@ else:
     else:
         distr_param = None
 
-# linear_config = {"linear_type": "auto_fp8", "activation_quantization": "static-per-tensor"}
+# Note: auto_fp8 works for either fused or unfused models
+#       fbgemm_fp8 only works with fused models for now unless there's a need to support it for unfused ones
+linear_config = {"linear_type": "auto_fp8", "activation_quantization": "static-per-tensor"}
 # linear_config = {"linear_type": "auto_fp8", "activation_quantization": "dynamic-per-tensor"}
-# linear_config = {"linear_type": "fbgemm_fp8", "activation_quantization": "dynamic-per-tensor", "weight_quantization": "static-per-tensor"} # won't work for llama3-fp8
-# linear_config = {"linear_type": "fbgemm_fp8", "activation_quantization": "static-per-tensor", "weight_quantization": "static-per-tensor"}  # won't work for llama3-fp8
-linear_config = {"linear_type": "fbgemm_fp8", "activation_quantization": "dynamic-per-row", "weight_quantization": "static-per-row"}
+# linear_config = {"linear_type": "fbgemm_fp8", "activation_quantization": "dynamic-per-tensor", "weight_quantization": "static-per-tensor"}
+# linear_config = {"linear_type": "fbgemm_fp8", "activation_quantization": "static-per-tensor", "weight_quantization": "static-per-tensor"}
+# linear_config = {"linear_type": "fbgemm_fp8", "activation_quantization": "dynamic-per-row", "weight_quantization": "static-per-row"}
 
 model = get_model(
     args.architecture,

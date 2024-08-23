@@ -124,6 +124,10 @@ class AutoFp8InferenceLinear(Fp8InferenceLinearBase):
                                   scale_b=wscale, # per-tensor
                                   bias=self.bias)
         
+        # DEBUG implementation with high-precision mm - can be used by HW that doesn't support FP8
+        # output = input @ (wq.to(torch.bfloat16) * wscale.to(torch.float16)).T
+        # output = output.to(input.dtype)
+        
         if bs is not None:
             output = output.reshape(bs, -1, output.shape[1])
 
