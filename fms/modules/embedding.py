@@ -258,9 +258,9 @@ class TPWordEmbedding(WordEmbedding, TPModule):
         inp_par = copy_to_tensor_model_parallel_region(inp)
         out_par = WordEmbedding.forward(self, inp_par, reverse=reverse)
         # with ints this wasn't `torch.compile`ing
-        rank = torch.tensor(self.rank)
-        world_size = torch.tensor(self.world_size)
-        return all_gather_from_tensor_model_parallel_region(out_par, rank, world_size)
+        return all_gather_from_tensor_model_parallel_region(
+            out_par, self.rank, self.world_size
+        )
 
 
 class TPEmbedding(nn.Embedding, TPModule):
@@ -335,6 +335,6 @@ class TPEmbedding(nn.Embedding, TPModule):
         inp_par = copy_to_tensor_model_parallel_region(inp)
         out_par = nn.Embedding.forward(self, inp_par)
         # with ints this wasn't `torch.compile`ing
-        rank = torch.tensor(self.rank)
-        world_size = torch.tensor(self.world_size)
-        return all_gather_from_tensor_model_parallel_region(out_par, rank, world_size)
+        return all_gather_from_tensor_model_parallel_region(
+            out_par, self.rank, self.world_size
+        )

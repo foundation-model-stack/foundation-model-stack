@@ -165,7 +165,7 @@ class TPFeedForwardBlock(FeedForwardBlock, TPModule):
     def forward(self, x):
         x_par = copy_to_tensor_model_parallel_region(x)
         out_par = FeedForwardBlock.forward(self, x_par)
-        return reduce_from_tensor_model_parallel_region(out_par)
+        return reduce_from_tensor_model_parallel_region(out_par, self.world_size)
 
 
 class GatedLinearUnit(nn.Module):
@@ -403,7 +403,7 @@ class TPGatedLinearUnit(GatedLinearUnit, TPModule):
     def forward(self, x):
         x_par = copy_to_tensor_model_parallel_region(x)
         out_par = GatedLinearUnit.forward(self, x_par)
-        return reduce_from_tensor_model_parallel_region(out_par)
+        return reduce_from_tensor_model_parallel_region(out_par, self.world_size)
 
     def _initialize_empty_module(self):
         return TPGatedLinearUnit(
@@ -573,7 +573,7 @@ class TPConditionalFeedForward(ConditionalFeedForward, TPModule):
     def forward(self, x, expert_indices):
         x_par = copy_to_tensor_model_parallel_region(x)
         out_par = ConditionalFeedForward.forward(self, x_par, expert_indices)
-        return reduce_from_tensor_model_parallel_region(out_par)
+        return reduce_from_tensor_model_parallel_region(out_par, self.world_size)
 
 
 class MOEFeedForward(nn.Module):
