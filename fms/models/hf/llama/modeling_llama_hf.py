@@ -17,6 +17,9 @@ class HFAdaptedLLaMADecoder(HFDecoder):
     def __init__(self, model: LLaMA, config: PretrainedConfig):
         super().__init__(model, config, attention_mask_dim=3)
 
+    def set_input_embeddings(self, value: nn.Module):
+        self.model.shared.emb = value
+
     def _adapt(
         self,
         input_ids: Optional[torch.LongTensor] = None,
