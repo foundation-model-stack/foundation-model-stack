@@ -50,7 +50,7 @@ def get_linear(
     in_features: int,
     out_features: int,
     bias: bool,
-    linear_config:  Optional[Mapping[str, Any]] = None,
+    linear_config: Optional[Mapping[str, Any]] = None,
 ) -> nn.Module:
     linear_type = get_linear_type(linear_config)
 
@@ -84,12 +84,12 @@ def shard_base_linear(
     tp_module: TPModule,
     module_sharding_info: Dict[str, LinearModuleShardingInfo],
     param_sharding_info: Dict[str, Dict[str, LinearParameterShardingInfo]],
-) -> None:
+) -> Optional[set]:
     all_params = {}
     used_keys: set[str] = set()
+    unused_keys: set[str] = set()
 
-    # Collect quantization parameters to copy on sharded module
-    tensor_device = None
+    # Collect all parameters to be copied on selected sharded modules
     param_count = 0
     for module_name in module_sharding_info:
         for param_name in param_sharding_info[module_name]:
@@ -99,34 +99,15 @@ def shard_base_linear(
             all_params[module_name][param_name] = tp_module._get_sd_weight(
                 tensor_values, used_keys, [module_name, param_name]
             )
-            # TODO: We should transfer the initial_device here from get_model
-            if tensor_device is None:
-                tensor_device = all_params[module_name][param_name].device
             param_count += 1
 
-    # FIXME: gptq llama ckpt may have bias but llama linear layers do not
-    # We can't raise an error here, because it stops further computations
-    # Better handling is needed (drop bias tensor earlier, if zeros?)
     if len(tensor_values) > param_count:
         unused_keys = set(tensor_values.keys()).difference(used_keys)
-        # print("UNUSED KEYS: ", ', '.join(unused_keys))
-        # raise AttributeError(f"Unused weight(s): {', '.join(unused_keys)}")
 
-    # Shard module, one parameter at the time
+    # Shard selected modules, one parameter at the time
     for module_name, module_info in module_sharding_info.items():
         for param_name, param_info in param_sharding_info[module_name].items():
             module_param = getattr(module_info.linear_module, param_name)
-            if module_param.device == torch.device("meta"):
-                # TODO: We should bring the default dtype if set from get_model here
-                if isinstance(module_param, nn.Parameter):
-                    module_param = nn.Parameter(
-                        torch.empty_like(module_param, device=tensor_device)
-                    )
-                else:
-                    module_param = torch.empty_like(module_param, device=tensor_device)
-                setattr(module_info.linear_module, param_name, module_param)
-                module_param = getattr(module_info.linear_module, param_name)
-
             tp_module.sharded_copy(
                 param=module_param,
                 tensor_value=all_params[module_name][param_name],
@@ -134,13 +115,14 @@ def shard_base_linear(
                 max_partition_sizes=module_info.max_partitions,
                 shard_type=param_info.shard_type,
             )
+    return unused_keys
 
 
 def shard_torch_linear(
     tensor_values: Dict[str, torch.Tensor],
     tp_module: TPModule,
     module_sharding_info: Dict[str, LinearModuleShardingInfo],
-) -> None:
+) -> Optional[set]:
     """
                          |     GPU     |
     sharding  | param    | shard | dim |
@@ -166,12 +148,13 @@ def shard_torch_linear(
             )
         param_sharding_info[module_name] = params
 
-    shard_base_linear(
+    unused_keys = shard_base_linear(
         tensor_values,
         tp_module,
         module_sharding_info,
         param_sharding_info,
     )
+    return unused_keys
 
 
 register_linear_type_to_module_map("torch_linear", nn.Linear)

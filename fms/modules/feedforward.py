@@ -159,11 +159,12 @@ class TPFeedForwardBlock(FeedForwardBlock, TPModule):
         }
 
         type_sharding_map = get_all_linear_type_to_sharding_maps()
-        type_sharding_map[self.linear_type](
+        unused_keys = type_sharding_map[self.linear_type](
             tensor_values,
             self,
             module_sharding_info,
         )
+        return unused_keys
 
     @staticmethod
     def import_module(
@@ -376,7 +377,20 @@ class TPGatedLinearUnit(GatedLinearUnit, TPModule):
     def load_weights(
         self,
         tensor_values: dict[str, torch.Tensor],
-    ):
+    ) -> Optional[set]:
+        """Define sharding info of GLU module as:
+        {'module_name': (module_obj, sharding_dim, max_partition)}
+        Then, call the pre-registered sharding function associated with
+        self.linear_type.
+
+        `sharding_dim` is sharding dimension of the `weights` parameter
+        of nn.Linear. It may differ for other types of linear or other
+        parameters.
+
+        The numbers in `max_partition` signify the largest world size
+        till we need to duplicate. For instance if we have nheads=16 and
+        world_size=32, then first 2 ranks will get first 1/16th of query
+        """
 
         # sharding modules struct: {'module_name': (module_obj, sharding_dim, max_partition)}
         if self.fused:
@@ -388,14 +402,15 @@ class TPGatedLinearUnit(GatedLinearUnit, TPModule):
                 "w1": LinearModuleShardingInfo(self.w1, 0, [self.world_size]),
                 "wg": LinearModuleShardingInfo(self.wg, 0, [self.world_size]),
             }
-        module_sharding_info.update({"w2": LinearModuleShardingInfo(self.w2, 1, [self.world_size])})
+        module_sharding_info["w2"] = LinearModuleShardingInfo(self.w2, 1, [self.world_size])
 
         type_sharding_map = get_all_linear_type_to_sharding_maps()
-        type_sharding_map[self.linear_type](
+        unused_keys = type_sharding_map[self.linear_type](
             tensor_values,
             self,
             module_sharding_info,
         )
+        return unused_keys
 
     @staticmethod
     def import_module(glu: GatedLinearUnit, group: ProcessGroup) -> "TPGatedLinearUnit":

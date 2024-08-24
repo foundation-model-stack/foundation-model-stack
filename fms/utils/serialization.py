@@ -18,8 +18,6 @@ from typing import (
 )
 
 import torch
-
-from fms.modules.linear import get_linear_type
 from fms.modules.tp import TPModule
 
 
@@ -277,7 +275,7 @@ def load_state_dict(
             glob_pattern_list = [glob_pattern]
         elif source == "meta":
             glob_pattern_list = ["*.pth", "*.safetensors"]
-        elif source == "hf" or "gptq_hf" in source:
+        elif source == "hf":
             glob_pattern_list = ["*.bin", "*.safetensors", "*.pt"]
         else:
             glob_pattern_list = ["*.safetensors", "*.pth", "*.bin"]
@@ -376,7 +374,7 @@ def load_state_dict_into_model(
     distributed_strategy: Optional[str] = None,
     checkpoint_sharding: Optional[str] = None,
     initial_device: torch.device = torch.device("cpu"),
-    is_sd_unfused: bool = False,
+    rank: int = 0,
 ) -> None:
     """
     This function loads state_dict into model in the most efficient way possible,
@@ -401,9 +399,6 @@ def load_state_dict_into_model(
     """
 
     # 1. Get the adapter from checkpoint sd to fms sd
-    # TODO: could create custom source based on the unfuse_strategy, and call corresponding adapter
-    # TODO: adapter now always convert to fused... need a separate one or customize this
-    # source="gptq_hf_unfused"  # !!! DEBUG: hardcode source
     adapter = _get_adapter(architecture, source)
 
     # 2. Decide if model needs sharding and how (for now only TP)
@@ -443,8 +438,9 @@ def load_state_dict_into_model(
                     state_dict.pop(p_key)
             del partial_sd
             del fms_partial_sd
-    # TODO: we may return or print full set of unused_keys
-    # should not raise error but a warning would be useful
+
+    if unused_keys and rank == 0:
+        print(f"[WARNING] Keys from checkpoint (adapted to FMS) not copied into model: {unused_keys}")
 
 
 def _copy_if_present(parameter, tensor_value):
@@ -466,6 +462,7 @@ def _load_partial_state_dict(
     model: torch.nn.Module, state_dict, needs_tp_sharding: bool
 ) -> set:
     unused_keys = set()
+    unused_keys_tp = None
     seen_tp_modules = set()
     for key, tensor_value in state_dict.items():
         target_module = model
@@ -475,14 +472,10 @@ def _load_partial_state_dict(
         key_step = 0
         tp_module = None
         tp_prefix = ""
+
         # Navigate the model tree to find the module where the parameter is
         # located and whether there is a TPModule in the way in case the
         # parameter requires sharding
-
-        # import torch.distributed as dist
-        # if dist.get_rank() == 0:
-        #     breakpoint()
-
         while key_step < len(key_steps) - 1:
             try:
                 target_module = getattr(target_module, key_steps[key_step])
@@ -513,18 +506,17 @@ def _load_partial_state_dict(
                     param = _move_to_real_device(param, tensor_value.device)
                     setattr(target_module, key_steps[-1], param)
                     param = getattr(target_module, key_steps[-1])
-
                 param.copy_(tensor_value, non_blocking=True)
+
             elif tp_module is not None and tp_module not in seen_tp_modules:
                 seen_tp_modules.add(tp_module)
                 tensor_values = {k: v for k, v in state_dict.items() if tp_prefix in k}
                 tp_module._apply(lambda t: _move_to_real_device(t, tensor_value.device))
-                tp_module.load_weights(tensor_values)
-
-        except AttributeError:
-            # FIXME: error catch is incorrect, it will record `key` but the code
-            # may have failed when processing one or more of this key's neighbors
-            # (e.g., missing bias)
-            unused_keys.add(key)
+                unused_keys_tp = tp_module.load_weights(tensor_values)
+        except:
+            if unused_keys_tp:
+                unused_keys.update(unused_keys_tp)
+            else:
+                unused_keys.add(key)
 
     return unused_keys

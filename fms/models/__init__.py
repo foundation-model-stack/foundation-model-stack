@@ -207,20 +207,39 @@ def _is_dp(distributed_strategy):
     return distributed_strategy in {"fsdp", "hsdp", "ddp"}
 
 
-def _validate_unfuse_strategy(extra_args):
+def _validate_unfuse_strategy(extra_args, rank):
+    """Input checkpoint and output model may be fused or unfused, thus
+    support is needed for all 4 possible combinations of fusion.
+
+    For FP16 models, the checkpoint is always fused (converting from
+    unfused if needed), then its parameters are copied into a fused model.
+    If an unfused output model is desired, `unfuse_strategy` can be set
+    to `post` such that the fused model will be unfused as the last
+    step of processing.
+
+    For GPTQ, handling an unfused checkpoint requires instantiation of
+    an unfused model. This is obtained by setting `unfuse_strategy` to
+    `pre`.
+
+    ckpt       target_model   unfuse_strategy
+                              FP16     GPTQ
+    -----------------------------------------
+    fused      fused          None     None
+    fused      unfused        post     n/a
+    unfused    fused          None     n/a
+    unfused    unfused        post     pre
     """
-    ckpt       target_model   unfuse_strategy     task
-    -------------------------------------------------------------------------------------------------------
-    fused      fused          None                copy param from ckpt into fused model
-    fused      unfused        post                copy param from ckpt into fused model, then unfuse model
-    unfused    fused          pre + fuse (?)      instantiate unfused model, copy param from ckpt into unfused model, then fuse model OR
-                                                  fuse ckpt and copy param into fused model
-    unfused    unfused        pre                 instantiate unfused model, copy param from ckpt into unfused model
-    """
+
     unfuse = extra_args["unfuse_strategy"]
     if unfuse is not None and unfuse not in ["post", "pre"]:
         raise ValueError(
             f"Unsupported unfuse strategy `{unfuse}`. Choose between [None, `post`, `pre`]"
+        )
+    if rank == 0:
+        model_str = "fused" if unfuse is None else "unfused"
+        print(
+            f"Output model will be {model_str} (unfuse_strategy = {unfuse}). "
+            "Select a different unfuse_strategy to change this behavior."
         )
 
 
@@ -302,10 +321,18 @@ def get_model(
                 devices, _guess_num_layers(lazy_sd)
             )
 
-    # TODO: detect if ckpt is unfused, customize source accordingly (?)
-    # TODO: apply `pre` strategy to GPTQ only
     if extra_args.get("unfuse_strategy", None):
-        _validate_unfuse_strategy(extra_args)
+        _validate_unfuse_strategy(extra_args, rank)
+
+        # change source for "gptq + pre" (= unfused gptq ckpt into unfused model)
+        if (
+            extra_args.get("linear_config", None)
+            and extra_args["linear_config"].get("linear_type", None) == "gptq"
+            and extra_args.get("unfuse_strategy") == "pre"
+        ):
+            if source != "hf":  # only works for `hf` source but might support None or `fms` in the future
+                raise ValueError(f"Expected GPTQ checkpoint of type `hf` but source is `{source}` instead")
+            source = "gptq_" + source + "_unfused"
 
     # Create the model on meta device to allocate weights lazily
     fms_model = _get_model_instance(
@@ -335,6 +362,7 @@ def get_model(
             distributed_strategy,
             checkpoint_sharding,
             initial_device,
+            rank,
         )
     else:
         # move from meta device to real device

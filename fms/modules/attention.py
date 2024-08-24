@@ -514,19 +514,21 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
     def load_weights(
         self,
         tensor_values: dict[str, torch.Tensor],
-    ) -> None:
-        """Define name of MHA modules to TP-shard, their name-to-module mapping,
-        per-module base sharding dimension, and per-module max partition size.
+    ) -> Optional[set]:
+        """Define sharding info of MHA module as:
+        {'module_name': (module_obj, sharding_dim, max_partition)}
+        Then, call the pre-registered sharding function associated with
+        self.linear_type.
 
-        `module_base_shard_dim` is sharding dimension of the `weights` parameter
-        of nn.Linear. Other parameters may differ.
+        `sharding_dim` is sharding dimension of the `weights` parameter
+        of nn.Linear. It may differ for other types of linear or other
+        parameters.
 
-        The numbers in max_partition signify the largest world size
-        til we need to duplicate. For instance if we have nheads=16 and
+        The numbers in `max_partition` signify the largest world size
+        till we need to duplicate. For instance if we have nheads=16 and
         world_size=32, then first 2 ranks will get first 1/16th of query
         """
 
-        # sharding modules struct: {'module_name': (module_obj, sharding_dim, max_partition)}
         if self.fused:
             module_sharding_info = {
                 "qkv_fused": LinearModuleShardingInfo(
@@ -551,11 +553,12 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
             }
 
         type_sharding_map = get_all_linear_type_to_sharding_maps()
-        type_sharding_map[self.linear_type](
+        unused_keys = type_sharding_map[self.linear_type](
             tensor_values,
             self,
             module_sharding_info,
         )
+        return unused_keys
 
     @staticmethod
     def import_module(

@@ -111,7 +111,7 @@ def shard_gptq_linear(
     tensor_values: Dict[str, torch.Tensor],
     tp_module: TPModule,
     module_sharding_info: Dict[str, LinearModuleShardingInfo],
-) -> None:
+) -> Optional[set]:
     """
     Set up GPTQ quantization parameters to be sharded onto linear modules
 
@@ -157,7 +157,7 @@ def shard_gptq_linear(
 
     # NOTE: gptq ckpt may have ZERO bias in the ckpt tensors, while model has None
     # OK to ignore bias but we can't raise an error or computation will stop
-    shard_base_linear(
+    unused_keys = shard_base_linear(
         tensor_values, tp_module, module_sharding_info, param_sharding_info
     )
 
@@ -167,6 +167,7 @@ def shard_gptq_linear(
             g_idx_param = module_info.linear_module.g_idx
             module_info.linear_module.g_idx = g_idx_param - g_idx_param.min()
 
+    return unused_keys
 
 register_linear_type_to_module_map("gptq", get_gptq_linear)
 register_linear_type_to_sharding_map("gptq", shard_gptq_linear)

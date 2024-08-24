@@ -286,11 +286,12 @@ class LLaMA(nn.Module):
                     check_close(m.dense.weight)
 
     def post_init(self):
-        # This function is called in `get_model` after the model is fully initalized in the correct device
+        # This function is called in `get_model` after the model is
+        # fully initalized on the correct device
 
-        # if this model ties weights, so we tie here
+        # if this model ties weights, they are tied here
         if self.config.tie_heads:
-            # make sure you assign the non-meta weights to the meta parameters
+            # handle assignment of non-meta weights to meta parameters
             if self.shared.head.weight.device == torch.device("meta"):
                 self.shared.head.weight = self.shared.emb.weight
             else:

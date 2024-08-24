@@ -149,6 +149,9 @@ class TPModule(nn.Module, metaclass=ABCMeta):
         used_keys: Set[str],
         substr_matches: List[str],
     ):
+        """Extract from partial model state_dict, the tensor
+        uniquely identified by the matching substrings provided.
+        """
         results = []
         for k in state_dict:
             all_matches = True

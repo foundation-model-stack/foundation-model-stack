@@ -255,6 +255,8 @@ class TPWordEmbedding(WordEmbedding, TPModule):
     def forward(self, inp, reverse=False):
         # If reverse is False, compute input embeddings. If reverse is True, compute output logits.
         # vocab_idx: b n d if reverse, else b n
+        # if self.tie_weights and reverse:
+        #     inp = inp.chunk(self.world_size, dim=2)[self.rank]
         inp_par = copy_to_tensor_model_parallel_region(inp)
         out_par = WordEmbedding.forward(self, inp_par, reverse=reverse)
         # with ints this wasn't `torch.compile`ing
