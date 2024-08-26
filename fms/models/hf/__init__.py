@@ -1,4 +1,3 @@
-# type: ignore
 from fms.models.gpt_bigcode import GPTBigCode, GPTBigCodeHeadless
 from fms.models.hf.gpt_bigcode import HFAdaptedGPTBigCodeForCausalLM
 from fms.models.hf.gpt_bigcode.modeling_gpt_bigcode_hf import (
