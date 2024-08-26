@@ -643,9 +643,8 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
         if bool(expand_required_pattern.match(name)):
             if param.numel() == 1:
                 weight_out_features = new_sd[name.replace("weight_scale", "weight")].shape[0]
-            new_sd[name] = param.expand(weight_out_features)
+                new_sd[name] = param.expand(weight_out_features)
 
-                
     fused_sd = _convert_to_fused(new_sd)
 
     return fused_sd
