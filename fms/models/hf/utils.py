@@ -137,11 +137,15 @@ def to_hf_api(model: nn.Module, **override_config_kwargs) -> "HFModelArchitectur
 
 
 def _infer_model_configuration(
-    model_id_or_path: Union[str, os.PathLike]
+    model_id_or_path: Union[str, os.PathLike],
+    download_weights: bool = True,
 ) -> Dict[str, Any]:
     # if the path does not exist, download it from huggingface and get the local path
     if not os.path.exists(model_id_or_path):
         from huggingface_hub import snapshot_download  # type: ignore
+
+        # in the case we don't want to download the weights, but just create the model from scratch, we will only allow config.json
+        allow_patterns = None if download_weights else ["config.json"]
 
         # mixtral saves safetensors expert sharded, so we will need their pt checkpoints
         # ideally this should be fixed in the adapter in the future
@@ -151,7 +155,9 @@ def _infer_model_configuration(
         ):
             ignore_patterns = ["*.safetensors"]
         model_path = snapshot_download(
-            repo_id=model_id_or_path, ignore_patterns=ignore_patterns
+            repo_id=model_id_or_path,
+            ignore_patterns=ignore_patterns,
+            allow_patterns=allow_patterns,
         )
     else:
         model_path = model_id_or_path
@@ -213,7 +219,7 @@ def _infer_model_configuration(
     # infer get_model params
     config_params["architecture"] = architecture
     config_params["variant"] = list_variants(architecture)[0]
-    config_params["model_path"] = model_path
+    config_params["model_path"] = model_path if download_weights else None
     return config_params
 
 
@@ -223,6 +229,7 @@ def as_fms_model(
     distributed_strategy: Optional[str] = None,
     checkpoint_sharding: Optional[str] = None,
     group: Optional[ProcessGroup] = None,
+    initialize_model_with_weights: bool = True,
 ) -> nn.Module:
     """
     get an FMS model from a huggingface checkpoint
@@ -238,13 +245,18 @@ def as_fms_model(
     checkpoint_sharding: how the checkpoint files are sharded: None, 'tp',
                 'fsdp', or 'layer'. If None, guess based on files.
     group: ProcessGroup The PG to use for any model distribution
+    initialize_model_with_weights: bool
+        If True, will download the weights for the model and load them into the fms model. Otherwise the model will
+        simply be initialized without the weights.
 
     Returns
     -------
     nn.Module
         an fms equivalent implementation of an HF model
     """
-    get_model_kwargs = _infer_model_configuration(model_id_or_path)
+    get_model_kwargs = _infer_model_configuration(
+        model_id_or_path, download_weights=initialize_model_with_weights
+    )
 
     return get_model(
         source="hf",

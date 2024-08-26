@@ -71,8 +71,9 @@ def __maybe_infer_model_variant(
     variant: Optional[str],
     model_path: Optional[str],
     source: Optional[str],
+    download_weights_if_applicable: bool,
     **kwargs,
-) -> Tuple[str, str, Dict[str, Any]]:
+) -> Tuple[str, str, Optional[str], Dict[str, Any]]:
     """Infer the model variant configuration from different sources, currently only supported sources are hf"""
     extra_kwargs = kwargs
     if architecture is None:
@@ -99,9 +100,12 @@ def __maybe_infer_model_variant(
                 )
             from fms.models.hf.utils import _infer_model_configuration  # type: ignore
 
-            extra_kwargs = _infer_model_configuration(model_path)
+            extra_kwargs = _infer_model_configuration(
+                model_path, download_weights_if_applicable
+            )
             architecture = extra_kwargs.pop("architecture")
             variant = extra_kwargs.pop("variant")
+            model_path = extra_kwargs.pop("model_path")
         else:
             raise NotImplementedError(
                 f"Cannot infer model configuration from source={source}"
@@ -112,7 +116,7 @@ def __maybe_infer_model_variant(
             "When not inferring the configuration, a variant must be given"
         )
 
-    return architecture, variant, extra_kwargs
+    return architecture, variant, model_path, extra_kwargs
 
 
 def _get_model_instance(
@@ -266,6 +270,7 @@ def get_model(
     distributed_strategy: Optional[str] = None,
     checkpoint_sharding: Optional[str] = None,
     group: Optional[ProcessGroup] = None,
+    initialize_model_with_weights: bool = True,
     **kwargs,
 ):
     """
@@ -285,6 +290,9 @@ def get_model(
                 `source` specifies which conversion function might be needed.
                 See `serialization.list_sources(architecture)`
     group: ProcessGroup The PG to use for any model distribution
+    initialize_model_with_weights: If True, and model being inferred, will download the weights and load them into the
+    model, otherwise will simply initialize the model without the weights. If model is not being inferred, this will
+    have no effect
     """
 
     rank, world_size = distributed.rank_and_world(group)
@@ -312,6 +320,16 @@ def get_model(
     else:
         initial_device = device
 
+    # infer the model architecture and variant if they do not exist yet
+    architecture, variant, model_path, extra_args = __maybe_infer_model_variant(
+        architecture,
+        variant,
+        model_path,
+        source,
+        initialize_model_with_weights,
+        **kwargs,
+    )
+
     lazy_sd: MutableMapping[str, Any] = {}
     if model_path is not None:
         lazy_sd = serialization.load_state_dict(
@@ -323,11 +341,6 @@ def get_model(
             rank=rank,
             world_size=world_size,
         )
-
-    # infer the model architecture and variant if they do not exist yet
-    architecture, variant, extra_args = __maybe_infer_model_variant(
-        architecture, variant, model_path, source, **kwargs
-    )
 
     if "distributed_strategy" not in extra_args:
         if distributed_strategy == "tp":
