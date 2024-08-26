@@ -1,6 +1,6 @@
 from contextlib import nullcontext
 from functools import partial
-from typing import Any, Callable, MutableMapping, Optional
+from typing import Any, Callable, MutableMapping, Optional, Union
 
 import torch
 from torch import nn
@@ -66,7 +66,12 @@ def list_variants(architecture: str):
 
 
 def _get_model_instance(
-    architecture: str, variant: str, *, dtype=None, device=None, extra_args: dict = {}
+    architecture: str,
+    variant: str,
+    *,
+    dtype: Optional[torch.dtype] = None,
+    device: Optional[torch.device] = None,
+    extra_args: dict = {},
 ) -> nn.Module:
     """
     Gets a model by name and variant, e.g. `models.get_model('llama', '7b')`
@@ -249,6 +254,7 @@ def get_model(
     model_path: Optional[str] = None,
     source: Optional[str] = None,
     device_type: str = "cpu",
+    data_type: Optional[Union[str, torch.dtype]] = None,
     distributed_strategy: Optional[str] = None,
     checkpoint_sharding: Optional[str] = None,
     group: Optional[ProcessGroup] = None,
@@ -284,6 +290,24 @@ def get_model(
     else:
         device = torch.device(device_type)
 
+    extra_args = kwargs
+    if isinstance(data_type, str):  # convert str to torch.dtype
+        try:
+            data_type = getattr(torch, data_type)
+        except:
+            raise ValueError(f"Data type `{data_type}` is not a supported torch dtype")
+        if (
+            data_type
+            and extra_args.get("linear_config", None)
+            and extra_args["linear_config"].get("linear_type", None) == "gptq"
+        ):
+            # TODO: introduce logger with different log levels?
+            print(
+                f"[WARNING] data_type {data_type} provided, but GPTQ does not support "
+                "casting to custom data type. Will use checkpoint data type instead."
+            )
+            data_type = None
+
     hsdp = distributed_strategy == "hsdp"
     fsdp = distributed_strategy == "fsdp"
     ddp = distributed_strategy == "ddp"
@@ -309,7 +333,6 @@ def get_model(
             world_size=world_size,
         )
 
-    extra_args = kwargs
     if "distributed_strategy" not in extra_args:
         if distributed_strategy == "tp":
             print("using tensor parallel")
@@ -330,13 +353,19 @@ def get_model(
             and extra_args["linear_config"].get("linear_type", None) == "gptq"
             and extra_args.get("unfuse_strategy") == "pre"
         ):
-            if source != "hf":  # only works for `hf` source but might support None or `fms` in the future
-                raise ValueError(f"Expected GPTQ checkpoint of type `hf` but source is `{source}` instead")
+            if source != "hf":  # GPTQ ckpt is always "hf" style
+                raise ValueError(
+                    f"Expected GPTQ checkpoint of type `hf` but source is `{source}` instead"
+                )
             source = "gptq_" + source + "_unfused"
 
     # Create the model on meta device to allocate weights lazily
     fms_model = _get_model_instance(
-        architecture, variant, device=torch.device("meta"), extra_args=extra_args
+        architecture,
+        variant,
+        dtype=data_type,
+        device=torch.device("meta"),
+        extra_args=extra_args,
     )
 
     # Choose when to wrap and load the model weights based on the combination
@@ -355,14 +384,15 @@ def get_model(
 
     if len(lazy_sd):
         serialization.load_state_dict_into_model(
-            fms_model,
-            lazy_sd,
-            architecture,
-            source if source is not None else "fms",
-            distributed_strategy,
-            checkpoint_sharding,
-            initial_device,
-            rank,
+            model=fms_model,
+            state_dict=lazy_sd,
+            architecture=architecture,
+            source=source if source is not None else "fms",
+            dtype=data_type,
+            distributed_strategy=distributed_strategy,
+            checkpoint_sharding=checkpoint_sharding,
+            initial_device=initial_device,
+            rank=rank,
         )
     else:
         # move from meta device to real device

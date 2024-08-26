@@ -371,6 +371,7 @@ def load_state_dict_into_model(
     state_dict: MutableMapping[str, Any],
     architecture: str,
     source: str,
+    dtype: Optional[torch.dtype] = None,
     distributed_strategy: Optional[str] = None,
     checkpoint_sharding: Optional[str] = None,
     initial_device: torch.device = torch.device("cpu"),
@@ -390,6 +391,8 @@ def load_state_dict_into_model(
     source: If the weights in the state dict didn't come from an FMS model,
             `source` specifies which conversion function might be needed.
             See `serialization.list_sources(architecture)`
+    dtype: If None, cast to state dict parameter data type when copying it
+            into the model
     distributed_strategy: the kind of possibly-distributed model in which we
             intend to load these weights. E.g. tp, fsdp, None. Used for weight
             sharding.
@@ -427,7 +430,12 @@ def load_state_dict_into_model(
                 if partial_sd[psd_key].device != initial_device:
                     partial_sd[psd_key] = partial_sd[psd_key].to(device=initial_device)
             fms_partial_sd = adapter(partial_sd)
-            unused_keys_partial = _load_partial_state_dict(model, fms_partial_sd, needs_tp_sharding)
+            unused_keys_partial = _load_partial_state_dict(
+                model=model,
+                state_dict=fms_partial_sd,
+                needs_tp_sharding=needs_tp_sharding,
+                dtype=dtype,
+            )
             unused_keys.update(unused_keys_partial)
             # Be aggressive in removing weights to save as much memory as possible
             for p_key in partial_sd.keys():
@@ -440,26 +448,39 @@ def load_state_dict_into_model(
             del fms_partial_sd
 
     if unused_keys and rank == 0:
-        print(f"[WARNING] Keys from checkpoint (adapted to FMS) not copied into model: {unused_keys}")
+        # TODO: start using logger?
+        print(
+            f"[WARNING] Keys from checkpoint (adapted to FMS) "
+            f"not copied into model: {unused_keys}"
+            )
 
 
 def _copy_if_present(parameter, tensor_value):
     parameter.copy_(tensor_value, non_blocking=True)
 
 
-def _move_to_real_device(param, real_device):
+def _move_to_real_device(
+        param: torch.Tensor,
+        real_device: torch.device,
+        dtype: Optional[torch.dtype] = None,
+    ) -> torch.Tensor:
     if param.device == torch.device("meta"):
-        if isinstance(param, torch.nn.Parameter):
-            param = torch.nn.Parameter(
-                torch.empty_like(param, device=real_device)
-            )
-        else:
-            param = torch.empty_like(param, device=real_device)
+        is_parameter = isinstance(param, torch.nn.Parameter)
+        param = torch.empty_like(
+            param,
+            device=real_device,
+            dtype=param.dtype if dtype is None else dtype,
+        )
+        if is_parameter:
+            param = torch.nn.Parameter(param)
     return param
 
 
 def _load_partial_state_dict(
-    model: torch.nn.Module, state_dict, needs_tp_sharding: bool
+    model: torch.nn.Module,
+    state_dict: MutableMapping[str, Any],
+    needs_tp_sharding: bool,
+    dtype: Optional[torch.dtype] = None,
 ) -> set:
     unused_keys = set()
     unused_keys_tp = None
@@ -503,7 +524,7 @@ def _load_partial_state_dict(
 
                 # cast module parameter to non-meta device
                 if param.device == torch.device("meta"):
-                    param = _move_to_real_device(param, tensor_value.device)
+                    param = _move_to_real_device(param, tensor_value.device, dtype)
                     setattr(target_module, key_steps[-1], param)
                     param = getattr(target_module, key_steps[-1])
                 param.copy_(tensor_value, non_blocking=True)
@@ -511,7 +532,7 @@ def _load_partial_state_dict(
             elif tp_module is not None and tp_module not in seen_tp_modules:
                 seen_tp_modules.add(tp_module)
                 tensor_values = {k: v for k, v in state_dict.items() if tp_prefix in k}
-                tp_module._apply(lambda t: _move_to_real_device(t, tensor_value.device))
+                tp_module._apply(lambda t: _move_to_real_device(t, tensor_value.device, dtype))
                 unused_keys_tp = tp_module.load_weights(tensor_values)
         except:
             if unused_keys_tp:
