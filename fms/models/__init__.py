@@ -1,7 +1,7 @@
 import logging
 from contextlib import nullcontext
 from functools import partial
-from typing import Any, Callable, MutableMapping, Optional
+from typing import Any, Callable, Dict, MutableMapping, Optional, Tuple
 
 import torch
 from torch import nn
@@ -64,6 +64,55 @@ def list_variants(architecture: str):
             f"{architecture} is not registered. See `models.list_models()` for available architectures"
         )
     return list(__models[architecture].keys())
+
+
+def __maybe_infer_model_variant(
+    architecture: Optional[str],
+    variant: Optional[str],
+    model_path: Optional[str],
+    source: Optional[str],
+    **kwargs,
+) -> Tuple[str, str, Dict[str, Any]]:
+    """Infer the model variant configuration from different sources, currently only supported sources are hf"""
+    extra_kwargs = kwargs
+    if architecture is None:
+        if variant is not None:
+            logging.warning(
+                f"architecture was set to None which implies the model configuration is being inferred (variant={variant} will be ignored)"
+            )
+
+        if model_path is None:
+            raise ValueError(
+                "the model_path parameter is required to be set in order to infer the model configuration when architecture=None"
+            )
+
+        logging.info(f"inferring model configuration from checkpoint at {model_path}")
+
+        if source is None:
+            raise ValueError(
+                "the model source parameter is required to be set in order to infer the model configuration when architecture=None"
+            )
+        elif source == "hf":
+            if len(kwargs) > 0:
+                logging.warning(
+                    f"ignoring the following parameters as the configuration is being inferred: {list(kwargs.keys())}"
+                )
+            from fms.models.hf.utils import _infer_model_configuration  # type: ignore
+
+            extra_kwargs = _infer_model_configuration(model_path)
+            architecture = extra_kwargs.pop("architecture")
+            variant = extra_kwargs.pop("variant")
+        else:
+            raise NotImplementedError(
+                f"Cannot infer model configuration from source={source}"
+            )
+
+    if variant is None:
+        raise ValueError(
+            "When not inferring the configuration, a variant must be given"
+        )
+
+    return architecture, variant, extra_kwargs
 
 
 def _get_model_instance(
@@ -237,46 +286,6 @@ def get_model(
                 See `serialization.list_sources(architecture)`
     group: ProcessGroup The PG to use for any model distribution
     """
-    if architecture is None:
-        if variant is not None:
-            logging.warning(
-                f"architecture was set to None which implies the model configuration is being inferred (variant={variant} will be ignored)"
-            )
-
-        if model_path is None:
-            raise ValueError(
-                "the model_path parameter is required to be set in order to infer the model configuration when architecture=None"
-            )
-
-        logging.info(f"inferring model configuration from checkpoint at {model_path}")
-
-        if source is None:
-            raise ValueError(
-                "the model source parameter is required to be set in order to infer the model configuration when architecture=None"
-            )
-        elif source == "hf":
-            if len(kwargs) > 0:
-                logging.warning(
-                    f"ignoring the following parameters as the configuration is being inferred: {list(kwargs.keys())}"
-                )
-            from fms.models.hf import as_fms_model  # type: ignore
-
-            return as_fms_model(
-                model_path,
-                device_type=device_type,
-                distributed_strategy=distributed_strategy,
-                checkpoint_sharding=checkpoint_sharding,
-                group=group,
-            )
-        else:
-            raise NotImplementedError(
-                f"Cannot infer model configuration from source={source}"
-            )
-
-    if variant is None:
-        raise ValueError(
-            "When not inferring the configuration, a variant must be given"
-        )
 
     rank, world_size = distributed.rank_and_world(group)
     local_rank = distributed.local_rank()
@@ -315,7 +324,11 @@ def get_model(
             world_size=world_size,
         )
 
-    extra_args = kwargs
+    # infer the model architecture and variant if they do not exist yet
+    architecture, variant, extra_args = __maybe_infer_model_variant(
+        architecture, variant, model_path, source, **kwargs
+    )
+
     if "distributed_strategy" not in extra_args:
         if distributed_strategy == "tp":
             print("using tensor parallel")
