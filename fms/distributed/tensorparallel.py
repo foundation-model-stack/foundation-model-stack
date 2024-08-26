@@ -172,7 +172,7 @@ class _AllGatherFromModelParallelRegion(torch.autograd.Function):
         return _split(grad_output, ctx.rank, ctx.world_size)
 
 
-def copy_to_tensor_model_parallel_region(input_: torch.Tensor):
+def copy_to_tensor_model_parallel_region(input_):
     return _CopyToModelParallelRegion.apply(input_)
 
 
