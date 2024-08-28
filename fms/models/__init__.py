@@ -82,7 +82,6 @@ def __maybe_infer_model_variant(
         logger.info(f"inferring model configuration from {variant}")
 
     if architecture == "hf_pretrained":
-
         if len(kwargs) > 0:
             logger.warning(
                 f"ignoring the following parameters as a pretrained model with an inferred configuration is being loaded: {list(kwargs.keys())}"
