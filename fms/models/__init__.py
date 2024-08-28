@@ -22,6 +22,8 @@ from fms.distributed.strategy import (
 from fms.utils import serialization
 
 
+logger = logging.getLogger(__name__)
+
 __models: MutableMapping[str, MutableMapping[str, Callable[[], nn.Module]]] = {}
 
 
@@ -77,12 +79,12 @@ def __maybe_infer_model_variant(
     extra_kwargs = kwargs
 
     if architecture in ("hf_pretrained", "hf_configured"):
-        logging.info(f"inferring model configuration from {variant}")
+        logger.info(f"inferring model configuration from {variant}")
 
     if architecture == "hf_pretrained":
 
         if len(kwargs) > 0:
-            logging.warning(
+            logger.warning(
                 f"ignoring the following parameters as a pretrained model with an inferred configuration is being loaded: {list(kwargs.keys())}"
             )
 
