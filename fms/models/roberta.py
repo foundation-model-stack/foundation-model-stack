@@ -275,7 +275,7 @@ _micro_char_config = RoBERTaConfig(
     emb_dim=192, nheads=4, nlayers=5, max_pos=1024, src_vocab_size=256
 )
 
-_base_config = RoBERTaConfig()
+_base_config = RoBERTaConfig(tie_heads=True, norm_eps=1e-5, p_dropout=0.1)
 
 _architecture_name = "roberta"
 

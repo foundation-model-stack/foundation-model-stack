@@ -27,13 +27,11 @@ parser.add_argument("--device_type", type=str, default="cuda")
 parser.add_argument(
     "--architecture",
     type=str,
-    default=None,
     help="The model architecture to benchmark",
 )
 parser.add_argument(
     "--variant",
     type=str,
-    default=None,
     help="The model variant (configuration) to benchmark. E.g. 7b, 13b, 70b.",
 )
 parser.add_argument(

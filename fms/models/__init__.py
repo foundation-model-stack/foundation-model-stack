@@ -67,56 +67,44 @@ def list_variants(architecture: str):
 
 
 def __maybe_infer_model_variant(
-    architecture: Optional[str],
-    variant: Optional[str],
+    architecture: str,
+    variant: str,
     model_path: Optional[str],
     source: Optional[str],
-    download_weights_if_applicable: bool,
     **kwargs,
-) -> Tuple[str, str, Optional[str], Dict[str, Any]]:
+) -> Tuple[str, str, Optional[str], Optional[str], Dict[str, Any]]:
     """Infer the model variant configuration from different sources, currently only supported sources are hf"""
     extra_kwargs = kwargs
-    if architecture is None:
-        if variant is not None:
+
+    if architecture in ("hf_pretrained", "hf_configured"):
+        logging.info(f"inferring model configuration from {variant}")
+
+        if len(kwargs) > 0:
             logging.warning(
-                f"architecture was set to None which implies the model configuration is being inferred (variant={variant} will be ignored)"
+                f"ignoring the following parameters as the configuration is being inferred: {list(kwargs.keys())}"
             )
 
-        if model_path is None:
+    if architecture == "hf_pretrained":
+        if model_path is not None or source is not None:
             raise ValueError(
-                "the model_path parameter is required to be set in order to infer the model configuration when architecture=None"
+                """architecture="hf_pretrained" implies model weights will be downloaded and extracted from hf cache and loaded into the model, therefore model_path and source should not be set"""
             )
 
-        logging.info(f"inferring model configuration from checkpoint at {model_path}")
+        from fms.models.hf.utils import _infer_model_configuration  # type: ignore
 
-        if source is None:
-            raise ValueError(
-                "the model source parameter is required to be set in order to infer the model configuration when architecture=None"
-            )
-        elif source == "hf":
-            if len(kwargs) > 0:
-                logging.warning(
-                    f"ignoring the following parameters as the configuration is being inferred: {list(kwargs.keys())}"
-                )
-            from fms.models.hf.utils import _infer_model_configuration  # type: ignore
+        extra_kwargs = _infer_model_configuration(variant, download_weights=True)
+        architecture = extra_kwargs.pop("architecture")
+        variant = extra_kwargs.pop("variant")
+        model_path = extra_kwargs.pop("model_path")
+        source = "hf"
+    elif architecture == "hf_configured":
+        from fms.models.hf.utils import _infer_model_configuration  # type: ignore
 
-            extra_kwargs = _infer_model_configuration(
-                model_path, download_weights_if_applicable
-            )
-            architecture = extra_kwargs.pop("architecture")
-            variant = extra_kwargs.pop("variant")
-            model_path = extra_kwargs.pop("model_path")
-        else:
-            raise NotImplementedError(
-                f"Cannot infer model configuration from source={source}"
-            )
+        extra_kwargs = _infer_model_configuration(variant, download_weights=False)
+        architecture = extra_kwargs.pop("architecture")
+        variant = extra_kwargs.pop("variant")
 
-    if variant is None:
-        raise ValueError(
-            "When not inferring the configuration, a variant must be given"
-        )
-
-    return architecture, variant, model_path, extra_kwargs
+    return architecture, variant, model_path, source, extra_kwargs
 
 
 def _get_model_instance(
@@ -262,15 +250,14 @@ def _is_dp(distributed_strategy):
 
 
 def get_model(
-    architecture: Optional[str] = None,
-    variant: Optional[str] = None,
+    architecture: str,
+    variant: str,
     model_path: Optional[str] = None,
     source: Optional[str] = None,
     device_type: str = "cpu",
     distributed_strategy: Optional[str] = None,
     checkpoint_sharding: Optional[str] = None,
     group: Optional[ProcessGroup] = None,
-    initialize_model_with_weights: bool = True,
     **kwargs,
 ):
     """
@@ -278,9 +265,15 @@ def get_model(
 
     Args:
     architecture: the model architecture, e.g. llama. See
-                `models.list_models()`. If None is provided, the model configuration will be inferred
+                `models.list_models()`. If hf_pretrained is given, the model architecture will be inferred by the
+                model_config associated with the hf model_id_or_path and subsequently the weights will be downloaded and
+                loaded into the model. If hf_configured is given, only the model architecture configuration will be and
+                no weights will explicitly be loaded unless following the normal model_path logic. Note, if
+                hf_pretrained is given and model_path or source are set, an exception will be raised as model loading
+                will occur through the hf cache.
     variant: the configuration of the model, e.g. 7b. See
-                `models.list_variants(architecture)`. Only required when architecture is provided.
+                `models.list_variants(architecture)`. If architecture is given as "hf_pretrained" or "hf_configured",
+                the variant will refer to the hf model_id_or_path.
     model_path: the path to the state_dict of weights. If None, don't load.
     device_type: where to load the model
     distributed_strategy: None, 'fsdp', 'hsdp', 'tp', or 'mp'.
@@ -288,11 +281,8 @@ def get_model(
                 'fsdp', or 'layer'. If None, guess based on files.
     source: If the weights in the state dict didn't come from an FMS model,
                 `source` specifies which conversion function might be needed.
-                See `serialization.list_sources(architecture)`
+                See `serialization.list_sources(architecture)`.
     group: ProcessGroup The PG to use for any model distribution
-    initialize_model_with_weights: If True, and model being inferred, will download the weights and load them into the
-    model, otherwise will simply initialize the model without the weights. If model is not being inferred, this will
-    have no effect
     """
 
     rank, world_size = distributed.rank_and_world(group)
@@ -321,12 +311,11 @@ def get_model(
         initial_device = device
 
     # infer the model architecture and variant if they do not exist yet
-    architecture, variant, model_path, extra_args = __maybe_infer_model_variant(
+    architecture, variant, model_path, source, extra_args = __maybe_infer_model_variant(
         architecture,
         variant,
         model_path,
         source,
-        initialize_model_with_weights,
         **kwargs,
     )
 
