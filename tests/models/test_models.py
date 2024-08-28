@@ -1,4 +1,3 @@
-import math
 import tempfile
 from collections import ChainMap
 from pathlib import Path
@@ -7,7 +6,6 @@ import pytest
 import torch
 
 from fms import models
-from fms.models.hf import to_hf_api
 from fms.testing.comparison import (
     HFModelSignatureParams,
     ModelSignatureParams,
