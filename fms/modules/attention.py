@@ -261,7 +261,7 @@ class MultiHeadAttention(nn.Module):
         use_bias=False,
         position_encoder: Optional[PositionEncoder] = None,
         fused: bool = True,
-        linear_config:  Optional[Mapping[str, Any]] = None,
+        linear_config: Optional[Mapping[str, Any]] = None,
     ):
         super(MultiHeadAttention, self).__init__()
         self.nheads = nheads

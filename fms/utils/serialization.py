@@ -469,7 +469,7 @@ def _move_to_real_device(
         param = torch.empty_like(
             param,
             device=real_device,
-            dtype=param.dtype if dtype is None else dtype,
+            dtype=dtype,
         )
         if is_parameter:
             param = torch.nn.Parameter(param)
@@ -493,6 +493,7 @@ def _load_partial_state_dict(
         key_step = 0
         tp_module = None
         tp_prefix = ""
+        target_dtype = tensor_value.dtype if dtype is None else dtype
 
         # Navigate the model tree to find the module where the parameter is
         # located and whether there is a TPModule in the way in case the
@@ -524,7 +525,7 @@ def _load_partial_state_dict(
 
                 # cast module parameter to non-meta device
                 if param.device == torch.device("meta"):
-                    param = _move_to_real_device(param, tensor_value.device, dtype)
+                    param = _move_to_real_device(param, tensor_value.device, target_dtype)
                     setattr(target_module, key_steps[-1], param)
                     param = getattr(target_module, key_steps[-1])
                 param.copy_(tensor_value, non_blocking=True)
@@ -532,7 +533,9 @@ def _load_partial_state_dict(
             elif tp_module is not None and tp_module not in seen_tp_modules:
                 seen_tp_modules.add(tp_module)
                 tensor_values = {k: v for k, v in state_dict.items() if tp_prefix in k}
-                tp_module._apply(lambda t: _move_to_real_device(t, tensor_value.device, dtype))
+                tp_module._apply(
+                    lambda t: _move_to_real_device(t, tensor_value.device, target_dtype)
+                )
                 unused_keys_tp = tp_module.load_weights(tensor_values)
         except:
             if unused_keys_tp:
