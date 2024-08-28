@@ -79,12 +79,13 @@ def __maybe_infer_model_variant(
     if architecture in ("hf_pretrained", "hf_configured"):
         logging.info(f"inferring model configuration from {variant}")
 
+    if architecture == "hf_pretrained":
+
         if len(kwargs) > 0:
             logging.warning(
-                f"ignoring the following parameters as the configuration is being inferred: {list(kwargs.keys())}"
+                f"ignoring the following parameters as a pretrained model with an inferred configuration is being loaded: {list(kwargs.keys())}"
             )
 
-    if architecture == "hf_pretrained":
         if model_path is not None or source is not None:
             raise ValueError(
                 """architecture="hf_pretrained" implies model weights will be downloaded and extracted from hf cache and loaded into the model, therefore model_path and source should not be set"""
@@ -101,6 +102,7 @@ def __maybe_infer_model_variant(
         from fms.models.hf.utils import _infer_model_configuration  # type: ignore
 
         extra_kwargs = _infer_model_configuration(variant, download_weights=False)
+        extra_kwargs = {**extra_kwargs, **kwargs}
         architecture = extra_kwargs.pop("architecture")
         variant = extra_kwargs.pop("variant")
 
