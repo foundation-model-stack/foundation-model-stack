@@ -1,16 +1,12 @@
-import json
-import math
-import os
+import logging
 import re
-from collections import OrderedDict
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Mapping, Optional
 
 import torch
 import torch.nn as nn
 
-from fms import distributed, models
+from fms import models
 from fms.distributed.strategy import (
     DistributedStrategy,
     NoOpStrategy,
@@ -26,6 +22,9 @@ from fms.utils import serialization
 from fms.utils.activation import str_to_activation
 from fms.utils.config import ModelConfig
 from fms.utils.tokenizers import _has_hf, get_tokenizer
+
+
+logger = logging.getLogger(__name__)
 
 
 # params emb_dim heads layers lr
@@ -190,7 +189,19 @@ class LLaMA(nn.Module):
             tie_weights=self.config.tie_heads,
             bias=False,
         )
-        self.shared = self.distributed_strategy.distribute_module(shared)
+
+        # TP does not work with tied weights
+        if (
+            not isinstance(self.distributed_strategy, TensorParallelStrategy)
+            or not self.config.tie_heads
+        ):
+            self.shared = self.distributed_strategy.distribute_module(shared)
+        else:
+            logger.warn(
+                "You're using TP on a model with tied weights between head and embedding."
+                "The tied weights won't be sharded, which can result in unexpected OOMs."
+            )
+            self.shared = shared
 
         self.rot_emb = RotaryEmbedding(
             dim=self.config.emb_dim // self.config.nheads,
