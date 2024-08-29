@@ -1,10 +1,10 @@
 import os.path
-from typing import Union
+from typing import Any, Dict, Optional, Union
 
 import torch
 import torch.nn as nn
-from huggingface_hub import snapshot_download
-from transformers import (
+from torch._C._distributed_c10d import ProcessGroup
+from transformers import (  # type: ignore
     AutoConfig,
     AutoModel,
     AutoModelForCausalLM,
@@ -33,7 +33,7 @@ def register_fms_models():
         AutoModelForMaskedLM.register(model_cls.config_class, model_cls)
 
 
-def mask_2d_to_3d(inp: torch.Tensor) -> torch.BoolTensor:
+def mask_2d_to_3d(inp: torch.Tensor) -> torch.Tensor:
     """
     Produces a block-diagonal boolean attention mask matrix A where A[i,j]=True if tokens i and j are both pads,
     or both non-pads, False otherwise.
@@ -45,7 +45,7 @@ def mask_2d_to_3d(inp: torch.Tensor) -> torch.BoolTensor:
     ...
     Returns
     -------
-    mask : torch.BoolTensor
+    mask : torch.Tensor
         Mask tensor corresponding to inp. Will be of shape [batch_size, sequence_length, sequence_length].
     """
     is_pad = inp == 0
@@ -56,7 +56,7 @@ def mask_2d_to_3d(inp: torch.Tensor) -> torch.BoolTensor:
 def mask_2d_to_3d_bidirectional(
     decoder_input: Union[torch.BoolTensor, torch.LongTensor, torch.IntTensor],
     encoder_input: Union[torch.BoolTensor, torch.LongTensor, torch.IntTensor],
-) -> torch.BoolTensor:
+) -> torch.Tensor:
     """
     Produces a boolean attention mask matrix A where A[i,j]=True if tokens i and j are both pads, or both non-pads,
     from their respective inputs, False otherwise. If decoder_input is b*n1 and encoder_input is b*n2, output will be b*n1*n2.
@@ -73,7 +73,7 @@ def mask_2d_to_3d_bidirectional(
     ...
     Returns
     -------
-    mask : torch.BoolTensor
+    mask : torch.Tensor
         Mask tensor corresponding to inp. Will be of shape [batch_size, sequence_length1, sequence_length2].
     """
 
@@ -107,7 +107,7 @@ def mask_2d_to_3d_bidirectional(
     return mask_encoder.unsqueeze(1) == mask_decoder.unsqueeze(2)
 
 
-def to_hf_api(model: nn.Module, **override_config_kwargs) -> "HFModelArchitecture":
+def to_hf_api(model: nn.Module, **override_config_kwargs) -> "HFModelArchitecture":  # type: ignore
     """Wrap an FMS model, converting its API to one of and Huggingface model
 
     Parameters
@@ -122,7 +122,7 @@ def to_hf_api(model: nn.Module, **override_config_kwargs) -> "HFModelArchitectur
     HFModelArchitecture
         an HF adapted FMS model
     """
-    from fms.models.hf import _fms_to_hf_adapt_map
+    from fms.models.hf import _fms_to_hf_adapt_map  # type: ignore
 
     register_fms_models()
 
@@ -136,38 +136,28 @@ def to_hf_api(model: nn.Module, **override_config_kwargs) -> "HFModelArchitectur
     return hf_adapted_cls.from_fms_model(model, **override_config_kwargs)
 
 
-def as_fms_model(
+def _infer_model_configuration(
     model_id_or_path: Union[str, os.PathLike],
-    **get_model_params,
-) -> nn.Module:
-    """
-    get an FMS model from a huggingface checkpoint
-
-    Parameters
-    ----------
-    model_id_or_path: Union[str, os.PathLike]
-        The huggingface hub model id or a local path. If the local path exists, the model will be loaded directly from
-        the local path, otherwise the huggingface cache will be checked. If the huggingface cache does not contain the
-        model, then the weights will be downloaded and stored into the huggingface cache
-    get_model_params
-        extra arguments to pass to get_model. Note: if an argument is specified by the user in get_model_params and is
-        also inferred in this function based on the hf config, the user's specified argument will be ignored. If you do
-        not want this feature, please use get_model directly
-
-    Returns
-    -------
-    nn.Module
-        an fms equivalent implementation of an HF model
-    """
+    download_weights: bool = True,
+) -> Dict[str, Any]:
     # if the path does not exist, download it from huggingface and get the local path
     if not os.path.exists(model_id_or_path):
+        from huggingface_hub import snapshot_download  # type: ignore
+
+        # in the case we don't want to download the weights, but just create the model from scratch, we will only allow config.json
+        allow_patterns = None if download_weights else ["config.json"]
+
         # mixtral saves safetensors expert sharded, so we will need their pt checkpoints
         # ideally this should be fixed in the adapter in the future
         ignore_patterns = None
-        if model_id_or_path.startswith("mistralai/Mixtral"):
+        if isinstance(model_id_or_path, str) and model_id_or_path.startswith(
+            "mistralai/Mixtral"
+        ):
             ignore_patterns = ["*.safetensors"]
         model_path = snapshot_download(
-            repo_id=model_id_or_path, ignore_patterns=ignore_patterns
+            repo_id=model_id_or_path,
+            ignore_patterns=ignore_patterns,
+            allow_patterns=allow_patterns,
         )
     else:
         model_path = model_id_or_path
@@ -175,7 +165,7 @@ def as_fms_model(
     config = AutoConfig.from_pretrained(model_path)
 
     architecture = config.architectures[0]
-    config_params = {**get_model_params}
+    config_params = {}
 
     if architecture == "LlamaForCausalLM":
         inner_dim = config.intermediate_size
@@ -211,7 +201,7 @@ def as_fms_model(
         config_params["emb_dim"] = config.hidden_size
         config_params["pad_id"] = config.pad_token_id
         config_params["max_pos"] = config.max_position_embeddings - 2
-        config_params["p_dropout"] = 0.0  # config.hidden_dropout_prob
+        config_params["p_dropout"] = config.hidden_dropout_prob
         config_params["norm_eps"] = config.layer_norm_eps
         config_params["activation_fn"] = config.hidden_act
     else:
@@ -226,10 +216,53 @@ def as_fms_model(
     config_params["hidden_grow_factor"] = inner_dim / config.hidden_size
     config_params["tie_heads"] = config.tie_word_embeddings
 
+    # infer get_model params
+    config_params["architecture"] = architecture
+    config_params["variant"] = list_variants(architecture)[0]
+    config_params["model_path"] = model_path if download_weights else None
+    return config_params
+
+
+def as_fms_model(
+    model_id_or_path: Union[str, os.PathLike],
+    device_type: str = "cpu",
+    distributed_strategy: Optional[str] = None,
+    checkpoint_sharding: Optional[str] = None,
+    group: Optional[ProcessGroup] = None,
+    initialize_model_with_weights: bool = True,
+) -> nn.Module:
+    """
+    get an FMS model from a huggingface checkpoint
+
+    Parameters
+    ----------
+    model_id_or_path: Union[str, os.PathLike]
+        The huggingface hub model id or a local path. If the local path exists, the model will be loaded directly from
+        the local path, otherwise the huggingface cache will be checked. If the huggingface cache does not contain the
+        model, then the weights will be downloaded and stored into the huggingface cache
+    device_type: where to load the model
+    distributed_strategy: None, 'fsdp', 'hsdp', 'tp', or 'mp'.
+    checkpoint_sharding: how the checkpoint files are sharded: None, 'tp',
+                'fsdp', or 'layer'. If None, guess based on files.
+    group: ProcessGroup The PG to use for any model distribution
+    initialize_model_with_weights: bool
+        If True, will download the weights for the model and load them into the fms model. Otherwise the model will
+        simply be initialized without the weights.
+
+    Returns
+    -------
+    nn.Module
+        an fms equivalent implementation of an HF model
+    """
+    get_model_kwargs = _infer_model_configuration(
+        model_id_or_path, download_weights=initialize_model_with_weights
+    )
+
     return get_model(
-        architecture=architecture,
-        variant=list_variants(architecture)[0],
-        model_path=model_path,
         source="hf",
-        **config_params,
+        device_type=device_type,
+        distributed_strategy=distributed_strategy,
+        checkpoint_sharding=checkpoint_sharding,
+        group=group,
+        **get_model_kwargs,
     )
