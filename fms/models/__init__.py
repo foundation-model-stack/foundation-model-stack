@@ -335,7 +335,7 @@ def get_model(
     if "distributed_strategy" not in extra_args:
         if distributed_strategy == "tp":
             print("using tensor parallel")
-            extra_args["distributed_strategy"] = TensorParallelStrategy()
+            extra_args["distributed_strategy"] = TensorParallelStrategy(group)
         elif distributed_strategy == "mp":
             print("using model parallel")
             devices = [i for i in range(torch.cuda.device_count())]

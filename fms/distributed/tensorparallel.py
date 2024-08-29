@@ -69,9 +69,8 @@ def _all_gather_into_tensor(inp, group_size, group_name):
     )
 
 
-def _all_gather(input_: torch.Tensor) -> torch.Tensor:
+def _all_gather(input_: torch.Tensor, world_size: int) -> torch.Tensor:
     """Gather the input tensor across model parallel group."""
-    world_size = dist.get_world_size()
 
     if world_size == 1:
         return input_
@@ -91,9 +90,8 @@ def _all_gather(input_: torch.Tensor) -> torch.Tensor:
     )
 
 
-def _all_reduce(input_: torch.Tensor) -> torch.Tensor:
+def _all_reduce(input_: torch.Tensor, world_size: int) -> torch.Tensor:
     """All-reduce the input tensor across model parallel group."""
-    world_size = dist.get_world_size()
 
     if world_size == 1:
         return input_
@@ -104,7 +102,7 @@ def _all_reduce(input_: torch.Tensor) -> torch.Tensor:
     )
 
 
-def _split(input_: torch.Tensor, rank, world_size) -> torch.Tensor:
+def _split(input_: torch.Tensor, rank: int, world_size: int) -> torch.Tensor:
     """Split the tensor along its last dimension and keep the
     corresponding slice."""
 
@@ -144,30 +142,30 @@ class _ReduceFromModelParallelRegion(torch.autograd.Function):
     """All-reduce the input from the model parallel region."""
 
     @staticmethod
-    def symbolic(graph, input_):
-        return _all_reduce(input_)
+    def symbolic(graph, input_, world_size):
+        return _all_reduce(input_, world_size)
 
     @staticmethod
-    def forward(ctx, input_):
-        return _all_reduce(input_)
+    def forward(ctx, input_, world_size):
+        return _all_reduce(input_, world_size)
 
     @staticmethod
     def backward(ctx, grad_output):
-        return grad_output
+        return grad_output, None
 
 
 class _AllGatherFromModelParallelRegion(torch.autograd.Function):
     """Gather the input from the model parallel region."""
 
     @staticmethod
-    def symbolic(graph, input_):
-        return _all_gather(input_)
+    def symbolic(graph, input_, world_size):
+        return _all_gather(input_, world_size)
 
     @staticmethod
     def forward(ctx, input_, rank, world_size):
         ctx.rank = rank
         ctx.world_size = world_size
-        return _all_gather(input_)
+        return _all_gather(input_, world_size)
 
     @staticmethod
     def backward(ctx, grad_output):
@@ -178,9 +176,11 @@ def copy_to_tensor_model_parallel_region(input_):
     return _CopyToModelParallelRegion.apply(input_)
 
 
-def reduce_from_tensor_model_parallel_region(input_):
-    return _ReduceFromModelParallelRegion.apply(input_)
+def reduce_from_tensor_model_parallel_region(input_: torch.Tensor, world_size: int):
+    return _ReduceFromModelParallelRegion.apply(input_, world_size)
 
 
-def all_gather_from_tensor_model_parallel_region(input_, rank, world_size):
+def all_gather_from_tensor_model_parallel_region(
+    input_: torch.Tensor, rank: int, world_size: int
+):
     return _AllGatherFromModelParallelRegion.apply(input_, rank, world_size)
