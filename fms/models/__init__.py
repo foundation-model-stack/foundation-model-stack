@@ -308,6 +308,11 @@ def get_model(
             )
             data_type = None
 
+    is_gptq = (
+        extra_args.get("linear_config", None)
+        and extra_args["linear_config"].get("linear_type", None) == "gptq"
+    )
+
     hsdp = distributed_strategy == "hsdp"
     fsdp = distributed_strategy == "fsdp"
     ddp = distributed_strategy == "ddp"
@@ -348,11 +353,7 @@ def get_model(
         _validate_unfuse_strategy(extra_args, rank)
 
         # change source for "gptq + pre" (= unfused gptq ckpt into unfused model)
-        if (
-            extra_args.get("linear_config", None)
-            and extra_args["linear_config"].get("linear_type", None) == "gptq"
-            and extra_args.get("unfuse_strategy") == "pre"
-        ):
+        if (is_gptq and extra_args.get("unfuse_strategy") == "pre"):
             if source != "hf":  # GPTQ ckpt is always "hf" style
                 raise ValueError(
                     f"Expected GPTQ checkpoint of type `hf` but source is `{source}` instead"
@@ -398,8 +399,8 @@ def get_model(
         # move from meta device to real device
         if initial_device != torch.device("meta"):
             fms_model.to_empty(device=initial_device)
-        # randomly initialize the model
-        if hasattr(fms_model, "reset_parameters"):
+        # randomly initialize the model (non-gptq models only)
+        if hasattr(fms_model, "reset_parameters") and not is_gptq:
             fms_model.reset_parameters()
 
     if pre_load:
