@@ -101,6 +101,12 @@ parser.add_argument(
     action="store_true",
     help="instantiate unfused model instance`",
 )
+parser.add_argument(
+    "--linear_choice",
+    type=int,
+    help="Choose linear config from a set of options",
+    default=0,
+)
 args = parser.parse_args()
 
 local_rank = int(os.getenv("LOCAL_RANK", 0))
@@ -137,11 +143,16 @@ else:
 
 # Note: auto_fp8 works for either fused or unfused models
 #       fbgemm_fp8 only works with fused models for now unless there's a need to support it for unfused ones
-linear_config = {"linear_type": "auto_fp8", "activation_quantization": "static-per-tensor"}
-# linear_config = {"linear_type": "auto_fp8", "activation_quantization": "dynamic-per-tensor"}
-# linear_config = {"linear_type": "fbgemm_fp8", "activation_quantization": "dynamic-per-tensor", "weight_quantization": "static-per-tensor"}
-# linear_config = {"linear_type": "fbgemm_fp8", "activation_quantization": "static-per-tensor", "weight_quantization": "static-per-tensor"}
-# linear_config = {"linear_type": "fbgemm_fp8", "activation_quantization": "dynamic-per-row", "weight_quantization": "static-per-row"}
+linear_configs = [
+    {}, # 0
+    {"linear_type": "auto_fp8", "activation_quantization": "static-per-tensor"},    # 1
+    {"linear_type": "auto_fp8", "activation_quantization": "dynamic-per-tensor"},   # 2
+    {"linear_type": "fbgemm_fp8", "activation_quantization": "dynamic-per-tensor", "weight_quantization": "static-per-tensor"}, # 3
+    {"linear_type": "fbgemm_fp8", "activation_quantization": "static-per-tensor", "weight_quantization": "static-per-tensor"},  # 4
+    {"linear_type": "fbgemm_fp8", "activation_quantization": "dynamic-per-row", "weight_quantization": "static-per-row"},       # 5
+]
+print(f"Selected linear_config={linear_configs[args.linear_choice]}")
+# TODO: add sanity checks to block out some ckpt type and linear mix-and-match
 
 model = get_model(
     args.architecture,
@@ -151,7 +162,7 @@ model = get_model(
     source=args.model_source,
     distributed_strategy=distr_param,
     group=dist.group.WORLD,
-    linear_config=linear_config,
+    linear_config=linear_configs[args.linear_choice],
     unfuse_strategy="pre" if args.unfuse else None,
 )
 print(model)
@@ -215,13 +226,13 @@ else:
     )
     prompt2 = template.format("Explain some popular greetings in Spanish.")
 
-prompt1 = "def sqrt(x): "
-prompt2 = prompt1
+# prompt1 = "def sqrt(x): "
+# prompt2 = prompt1
 
-prompt1 = ids_for_prompt(prompt1)
-prompt2 = ids_for_prompt(prompt2)
+prompt1 = ids_for_prompt(prompt1)[1:]
+prompt2 = ids_for_prompt(prompt2)[1:]
 print(f"{prompt1=}")
-# print(f"{prompt2=}")
+print(f"{prompt2=}")
 max_len = max([len(prompt) for prompt in [prompt1, prompt2]])
 
 
@@ -241,7 +252,7 @@ def print_result(result):
         return
     # stop at EOS token if present
     # print(f"{tokenizer.eos_token_id=}")
-    # result = generation.truncate_after_eos(result, tokenizer.eos_token_id)
+    result = generation.truncate_after_eos(result, tokenizer.eos_token_id)
     # print(result)
     # print(tokenizer.convert_ids_to_tokens(result))
     print(tokenizer.convert_tokens_to_string(tokenizer.convert_ids_to_tokens(result)))
@@ -264,7 +275,7 @@ def infer(use_cache, do_sample):
     result = generate(
         model,
         ids,
-        max_new_tokens=10,
+        max_new_tokens=100,
         use_cache=use_cache,
         do_sample=do_sample,
         max_seq_len=max_seq_len,
