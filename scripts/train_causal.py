@@ -15,7 +15,7 @@ from torch.utils.data.distributed import DistributedSampler
 from fms import datasets, models
 from fms.training import plugins as trainplugins
 from fms.training import trainer
-from fms.utils import print0, tokenizers
+from fms.utils import fusion, print0, tokenizers
 
 
 #
@@ -142,6 +142,16 @@ parser.add_argument(
     type=int,
     default=1,
     help="Number of steps to accumulate gradients before applying",
+)
+parser.add_argument(
+    "--compile",
+    action="store_true",
+    help="Whether to compile the model and optimizer.",
+)
+parser.add_argument(
+    "--head_only",
+    action="store_true",
+    help="Whether to only tune the head or the whole model.",
 )
 
 
@@ -294,7 +304,7 @@ def training_state(model_path, model, rank):
 
 
 def main():
-    torch.set_default_dtype(torch.bfloat16)
+    torch.set_default_dtype(torch.float32)
 
     print0("Loading model...")
     model = models.get_model(
@@ -305,8 +315,17 @@ def main():
         device_type=device_type,
         distributed_strategy=args.distributed,
         group=group,
+        p_dropout=0.0,
     )
+    model = fusion.apply_unfuse_weights(model)
     # model.to(torch.half)
+    if args.head_only:
+        for name, param in model.named_parameters():
+            param.requires_grad = False
+        # Untie head and activate its gradients
+        model.head.weight = torch.nn.Parameter(model.head.weight.clone().detach())
+        model.head.weight.requires_grad = True
+    model.base_model.rot_emb.compute_freqs_cis(model.head.weight.device, 4096)
     optimizer, dataset_sd, epoch, prev_step, cum_tokens = training_state(
         args.model_path, model, rank
     )
@@ -315,6 +334,9 @@ def main():
         "starting from epoch", epoch, "prior step", prev_step, "cum tokens", cum_tokens
     )
     print0("dataset state", dataset_sd)
+
+    if args.compile:
+        model = torch.compile(model, backend="sendnn")
 
     tokenizer = tokenizers.get_tokenizer(args.tokenizer)
 
@@ -327,7 +349,7 @@ def main():
     eos_token = tokenizer.convert_ids_to_tokens([eos_token_id])[0]
 
     # TODO: split a validation dataset
-    dataset = datasets.get_dataset(args.dataset_style, tokenizer, args.dataset_path)
+    dataset = datasets.get_dataset(args.dataset_style, tokenizer, args.dataset_path, pad_token=0, max_len=257)
     if len(dataset_sd):
         dataset.load_state_dict(dataset_sd)
 

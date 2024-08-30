@@ -257,10 +257,12 @@ def main():
         device_type=device_type,
         distributed_strategy=args.distributed,
         group=group,
+        p_dropout=0.,
     )
     #model.base_model.rot_emb.compute_freqs_cis(device, 512)
     #model.reset_head()
     if args.head_only:
+        # model.base_model.embedding.weight.requires_grad = False
         for param in model.parameters():
             param.requires_grad = False
         model.classification_head.head.weight.requires_grad = True
