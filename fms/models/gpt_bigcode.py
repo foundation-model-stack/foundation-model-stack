@@ -467,6 +467,16 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
 
         new_sd[new_name] = param
 
+    expand_required_pattern = re.compile("base_model.layers.[0-9]+.*.weight_scale")
+    # special handling for weight_scale
+    # expand per-tensor weight_scale to a per-channel weight scale
+    # so that the TP sharding logic can shard it for proper layer fusion
+    for name, param in new_sd.items():
+        if bool(expand_required_pattern.match(name)):
+            if param.numel() == 1:
+                weight_out_features = new_sd[name.replace("weight_scale", "weight")].shape[0]
+                new_sd[name] = param.expand(weight_out_features)
+
     return new_sd
 
 
