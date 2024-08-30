@@ -351,7 +351,7 @@ def shard_fbgemm_fp8_linear(
             # FIXME: should either shard or clone depending on the checkpoint weight_scale
             "weight_scale": LinearParameterShardingInfo(
                 module_info.sharding_dim,
-                ShardType.SHARD if module_info.sharding_dim == 0 else ShardType.CLONE,
+                ShardType.SHARD if (module_info.sharding_dim == 0 and not "per-tensor" in linear_module.weight_casting) else ShardType.CLONE,
             ),
             "weight": LinearParameterShardingInfo(
                 module_info.sharding_dim, ShardType.SHARD
