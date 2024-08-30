@@ -169,7 +169,8 @@ class TPModule(nn.Module, metaclass=ABCMeta):
             )
         else:
             raise ValueError(
-                f"Weight not found, weights names are {', '.join(state_dict.keys())}"
+                f"Weight not found, searching for {substr_matches} "
+                f"but weights names are {', '.join(state_dict.keys())}"
             )
 
     def load_weights(

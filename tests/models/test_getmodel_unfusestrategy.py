@@ -3,7 +3,7 @@ import torch
 import tempfile
 from fms.models import get_model
 
-# Usage of unfuse_strategy to obtained desired `target_model` fusion
+# How to set unfuse_strategy to obtain desired `target_model` fusion
 #
 # ckpt       target_model   unfuse_strategy   tested
 #                            FP16    GPTQ
