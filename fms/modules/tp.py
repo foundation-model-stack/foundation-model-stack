@@ -123,22 +123,26 @@ class TPModule(nn.Module, metaclass=ABCMeta):
                 sum(max_partition_sizes_replicated)
                 // min(max_partition_sizes_replicated)
             )
-            tp_slices = self.__get_tp_slices(
-                tensor_value.shape[dim], output_size_per_partition, max_partition_sizes
-            )
-            tp_shard_indices = [
-                tuple([slice(None) for _ in range(dim)] + [tp_slice])
-                for tp_slice in tp_slices
-            ]
-            tensors_to_cat = [
-                tensor_value[tp_shard_index] for tp_shard_index in tp_shard_indices
-            ]
-            # FIXME: temporary workaround for fp8 tensor cat
-            if tensors_to_cat and tensors_to_cat[0].dtype == torch.float8_e4m3fn:
-                tensor = torch.cat([t.to(torch.bfloat16) for t in tensors_to_cat], dim=dim)
-                tensor = tensor.to(torch.float8_e4m3fn)
+            # FP8 per-tensor weight_scale exception
+            if tensor_value.dim() == 0:
+                tensor = tensor_value # scalar value will be broadcasted if param is 1d vector
             else:
-                tensor = torch.cat(tensors_to_cat, dim=dim)
+                tp_slices = self.__get_tp_slices(
+                    tensor_value.shape[dim], output_size_per_partition, max_partition_sizes
+                )
+                tp_shard_indices = [
+                    tuple([slice(None) for _ in range(dim)] + [tp_slice])
+                    for tp_slice in tp_slices
+                ]
+                tensors_to_cat = [
+                    tensor_value[tp_shard_index] for tp_shard_index in tp_shard_indices
+                ]
+                # FIXME: temporary workaround for fp8 tensor cat
+                if tensors_to_cat and tensors_to_cat[0].dtype == torch.float8_e4m3fn:
+                    tensor = torch.cat([t.to(torch.bfloat16) for t in tensors_to_cat], dim=dim)
+                    tensor = tensor.to(torch.float8_e4m3fn)
+                else:
+                    tensor = torch.cat(tensors_to_cat, dim=dim)
             param.copy_(tensor, non_blocking=True)
         elif shard_type == ShardType.RANK0:
             if self.rank == 0:
