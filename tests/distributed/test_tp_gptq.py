@@ -90,7 +90,7 @@ class TestGPTQwithTP:
             "qweight": torch.randint(
                 0, int32_max, (in_feat // packing, out_feat)
             ).to(torch.int32),
-            "bias": torch.randn((out_feat, ), dtype=torch.float16),
+            "bias": torch.zeros((out_feat, ), dtype=torch.float16),
             "scales": torch.randn((n_grp, out_feat), dtype=torch.float16),
             "qzeros": torch.randint(
                 0, int32_max, (n_grp, out_feat // packing)
@@ -107,7 +107,7 @@ class TestGPTQwithTP:
             "qweight": torch.randint(
                 0, int32_max, (in_feat // packing, out_feat)
             ).to(torch.int32),
-            "bias": torch.randn((out_feat, ), dtype=torch.float16),
+            "bias": torch.zeros((out_feat, ), dtype=torch.float16),
             "scales": torch.randn((n_grp, out_feat), dtype=torch.float16),
             "qzeros": torch.randint(
                 0, int32_max, (n_grp, out_feat // packing)
@@ -125,6 +125,7 @@ class TestGPTQwithTP:
                     qparams["dense." + k] = v
 
                 with torch.no_grad():
+                    # create TP-sharded attention module
                     tp_mod = get_attention.to_tp(group)
 
                     print("=== TP MODULE ==========================================")
@@ -135,47 +136,142 @@ class TestGPTQwithTP:
 
                     tp_mod.load_weights(qparams)
 
-                # qweights are transposed
-                tp_q, tp_k, tp_v = torch.split(
+                # load split qparams from TP attention module
+                tp_q_qw, tp_k_qw, tp_v_qw = torch.split(
                     tp_mod.in_proj.qkv_fused.qweight, tp_mod.in_proj.splits, dim=1
                 )
+                tp_q_bias, tp_k_bias, tp_v_bias = torch.split(
+                    tp_mod.in_proj.qkv_fused.bias, tp_mod.in_proj.splits, dim=0
+                )
+                tp_q_scales, tp_k_scales, tp_v_scales = torch.split(
+                    tp_mod.in_proj.qkv_fused.scales, tp_mod.in_proj.splits, dim=1
+                )
+                tp_q_qzeros, tp_k_qzeros, tp_v_qzeros = torch.split(
+                    tp_mod.in_proj.qkv_fused.qzeros, [x // packing for x in tp_mod.in_proj.splits], dim=1
+                )
+                tp_gidx = tp_mod.in_proj.qkv_fused.g_idx
 
+                # load pre-TP tensors
                 qkv_fused_qw = qparams["in_proj.qkv_fused.qweight"]
-                q_mult = config.emb_kq * config.nheads // min(group.size(), config.nheads)
+                qkv_fused_bias = qparams["in_proj.qkv_fused.bias"]
+                qkv_fused_scales = qparams["in_proj.qkv_fused.scales"]
+                qkv_fused_qzeros = qparams["in_proj.qkv_fused.qzeros"]
+                qkv_fused_gidx = qparams["in_proj.qkv_fused.g_idx"]
+
+                # assert on Query linear module
+                q_out_dim = config.emb_kq * config.nheads
+                q_mult = q_out_dim // min(group.size(), config.nheads)
+                q_mult_packed = q_mult // packing
                 q_rank = rank // max(1, group.size() // config.nheads)
                 torch.testing.assert_close(
                     qkv_fused_qw[:, q_mult * q_rank : q_mult * (q_rank + 1)],
-                    tp_q
+                    tp_q_qw
                 )
-
-                k_mult = config.emb_kq * config.kvheads // min(group.size(), config.kvheads)
-                k_rank = rank // max(1, group.size() // config.kvheads)
                 torch.testing.assert_close(
-                    qkv_fused_qw[:, k_mult * k_rank + config.emb_kq * config.nheads : k_mult * (k_rank + 1) +  config.emb_kq * config.nheads],
-                    tp_k
+                    qkv_fused_bias[q_mult * q_rank : q_mult * (q_rank + 1)],
+                    tp_q_bias
+                )
+                torch.testing.assert_close(
+                    qkv_fused_scales[:, q_mult * q_rank : q_mult * (q_rank + 1)],
+                    tp_q_scales
+                )
+                torch.testing.assert_close(
+                    qkv_fused_qzeros[:, q_mult_packed * q_rank : q_mult_packed * (q_rank + 1)],
+                    tp_q_qzeros
+                )
+                torch.testing.assert_close(
+                    qkv_fused_gidx - min(qkv_fused_gidx),
+                    tp_gidx
                 )
 
+                # assert on Key linear module
+                k_out_dim = config.emb_kq * config.kvheads
+                k_mult = k_out_dim // min(group.size(), config.kvheads)
+                k_rank = rank // max(1, group.size() // config.kvheads)
+                k_out_dim_start = k_mult * k_rank + q_out_dim
+                k_out_dim_end = k_mult * (k_rank + 1) + q_out_dim
+                torch.testing.assert_close(
+                    qkv_fused_qw[:, k_out_dim_start : k_out_dim_end],
+                    tp_k_qw
+                )
+                torch.testing.assert_close(
+                    qkv_fused_bias[k_out_dim_start : k_out_dim_end],
+                    tp_k_bias
+                )
+                torch.testing.assert_close(
+                    qkv_fused_scales[:, k_out_dim_start : k_out_dim_end],
+                    tp_k_scales
+                )
+                torch.testing.assert_close(
+                    qkv_fused_qzeros[:, k_out_dim_start // packing : k_out_dim_end // packing],
+                    tp_k_qzeros
+                )
+
+                # assert on Value linear module
                 v_mult = config.emb_v * config.kvheads // min(group.size(), config.kvheads)
                 v_rank = rank // max(1, group.size() // config.kvheads)
+                v_out_idx_start = v_mult * v_rank + q_out_dim + k_out_dim
+                v_out_idx_end = v_mult * (v_rank + 1) + q_out_dim + k_out_dim
                 torch.testing.assert_close(
-                    qkv_fused_qw[:, v_mult * v_rank + config.emb_kq * config.nheads + config.emb_kq * config.kvheads : v_mult * (v_rank + 1) + config.emb_kq * config.nheads + config.emb_kq * config.kvheads],
-                    tp_v
+                    qkv_fused_qw[:, v_out_idx_start : v_out_idx_end],
+                    tp_v_qw
+                )
+                torch.testing.assert_close(
+                    qkv_fused_bias[v_out_idx_start : v_out_idx_end],
+                    tp_v_bias
+                )
+                torch.testing.assert_close(
+                    qkv_fused_scales[:, v_out_idx_start : v_out_idx_end],
+                    tp_v_scales
+                )
+                torch.testing.assert_close(
+                    qkv_fused_qzeros[:, v_out_idx_start // packing : v_out_idx_end // packing],
+                    tp_v_qzeros
                 )
 
+                # assert on Dense linear module
                 d_qw = qparams["dense.qweight"]
-                d_mult = config.emb_dim // packing // min(group.size(), config.nheads)
+                d_bias = qparams["dense.bias"]
+                d_scales = qparams["dense.scales"]
+                d_qzeros = qparams["dense.qzeros"]
+                d_gidx = qparams["dense.g_idx"]
+                d_mult = config.emb_dim // min(group.size(), config.nheads)
+                d_mult_packed = d_mult // packing
+                d_mult_grp = d_mult // config.group_size
                 d_rank = rank // max(1, group.size() // config.nheads)
                 torch.testing.assert_close(
-                    d_qw[d_mult * d_rank : d_mult * (d_rank + 1)],
+                    d_qw[d_mult_packed * d_rank : d_mult_packed * (d_rank + 1)],
                     tp_mod.dense.qweight,
+                )
+                torch.testing.assert_close(
+                    d_bias,
+                    tp_mod.dense.bias,
+                )
+                torch.testing.assert_close(
+                    d_scales[d_mult_grp * d_rank : d_mult_grp * (d_rank + 1)],
+                    tp_mod.dense.scales,
+                )
+                torch.testing.assert_close(
+                    d_qzeros[d_mult_grp * d_rank : d_mult_grp * (d_rank + 1)],
+                    tp_mod.dense.qzeros,
+                )
+                d_gidx_unscaled = d_gidx[d_mult * d_rank : d_mult * (d_rank + 1)]
+                torch.testing.assert_close(
+                    d_gidx_unscaled - min(d_gidx_unscaled),
+                    tp_mod.dense.g_idx,
                 )
 
         # Test world_size < kvheads
-        group = MockGroup(2)
+        group = MockGroup(4)
         _test_gptq_for_world_size(group, qkv_fused, dense)
 
         # Test kvheads <= world_size < nheads
-        # group = MockGroup(8)
-        # _test_gptq_for_world_size(group, qkv_fused, dense)
+        group = MockGroup(8)
+        _test_gptq_for_world_size(group, qkv_fused, dense)
 
-        assert True
+        group = MockGroup(16)
+        _test_gptq_for_world_size(group, qkv_fused, dense)
+
+        # Test nheads <= world_size
+        group = MockGroup(32)
+        _test_gptq_for_world_size(group, qkv_fused, dense)
