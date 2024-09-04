@@ -148,7 +148,7 @@ def shard_gptq_linear(
                 ShardType.CLONE if module_info.sharding_dim == 0 else ShardType.SHARD,
             ),
         }
-        if gptq_mod.bias is not None:
+        if hasattr(gptq_mod, "bias") and gptq_mod.bias is not None:
             params["bias"] = LinearParameterShardingInfo(
                 module_info.sharding_dim,
                 ShardType.SHARD if module_info.sharding_dim == 0 else ShardType.RANK0,

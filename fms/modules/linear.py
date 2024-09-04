@@ -141,7 +141,7 @@ def shard_torch_linear(
                 module_info.sharding_dim, ShardType.SHARD
             )
         }
-        if linear_mod.bias is not None:
+        if hasattr(linear_mod, "bias") and linear_mod.bias is not None:
             params["bias"] = LinearParameterShardingInfo(
                 module_info.sharding_dim,
                 ShardType.SHARD if module_info.sharding_dim == 0 else ShardType.RANK0,
