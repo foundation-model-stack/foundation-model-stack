@@ -14,9 +14,13 @@ class MockGPTQConfig(ModelConfig):
     emb_v: int = 128
     nheads: int = 32
     kvheads: int = 8
-    use_bias: bool = True  # AutoGPTQ QuantLinear has bias zero if False (not None)
+    multiple_of: int = 4
+    use_bias: bool = False
     fused: bool = True  # only testing fused=True
     group_size: int = 2
+    use_marlin: bool = False  # Marlin kernels not supported yet
+    disable_exllama: bool = True
+    disable_exllamav2: bool = False
 
 
 class MockGroup:
@@ -42,7 +46,7 @@ class TestGPTQwithTP:
     @pytest.fixture(scope="class")
     def get_attention(self, get_config) -> MultiHeadAttention:
         config = get_config
-        # print(f"{config.use_bias=}")
+        assert config.fused  # only testing fused=True
         attention = MultiHeadAttention(
             emb_dim=config.emb_dim,
             emb_kq=config.emb_kq,
@@ -54,9 +58,9 @@ class TestGPTQwithTP:
             linear_config={
                 "linear_type": "gptq",
                 "group_size": config.group_size,
-                "use_marlin": False,
-                "disable_exllama": True,
-                "disable_exllamav2": False,
+                "use_marlin": config.use_marlin,
+                "disable_exllama": config.disable_exllama,
+                "disable_exllamav2": config.disable_exllamav2,
             }
         )
         return attention
@@ -64,7 +68,6 @@ class TestGPTQwithTP:
     @pytest.fixture(scope="class")
     def get_ffn(self, get_config) -> FeedForwardBlock:
         config = get_config
-        # print(f"{config.use_bias=}")
         # ffn does not have fusion
         ffn = FeedForwardBlock(
             emb_dim=config.emb_dim,
@@ -72,9 +75,9 @@ class TestGPTQwithTP:
             linear_config={
                 "linear_type": "gptq",
                 "group_size": config.group_size,
-                "use_marlin": False,
-                "disable_exllama": True,
-                "disable_exllamav2": False,
+                "use_marlin": config.use_marlin,
+                "disable_exllama": config.disable_exllama,
+                "disable_exllamav2": config.disable_exllamav2,
             }
         )
         return ffn
@@ -82,19 +85,45 @@ class TestGPTQwithTP:
     @pytest.fixture(scope="class")
     def get_glu(self, get_config) -> GatedLinearUnit:
         config = get_config
-        glu = FeedForwardBlock(
+        assert config.fused  # only testing fused=True
+        glu = GatedLinearUnit(
             emb_dim=config.emb_dim,
             use_bias=config.use_bias,
             fused=config.fused,
             linear_config={
                 "linear_type": "gptq",
                 "group_size": config.group_size,
-                "use_marlin": False,
-                "disable_exllama": True,
-                "disable_exllamav2": False,
+                "use_marlin": config.use_marlin,
+                "disable_exllama": config.disable_exllama,
+                "disable_exllamav2": config.disable_exllamav2,
             }
         )
         return glu
+
+
+    def test_gptq_kernel(self, get_config, get_attention, get_ffn, get_glu):
+        config = get_config
+        if config.use_marlin:
+            raise NotImplementedError("Marlin kernel not supported at this time")
+        if config.disable_exllama:
+            if config.disable_exllamav2:
+                kernel = "cuda-old"
+            else:
+                kernel = "exllamav2"
+        elif config.disable_exllamav2:
+            kernel = "exllama"
+        else:
+            raise ValueError(
+                "ambiguous configuration: disable_exllama and disable_exllamav2 are both True in MockGPTQConfig"
+            )
+
+        assert get_attention.in_proj.qkv_fused.QUANT_TYPE == kernel
+        assert get_attention.dense.QUANT_TYPE == kernel
+        assert get_ffn.w1.QUANT_TYPE == kernel
+        assert get_ffn.w2.QUANT_TYPE == kernel
+        assert get_glu.wg1_fused.QUANT_TYPE == kernel
+        assert get_glu.w2.QUANT_TYPE == kernel
+
 
     def test_gptq_tp_attn_fused(self, get_attention, get_config):
         if not torch.distributed.is_initialized():
@@ -181,7 +210,7 @@ class TestGPTQwithTP:
                         tp_mod.in_proj.qkv_fused.bias, tp_mod.in_proj.splits, dim=0
                     )
 
-                # load pre-TP tensors
+                # load pre-TP tensors of qkv_fused linear module
                 qkv_fused_qw = qparams["in_proj.qkv_fused.qweight"]
                 qkv_fused_scales = qparams["in_proj.qkv_fused.scales"]
                 qkv_fused_qzeros = qparams["in_proj.qkv_fused.qzeros"]
@@ -273,7 +302,7 @@ class TestGPTQwithTP:
                         or torch.sum(qkv_fused_qparam.get("bias")) == 0
                     )
 
-                # load pre-TP tensors
+                # load pre-TP tensors of Dense linear module
                 d_qw = qparams["dense.qweight"]
                 d_scales = qparams["dense.scales"]
                 d_qzeros = qparams["dense.qzeros"]
@@ -347,7 +376,7 @@ class TestGPTQwithTP:
 
         # w1
         in_feat = config.emb_dim
-        out_feat = 4 * in_feat
+        out_feat = config.multiple_of * in_feat
         n_grp = in_feat // config.group_size
 
         w1_qparam = {
@@ -364,7 +393,7 @@ class TestGPTQwithTP:
             w1_qparam["bias"] = torch.zeros((out_feat, ), dtype=torch.float16)
 
         # w2
-        in_feat = 4 * config.emb_dim
+        in_feat = config.multiple_of * config.emb_dim
         out_feat = config.emb_dim
         n_grp = in_feat // config.group_size
 
@@ -392,16 +421,6 @@ class TestGPTQwithTP:
                 with torch.no_grad():
                     # create TP-sharded attention module
                     tp_mod = get_ffn.to_tp(group)
-
-                    print("=== TP MODULE ==========================================")
-                    print("\n".join(f"{k:40} {v.size()}" for k, v in tp_mod.named_buffers()))
-                    print("=== CKPT ===============================================")
-                    print("\n".join(f"{k:40} {v.size()}" for k, v in qparams.items()))
-                    print("")
-                    print(">"*60)
-                    print(tp_mod)
-                    print(">"*60)
-
                     tp_mod.load_weights(qparams)
 
                 # load pre-TP tensors
@@ -413,7 +432,7 @@ class TestGPTQwithTP:
                     w1_bias = qparams["w1.bias"]
 
                 # # assert on w1 linear module
-                w1_mult = 4 * config.emb_dim // group.size()
+                w1_mult = config.multiple_of * config.emb_dim // group.size()
                 w1_mult_packed = w1_mult // packing
                 torch.testing.assert_close(
                     w1_qw[:, w1_mult * rank : w1_mult * (rank + 1)],
@@ -456,7 +475,7 @@ class TestGPTQwithTP:
                     w2_bias = qparams["w2.bias"]
 
                 # assert on w2 linear module
-                w2_mult = 4 * config.emb_dim // group.size()
+                w2_mult = config.multiple_of * config.emb_dim // group.size()
                 w2_mult_packed = w2_mult // packing
                 w2_mult_grp = w2_mult // config.group_size
                 torch.testing.assert_close(
@@ -492,7 +511,6 @@ class TestGPTQwithTP:
                         or torch.sum(w2_qparam.get("bias")) == 0
                     )
 
-
         # Test world_size < kvheads
         group = MockGroup(4)
         _test_gptq_for_world_size(group, w1_qparam, w2_qparam)
@@ -507,3 +525,206 @@ class TestGPTQwithTP:
         # Test nheads <= world_size
         group = MockGroup(32)
         _test_gptq_for_world_size(group, w1_qparam, w2_qparam)
+
+
+    def test_gptq_tp_glu_fused(self, get_glu, get_config):
+        if not torch.distributed.is_initialized():
+            torch.distributed.init_process_group(
+                "gloo", store=torch.distributed.HashStore(), rank=0, world_size=1
+            )
+
+        config = get_config
+        packing = 8  # 8x INT4 --> 1x INT32
+        int32_max = torch.iinfo(torch.int32).max
+
+        # wg1_fused
+        in_feat = config.emb_dim
+        out_feat = 2 * config.multiple_of * in_feat
+        n_grp = in_feat // config.group_size
+
+        wg1_fused_qparam = {
+            "qweight": torch.randint(
+                0, int32_max, (in_feat // packing, out_feat)
+            ).to(torch.int32),
+            "scales": torch.randn((n_grp, out_feat), dtype=torch.float16),
+            "qzeros": torch.randint(
+                0, int32_max, (n_grp, out_feat // packing)
+            ).to(torch.int32),
+            "g_idx": torch.randint(0, n_grp, (in_feat, )).to(torch.int32),
+        }
+        if config.use_bias:
+            wg1_fused_qparam["bias"] = torch.zeros((out_feat, ), dtype=torch.float16)
+
+        # w2
+        in_feat = config.multiple_of * config.emb_dim
+        out_feat = config.emb_dim
+        n_grp = in_feat // config.group_size
+
+        w2_qparam = {
+            "qweight": torch.randint(
+                0, int32_max, (in_feat // packing, out_feat)
+            ).to(torch.int32),
+            "scales": torch.randn((n_grp, out_feat), dtype=torch.float16),
+            "qzeros": torch.randint(
+                0, int32_max, (n_grp, out_feat // packing)
+            ).to(torch.int32),
+            "g_idx": torch.randint(0, n_grp, (in_feat, )).to(torch.int32),
+        }
+        if config.use_bias:
+            w2_qparam["bias"] = torch.zeros((out_feat, ), dtype=torch.float16)
+
+        def _test_gptq_for_world_size(group, w1_fused_qparam, w2_qparam):
+            for rank in range(group.size()):
+                qparams = {}
+                for k, v in w1_fused_qparam.items():
+                    qparams["wg1_fused." + k] = v
+                for k, v in w2_qparam.items():
+                    qparams["w2." + k] = v
+
+                with torch.no_grad():
+                    # create TP-sharded GLU module
+                    tp_mod = get_glu.to_tp(group)
+                    tp_mod.load_weights(qparams)
+
+                # load split qparams from TP GLU module
+                hidden_size_per_rank = config.multiple_of * config.emb_dim // group.size()
+                tp_wg_qw, tp_w1_qw = torch.split(
+                    tp_mod.wg1_fused.qweight, [hidden_size_per_rank, hidden_size_per_rank], dim=1
+                )
+                tp_wg_scales, tp_w1_scales = torch.split(
+                    tp_mod.wg1_fused.scales, [hidden_size_per_rank, hidden_size_per_rank], dim=1
+                )
+                tp_wg_qzeros, tp_w1_qzeros = torch.split(
+                    tp_mod.wg1_fused.qzeros, [hidden_size_per_rank // packing, hidden_size_per_rank // packing], dim=1
+                )
+                tp_gidx = tp_mod.wg1_fused.g_idx
+                if config.use_bias:
+                    tp_wg_bias, tp_w1_bias = torch.split(
+                        tp_mod.wg1_fused.bias, [hidden_size_per_rank, hidden_size_per_rank], dim=0
+                    )
+
+                # load pre-TP tensors of wg1_fused linear module
+                wg1_fused_qw = qparams["wg1_fused.qweight"]
+                wg1_fused_scales = qparams["wg1_fused.scales"]
+                wg1_fused_qzeros = qparams["wg1_fused.qzeros"]
+                wg1_fused_gidx = qparams["wg1_fused.g_idx"]
+                if config.use_bias:
+                    wg1_fused_bias = qparams["wg1_fused.bias"]
+
+                # assert on wg linear module
+                wg_out_dim = config.multiple_of * config.emb_dim
+                wg_mult = wg_out_dim // group.size()
+                wg_mult_packed = wg_mult // packing
+                torch.testing.assert_close(
+                    wg1_fused_qw[:, wg_mult * rank : wg_mult * (rank + 1)],
+                    tp_wg_qw
+                )
+                torch.testing.assert_close(
+                    wg1_fused_scales[:, wg_mult * rank : wg_mult * (rank + 1)],
+                    tp_wg_scales
+                )
+                torch.testing.assert_close(
+                    wg1_fused_qzeros[:, wg_mult_packed * rank : wg_mult_packed * (rank + 1)],
+                    tp_wg_qzeros
+                )
+                torch.testing.assert_close(
+                    wg1_fused_gidx - min(wg1_fused_gidx),
+                    tp_gidx
+                )
+                if config.use_bias:
+                    torch.testing.assert_close(
+                        wg1_fused_bias[wg_mult * rank : wg_mult * (rank + 1)],
+                        tp_wg_bias
+                    )
+
+                # assert on wg linear module
+                w1_mult = config.multiple_of * config.emb_dim // group.size()
+                w1_out_idx_start = w1_mult * rank + wg_out_dim
+                w1_out_idx_end = w1_mult * (rank + 1) + wg_out_dim
+                torch.testing.assert_close(
+                    wg1_fused_qw[:, w1_out_idx_start : w1_out_idx_end],
+                    tp_w1_qw
+                )
+                torch.testing.assert_close(
+                    wg1_fused_scales[:, w1_out_idx_start : w1_out_idx_end],
+                    tp_w1_scales
+                )
+                torch.testing.assert_close(
+                    wg1_fused_qzeros[:, w1_out_idx_start // packing : w1_out_idx_end // packing],
+                    tp_w1_qzeros
+                )
+                if config.use_bias:
+                    torch.testing.assert_close(
+                        wg1_fused_bias[w1_out_idx_start : w1_out_idx_end],
+                        tp_w1_bias
+                    )
+                else:
+                    assert (
+                        not hasattr(tp_mod.wg1_fused, "bias")
+                        or tp_mod.wg1_fused.bias is None
+                        or torch.sum(tp_mod.wg1_fused.bias) == 0
+                    )
+                    assert (
+                        wg1_fused_qparam.get("bias", None) is None
+                        or torch.sum(wg1_fused_qparam.get("bias")) == 0
+                    )
+
+                # load pre-TP tensors of w2 linear module
+                w2_qw = qparams["w2.qweight"]
+                w2_scales = qparams["w2.scales"]
+                w2_qzeros = qparams["w2.qzeros"]
+                w2_gidx = qparams["w2.g_idx"]
+                if config.use_bias:
+                    w2_bias = qparams["w2.bias"]
+
+                # assert on w2 linear module
+                w2_mult = config.multiple_of * config.emb_dim // group.size()
+                w2_mult_packed = w2_mult // packing
+                w2_mult_grp = w2_mult // config.group_size
+                torch.testing.assert_close(
+                    w2_qw[w2_mult_packed * rank : w2_mult_packed * (rank + 1)],
+                    tp_mod.w2.qweight,
+                )
+                torch.testing.assert_close(
+                    w2_scales[w2_mult_grp * rank : w2_mult_grp * (rank + 1)],
+                    tp_mod.w2.scales,
+                )
+                torch.testing.assert_close(
+                    w2_qzeros[w2_mult_grp * rank : w2_mult_grp * (rank + 1)],
+                    tp_mod.w2.qzeros,
+                )
+                w2_gidx_unscaled = w2_gidx[w2_mult * rank : w2_mult * (rank + 1)]
+                torch.testing.assert_close(
+                    w2_gidx_unscaled - min(w2_gidx_unscaled),
+                    tp_mod.w2.g_idx,
+                )
+                if config.use_bias:
+                    torch.testing.assert_close(
+                        w2_bias,
+                        tp_mod.w2.bias,
+                    )
+                else:
+                    assert (
+                        not hasattr(tp_mod.w2, "bias")
+                        or tp_mod.w2.bias is None
+                        or torch.sum(tp_mod.w2.bias) == 0
+                    )
+                    assert (
+                        w2_qparam.get("bias", None) is None
+                        or torch.sum(w2_qparam.get("bias")) == 0
+                    )
+
+        # Test world_size < kvheads
+        group = MockGroup(4)
+        _test_gptq_for_world_size(group, wg1_fused_qparam, w2_qparam)
+
+        # Test kvheads <= world_size < nheads
+        group = MockGroup(8)
+        _test_gptq_for_world_size(group, wg1_fused_qparam, w2_qparam)
+
+        group = MockGroup(16)
+        _test_gptq_for_world_size(group, wg1_fused_qparam, w2_qparam)
+
+        # Test nheads <= world_size
+        group = MockGroup(32)
+        _test_gptq_for_world_size(group, wg1_fused_qparam, w2_qparam)
