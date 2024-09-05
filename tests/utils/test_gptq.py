@@ -66,12 +66,7 @@ qlinear_configs = [
     # ),
 ]
 qlinear_ids = ["cuda", "exllama", "exllamav2"]  # , "marlin"]
-qlinear_id_to_module = {
-    "cuda": qlinear_cuda_old,
-    "exllama": qlinear_exllama,
-    "exllamav2": qlinear_exllamav2,
-    "marlin": qlinear_marlin,
-}
+
 
 class TestGPTQModel:
 
@@ -99,6 +94,12 @@ class TestGPTQModel:
     def test_gptq_quantlinear(self, get_gptq_model):
         # verify that all fused linear modules in GPTQ model are instances
         # of a QuantLinear of the expected type (cuda_old, exllama, exllamav2)
+        qlinear_id_to_module = {
+            "cuda": qlinear_cuda_old,
+            "exllama": qlinear_exllama,
+            "exllamav2": qlinear_exllamav2,
+            "marlin": qlinear_marlin,
+        }
         id, gptq_model = get_gptq_model
         fused_linear = ["qkv_fused", "dense", "wg1_fused", "w2"]
         not_quantlinear = {}

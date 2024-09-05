@@ -13,18 +13,11 @@ def pytest_addoption(parser):
         default=False,
         help="capture the output expectation for a given test",
     )
-    parser.addoption(
-        "--autogptq",
-        action="store_true",
-        default=False,
-        help="run tests requiring AutoGPTQ package (with GPU support)"
-    )
 
 
 def pytest_configure(config):
     config.addinivalue_line("markers", "slow: mark test as slow to run")
     config.addinivalue_line("markers", "capture expectation: expectation was captured")
-    config.addinivalue_line("markers", "autogptq: mark test requiring AutoGPTQ")
 
 
 def pytest_generate_tests(metafunc):
@@ -34,14 +27,10 @@ def pytest_generate_tests(metafunc):
 
 
 def pytest_collection_modifyitems(config, items):
+    if config.getoption("--runslow"):
+        # --runslow given in cli: do not skip slow tests
+        return
     skip_slow = pytest.mark.skip(reason="need --runslow option to run")
-    if not config.getoption("--runslow"):
-        for item in items:
-            if "slow" in item.keywords:
-                item.add_marker(skip_slow)
-
-    skip_autogptq = pytest.mark.skip(reason="need --autogptq option to run")
-    if not config.getoption("--autogptq"):
-        for item in items:
-            if "autogptq" in item.keywords:
-                item.add_marker(skip_autogptq)
+    for item in items:
+        if "slow" in item.keywords:
+            item.add_marker(skip_slow)

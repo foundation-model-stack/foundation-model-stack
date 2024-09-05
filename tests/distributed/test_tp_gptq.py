@@ -510,6 +510,7 @@ class TestGPTQwithTP:
         group = MockGroup(4)
         _test_gptq_for_world_size(group, w1_qparam, w2_qparam)
 
+    @pytest.mark.autogptq
     def test_gptq_tp_glu_fused(self, get_glu, get_config):
         if not torch.distributed.is_initialized():
             torch.distributed.init_process_group(
