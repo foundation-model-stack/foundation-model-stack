@@ -247,7 +247,12 @@ class MultiHeadAttention(nn.Module):
     use_bias : bool
         Include bias terms in fully-connected sublayers?
     fused : bool
-        if True, qkv weights will be fused, otherwise qkv weights will be unfused
+        If True, qkv weights will be fused, otherwise qkv weights will be unfused.
+    linear_config : Mapping[str, Any] | None
+        Configuration for selection of linear modules (QKV, dense).
+        Pass as {"linear_type": str, <other kwargs>}. "linear_type" should provide the string
+        identifier of a registered type (e.g., "torch_linear", "gptq", ...). Additional config
+        options should be provided as kwargs.
     """
 
     def __init__(
