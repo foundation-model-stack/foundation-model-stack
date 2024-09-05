@@ -35,12 +35,23 @@ class MockGroup:
         self.current_rank += 1
         return self.current_rank - 1
 
+    def reset_rank(self):
+        self.current_rank = 0
+
 
 class TestGPTQwithTP:
     @pytest.fixture(scope="class")
     def get_config(self) -> MockGPTQConfig:
         # defined as fixture to support future parameterization
         return MockGPTQConfig()
+
+    @pytest.fixture(
+        scope="class",
+        params=[4, 8, 16, 32],
+        ids=["TP=4", "TP=8", "TP=16", "TP=32"],
+    )
+    def get_mockgroup(self, request) -> MockGroup:
+        return MockGroup(request.param)
 
     @pytest.fixture(scope="class")
     def get_attention(self, get_config) -> MultiHeadAttention:
@@ -124,7 +135,7 @@ class TestGPTQwithTP:
         assert get_glu.w2.QUANT_TYPE == kernel
 
     @pytest.mark.autogptq
-    def test_gptq_tp_attn_fused(self, get_attention, get_config):
+    def test_gptq_tp_attn_fused(self, get_attention, get_config, get_mockgroup):
         if not torch.distributed.is_initialized():
             torch.distributed.init_process_group(
                 "gloo", store=torch.distributed.HashStore(), rank=0, world_size=1
@@ -348,24 +359,15 @@ class TestGPTQwithTP:
                         dense_qparam.get("bias", None) is None
                         or torch.sum(dense_qparam.get("bias")) == 0
                     )
+            group.reset_rank()
 
-        # Test world_size < kvheads
-        group = MockGroup(4)
-        _test_gptq_for_world_size(group, qkv_fused_qparam, dense_qparam)
-
-        # Test kvheads <= world_size < nheads
-        group = MockGroup(8)
-        _test_gptq_for_world_size(group, qkv_fused_qparam, dense_qparam)
-
-        group = MockGroup(16)
-        _test_gptq_for_world_size(group, qkv_fused_qparam, dense_qparam)
-
-        # Test nheads <= world_size
-        group = MockGroup(32)
-        _test_gptq_for_world_size(group, qkv_fused_qparam, dense_qparam)
+        # TP = 4: test world_size < kvheads
+        # TP = 8, 16: test kvheads <= world_size < nheads
+        # TP = 32: test nheads <= world_size
+        _test_gptq_for_world_size(get_mockgroup, qkv_fused_qparam, dense_qparam)
 
     @pytest.mark.autogptq
-    def test_gptq_tp_ffn(self, get_ffn, get_config):
+    def test_gptq_tp_ffn(self, get_ffn, get_config, get_mockgroup):
         if not torch.distributed.is_initialized():
             torch.distributed.init_process_group(
                 "gloo", store=torch.distributed.HashStore(), rank=0, world_size=1
@@ -506,12 +508,12 @@ class TestGPTQwithTP:
                         w2_qparam.get("bias", None) is None
                         or torch.sum(w2_qparam.get("bias")) == 0
                     )
+            group.reset_rank()
 
-        group = MockGroup(4)
-        _test_gptq_for_world_size(group, w1_qparam, w2_qparam)
+        _test_gptq_for_world_size(get_mockgroup, w1_qparam, w2_qparam)
 
     @pytest.mark.autogptq
-    def test_gptq_tp_glu_fused(self, get_glu, get_config):
+    def test_gptq_tp_glu_fused(self, get_glu, get_config, get_mockgroup):
         if not torch.distributed.is_initialized():
             torch.distributed.init_process_group(
                 "gloo", store=torch.distributed.HashStore(), rank=0, world_size=1
@@ -706,6 +708,6 @@ class TestGPTQwithTP:
                         w2_qparam.get("bias", None) is None
                         or torch.sum(w2_qparam.get("bias")) == 0
                     )
+            group.reset_rank()
 
-        group = MockGroup(4)
-        _test_gptq_for_world_size(group, wg1_fused_qparam, w2_qparam)
+        _test_gptq_for_world_size(get_mockgroup, wg1_fused_qparam, w2_qparam)
