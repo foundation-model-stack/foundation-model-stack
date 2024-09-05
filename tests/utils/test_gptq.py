@@ -95,6 +95,7 @@ class TestGPTQModel:
         )
         return (id, gptq_model)
 
+    @pytest.mark.autogptq
     def test_gptq_quantlinear(self, get_gptq_model):
         # verify that all fused linear modules in GPTQ model are instances
         # of a QuantLinear of the expected type (cuda_old, exllama, exllamav2)

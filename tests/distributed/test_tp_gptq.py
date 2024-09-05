@@ -99,7 +99,7 @@ class TestGPTQwithTP:
         )
         return glu
 
-
+    @pytest.mark.autogptq
     def test_gptq_kernel(self, get_config, get_attention, get_ffn, get_glu):
         config = get_config
         if config.use_marlin:
@@ -123,6 +123,7 @@ class TestGPTQwithTP:
         assert get_glu.wg1_fused.QUANT_TYPE == kernel
         assert get_glu.w2.QUANT_TYPE == kernel
 
+    @pytest.mark.autogptq
     def test_gptq_tp_attn_fused(self, get_attention, get_config):
         if not torch.distributed.is_initialized():
             torch.distributed.init_process_group(
@@ -363,6 +364,7 @@ class TestGPTQwithTP:
         group = MockGroup(32)
         _test_gptq_for_world_size(group, qkv_fused_qparam, dense_qparam)
 
+    @pytest.mark.autogptq
     def test_gptq_tp_ffn(self, get_ffn, get_config):
         if not torch.distributed.is_initialized():
             torch.distributed.init_process_group(
@@ -505,19 +507,7 @@ class TestGPTQwithTP:
                         or torch.sum(w2_qparam.get("bias")) == 0
                     )
 
-        # Test world_size < kvheads
         group = MockGroup(4)
-        _test_gptq_for_world_size(group, w1_qparam, w2_qparam)
-
-        # Test kvheads <= world_size < nheads
-        group = MockGroup(8)
-        _test_gptq_for_world_size(group, w1_qparam, w2_qparam)
-
-        group = MockGroup(16)
-        _test_gptq_for_world_size(group, w1_qparam, w2_qparam)
-
-        # Test nheads <= world_size
-        group = MockGroup(32)
         _test_gptq_for_world_size(group, w1_qparam, w2_qparam)
 
     def test_gptq_tp_glu_fused(self, get_glu, get_config):
@@ -716,17 +706,5 @@ class TestGPTQwithTP:
                         or torch.sum(w2_qparam.get("bias")) == 0
                     )
 
-        # Test world_size < kvheads
         group = MockGroup(4)
-        _test_gptq_for_world_size(group, wg1_fused_qparam, w2_qparam)
-
-        # Test kvheads <= world_size < nheads
-        group = MockGroup(8)
-        _test_gptq_for_world_size(group, wg1_fused_qparam, w2_qparam)
-
-        group = MockGroup(16)
-        _test_gptq_for_world_size(group, wg1_fused_qparam, w2_qparam)
-
-        # Test nheads <= world_size
-        group = MockGroup(32)
         _test_gptq_for_world_size(group, wg1_fused_qparam, w2_qparam)
