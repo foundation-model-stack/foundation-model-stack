@@ -16,6 +16,7 @@ from fms.utils.config import ModelConfig
 
 try:
     from auto_gptq.utils.import_utils import dynamically_import_QuantLinear
+
     IS_AUTOGPTQ_AVAILABLE = True
 except:
     IS_AUTOGPTQ_AVAILABLE = False
@@ -166,6 +167,7 @@ def shard_gptq_linear(
             module_info.linear_module.g_idx = g_idx_param - g_idx_param.min()
 
     return unused_keys
+
 
 register_linear_type_to_module_map("gptq", get_gptq_linear)
 register_linear_type_to_sharding_map("gptq", shard_gptq_linear)

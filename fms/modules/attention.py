@@ -90,7 +90,7 @@ class UnfusedQKV(QKV):
         emb_kq_per_head: int,
         emb_v_per_head: int,
         use_bias: bool,
-        linear_config:  Optional[Mapping[str, Any]] = None,
+        linear_config: Optional[Mapping[str, Any]] = None,
         *args,
         **kwargs,
     ):
@@ -163,7 +163,7 @@ class FusedQKV(QKV):
         emb_kq_per_head: int,
         emb_v_per_head: int,
         use_bias: bool,
-        linear_config:  Optional[Mapping[str, Any]] = None,
+        linear_config: Optional[Mapping[str, Any]] = None,
         *args,
         **kwargs,
     ):
@@ -483,7 +483,7 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
         position_encoder: Optional[PositionEncoder] = None,
         fused: bool = True,
         group: Optional[ProcessGroup] = None,
-        linear_config:  Optional[Mapping[str, Any]] = None,
+        linear_config: Optional[Mapping[str, Any]] = None,
     ):
         assert torch.distributed.is_initialized()
 

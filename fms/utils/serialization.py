@@ -452,7 +452,7 @@ def load_state_dict_into_model(
         print(
             f"[WARNING] Keys from checkpoint (adapted to FMS) "
             f"not copied into model: {unused_keys}"
-            )
+        )
 
 
 def _copy_if_present(parameter, tensor_value):
@@ -460,10 +460,10 @@ def _copy_if_present(parameter, tensor_value):
 
 
 def _move_to_real_device(
-        param: torch.Tensor,
-        real_device: torch.device,
-        dtype: Optional[torch.dtype] = None,
-    ) -> torch.Tensor:
+    param: torch.Tensor,
+    real_device: torch.device,
+    dtype: Optional[torch.dtype] = None,
+) -> torch.Tensor:
     if param.device == torch.device("meta"):
         is_parameter = isinstance(param, torch.nn.Parameter)
         param = torch.empty_like(
@@ -525,7 +525,9 @@ def _load_partial_state_dict(
 
                 # cast module parameter to non-meta device
                 if param.device == torch.device("meta"):
-                    param = _move_to_real_device(param, tensor_value.device, target_dtype)
+                    param = _move_to_real_device(
+                        param, tensor_value.device, target_dtype
+                    )
                     setattr(target_module, key_steps[-1], param)
                     param = getattr(target_module, key_steps[-1])
                 param.copy_(tensor_value, non_blocking=True)

@@ -3,46 +3,69 @@ import torch
 from fms.models import get_model
 
 try:
-    from auto_gptq.nn_modules.qlinear.qlinear_cuda_old import QuantLinear as qlinear_cuda_old
-    from auto_gptq.nn_modules.qlinear.qlinear_exllama import QuantLinear as qlinear_exllama
-    from auto_gptq.nn_modules.qlinear.qlinear_exllamav2 import QuantLinear as qlinear_exllamav2
-    from auto_gptq.nn_modules.qlinear.qlinear_marlin import QuantLinear as qlinear_marlin
+    from auto_gptq.nn_modules.qlinear.qlinear_cuda_old import (
+        QuantLinear as qlinear_cuda_old
+    )
+    from auto_gptq.nn_modules.qlinear.qlinear_exllama import (
+        QuantLinear as qlinear_exllama
+    )
+    from auto_gptq.nn_modules.qlinear.qlinear_exllamav2 import (
+        QuantLinear as qlinear_exllamav2
+    )
+    from auto_gptq.nn_modules.qlinear.qlinear_marlin import (
+        QuantLinear as qlinear_marlin
+    )
 except ImportError:
-    print("One or more AutoGPTQ QuantLinear (cuda_old, exllama, exllamav2, marlin) could not be imported")
+    print(
+        "One or more AutoGPTQ QuantLinear (cuda_old, exllama, exllamav2, marlin) "
+        "could not be imported"
+    )
 
 # TODO: support for marlin kernels to be implemented
 
 qlinear_configs = [
-    ("cuda", {
-        "linear_type": "gptq",
-        "group_size": 2,
-        "use_marlin": False,
-        "disable_exllama": True,
-        "disable_exllamav2": True,
-    }),
-    ("exllama", {
-        "linear_type": "gptq",
-        "group_size": 2,
-        "use_marlin": False,
-        "disable_exllama": False,
-        "disable_exllamav2": True,
-    }),
-    ("exllamav2", {
-        "linear_type": "gptq",
-        "group_size": 2,
-        "use_marlin": False,
-        "disable_exllama": True,
-        "disable_exllamav2": False,
-    }),
-    # ("marlin", {
-    #     "linear_type": "gptq",
-    #     "group_size": 2,
-    #     "use_marlin": True,
-    #     "disable_exllama": True,
-    #     "disable_exllamav2": True,
-    # }),
+    (
+        "cuda",
+        {
+            "linear_type": "gptq",
+            "group_size": 2,
+            "use_marlin": False,
+            "disable_exllama": True,
+            "disable_exllamav2": True,
+        }
+    ),
+    (
+        "exllama",
+        {
+            "linear_type": "gptq",
+            "group_size": 2,
+            "use_marlin": False,
+            "disable_exllama": False,
+            "disable_exllamav2": True,
+        }
+    ),
+    (
+        "exllamav2",
+        {
+            "linear_type": "gptq",
+            "group_size": 2,
+            "use_marlin": False,
+            "disable_exllama": True,
+            "disable_exllamav2": False,
+        }
+    ),
+    # (
+    #     "marlin",
+    #     {
+    #         "linear_type": "gptq",
+    #         "group_size": 2,
+    #         "use_marlin": True,
+    #         "disable_exllama": True,
+    #         "disable_exllamav2": True,
+    #     }
+    # ),
 ]
-qlinear_ids = ["cuda", "exllama", "exllamav2"] # , "marlin"]
+qlinear_ids = ["cuda", "exllama", "exllamav2"]  # , "marlin"]
 qlinear_id_to_module = {
     "cuda": qlinear_cuda_old,
     "exllama": qlinear_exllama,
@@ -79,6 +102,8 @@ class TestGPTQModel:
         fused_linear = ["qkv_fused", "dense", "wg1_fused", "w2"]
         not_quantlinear = {}
         for k,v in gptq_model.named_modules():
-            if k.split(".")[-1] in fused_linear and not isinstance(v, qlinear_id_to_module[id]):
+            if k.split(".")[-1] in fused_linear and not isinstance(
+                v, qlinear_id_to_module[id]
+            ):
                 not_quantlinear[k] = v
         assert not_quantlinear == {}

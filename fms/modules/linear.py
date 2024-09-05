@@ -31,7 +31,7 @@ def get_all_linear_type_to_sharding_maps() -> dict[str, Callable]:
     return __type_sharding_map
 
 
-def get_linear_type(linear_config:  Optional[Mapping[str, Any]]) -> str:
+def get_linear_type(linear_config: Optional[Mapping[str, Any]]) -> str:
     if not linear_config:
         return "torch_linear"
 

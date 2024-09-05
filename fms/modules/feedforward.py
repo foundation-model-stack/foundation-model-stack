@@ -50,7 +50,7 @@ class FeedForwardBlock(nn.Module):
         activation_fn=nn.ReLU(),
         p_dropout=0.1,
         use_bias=True,
-        linear_config:  Optional[Mapping[str, Any]] = None,
+        linear_config: Optional[Mapping[str, Any]] = None,
     ):
         super(FeedForwardBlock, self).__init__()
         self.hidden_dim = int(hidden_grow_factor * emb_dim)
@@ -122,7 +122,7 @@ class TPFeedForwardBlock(FeedForwardBlock, TPModule):
         p_dropout=0.1,
         use_bias=True,
         group: Optional[ProcessGroup] = None,
-        linear_config:  Optional[Mapping[str, Any]] = None,
+        linear_config: Optional[Mapping[str, Any]] = None,
     ):
         assert torch.distributed.is_initialized()
         hidden_dim = int(hidden_grow_factor * emb_dim)
@@ -231,11 +231,11 @@ class GatedLinearUnit(nn.Module):
             )
         if self.fused:
             self.wg1_fused = get_linear(
-            emb_dim,
-            2 * self.hidden_dim,
-            bias=use_bias,
-            linear_config=linear_config,
-        )
+                emb_dim,
+                2 * self.hidden_dim,
+                bias=use_bias,
+                linear_config=linear_config,
+            )
         else:
             self.w1 = get_linear(
                 emb_dim,
@@ -350,7 +350,7 @@ class TPGatedLinearUnit(GatedLinearUnit, TPModule):
         use_bias=True,
         group: Optional[ProcessGroup] = None,
         fused: bool = True,
-        linear_config:  Optional[Mapping[str, Any]] = None,
+        linear_config: Optional[Mapping[str, Any]] = None,
     ):
         assert torch.distributed.is_initialized()
         rank, world_size = distributed.rank_and_world(group)
@@ -395,14 +395,18 @@ class TPGatedLinearUnit(GatedLinearUnit, TPModule):
         # sharding modules struct: {'module_name': (module_obj, sharding_dim, max_partition)}
         if self.fused:
             module_sharding_info = {
-                "wg1_fused": LinearModuleShardingInfo(self.wg1_fused, 0, [self.world_size, self.world_size]),
+                "wg1_fused": LinearModuleShardingInfo(
+                    self.wg1_fused, 0, [self.world_size, self.world_size]
+                ),
             }
         else:
             module_sharding_info = {
                 "w1": LinearModuleShardingInfo(self.w1, 0, [self.world_size]),
                 "wg": LinearModuleShardingInfo(self.wg, 0, [self.world_size]),
             }
-        module_sharding_info["w2"] = LinearModuleShardingInfo(self.w2, 1, [self.world_size])
+        module_sharding_info["w2"] = LinearModuleShardingInfo(
+            self.w2, 1, [self.world_size]
+        )
 
         type_sharding_map = get_all_linear_type_to_sharding_maps()
         unused_keys = type_sharding_map[self.linear_type](

@@ -11,8 +11,8 @@ from fms.models import get_model
 # path/to/sd    None           state dict
 # path/to/sd    custom         custom
 
-class TestDatatype:
 
+class TestDatatype:
     @pytest.fixture(
         scope="class",
         params=[torch.float32, torch.float16],

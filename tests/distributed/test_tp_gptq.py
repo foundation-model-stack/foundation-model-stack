@@ -37,7 +37,6 @@ class MockGroup:
 
 
 class TestGPTQwithTP:
-
     @pytest.fixture(scope="class")
     def get_config(self) -> MockGPTQConfig:
         # defined as fixture to support future parameterization
@@ -61,7 +60,7 @@ class TestGPTQwithTP:
                 "use_marlin": config.use_marlin,
                 "disable_exllama": config.disable_exllama,
                 "disable_exllamav2": config.disable_exllamav2,
-            }
+            },
         )
         return attention
 
@@ -78,7 +77,7 @@ class TestGPTQwithTP:
                 "use_marlin": config.use_marlin,
                 "disable_exllama": config.disable_exllama,
                 "disable_exllamav2": config.disable_exllamav2,
-            }
+            },
         )
         return ffn
 
@@ -124,7 +123,6 @@ class TestGPTQwithTP:
         assert get_glu.wg1_fused.QUANT_TYPE == kernel
         assert get_glu.w2.QUANT_TYPE == kernel
 
-
     def test_gptq_tp_attn_fused(self, get_attention, get_config):
         if not torch.distributed.is_initialized():
             torch.distributed.init_process_group(
@@ -151,17 +149,17 @@ class TestGPTQwithTP:
         n_grp = in_feat // config.group_size
 
         qkv_fused_qparam = {
-            "qweight": torch.randint(
-                0, int32_max, (in_feat // packing, out_feat)
-            ).to(torch.int32),
+            "qweight": torch.randint(0, int32_max, (in_feat // packing, out_feat)).to(
+                torch.int32
+            ),
             "scales": torch.randn((n_grp, out_feat), dtype=torch.float16),
-            "qzeros": torch.randint(
-                0, int32_max, (n_grp, out_feat // packing)
-            ).to(torch.int32),
-            "g_idx": torch.randint(0, n_grp, (in_feat, )).to(torch.int32),
+            "qzeros": torch.randint(0, int32_max, (n_grp, out_feat // packing)).to(
+                torch.int32
+            ),
+            "g_idx": torch.randint(0, n_grp, (in_feat,)).to(torch.int32),
         }
         if config.use_bias:
-            qkv_fused_qparam["bias"] = torch.zeros((out_feat, ), dtype=torch.float16)
+            qkv_fused_qparam["bias"] = torch.zeros((out_feat,), dtype=torch.float16)
 
         # DENSE
         in_feat = config.emb_kq * config.nheads
@@ -169,17 +167,17 @@ class TestGPTQwithTP:
         n_grp = in_feat // config.group_size
 
         dense_qparam = {
-            "qweight": torch.randint(
-                0, int32_max, (in_feat // packing, out_feat)
-            ).to(torch.int32),
+            "qweight": torch.randint(0, int32_max, (in_feat // packing, out_feat)).to(
+                torch.int32
+            ),
             "scales": torch.randn((n_grp, out_feat), dtype=torch.float16),
             "qzeros": torch.randint(
                 0, int32_max, (n_grp, out_feat // packing)
             ).to(torch.int32),
-            "g_idx": torch.randint(0, n_grp, (in_feat, )).to(torch.int32),
+            "g_idx": torch.randint(0, n_grp, (in_feat,)).to(torch.int32),
         }
         if config.use_bias:
-            dense_qparam["bias"] = torch.zeros((out_feat, ), dtype=torch.float16)
+            dense_qparam["bias"] = torch.zeros((out_feat,), dtype=torch.float16)
 
         def _test_gptq_for_world_size(group, qkv_fused_qparam, dense_qparam):
             for rank in range(group.size()):
@@ -202,7 +200,9 @@ class TestGPTQwithTP:
                     tp_mod.in_proj.qkv_fused.scales, tp_mod.in_proj.splits, dim=1
                 )
                 tp_q_qzeros, tp_k_qzeros, tp_v_qzeros = torch.split(
-                    tp_mod.in_proj.qkv_fused.qzeros, [x // packing for x in tp_mod.in_proj.splits], dim=1
+                    tp_mod.in_proj.qkv_fused.qzeros,
+                    [x // packing for x in tp_mod.in_proj.splits],
+                    dim=1,
                 )
                 tp_gidx = tp_mod.in_proj.qkv_fused.g_idx
                 if config.use_bias:
@@ -224,25 +224,25 @@ class TestGPTQwithTP:
                 q_mult_packed = q_mult // packing
                 q_rank = rank // max(1, group.size() // config.nheads)
                 torch.testing.assert_close(
-                    qkv_fused_qw[:, q_mult * q_rank : q_mult * (q_rank + 1)],
-                    tp_q_qw
+                    qkv_fused_qw[:, q_mult * q_rank : q_mult * (q_rank + 1)], tp_q_qw
                 )
                 torch.testing.assert_close(
                     qkv_fused_scales[:, q_mult * q_rank : q_mult * (q_rank + 1)],
-                    tp_q_scales
+                    tp_q_scales,
                 )
                 torch.testing.assert_close(
-                    qkv_fused_qzeros[:, q_mult_packed * q_rank : q_mult_packed * (q_rank + 1)],
-                    tp_q_qzeros
+                    qkv_fused_qzeros[
+                        :, q_mult_packed * q_rank : q_mult_packed * (q_rank + 1)
+                    ],
+                    tp_q_qzeros,
                 )
                 torch.testing.assert_close(
-                    qkv_fused_gidx - min(qkv_fused_gidx),
-                    tp_gidx
+                    qkv_fused_gidx - min(qkv_fused_gidx), tp_gidx
                 )
                 if config.use_bias:
                     torch.testing.assert_close(
                         qkv_fused_bias[q_mult * q_rank : q_mult * (q_rank + 1)],
-                        tp_q_bias
+                        tp_q_bias,
                     )
 
                 # assert on Key linear module
@@ -252,44 +252,44 @@ class TestGPTQwithTP:
                 k_out_dim_start = k_mult * k_rank + q_out_dim
                 k_out_dim_end = k_mult * (k_rank + 1) + q_out_dim
                 torch.testing.assert_close(
-                    qkv_fused_qw[:, k_out_dim_start : k_out_dim_end],
-                    tp_k_qw
+                    qkv_fused_qw[:, k_out_dim_start : k_out_dim_end], tp_k_qw
                 )
                 torch.testing.assert_close(
-                    qkv_fused_scales[:, k_out_dim_start : k_out_dim_end],
-                    tp_k_scales
+                    qkv_fused_scales[:, k_out_dim_start : k_out_dim_end], tp_k_scales
                 )
                 torch.testing.assert_close(
-                    qkv_fused_qzeros[:, k_out_dim_start // packing : k_out_dim_end // packing],
-                    tp_k_qzeros
+                    qkv_fused_qzeros[
+                        :, k_out_dim_start // packing : k_out_dim_end // packing
+                    ],
+                    tp_k_qzeros,
                 )
                 if config.use_bias:
                     torch.testing.assert_close(
-                        qkv_fused_bias[k_out_dim_start : k_out_dim_end],
-                        tp_k_bias
+                        qkv_fused_bias[k_out_dim_start : k_out_dim_end], tp_k_bias
                     )
 
                 # assert on Value linear module
-                v_mult = config.emb_v * config.kvheads // min(group.size(), config.kvheads)
+                v_mult = (
+                    config.emb_v * config.kvheads // min(group.size(), config.kvheads)
+                )
                 v_rank = rank // max(1, group.size() // config.kvheads)
                 v_out_idx_start = v_mult * v_rank + q_out_dim + k_out_dim
                 v_out_idx_end = v_mult * (v_rank + 1) + q_out_dim + k_out_dim
                 torch.testing.assert_close(
-                    qkv_fused_qw[:, v_out_idx_start : v_out_idx_end],
-                    tp_v_qw
+                    qkv_fused_qw[:, v_out_idx_start : v_out_idx_end], tp_v_qw
                 )
                 torch.testing.assert_close(
-                    qkv_fused_scales[:, v_out_idx_start : v_out_idx_end],
-                    tp_v_scales
+                    qkv_fused_scales[:, v_out_idx_start : v_out_idx_end], tp_v_scales
                 )
                 torch.testing.assert_close(
-                    qkv_fused_qzeros[:, v_out_idx_start // packing : v_out_idx_end // packing],
-                    tp_v_qzeros
+                    qkv_fused_qzeros[
+                        :, v_out_idx_start // packing : v_out_idx_end // packing
+                    ],
+                    tp_v_qzeros,
                 )
                 if config.use_bias:
                     torch.testing.assert_close(
-                        qkv_fused_bias[v_out_idx_start : v_out_idx_end],
-                        tp_v_bias
+                        qkv_fused_bias[v_out_idx_start : v_out_idx_end], tp_v_bias
                     )
                 else:
                     assert (
@@ -363,7 +363,6 @@ class TestGPTQwithTP:
         group = MockGroup(32)
         _test_gptq_for_world_size(group, qkv_fused_qparam, dense_qparam)
 
-
     def test_gptq_tp_ffn(self, get_ffn, get_config):
         if not torch.distributed.is_initialized():
             torch.distributed.init_process_group(
@@ -380,17 +379,17 @@ class TestGPTQwithTP:
         n_grp = in_feat // config.group_size
 
         w1_qparam = {
-            "qweight": torch.randint(
-                0, int32_max, (in_feat // packing, out_feat)
-            ).to(torch.int32),
+            "qweight": torch.randint(0, int32_max, (in_feat // packing, out_feat)).to(
+                torch.int32
+            ),
             "scales": torch.randn((n_grp, out_feat), dtype=torch.float16),
-            "qzeros": torch.randint(
-                0, int32_max, (n_grp, out_feat // packing)
-            ).to(torch.int32),
-            "g_idx": torch.randint(0, n_grp, (in_feat, )).to(torch.int32),
+            "qzeros": torch.randint(0, int32_max, (n_grp, out_feat // packing)).to(
+                torch.int32
+            ),
+            "g_idx": torch.randint(0, n_grp, (in_feat,)).to(torch.int32),
         }
         if config.use_bias:
-            w1_qparam["bias"] = torch.zeros((out_feat, ), dtype=torch.float16)
+            w1_qparam["bias"] = torch.zeros((out_feat,), dtype=torch.float16)
 
         # w2
         in_feat = config.multiple_of * config.emb_dim
@@ -398,17 +397,17 @@ class TestGPTQwithTP:
         n_grp = in_feat // config.group_size
 
         w2_qparam = {
-            "qweight": torch.randint(
-                0, int32_max, (in_feat // packing, out_feat)
-            ).to(torch.int32),
+            "qweight": torch.randint(0, int32_max, (in_feat // packing, out_feat)).to(
+                torch.int32
+            ),
             "scales": torch.randn((n_grp, out_feat), dtype=torch.float16),
-            "qzeros": torch.randint(
-                0, int32_max, (n_grp, out_feat // packing)
-            ).to(torch.int32),
-            "g_idx": torch.randint(0, n_grp, (in_feat, )).to(torch.int32),
+            "qzeros": torch.randint(0, int32_max, (n_grp, out_feat // packing)).to(
+                torch.int32
+            ),
+            "g_idx": torch.randint(0, n_grp, (in_feat,)).to(torch.int32),
         }
         if config.use_bias:
-            w2_qparam["bias"] = torch.zeros((out_feat, ), dtype=torch.float16)
+            w2_qparam["bias"] = torch.zeros((out_feat,), dtype=torch.float16)
 
         def _test_gptq_for_world_size(group, w1_qparam, w2_qparam):
             for rank in range(group.size()):
@@ -435,25 +434,20 @@ class TestGPTQwithTP:
                 w1_mult = config.multiple_of * config.emb_dim // group.size()
                 w1_mult_packed = w1_mult // packing
                 torch.testing.assert_close(
-                    w1_qw[:, w1_mult * rank : w1_mult * (rank + 1)],
-                    tp_mod.w1.qweight
+                    w1_qw[:, w1_mult * rank : w1_mult * (rank + 1)], tp_mod.w1.qweight
                 )
                 torch.testing.assert_close(
                     w1_scales[:, w1_mult * rank : w1_mult * (rank + 1)],
-                    tp_mod.w1.scales
+                    tp_mod.w1.scales,
                 )
                 torch.testing.assert_close(
                     w1_qzeros[:, w1_mult_packed * rank : w1_mult_packed * (rank + 1)],
-                    tp_mod.w1.qzeros
+                    tp_mod.w1.qzeros,
                 )
-                torch.testing.assert_close(
-                    w1_gidx - min(w1_gidx),
-                    tp_mod.w1.g_idx
-                )
+                torch.testing.assert_close(w1_gidx - min(w1_gidx), tp_mod.w1.g_idx)
                 if config.use_bias:
                     torch.testing.assert_close(
-                        w1_bias[w1_mult * rank : w1_mult * (rank + 1)],
-                        tp_mod.w1.bias
+                        w1_bias[w1_mult * rank : w1_mult * (rank + 1)], tp_mod.w1.bias
                     )
                 else:
                     assert (
@@ -526,7 +520,6 @@ class TestGPTQwithTP:
         group = MockGroup(32)
         _test_gptq_for_world_size(group, w1_qparam, w2_qparam)
 
-
     def test_gptq_tp_glu_fused(self, get_glu, get_config):
         if not torch.distributed.is_initialized():
             torch.distributed.init_process_group(
@@ -543,17 +536,17 @@ class TestGPTQwithTP:
         n_grp = in_feat // config.group_size
 
         wg1_fused_qparam = {
-            "qweight": torch.randint(
-                0, int32_max, (in_feat // packing, out_feat)
-            ).to(torch.int32),
+            "qweight": torch.randint(0, int32_max, (in_feat // packing, out_feat)).to(
+                torch.int32
+            ),
             "scales": torch.randn((n_grp, out_feat), dtype=torch.float16),
-            "qzeros": torch.randint(
-                0, int32_max, (n_grp, out_feat // packing)
-            ).to(torch.int32),
-            "g_idx": torch.randint(0, n_grp, (in_feat, )).to(torch.int32),
+            "qzeros": torch.randint(0, int32_max, (n_grp, out_feat // packing)).to(
+                torch.int32
+            ),
+            "g_idx": torch.randint(0, n_grp, (in_feat,)).to(torch.int32),
         }
         if config.use_bias:
-            wg1_fused_qparam["bias"] = torch.zeros((out_feat, ), dtype=torch.float16)
+            wg1_fused_qparam["bias"] = torch.zeros((out_feat,), dtype=torch.float16)
 
         # w2
         in_feat = config.multiple_of * config.emb_dim
@@ -561,17 +554,17 @@ class TestGPTQwithTP:
         n_grp = in_feat // config.group_size
 
         w2_qparam = {
-            "qweight": torch.randint(
-                0, int32_max, (in_feat // packing, out_feat)
-            ).to(torch.int32),
+            "qweight": torch.randint(0, int32_max, (in_feat // packing, out_feat)).to(
+                torch.int32
+            ),
             "scales": torch.randn((n_grp, out_feat), dtype=torch.float16),
-            "qzeros": torch.randint(
-                0, int32_max, (n_grp, out_feat // packing)
-            ).to(torch.int32),
-            "g_idx": torch.randint(0, n_grp, (in_feat, )).to(torch.int32),
+            "qzeros": torch.randint(0, int32_max, (n_grp, out_feat // packing)).to(
+                torch.int32
+            ),
+            "g_idx": torch.randint(0, n_grp, (in_feat,)).to(torch.int32),
         }
         if config.use_bias:
-            w2_qparam["bias"] = torch.zeros((out_feat, ), dtype=torch.float16)
+            w2_qparam["bias"] = torch.zeros((out_feat,), dtype=torch.float16)
 
         def _test_gptq_for_world_size(group, w1_fused_qparam, w2_qparam):
             for rank in range(group.size()):
@@ -587,20 +580,30 @@ class TestGPTQwithTP:
                     tp_mod.load_weights(qparams)
 
                 # load split qparams from TP GLU module
-                hidden_size_per_rank = config.multiple_of * config.emb_dim // group.size()
+                hidden_size_per_rank = (
+                    config.multiple_of * config.emb_dim // group.size()
+                )
                 tp_wg_qw, tp_w1_qw = torch.split(
-                    tp_mod.wg1_fused.qweight, [hidden_size_per_rank, hidden_size_per_rank], dim=1
+                    tp_mod.wg1_fused.qweight,
+                    [hidden_size_per_rank, hidden_size_per_rank],
+                    dim=1,
                 )
                 tp_wg_scales, tp_w1_scales = torch.split(
-                    tp_mod.wg1_fused.scales, [hidden_size_per_rank, hidden_size_per_rank], dim=1
+                    tp_mod.wg1_fused.scales,
+                    [hidden_size_per_rank, hidden_size_per_rank],
+                    dim=1,
                 )
                 tp_wg_qzeros, tp_w1_qzeros = torch.split(
-                    tp_mod.wg1_fused.qzeros, [hidden_size_per_rank // packing, hidden_size_per_rank // packing], dim=1
+                    tp_mod.wg1_fused.qzeros,
+                    [hidden_size_per_rank // packing, hidden_size_per_rank // packing],
+                    dim=1,
                 )
                 tp_gidx = tp_mod.wg1_fused.g_idx
                 if config.use_bias:
                     tp_wg_bias, tp_w1_bias = torch.split(
-                        tp_mod.wg1_fused.bias, [hidden_size_per_rank, hidden_size_per_rank], dim=0
+                        tp_mod.wg1_fused.bias,
+                        [hidden_size_per_rank, hidden_size_per_rank],
+                        dim=0,
                     )
 
                 # load pre-TP tensors of wg1_fused linear module
@@ -616,25 +619,25 @@ class TestGPTQwithTP:
                 wg_mult = wg_out_dim // group.size()
                 wg_mult_packed = wg_mult // packing
                 torch.testing.assert_close(
-                    wg1_fused_qw[:, wg_mult * rank : wg_mult * (rank + 1)],
-                    tp_wg_qw
+                    wg1_fused_qw[:, wg_mult * rank : wg_mult * (rank + 1)], tp_wg_qw
                 )
                 torch.testing.assert_close(
                     wg1_fused_scales[:, wg_mult * rank : wg_mult * (rank + 1)],
-                    tp_wg_scales
+                    tp_wg_scales,
                 )
                 torch.testing.assert_close(
-                    wg1_fused_qzeros[:, wg_mult_packed * rank : wg_mult_packed * (rank + 1)],
-                    tp_wg_qzeros
+                    wg1_fused_qzeros[
+                        :, wg_mult_packed * rank : wg_mult_packed * (rank + 1)
+                    ],
+                    tp_wg_qzeros,
                 )
                 torch.testing.assert_close(
-                    wg1_fused_gidx - min(wg1_fused_gidx),
-                    tp_gidx
+                    wg1_fused_gidx - min(wg1_fused_gidx), tp_gidx
                 )
                 if config.use_bias:
                     torch.testing.assert_close(
                         wg1_fused_bias[wg_mult * rank : wg_mult * (rank + 1)],
-                        tp_wg_bias
+                        tp_wg_bias,
                     )
 
                 # assert on wg linear module
@@ -642,21 +645,20 @@ class TestGPTQwithTP:
                 w1_out_idx_start = w1_mult * rank + wg_out_dim
                 w1_out_idx_end = w1_mult * (rank + 1) + wg_out_dim
                 torch.testing.assert_close(
-                    wg1_fused_qw[:, w1_out_idx_start : w1_out_idx_end],
-                    tp_w1_qw
+                    wg1_fused_qw[:, w1_out_idx_start : w1_out_idx_end], tp_w1_qw
                 )
                 torch.testing.assert_close(
-                    wg1_fused_scales[:, w1_out_idx_start : w1_out_idx_end],
-                    tp_w1_scales
+                    wg1_fused_scales[:, w1_out_idx_start : w1_out_idx_end], tp_w1_scales
                 )
                 torch.testing.assert_close(
-                    wg1_fused_qzeros[:, w1_out_idx_start // packing : w1_out_idx_end // packing],
-                    tp_w1_qzeros
+                    wg1_fused_qzeros[
+                        :, w1_out_idx_start // packing : w1_out_idx_end // packing
+                    ],
+                    tp_w1_qzeros,
                 )
                 if config.use_bias:
                     torch.testing.assert_close(
-                        wg1_fused_bias[w1_out_idx_start : w1_out_idx_end],
-                        tp_w1_bias
+                        wg1_fused_bias[w1_out_idx_start : w1_out_idx_end], tp_w1_bias
                     )
                 else:
                     assert (

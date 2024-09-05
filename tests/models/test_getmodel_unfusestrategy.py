@@ -30,7 +30,6 @@ expected_layers_from_fusion = {
 
 
 class TestUnfuseStrategy:
-
     @pytest.fixture(
         scope="class",
         params=unfuse_strategies,
@@ -69,7 +68,7 @@ class TestUnfuseStrategy:
                 "use_marlin": False,
                 "disable_exllama": True,
                 "disable_exllamav2": False,
-            }
+            },
         ).state_dict()
         return (sd, request.param)
 
@@ -99,11 +98,11 @@ class TestUnfuseStrategy:
                 source="hf",
                 unfuse_strategy=None,
             ).state_dict()
-            assert (
-                all([
+            assert all(
+                [
                     any([layer_key in sd_key for sd_key in sd_fused])
                     for layer_key in expected_layers
-                ])
+                ]
             )
 
     def test_strategy_post_from_ckpt(self, get_state_dict):
@@ -119,11 +118,11 @@ class TestUnfuseStrategy:
                 model_path=f.name,
                 unfuse_strategy="post",
             ).state_dict()
-            assert (
-                all([
+            assert all(
+                [
                     any([layer_key in sd_key for sd_key in sd_fused])
                     for layer_key in expected_layers
-                ])
+                ]
             )
 
     def test_gptq_fusion_no_ckpt(self, get_gptq_state_dict):

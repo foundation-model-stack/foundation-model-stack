@@ -629,7 +629,9 @@ def _hf_unfused_sd_to_fms_unfused_sd(hf_sd: Mapping) -> Mapping:
     ]
     new_sd = {}
 
-    trans_required_pattern = re.compile("layers.[0-9]+.attn.in_proj.(query|key).(weight|bias)")
+    trans_required_pattern = re.compile(
+        "layers.[0-9]+.attn.in_proj.(query|key).(weight|bias)"
+    )
     for name, param in hf_sd.items():
         new_name = name
         for pattern, repl in replacements:
@@ -706,9 +708,11 @@ def _gptq_unfused_sd_to_fms_unfused_sd(hf_sd: Mapping) -> Mapping:
             nheads = int(param_t_size[0] / head_size)
 
             fms_unfused_sd[fms_name] = (
-                param.t().view(nheads, 2, -1, param_t_size[1])
+                param.t()
+                .view(nheads, 2, -1, param_t_size[1])
                 .transpose(1, 2)
-                .reshape(*param_t_size).t()
+                .reshape(*param_t_size)
+                .t()
             )
     return fms_unfused_sd
 
