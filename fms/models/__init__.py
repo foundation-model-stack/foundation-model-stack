@@ -349,7 +349,7 @@ def get_model(
         if (
             data_type
             and extra_args.get("linear_config", None)
-            and extra_args["linear_config"].get("linear_type", None) == "gptq"
+            and "gptq" in extra_args["linear_config"].get("linear_type", None)
         ):
             # TODO: introduce logger with different log levels?
             print(
