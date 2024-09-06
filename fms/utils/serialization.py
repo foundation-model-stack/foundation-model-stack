@@ -493,7 +493,6 @@ def _load_partial_state_dict(
         key_step = 0
         tp_module = None
         tp_prefix = ""
-        target_dtype = tensor_value.dtype if dtype is None else dtype
 
         # Navigate the model tree to find the module where the parameter is
         # located and whether there is a TPModule in the way in case the
@@ -526,7 +525,9 @@ def _load_partial_state_dict(
                 # cast module parameter to non-meta device
                 if param.device == torch.device("meta"):
                     param = _move_to_real_device(
-                        param, tensor_value.device, target_dtype
+                        param=param,
+                        real_device=tensor_value.device,
+                        dtype=tensor_value.dtype if dtype is None else dtype,
                     )
                     setattr(target_module, key_steps[-1], param)
                     param = getattr(target_module, key_steps[-1])
@@ -535,8 +536,23 @@ def _load_partial_state_dict(
             elif tp_module is not None and tp_module not in seen_tp_modules:
                 seen_tp_modules.add(tp_module)
                 tensor_values = {k: v for k, v in state_dict.items() if tp_prefix in k}
+
+                # when tensors from ckpt have all the same dtype,
+                # it can be enforced onto the module parameters
+                is_single_dtype = len(
+                    set([v.dtype for v in tensor_values.values()])
+                ) == 1
+
                 tp_module._apply(
-                    lambda t: _move_to_real_device(t, tensor_value.device, target_dtype)
+                    lambda t: _move_to_real_device(
+                        param=t,
+                        real_device=tensor_value.device,
+                        dtype=(
+                            dtype if dtype is not None
+                            else tensor_value.dtype if is_single_dtype
+                            else t.dtype
+                        )
+                    )
                 )
                 unused_keys_tp = tp_module.load_weights(tensor_values)
         except:
