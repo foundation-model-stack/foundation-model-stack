@@ -348,10 +348,9 @@ def get_model(
             data_type_parsed = getattr(torch, data_type)
         except:
             raise ValueError(f"Data type `{data_type}` is not a supported torch dtype")
-        if (
-            extra_args.get("linear_config", None)
-            and "gptq" in extra_args["linear_config"].get("linear_type", None)
-        ):
+        if extra_args.get("linear_config", None) and "gptq" in extra_args[
+            "linear_config"
+        ].get("linear_type", None):
             # TODO: introduce logger with different log levels?
             print(
                 f"[WARNING] data_type {data_type} provided, but GPTQ does not support "

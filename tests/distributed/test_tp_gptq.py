@@ -183,10 +183,9 @@ class TestGPTQwithTP:
                 torch.int32
             ),
             "scales": torch.randn((n_grp, out_feat), dtype=torch.float16),
-            "qzeros": torch.randint(
-                0, int32_max, (n_grp, out_feat // packing)).to(
-                    torch.int32
-                ),
+            "qzeros": torch.randint(0, int32_max, (n_grp, out_feat // packing)).to(
+                torch.int32
+            ),
             "g_idx": torch.randint(0, n_grp, (in_feat,)).to(torch.int32),
         }
         if config.use_bias:
