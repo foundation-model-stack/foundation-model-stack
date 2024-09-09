@@ -296,6 +296,20 @@ class LLaMA(nn.Module):
                     check_close(m.value.weight)
                     check_close(m.dense.weight)
 
+    def _clean_up_rot_emb_cache(
+        self,
+        cached_freqs: dict[Optional[torch.device]: dict[int: torch.Tensor]],
+        max_seq_len_cached: dict[Optional[torch.device]: int],
+    ):
+        # remove meta tensors from cached_freqs
+        for dev in list(cached_freqs.keys()):
+            for alp in list(cached_freqs[dev].keys()):
+                if cached_freqs[dev][alp].device == torch.device("meta"):
+                    del cached_freqs[dev][alp]
+                    if len(cached_freqs[dev]) == 0:
+                        del cached_freqs[dev]
+                        del max_seq_len_cached[dev]
+
     def post_init(self):
         # This function is called in `get_model` after the model is
         # fully initalized on the correct device
@@ -307,6 +321,11 @@ class LLaMA(nn.Module):
                 self.shared.head.weight = self.shared.emb.weight
             else:
                 self.shared.emb.weight = self.shared.head.weight
+
+        self._clean_up_rot_emb_cache(
+            self.rot_emb.cached_freqs,
+            self.rot_emb.max_seq_len_cached,
+        )
 
         # init RoPE on the right device(s)
         for device in set(
