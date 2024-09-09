@@ -17,7 +17,7 @@ def pytest_addoption(parser):
         "--autogptq",
         action="store_true",
         default=False,
-        help="run tests requiring AutoGPTQ package (with GPU support)"
+        help="run tests requiring AutoGPTQ package (with GPU support)",
     )
 
 

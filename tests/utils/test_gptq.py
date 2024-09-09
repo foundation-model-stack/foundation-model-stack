@@ -4,16 +4,16 @@ from fms.models import get_model
 
 try:
     from auto_gptq.nn_modules.qlinear.qlinear_cuda_old import (
-        QuantLinear as qlinear_cuda_old
+        QuantLinear as qlinear_cuda_old,
     )
     from auto_gptq.nn_modules.qlinear.qlinear_exllama import (
-        QuantLinear as qlinear_exllama
+        QuantLinear as qlinear_exllama,
     )
     from auto_gptq.nn_modules.qlinear.qlinear_exllamav2 import (
-        QuantLinear as qlinear_exllamav2
+        QuantLinear as qlinear_exllamav2,
     )
     from auto_gptq.nn_modules.qlinear.qlinear_marlin import (
-        QuantLinear as qlinear_marlin
+        QuantLinear as qlinear_marlin,
     )
 except ImportError:
     print(
@@ -32,7 +32,7 @@ qlinear_configs = [
             "use_marlin": False,
             "disable_exllama": True,
             "disable_exllamav2": True,
-        }
+        },
     ),
     (
         "exllama",
@@ -42,7 +42,7 @@ qlinear_configs = [
             "use_marlin": False,
             "disable_exllama": False,
             "disable_exllamav2": True,
-        }
+        },
     ),
     (
         "exllamav2",
@@ -52,7 +52,7 @@ qlinear_configs = [
             "use_marlin": False,
             "disable_exllama": True,
             "disable_exllamav2": False,
-        }
+        },
     ),
     # (
     #     "marlin",
@@ -69,7 +69,6 @@ qlinear_ids = ["cuda", "exllama", "exllamav2"]  # , "marlin"]
 
 
 class TestGPTQModel:
-
     @pytest.fixture(
         scope="class",
         params=qlinear_configs,
@@ -103,7 +102,7 @@ class TestGPTQModel:
         id, gptq_model = get_gptq_model
         fused_linear = ["qkv_fused", "dense", "wg1_fused", "w2"]
         not_quantlinear = {}
-        for k,v in gptq_model.named_modules():
+        for k, v in gptq_model.named_modules():
             if k.split(".")[-1] in fused_linear and not isinstance(
                 v, qlinear_id_to_module[id]
             ):

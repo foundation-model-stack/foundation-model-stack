@@ -219,7 +219,7 @@ class GatedLinearUnit(nn.Module):
         p_dropout=0.1,
         use_bias=True,
         fused: bool = True,
-        linear_config:  Optional[Mapping[str, Any]] = None,
+        linear_config: Optional[Mapping[str, Any]] = None,
     ):
         super(GatedLinearUnit, self).__init__()
         self.hidden_dim = int(hidden_grow_factor * emb_dim)

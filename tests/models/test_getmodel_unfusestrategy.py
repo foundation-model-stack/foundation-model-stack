@@ -77,11 +77,11 @@ class TestUnfuseStrategy:
         sd, strategy = get_state_dict
         fusion = {None: "fused", "post": "unfused"}
         expected_layers = expected_layers_from_fusion[fusion[strategy]]
-        assert (
-            all([
+        assert all(
+            [
                 any([layer_key in sd_key for sd_key in sd])
                 for layer_key in expected_layers
-            ])
+            ]
         )
 
     def test_strategy_none_from_ckpt(self, get_state_dict):
@@ -130,9 +130,9 @@ class TestUnfuseStrategy:
         sd, strategy = get_gptq_state_dict
         fusion = "fused" if strategy == None else "unfused"
         expected_layers = expected_layers_from_fusion[fusion]
-        assert (
-            all([
+        assert all(
+            [
                 any([layer_key in sd_key for sd_key in sd])
                 for layer_key in expected_layers
-            ])
+            ]
         )

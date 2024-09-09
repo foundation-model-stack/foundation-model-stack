@@ -539,19 +539,21 @@ def _load_partial_state_dict(
 
                 # when tensors from ckpt have all the same dtype,
                 # it can be enforced onto the module parameters
-                is_single_dtype = len(
-                    set([v.dtype for v in tensor_values.values()])
-                ) == 1
+                is_single_dtype = (
+                    len(set([v.dtype for v in tensor_values.values()])) == 1
+                )
 
                 tp_module._apply(
                     lambda t: _move_to_real_device(
                         param=t,
                         real_device=tensor_value.device,
                         dtype=(
-                            dtype if dtype is not None
-                            else tensor_value.dtype if is_single_dtype
+                            dtype
+                            if dtype is not None
+                            else tensor_value.dtype
+                            if is_single_dtype
                             else t.dtype
-                        )
+                        ),
                     )
                 )
                 unused_keys_tp = tp_module.load_weights(tensor_values)

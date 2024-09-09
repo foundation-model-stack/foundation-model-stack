@@ -412,7 +412,7 @@ def get_model(
         _validate_unfuse_strategy(extra_args, rank)
 
         # change source for "gptq + pre" (= unfused gptq ckpt into unfused model)
-        if (is_gptq and extra_args.get("unfuse_strategy") == "pre"):
+        if is_gptq and extra_args.get("unfuse_strategy") == "pre":
             if source != "hf":  # GPTQ ckpt is always "hf" style
                 raise ValueError(
                     f"Expected GPTQ checkpoint of type `hf` but source is `{source}` instead"
@@ -473,7 +473,11 @@ def get_model(
     # Make sure any uninitialized tensors are at least moved to device
     # TODO: should we raise a warning? are uninitialized tensors ever acceptable?
     if initial_device != torch.device("meta"):
-        fms_model._apply(lambda t: torch.empty_like(t, device=initial_device) if t.device == torch.device("meta") else t)
+        fms_model._apply(
+            lambda t: torch.empty_like(t, device=initial_device)
+            if t.device == torch.device("meta")
+            else t
+        )
 
     if extra_args.get("unfuse_strategy", None) == "post":
         fms_model = fusion.apply_unfuse_weights(fms_model)
