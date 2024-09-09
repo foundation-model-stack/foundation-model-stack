@@ -478,7 +478,7 @@ def _move_to_real_device(
 
 def _load_partial_state_dict(
     model: torch.nn.Module,
-    state_dict: MutableMapping[str, Any],
+    state_dict: Mapping[str, Any],
     needs_tp_sharding: bool,
     dtype: Optional[torch.dtype] = None,
 ) -> set:

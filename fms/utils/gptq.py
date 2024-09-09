@@ -15,7 +15,7 @@ from fms.modules.tp import ShardType, TPModule
 from fms.utils.config import ModelConfig
 
 try:
-    from auto_gptq.utils.import_utils import dynamically_import_QuantLinear
+    from auto_gptq.utils.import_utils import dynamically_import_QuantLinear  # type: ignore
 
     IS_AUTOGPTQ_AVAILABLE = True
 except:
@@ -64,7 +64,7 @@ def get_gptq_linear(
     in_features: int,
     out_features: int,
     bias: bool,
-    linear_config: Optional[Mapping[str, Any]] = None,
+    linear_config: Mapping[str, Any],
 ):
     gptq_config = GPTQLinearConfig(**linear_config)
 

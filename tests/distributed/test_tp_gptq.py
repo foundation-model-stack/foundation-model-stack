@@ -106,7 +106,7 @@ class TestGPTQwithTP:
                 "use_marlin": config.use_marlin,
                 "disable_exllama": config.disable_exllama,
                 "disable_exllamav2": config.disable_exllamav2,
-            }
+            },
         )
         return glu
 
@@ -184,8 +184,9 @@ class TestGPTQwithTP:
             ),
             "scales": torch.randn((n_grp, out_feat), dtype=torch.float16),
             "qzeros": torch.randint(
-                0, int32_max, (n_grp, out_feat // packing)
-            ).to(torch.int32),
+                0, int32_max, (n_grp, out_feat // packing)).to(
+                    torch.int32
+                ),
             "g_idx": torch.randint(0, n_grp, (in_feat,)).to(torch.int32),
         }
         if config.use_bias:
@@ -264,10 +265,10 @@ class TestGPTQwithTP:
                 k_out_dim_start = k_mult * k_rank + q_out_dim
                 k_out_dim_end = k_mult * (k_rank + 1) + q_out_dim
                 torch.testing.assert_close(
-                    qkv_fused_qw[:, k_out_dim_start : k_out_dim_end], tp_k_qw
+                    qkv_fused_qw[:, k_out_dim_start:k_out_dim_end], tp_k_qw
                 )
                 torch.testing.assert_close(
-                    qkv_fused_scales[:, k_out_dim_start : k_out_dim_end], tp_k_scales
+                    qkv_fused_scales[:, k_out_dim_start:k_out_dim_end], tp_k_scales
                 )
                 torch.testing.assert_close(
                     qkv_fused_qzeros[
@@ -277,7 +278,7 @@ class TestGPTQwithTP:
                 )
                 if config.use_bias:
                     torch.testing.assert_close(
-                        qkv_fused_bias[k_out_dim_start : k_out_dim_end], tp_k_bias
+                        qkv_fused_bias[k_out_dim_start:k_out_dim_end], tp_k_bias
                     )
 
                 # assert on Value linear module
@@ -288,10 +289,10 @@ class TestGPTQwithTP:
                 v_out_idx_start = v_mult * v_rank + q_out_dim + k_out_dim
                 v_out_idx_end = v_mult * (v_rank + 1) + q_out_dim + k_out_dim
                 torch.testing.assert_close(
-                    qkv_fused_qw[:, v_out_idx_start : v_out_idx_end], tp_v_qw
+                    qkv_fused_qw[:, v_out_idx_start:v_out_idx_end], tp_v_qw
                 )
                 torch.testing.assert_close(
-                    qkv_fused_scales[:, v_out_idx_start : v_out_idx_end], tp_v_scales
+                    qkv_fused_scales[:, v_out_idx_start:v_out_idx_end], tp_v_scales
                 )
                 torch.testing.assert_close(
                     qkv_fused_qzeros[
@@ -301,7 +302,7 @@ class TestGPTQwithTP:
                 )
                 if config.use_bias:
                     torch.testing.assert_close(
-                        qkv_fused_bias[v_out_idx_start : v_out_idx_end], tp_v_bias
+                        qkv_fused_bias[v_out_idx_start:v_out_idx_end], tp_v_bias
                     )
                 else:
                     assert (
@@ -638,10 +639,10 @@ class TestGPTQwithTP:
                 w1_out_idx_start = w1_mult * rank + wg_out_dim
                 w1_out_idx_end = w1_mult * (rank + 1) + wg_out_dim
                 torch.testing.assert_close(
-                    wg1_fused_qw[:, w1_out_idx_start : w1_out_idx_end], tp_w1_qw
+                    wg1_fused_qw[:, w1_out_idx_start:w1_out_idx_end], tp_w1_qw
                 )
                 torch.testing.assert_close(
-                    wg1_fused_scales[:, w1_out_idx_start : w1_out_idx_end], tp_w1_scales
+                    wg1_fused_scales[:, w1_out_idx_start:w1_out_idx_end], tp_w1_scales
                 )
                 torch.testing.assert_close(
                     wg1_fused_qzeros[
@@ -651,7 +652,7 @@ class TestGPTQwithTP:
                 )
                 if config.use_bias:
                     torch.testing.assert_close(
-                        wg1_fused_bias[w1_out_idx_start : w1_out_idx_end], tp_w1_bias
+                        wg1_fused_bias[w1_out_idx_start:w1_out_idx_end], tp_w1_bias
                     )
                 else:
                     assert (

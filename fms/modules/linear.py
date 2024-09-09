@@ -7,8 +7,8 @@ import torch.nn as nn
 from fms.modules.tp import ShardType, TPModule
 
 
-__type_factory_map: Mapping[str, Callable] = {}
-__type_sharding_map: Mapping[str, Callable] = {}
+__type_factory_map: dict[str, Callable] = {}
+__type_sharding_map: dict[str, Callable] = {}
 
 
 def register_linear_type_to_module_map(linear_type: str, factory: Callable) -> None:
@@ -115,7 +115,7 @@ def shard_base_linear(
     and a TP-enabled module (`tp_module`), this function copies the correct shard
     from each tensor into the corresponding sharded module parameter.
     """
-    all_params = {}
+    all_params: dict = {}
     used_keys: set[str] = set()
     unused_keys: set[str] = set()
 
@@ -165,7 +165,7 @@ def shard_torch_linear(
     """
     param_sharding_info: dict[str, dict[str, LinearParameterShardingInfo]] = {}
     for module_name, module_info in module_sharding_info.items():
-        linear_mod: torch.nn.Linear = module_info.linear_module
+        linear_mod: torch.nn.Module = module_info.linear_module
         params: dict[str, LinearParameterShardingInfo] = {
             "weight": LinearParameterShardingInfo(
                 module_info.sharding_dim, ShardType.SHARD

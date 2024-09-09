@@ -341,14 +341,15 @@ def get_model(
         device = torch.device(device_type)
 
     extra_args = kwargs
+    # TODO: streamline this logic
+    data_type_parsed: Optional[torch.dtype] = None
     if isinstance(data_type, str):  # convert str to torch.dtype
         try:
-            data_type = getattr(torch, data_type)
+            data_type_parsed = getattr(torch, data_type)
         except:
             raise ValueError(f"Data type `{data_type}` is not a supported torch dtype")
         if (
-            data_type
-            and extra_args.get("linear_config", None)
+            extra_args.get("linear_config", None)
             and "gptq" in extra_args["linear_config"].get("linear_type", None)
         ):
             # TODO: introduce logger with different log levels?
@@ -356,7 +357,9 @@ def get_model(
                 f"[WARNING] data_type {data_type} provided, but GPTQ does not support "
                 "casting to custom data type. Will use checkpoint data type instead."
             )
-            data_type = None
+            data_type_parsed = None
+    else:
+        data_type_parsed = data_type
 
     is_gptq = (
         extra_args.get("linear_config", None)
@@ -423,7 +426,7 @@ def get_model(
     fms_model = _get_model_instance(
         architecture,
         variant,
-        dtype=data_type,
+        dtype=data_type_parsed,
         device=torch.device("meta"),
         extra_args=extra_args,
     )
@@ -448,7 +451,7 @@ def get_model(
             state_dict=lazy_sd,
             architecture=architecture,
             source=source if source is not None else "fms",
-            dtype=data_type,
+            dtype=data_type_parsed,
             distributed_strategy=distributed_strategy,
             checkpoint_sharding=checkpoint_sharding,
             initial_device=initial_device,
