@@ -32,7 +32,7 @@ def test_get_model_hf_pretrained():
         "hf_pretrained", "bigcode/gpt_bigcode-santacoder"
     )
     hf_model_pretrained = AutoModelForCausalLM.from_pretrained(
-        "bigcode/gpt_bigcode-santacoder"
+        "bigcode/gpt_bigcode-santacoder", torch_dtype="auto"
     )
 
     model_pretrained.eval()

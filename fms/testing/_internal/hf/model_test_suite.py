@@ -307,17 +307,22 @@ class HFModelGenerationTestSuite(HFConfigFixtureMixin, HFModelFixtureMixin):
     def _predict_text(model, tokenizer, texts, use_cache, num_beams):
         encoding = tokenizer(texts, padding=True, return_tensors="pt")
 
+        # Fix for newer versions of transformers
+        use_cache_kwarg = {}
+        if use_cache is not None:
+            use_cache_kwarg["use_cache"] = use_cache
+
         model.eval()
         with torch.no_grad():
             generated_ids = model.generate(
                 **encoding,
-                use_cache=use_cache,
                 num_beams=num_beams,
                 max_new_tokens=20,
                 repetition_penalty=2.5,
                 length_penalty=1.0,
                 early_stopping=True,
                 pad_token_id=model.config.pad_token_id,
+                **use_cache_kwarg,
             )
         generated_texts = tokenizer.batch_decode(
             generated_ids, skip_special_tokens=True

@@ -40,6 +40,7 @@ class TestUnfuseStrategy:
     )
     def get_state_dict(self, request):
         # instantiate FP16 model fused/unfused
+        orig_dtype = torch.get_default_dtype()
         torch.set_default_dtype(torch.float16)
         sd = get_model(
             architecture="llama",
@@ -49,6 +50,7 @@ class TestUnfuseStrategy:
             unfuse_strategy=request.param,
             linear_config={"linear_type": "torch_linear"},  # same as None
         ).state_dict()
+        torch.set_default_dtype(orig_dtype)
         return (sd, request.param)
 
     @pytest.fixture(
@@ -58,6 +60,7 @@ class TestUnfuseStrategy:
     )
     def get_gptq_state_dict(self, request):
         # instantiate GPTQ model fused/unfused
+        orig_dtype = torch.get_default_dtype()
         torch.set_default_dtype(torch.float16)
         sd = get_model(
             architecture="llama",
@@ -73,6 +76,7 @@ class TestUnfuseStrategy:
                 "disable_exllamav2": False,
             },
         ).state_dict()
+        torch.set_default_dtype(orig_dtype)
         return (sd, request.param)
 
     def test_fusion_no_ckpt(self, get_state_dict):
