@@ -319,6 +319,7 @@ class GPTBigCode(nn.Module):
         past_key_value_states: Optional[Tuple[torch.FloatTensor,]] = None,
         use_cache: bool = False,
         attn_algorithm: Optional[str] = None,
+        include_embeds: bool = False,
     ):
         output, cache = self.base_model(
             x,
@@ -331,10 +332,14 @@ class GPTBigCode(nn.Module):
 
         preds = self.head(output)
 
+        out = [preds]
         if use_cache:
-            return preds, cache
-        else:
-            return preds
+            out.append(cache)
+        if include_embeds:
+            out.append(output)
+        if len(out) == 1:
+            return out[0]
+        return out
 
 
 _micro_char_config = GPTBigCodeConfig(

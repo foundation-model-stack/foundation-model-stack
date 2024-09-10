@@ -329,6 +329,7 @@ class Mixtral(nn.Module):
         use_cache: bool = False,
         only_last_token: bool = False,
         attn_algorithm: Optional[str] = None,
+        include_embeds=False,
     ):
         output, cache = self.base_model(
             x, mask, position_ids, past_key_value_states, use_cache, attn_algorithm
@@ -338,10 +339,14 @@ class Mixtral(nn.Module):
             output = output[:, -1, :]
         preds = self.head(output)
 
+        out = [preds]
         if use_cache:
-            return preds, cache
-        else:
-            return preds
+            out.append(cache)
+        if include_embeds:
+            out.append(output)
+        if len(out) == 1:
+            return out[0]
+        return out
 
 
 # Register common Mixtral variants with the model registration API
