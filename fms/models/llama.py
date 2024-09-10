@@ -1,7 +1,7 @@
 import logging
 import re
 from dataclasses import dataclass
-from typing import Mapping, Optional, Any
+from typing import Any, Mapping, Optional
 
 import torch
 import torch.nn as nn
@@ -298,8 +298,8 @@ class LLaMA(nn.Module):
 
     def _clean_up_rot_emb_cache(
         self,
-        cached_freqs: dict[Optional[torch.device]: dict[int: torch.Tensor]],
-        max_seq_len_cached: dict[Optional[torch.device]: int],
+        cached_freqs: dict[Optional[torch.device], dict[int, torch.Tensor]],
+        max_seq_len_cached: dict[Optional[torch.device], int],
     ):
         # remove meta tensors from cached_freqs
         for dev in list(cached_freqs.keys()):

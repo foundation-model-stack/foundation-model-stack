@@ -1,6 +1,8 @@
 import pytest
 import torch
+
 from fms.models import get_model
+
 
 try:
     from auto_gptq.nn_modules.qlinear.qlinear_cuda_old import (

@@ -1,7 +1,10 @@
+import tempfile
+
 import pytest
 import torch
-import tempfile
+
 from fms.models import get_model
+
 
 # How to set unfuse_strategy to obtain desired `target_model` fusion
 #

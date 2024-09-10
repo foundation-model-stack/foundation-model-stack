@@ -19,7 +19,7 @@ from fms.distributed.strategy import (
     TensorParallelStrategy,
     UniformModelParallelStrategy,
 )
-from fms.utils import serialization, fusion
+from fms.utils import fusion, serialization
 
 
 logger = logging.getLogger(__name__)
@@ -141,7 +141,10 @@ def _get_model_instance(
     try:
         if dtype is not None:
             torch.set_default_dtype(dtype)
-        with device if device is not None else nullcontext():
+        device_ctx: Union[torch.device, nullcontext] = (
+            device if device is not None else nullcontext()
+        )
+        with device_ctx:
             return model_factory(**extra_args)
     finally:
         torch.set_default_dtype(orig)

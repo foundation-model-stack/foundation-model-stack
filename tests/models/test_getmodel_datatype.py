@@ -1,7 +1,10 @@
+import tempfile
+
 import pytest
 import torch
-import tempfile
+
 from fms.models import get_model
+
 
 # Expected data_type of model returned by get_model
 #
