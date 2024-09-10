@@ -83,6 +83,11 @@ class HFAdaptedGPTBigCodeForCausalLM(
     def __init__(self, config: HFAdaptedGPTBigCodeConfig, *args, **kwargs):
         super().__init__(config=config, bias=False, *args, **kwargs)
 
+    def _tie_weights(self):
+        # We know that FMS always saves the LM head weight, so ensure the right pointer is shared
+        self.embedding.weight = self.lm_head.weight
+        self.decoder.model.embedding.weight = self.embedding.weight
+
     @classmethod
     def _hf_model_from_fms(
         cls, model: nn.Module, config: HFAdaptedGPTBigCodeConfig

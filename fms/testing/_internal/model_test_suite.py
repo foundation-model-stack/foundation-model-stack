@@ -214,7 +214,7 @@ class ModelConsistencyTestSuite(ModelFixtureMixin, SignatureFixtureMixin):
             pytest.fail(
                 "Signature file has been saved, please re-run the tests without --capture_expectation"
             )
-
+        print(actual, signature)
         assertion_msg = f"""
         difference: {np.mean(np.abs(np.array(actual) - np.array(signature)))}
         
