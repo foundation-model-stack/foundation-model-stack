@@ -325,7 +325,8 @@ def main():
         # Untie head and activate its gradients
         model.head.weight = torch.nn.Parameter(model.head.weight.clone().detach())
         model.head.weight.requires_grad = True
-    model.base_model.rot_emb.compute_freqs_cis(model.head.weight.device, 4096)
+    model.base_model.embedding.weight.requires_grad = False
+    # model.base_model.rot_emb.compute_freqs_cis(model.head.weight.device, 4096)
     optimizer, dataset_sd, epoch, prev_step, cum_tokens = training_state(
         args.model_path, model, rank
     )
@@ -337,6 +338,7 @@ def main():
 
     if args.compile:
         model = torch.compile(model, backend="sendnn")
+        optimizer.step = torch.compile(optimizer.step, backend="sendnn")
 
     tokenizer = tokenizers.get_tokenizer(args.tokenizer)
 
@@ -349,7 +351,7 @@ def main():
     eos_token = tokenizer.convert_ids_to_tokens([eos_token_id])[0]
 
     # TODO: split a validation dataset
-    dataset = datasets.get_dataset(args.dataset_style, tokenizer, args.dataset_path, pad_token=0, max_len=257)
+    dataset = datasets.get_dataset(args.dataset_style, tokenizer, args.dataset_path, pad_token=0, max_len=513)
     if len(dataset_sd):
         dataset.load_state_dict(dataset_sd)
 

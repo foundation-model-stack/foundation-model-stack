@@ -266,6 +266,8 @@ def main():
         for param in model.parameters():
             param.requires_grad = False
         model.classification_head.head.weight.requires_grad = True
+    model.base_model.embedding.weight.requires_grad = False
+    model.base_model.position_embedding.weight.requires_grad = False
     optimizer, dataset_sd, epoch, prev_step, cum_tokens = training_state(
         args.model_path, model, rank
     )
