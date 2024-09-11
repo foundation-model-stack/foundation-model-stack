@@ -1,7 +1,7 @@
 import logging
 from contextlib import nullcontext
 from functools import partial
-from typing import Any, Callable, Dict, MutableMapping, Optional, Tuple
+from typing import Any, Callable, Dict, MutableMapping, Optional, Tuple, Union
 
 import torch
 from torch import nn
@@ -19,7 +19,7 @@ from fms.distributed.strategy import (
     TensorParallelStrategy,
     UniformModelParallelStrategy,
 )
-from fms.utils import serialization
+from fms.utils import fusion, serialization
 
 
 logger = logging.getLogger(__name__)
@@ -109,7 +109,12 @@ def __maybe_infer_model_variant(
 
 
 def _get_model_instance(
-    architecture: str, variant: str, *, dtype=None, device=None, extra_args: dict = {}
+    architecture: str,
+    variant: str,
+    *,
+    dtype: Optional[torch.dtype] = None,
+    device: Optional[torch.device] = None,
+    extra_args: dict = {},
 ) -> nn.Module:
     """
     Gets a model by name and variant, e.g. `models.get_model('llama', '7b')`
@@ -136,8 +141,13 @@ def _get_model_instance(
     try:
         if dtype is not None:
             torch.set_default_dtype(dtype)
-        with device if device is not None else nullcontext():
-            return model_factory(**extra_args)
+        device_ctx: Union[torch.device, nullcontext] = (
+            device if device is not None else nullcontext()
+        )
+        with device_ctx:
+            model = model_factory(**extra_args)
+        torch.set_default_dtype(orig)
+        return model
     finally:
         torch.set_default_dtype(orig)
 
@@ -250,12 +260,50 @@ def _is_dp(distributed_strategy):
     return distributed_strategy in {"fsdp", "hsdp", "ddp"}
 
 
+def _validate_unfuse_strategy(extra_args, rank: int = 0):
+    """Input checkpoint and output model may be fused or unfused, thus
+    support is needed for all 4 possible combinations of fusion.
+
+    For FP16 models, the checkpoint is always fused (converting from
+    unfused if needed), then its parameters are copied into a fused model.
+    If an unfused output model is desired, `unfuse_strategy` can be set
+    to `post` such that the fused model will be unfused as the last
+    step of processing.
+
+    For GPTQ, handling an unfused checkpoint requires instantiation of
+    an unfused model. This is obtained by setting `unfuse_strategy` to
+    `pre`.
+
+    ckpt       target_model   unfuse_strategy
+                              FP16     GPTQ
+    -----------------------------------------
+    fused      fused          None     None
+    fused      unfused        post     n/a
+    unfused    fused          None     n/a
+    unfused    unfused        post     pre
+    """
+
+    unfuse = extra_args["unfuse_strategy"]
+    if unfuse is not None and unfuse not in ["post", "pre"]:
+        raise ValueError(
+            f"Unsupported unfuse strategy `{unfuse}`. Choose between [None, `post`, `pre`]"
+        )
+    if rank == 0:
+        model_str = "fused" if unfuse is None else "unfused"
+        print(
+            f"Output model will use {model_str} projections "
+            f"(unfuse_strategy = {unfuse}). "
+            "Select a different unfuse_strategy to change this behavior."
+        )
+
+
 def get_model(
     architecture: str,
     variant: str,
     model_path: Optional[str] = None,
     source: Optional[str] = None,
     device_type: str = "cpu",
+    data_type: Optional[Union[str, torch.dtype]] = None,
     distributed_strategy: Optional[str] = None,
     checkpoint_sharding: Optional[str] = None,
     group: Optional[ProcessGroup] = None,
@@ -297,6 +345,31 @@ def get_model(
         device = torch.device(device_type, local_rank)
     else:
         device = torch.device(device_type)
+
+    extra_args = kwargs
+    # TODO: streamline this logic
+    data_type_parsed: Optional[torch.dtype] = None
+    if isinstance(data_type, str):  # convert str to torch.dtype
+        try:
+            data_type_parsed = getattr(torch, data_type)
+        except:
+            raise ValueError(f"Data type `{data_type}` is not a supported torch dtype")
+        if extra_args.get("linear_config", None) and "gptq" in extra_args[
+            "linear_config"
+        ].get("linear_type", None):
+            # TODO: introduce logger with different log levels?
+            print(
+                f"[WARNING] data_type {data_type} provided, but GPTQ does not support "
+                "casting to custom data type. Will use checkpoint data type instead."
+            )
+            data_type_parsed = None
+    else:
+        data_type_parsed = data_type
+
+    is_gptq = (
+        extra_args.get("linear_config", None)
+        and extra_args["linear_config"].get("linear_type", None) == "gptq"
+    )
 
     hsdp = distributed_strategy == "hsdp"
     fsdp = distributed_strategy == "fsdp"
@@ -343,9 +416,24 @@ def get_model(
                 devices, _guess_num_layers(lazy_sd)
             )
 
-    # Create the model
+    if extra_args.get("unfuse_strategy", None):
+        _validate_unfuse_strategy(extra_args, rank)
+
+        # change source for "gptq + pre" (= unfused gptq ckpt into unfused model)
+        if is_gptq and extra_args.get("unfuse_strategy") == "pre":
+            if source != "hf":  # GPTQ ckpt is always "hf" style
+                raise ValueError(
+                    f"Expected GPTQ checkpoint of type `hf` but source is `{source}` instead"
+                )
+            source = "gptq_" + source + "_unfused"
+
+    # Create the model on meta device to allocate weights lazily
     fms_model = _get_model_instance(
-        architecture, variant, device=initial_device, extra_args=extra_args
+        architecture,
+        variant,
+        dtype=data_type_parsed,
+        device=torch.device("meta"),
+        extra_args=extra_args,
     )
 
     # Choose when to wrap and load the model weights based on the combination
@@ -364,19 +452,43 @@ def get_model(
 
     if len(lazy_sd):
         serialization.load_state_dict_into_model(
-            fms_model,
-            lazy_sd,
-            architecture,
-            source if source is not None else "fms",
-            distributed_strategy,
-            checkpoint_sharding,
-            initial_device,
+            model=fms_model,
+            state_dict=lazy_sd,
+            architecture=architecture,
+            source=source if source is not None else "fms",
+            dtype=data_type_parsed,
+            distributed_strategy=distributed_strategy,
+            checkpoint_sharding=checkpoint_sharding,
+            initial_device=initial_device,
+            rank=rank,
         )
-    elif hasattr(fms_model, "reset_parameters"):
-        fms_model.reset_parameters()
+    else:
+        # move from meta device to real device
+        if initial_device != torch.device("meta"):
+            fms_model.to_empty(device=initial_device)
+        # randomly initialize the model (non-gptq models only)
+        if hasattr(fms_model, "reset_parameters") and not is_gptq:
+            fms_model.reset_parameters()
 
     if pre_load:
         fms_model = model_wrap(fms_model)
+
+    # Call post-init to take care of post-wrapping/device-mapping initialization
+    # Examples include tying weights, init Rope embeddings
+    if getattr(fms_model, "post_init", None):
+        fms_model.post_init()
+
+    # Make sure any uninitialized tensors are at least moved to device
+    # TODO: should we raise a warning? are uninitialized tensors ever acceptable?
+    if initial_device != torch.device("meta"):
+        fms_model._apply(
+            lambda t: torch.empty_like(t, device=initial_device)
+            if t.device == torch.device("meta")
+            else t
+        )
+
+    if extra_args.get("unfuse_strategy", None) == "post":
+        fms_model = fusion.apply_unfuse_weights(fms_model)
 
     return fms_model
 

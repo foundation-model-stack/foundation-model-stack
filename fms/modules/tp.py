@@ -1,5 +1,6 @@
 import itertools
 from abc import ABCMeta, abstractmethod
+from enum import Enum
 from typing import Dict, List, Set, Type, Union
 
 import torch
@@ -11,6 +12,12 @@ def _get_tpd_module(module: nn.Module, attr_name: str):
     if attr_name == "self":
         return module
     return getattr(module, attr_name)
+
+
+class ShardType(Enum):
+    SHARD = 1
+    RANK0 = 2
+    CLONE = 3
 
 
 class TPModule(nn.Module, metaclass=ABCMeta):
@@ -69,7 +76,7 @@ class TPModule(nn.Module, metaclass=ABCMeta):
         tensor_value: torch.Tensor,
         dim: int,
         max_partition_sizes: List[int],
-        is_sharded: bool = True,
+        shard_type: ShardType = ShardType.SHARD,
     ):
         """
         This function copies the correct shard of the weights for a rowwise-TP'd module
@@ -105,7 +112,7 @@ class TPModule(nn.Module, metaclass=ABCMeta):
             world_size = 4, max_partition_sizes = [4, 1], tensor = [0 1 2 3 4 5 6 7 8 9]
             [0 1 8 9] [2 3 8 9] [4 5 8 9] [6 7 8 9]
         """
-        if is_sharded:
+        if shard_type == ShardType.SHARD:
             # In the case where world size is larger than any of the partition sizes, we must add replication up til the
             # world size per partition
             max_partition_sizes_replicated = [
@@ -128,11 +135,13 @@ class TPModule(nn.Module, metaclass=ABCMeta):
             ]
             tensor = torch.cat(tensors_to_cat, dim=dim)
             param.copy_(tensor, non_blocking=True)
-        else:
+        elif shard_type == ShardType.RANK0:
             if self.rank == 0:
                 param.copy_(tensor_value, non_blocking=True)
             else:
                 param.zero_()
+        else:  # ShardType.CLONE
+            param.copy_(tensor_value, non_blocking=True)
 
     def _get_sd_weight(
         self,
@@ -140,6 +149,9 @@ class TPModule(nn.Module, metaclass=ABCMeta):
         used_keys: Set[str],
         substr_matches: List[str],
     ):
+        """Extract from partial model state_dict, the tensor
+        uniquely identified by the matching substrings provided.
+        """
         results = []
         for k in state_dict:
             all_matches = True
@@ -157,7 +169,8 @@ class TPModule(nn.Module, metaclass=ABCMeta):
             )
         else:
             raise ValueError(
-                f"Weight not found, weights names are {', '.join(state_dict.keys())}"
+                f"Weight not found, searching for {substr_matches} "
+                f"but weights names are {', '.join(state_dict.keys())}"
             )
 
     def load_weights(

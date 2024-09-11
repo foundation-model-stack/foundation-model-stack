@@ -372,9 +372,11 @@ def load_state_dict_into_model(
     state_dict: MutableMapping[str, Any],
     architecture: str,
     source: str,
+    dtype: Optional[torch.dtype] = None,
     distributed_strategy: Optional[str] = None,
     checkpoint_sharding: Optional[str] = None,
     initial_device: torch.device = torch.device("cpu"),
+    rank: int = 0,
 ) -> None:
     """
     This function loads state_dict into model in the most efficient way possible,
@@ -390,6 +392,8 @@ def load_state_dict_into_model(
     source: If the weights in the state dict didn't come from an FMS model,
             `source` specifies which conversion function might be needed.
             See `serialization.list_sources(architecture)`
+    dtype: If None, cast to state dict parameter data type when copying it
+            into the model
     distributed_strategy: the kind of possibly-distributed model in which we
             intend to load these weights. E.g. tp, fsdp, None. Used for weight
             sharding.
@@ -406,6 +410,7 @@ def load_state_dict_into_model(
 
     # 3. Iterate over the weights and load them into the model
     used_keys = set()
+    unused_keys = set()
     sd_keys = set(state_dict.keys())
 
     with torch.no_grad():
@@ -426,7 +431,13 @@ def load_state_dict_into_model(
                 if partial_sd[psd_key].device != initial_device:
                     partial_sd[psd_key] = partial_sd[psd_key].to(device=initial_device)
             fms_partial_sd = adapter(partial_sd)
-            _load_partial_state_dict(model, fms_partial_sd, needs_tp_sharding)
+            unused_keys_partial = _load_partial_state_dict(
+                model=model,
+                state_dict=fms_partial_sd,
+                needs_tp_sharding=needs_tp_sharding,
+                dtype=dtype,
+            )
+            unused_keys.update(unused_keys_partial)
             # Be aggressive in removing weights to save as much memory as possible
             for p_key in partial_sd.keys():
                 if isinstance(state_dict, ChainMap):
@@ -437,17 +448,43 @@ def load_state_dict_into_model(
             del partial_sd
             del fms_partial_sd
 
+    if unused_keys and rank == 0:
+        # TODO: start using logger?
+        print(
+            f"[WARNING] Keys from checkpoint (adapted to FMS) "
+            f"not copied into model: {unused_keys}"
+        )
+
 
 def _copy_if_present(parameter, tensor_value):
     parameter.copy_(tensor_value, non_blocking=True)
 
 
+def _move_to_real_device(
+    param: torch.Tensor,
+    real_device: torch.device,
+    dtype: Optional[torch.dtype] = None,
+) -> torch.Tensor:
+    if param.device == torch.device("meta"):
+        is_parameter = isinstance(param, torch.nn.Parameter)
+        param = torch.empty_like(
+            param,
+            device=real_device,
+            dtype=dtype,
+        )
+        if is_parameter:
+            param = torch.nn.Parameter(param)
+    return param
+
+
 def _load_partial_state_dict(
     model: torch.nn.Module,
-    state_dict,
+    state_dict: Mapping[str, Any],
     needs_tp_sharding: bool,
-):
-    unused_params = []
+    dtype: Optional[torch.dtype] = None,
+) -> set:
+    unused_keys = set()
+    unused_keys_tp = None
     seen_tp_modules = set()
     for key, tensor_value in state_dict.items():
         target_module = model
@@ -457,6 +494,7 @@ def _load_partial_state_dict(
         key_step = 0
         tp_module = None
         tp_prefix = ""
+
         # Navigate the model tree to find the module where the parameter is
         # located and whether there is a TPModule in the way in case the
         # parameter requires sharding
@@ -475,7 +513,7 @@ def _load_partial_state_dict(
                     tp_module = target_module
                     tp_prefix = prefix
             except AttributeError:
-                unused_params.append(key)
+                unused_keys.add(key)
                 break
 
         # Check if target_module has the Parameter/buffer
@@ -484,10 +522,46 @@ def _load_partial_state_dict(
             # into the model
             if not needs_tp_sharding or tp_module is None:
                 param = getattr(target_module, key_steps[-1])
+
+                # cast module parameter to non-meta device
+                if param.device == torch.device("meta"):
+                    param = _move_to_real_device(
+                        param=param,
+                        real_device=tensor_value.device,
+                        dtype=tensor_value.dtype if dtype is None else dtype,
+                    )
+                    setattr(target_module, key_steps[-1], param)
+                    param = getattr(target_module, key_steps[-1])
                 param.copy_(tensor_value, non_blocking=True)
+
             elif tp_module is not None and tp_module not in seen_tp_modules:
                 seen_tp_modules.add(tp_module)
                 tensor_values = {k: v for k, v in state_dict.items() if tp_prefix in k}
-                tp_module.load_weights(tensor_values)
-        except AttributeError:
-            unused_params.append(key)
+
+                # when tensors from ckpt have all the same dtype,
+                # it can be enforced onto the module parameters
+                is_single_dtype = (
+                    len(set([v.dtype for v in tensor_values.values()])) == 1
+                )
+
+                tp_module._apply(
+                    lambda t: _move_to_real_device(
+                        param=t,
+                        real_device=tensor_value.device,
+                        dtype=(
+                            dtype
+                            if dtype is not None
+                            else tensor_value.dtype
+                            if is_single_dtype
+                            else t.dtype
+                        ),
+                    )
+                )
+                unused_keys_tp = tp_module.load_weights(tensor_values)
+        except:
+            if unused_keys_tp:
+                unused_keys.update(unused_keys_tp)
+            else:
+                unused_keys.add(key)
+
+    return unused_keys

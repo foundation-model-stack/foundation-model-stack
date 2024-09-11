@@ -1,5 +1,5 @@
 import pathlib
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Optional
 
 import torch
 import triton  # type: ignore[import-untyped]
@@ -221,6 +221,6 @@ def _create_best_configs_key(input, moe_matrix, token_expert_mapping):
     return key
 
 
-BEST_MOE_CONFIGS: Optional[Dict[Any, Any]] = None
+BEST_MOE_CONFIGS: Optional[dict[Any, Any]] = None
 
 # TODO: Add a Backward kernel for Mixtral training in the future

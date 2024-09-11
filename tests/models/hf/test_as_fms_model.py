@@ -17,8 +17,10 @@ from fms.testing.comparison import HFModelSignatureParams, compare_model_signatu
 
 @pytest.mark.parametrize("model_id_or_path", ["bigcode/gpt_bigcode-santacoder"])
 def test_as_fms_model_equivalency_for_decoder(model_id_or_path):
-    fms_model = as_fms_model(model_id_or_path)
-    hf_model = AutoModelForCausalLM.from_pretrained(model_id_or_path)
+    fms_model = as_fms_model(model_id_or_path, data_type=torch.float32)
+    hf_model = AutoModelForCausalLM.from_pretrained(
+        model_id_or_path, torch_dtype=torch.float32
+    )
     fms_model = to_hf_api(
         fms_model,
         bos_token_id=hf_model.config.bos_token_id,
