@@ -16,7 +16,7 @@ from fms.utils.config import ModelConfig
 
 
 try:
-    from auto_gptq.utils.import_utils import (  # type: ignore[import-untyped]
+    from auto_gptq.utils.import_utils import (  # type: ignore[import-untyped,import-not-found]
         dynamically_import_QuantLinear,
     )
 
