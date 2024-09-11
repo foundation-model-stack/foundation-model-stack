@@ -145,7 +145,9 @@ def _get_model_instance(
             device if device is not None else nullcontext()
         )
         with device_ctx:
-            return model_factory(**extra_args)
+            model = model_factory(**extra_args)
+        torch.set_default_dtype(orig)
+        return model
     finally:
         torch.set_default_dtype(orig)
 
