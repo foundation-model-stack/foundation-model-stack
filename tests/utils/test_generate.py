@@ -78,7 +78,7 @@ def test_batched_homogeneous():
 def test_batched_heterogeneous():
     torch.manual_seed(0)
     with torch.no_grad():
-        _model_mock = get_model("gpt_bigcode", "micro")
+        _model_mock = get_model("gpt_bigcode", "micro", data_type=torch.float32)
         _model_mock.reset_parameters()
         _model_mock.eval()
         tokenizer = get_tokenizer("char_tokenizer")

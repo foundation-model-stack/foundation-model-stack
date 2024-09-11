@@ -132,6 +132,7 @@ class TestUnfuseStrategy:
                 ]
             )
 
+    @pytest.mark.autogptq
     def test_gptq_fusion_no_ckpt(self, get_gptq_state_dict):
         # validate fused/unfused output after instantiating GPTQ model without ckpt
         sd, strategy = get_gptq_state_dict
