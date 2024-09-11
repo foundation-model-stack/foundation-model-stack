@@ -29,10 +29,10 @@ def test_get_model_hf_pretrained():
     from transformers import AutoModelForCausalLM
 
     model_pretrained = models.get_model(
-        "hf_pretrained", "bigcode/gpt_bigcode-santacoder"
+        "hf_pretrained", "bigcode/gpt_bigcode-santacoder", data_type=torch.float32
     )
     hf_model_pretrained = AutoModelForCausalLM.from_pretrained(
-        "bigcode/gpt_bigcode-santacoder", torch_dtype="auto"
+        "bigcode/gpt_bigcode-santacoder", torch_dtype=torch.float32
     )
 
     model_pretrained.eval()
