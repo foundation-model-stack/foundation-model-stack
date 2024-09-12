@@ -192,25 +192,26 @@ class FusedQKV(QKV):
         )
 
     def unfuse_weights(self):
-        result = UnfusedQKV(
-            self.emb_dim,
-            self.nheads,
-            self.kvheads,
-            self.emb_kq_per_head,
-            self.emb_v_per_head,
-            self.use_bias,
-        ).to(self.qkv_fused.weight.device)
+        with torch.device("meta"):
+            result = UnfusedQKV(
+                self.emb_dim,
+                self.nheads,
+                self.kvheads,
+                self.emb_kq_per_head,
+                self.emb_v_per_head,
+                self.use_bias,
+            )
         query, key, value = torch.split(self.qkv_fused.weight, self.splits, dim=0)
-        result.query.weight.copy_(query)
-        result.key.weight.copy_(key)
-        result.value.weight.copy_(value)
+        result.query.weight = torch.nn.Parameter(query)
+        result.key.weight = torch.nn.Parameter(key)
+        result.value.weight = torch.nn.Parameter(value)
         if self.use_bias:
             query_bias, key_bias, value_bias = torch.split(
                 self.qkv_fused.bias, self.splits, dim=0
             )
-            result.query.bias.copy_(query_bias)
-            result.key.bias.copy_(key_bias)
-            result.value.bias.copy_(value_bias)
+            result.query.bias = torch.nn.Parameter(query_bias)
+            result.key.bias = torch.nn.Parameter(key_bias)
+            result.value.bias = torch.nn.Parameter(value_bias)
         return result
 
     def reset_parameters(self):

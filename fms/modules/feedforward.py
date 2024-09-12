@@ -296,31 +296,32 @@ class GatedLinearUnit(nn.Module):
         return self.w2(out)
 
     def _initialize_empty_module(self):
-        return GatedLinearUnit(
-            self.width,
-            self.grow_factor,
-            self.multiple_of,
-            self.a,
-            self.p_dropout,
-            self.use_bias,
-            fused=False,
-        ).to(self.w2.weight.device)
+        with torch.device("meta"):
+            return GatedLinearUnit(
+                self.width,
+                self.grow_factor,
+                self.multiple_of,
+                self.a,
+                self.p_dropout,
+                self.use_bias,
+                fused=False,
+            )
 
     def unfuse_weights(self):
         result = self._initialize_empty_module()
         wg, w1 = torch.split(
             self.wg1_fused.weight, [self.hidden_dim, self.hidden_dim], dim=0
         )
-        result.wg.weight.copy_(wg)
-        result.w1.weight.copy_(w1)
-        result.w2.weight.copy_(self.w2.weight)
+        result.wg.weight = torch.nn.Parameter(wg)
+        result.w1.weight = torch.nn.Parameter(w1)
+        result.w2.weight = torch.nn.Parameter(self.w2.weight)
         if self.use_bias:
             wg_bias, w1_bias = torch.split(
                 self.wg1_fused.bias, [self.hidden_dim, self.hidden_dim], dim=0
             )
-            result.wg.bias.copy_(wg_bias)
-            result.w1.bias.copy_(w1_bias)
-            result.w2.bias.copy_(self.w2.bias)
+            result.wg.bias = torch.nn.Parameter(wg_bias)
+            result.w1.bias = torch.nn.Parameter(w1_bias)
+            result.w2.bias = torch.nn.Parameter(self.w2.bias)
         return result
 
 
