@@ -1,6 +1,8 @@
 import pytest
 import torch
+
 from fms.models import get_model
+
 
 try:
     from auto_gptq.nn_modules.qlinear.qlinear_cuda_old import (
@@ -78,6 +80,7 @@ class TestGPTQModel:
         id, linear_config = request.param
 
         # instantiate GPTQ model
+        orig_dtype = torch.get_default_dtype()
         torch.set_default_dtype(torch.float16)
         gptq_model = get_model(
             architecture="llama",
@@ -87,6 +90,7 @@ class TestGPTQModel:
             unfuse_strategy=None,
             linear_config=linear_config,
         )
+        torch.set_default_dtype(orig_dtype)
         return (id, gptq_model)
 
     @pytest.mark.autogptq

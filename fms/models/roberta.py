@@ -278,7 +278,7 @@ class RoBERTa(nn.Module):
             if self.classification_head.head.weight.device == torch.device("meta"):
                 self.classification_head.head.weight = self.base_model.embedding.weight
             else:
-                self.embedding.head.weight = self.base_model.classification_head.weight
+                self.base_model.embedding.weight = self.classification_head.head.weight
 
 
 # a micro llama model to use with a char-level tokenizer

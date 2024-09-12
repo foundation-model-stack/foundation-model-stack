@@ -1,7 +1,10 @@
+import tempfile
+
 import pytest
 import torch
-import tempfile
+
 from fms.models import get_model
+
 
 # Expected data_type of model returned by get_model
 #
@@ -19,12 +22,14 @@ class TestDatatype:
         ids=["input=fp32_sd", "input=fp16_sd"],
     )
     def get_state_dict(self, request):
+        orig_dtype = torch.get_default_dtype()
         torch.set_default_dtype(request.param)
         sd = get_model(
             architecture="llama",
             variant="micro",
             model_path=None,
         ).state_dict()
+        torch.set_default_dtype(orig_dtype)
         return (sd, request.param)
 
     def test_datatype_default(self, get_state_dict):

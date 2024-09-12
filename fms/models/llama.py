@@ -1,7 +1,7 @@
 import logging
 import re
 from dataclasses import dataclass
-from typing import Mapping, Optional, Any
+from typing import Any, Mapping, Optional
 
 import torch
 import torch.nn as nn
@@ -298,8 +298,8 @@ class LLaMA(nn.Module):
 
     def _clean_up_rot_emb_cache(
         self,
-        cached_freqs: dict[Optional[torch.device]: dict[int: torch.Tensor]],
-        max_seq_len_cached: dict[Optional[torch.device]: int],
+        cached_freqs: dict[Optional[torch.device], dict[int, torch.Tensor]],
+        max_seq_len_cached: dict[Optional[torch.device], int],
     ):
         # remove meta tensors from cached_freqs
         for dev in list(cached_freqs.keys()):
@@ -455,6 +455,19 @@ _8b_llama3_config = LLaMAConfig(
     rope_theta=500_000.0,
 )
 
+_405b_llama3_config = LLaMAConfig(
+    src_vocab_size=128256,
+    emb_dim=16384,
+    norm_eps=1e-5,
+    nheads=128,
+    kvheads=16,
+    nlayers=126,
+    hidden_grow_factor=3.25, # 53248 / 16384
+    multiple_of=4096,
+    max_expected_seq_len=8192,
+    rope_theta=500_000.0,
+)
+
 # Granite configs
 _granite_7b_config = LLaMAConfig(
     src_vocab_size=32008,
@@ -514,6 +527,9 @@ models.register_model(_architecture_name, "2-70b", _llama_factory_factory(_70b_c
 # LLama 3 family
 models.register_model(
     _architecture_name, "3-8b", _llama_factory_factory((_8b_llama3_config))
+)
+models.register_model(
+    _architecture_name, "3-405b", _llama_factory_factory((_405b_llama3_config))
 )
 
 # Granite family
@@ -584,7 +600,7 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
     ]
     new_sd = {}
 
-    trans_required_pattern = re.compile("layers.[0-9]+.attn.(query|key).(weight|bias)")
+    trans_required_pattern = re.compile("layers.[0-9]+.attn.(query|key).(weight$|bias)")
     for name, param in hf_sd.items():
         new_name = name
         for pattern, repl in replacements:
@@ -618,6 +634,16 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
             temp = temp_view.transpose(1, 2).reshape(*temp.size())
 
             new_sd[new_name] = temp
+    
+    expand_required_pattern = re.compile("layers.[0-9]+.*.weight_scale")
+    # special handling for weight_scale in unfused checkpoint case
+    # expand per-tensor weight_scale to a per-channel weight scale
+    # so that the TP sharding logic can shard it for proper layer fusion
+    for name, param in new_sd.items():
+        if bool(expand_required_pattern.match(name)):
+            if param.numel() == 1:
+                weight_out_features = new_sd[name.replace("weight_scale", "weight")].shape[0]
+                new_sd[name] = param.expand(weight_out_features)
 
     fused_sd = _convert_to_fused(new_sd)
 
@@ -649,7 +675,7 @@ def _hf_unfused_sd_to_fms_unfused_sd(hf_sd: Mapping) -> Mapping:
     new_sd = {}
 
     trans_required_pattern = re.compile(
-        "layers.[0-9]+.attn.in_proj.(query|key).(weight|bias)"
+        "layers.[0-9]+.attn.in_proj.(query|key).(weight$|bias)"
     )
     for name, param in hf_sd.items():
         new_name = name
@@ -735,12 +761,14 @@ def _gptq_unfused_sd_to_fms_unfused_sd(hf_sd: Mapping) -> Mapping:
             )
     return fms_unfused_sd
 
-
 serialization.register_adapter("llama", "meta", _rename_meta_weights_to_fms)
 serialization.register_adapter("llama", "hf", _hf_sd_to_fms_sd)
 serialization.register_adapter("llama", "fms.pre0.0.6", _convert_to_fused)
 serialization.register_adapter(
     "llama", "gptq_hf_unfused", _gptq_unfused_sd_to_fms_unfused_sd
+)
+serialization.register_adapter(
+    "llama", "fp8_hf_unfused", _hf_unfused_sd_to_fms_unfused_sd
 )
 
 

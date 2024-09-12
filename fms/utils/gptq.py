@@ -14,8 +14,11 @@ from fms.modules.linear import (
 from fms.modules.tp import ShardType, TPModule
 from fms.utils.config import ModelConfig
 
+
 try:
-    from auto_gptq.utils.import_utils import dynamically_import_QuantLinear  # type: ignore
+    from auto_gptq.utils.import_utils import (  # type: ignore[import-untyped,import-not-found]
+        dynamically_import_QuantLinear,
+    )
 
     IS_AUTOGPTQ_AVAILABLE = True
 except:

@@ -19,7 +19,7 @@ from fms.distributed.strategy import (
     TensorParallelStrategy,
     UniformModelParallelStrategy,
 )
-from fms.utils import serialization, fusion
+from fms.utils import fusion, serialization
 
 
 logger = logging.getLogger(__name__)
@@ -141,8 +141,13 @@ def _get_model_instance(
     try:
         if dtype is not None:
             torch.set_default_dtype(dtype)
-        with device if device is not None else nullcontext():
-            return model_factory(**extra_args)
+        device_ctx: Union[torch.device, nullcontext] = (
+            device if device is not None else nullcontext()
+        )
+        with device_ctx:
+            model = model_factory(**extra_args)
+        torch.set_default_dtype(orig)
+        return model
     finally:
         torch.set_default_dtype(orig)
 
@@ -255,7 +260,7 @@ def _is_dp(distributed_strategy):
     return distributed_strategy in {"fsdp", "hsdp", "ddp"}
 
 
-def _validate_unfuse_strategy(extra_args, rank):
+def _validate_unfuse_strategy(extra_args, rank: int = 0):
     """Input checkpoint and output model may be fused or unfused, thus
     support is needed for all 4 possible combinations of fusion.
 
@@ -286,7 +291,8 @@ def _validate_unfuse_strategy(extra_args, rank):
     if rank == 0:
         model_str = "fused" if unfuse is None else "unfused"
         print(
-            f"Output model will be {model_str} (unfuse_strategy = {unfuse}). "
+            f"Output model will use {model_str} projections "
+            f"(unfuse_strategy = {unfuse}). "
             "Select a different unfuse_strategy to change this behavior."
         )
 
