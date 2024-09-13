@@ -226,6 +226,7 @@ def _infer_model_configuration(
 def as_fms_model(
     model_id_or_path: Union[str, os.PathLike],
     device_type: str = "cpu",
+    data_type: Optional[Union[str, torch.dtype]] = None,
     distributed_strategy: Optional[str] = None,
     checkpoint_sharding: Optional[str] = None,
     group: Optional[ProcessGroup] = None,
@@ -261,6 +262,7 @@ def as_fms_model(
     return get_model(
         source="hf",
         device_type=device_type,
+        data_type=data_type,
         distributed_strategy=distributed_strategy,
         checkpoint_sharding=checkpoint_sharding,
         group=group,
