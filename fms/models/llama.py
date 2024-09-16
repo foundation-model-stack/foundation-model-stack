@@ -736,10 +736,7 @@ def _gptq_unfused_sd_to_fms_unfused_sd(hf_sd: Mapping) -> Mapping:
                 )
             else:  # bias
                 fms_unfused_sd[fms_name] = (
-                    param
-                    .view(nheads, 2, -1)
-                    .transpose(1, 2)
-                    .reshape(*param.size())
+                    param.view(nheads, 2, -1).transpose(1, 2).reshape(*param.size())
                 )
     return fms_unfused_sd
 
