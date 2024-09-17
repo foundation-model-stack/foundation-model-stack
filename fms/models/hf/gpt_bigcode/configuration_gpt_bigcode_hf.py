@@ -58,7 +58,7 @@ class HFAdaptedGPTBigCodeConfig(PretrainedConfig):
             is_decoder=is_decoder,
             # the default for this model is to tie_heads
             # so set to true if tie_word_embeddings is not given
-            tie_word_embeddings=kwargs.pop("tie_word_embeddings", True),
+            tie_word_embeddings=kwargs.pop("tie_word_embeddings", False),
             **kwargs,
         )
 

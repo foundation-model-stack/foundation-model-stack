@@ -1,12 +1,12 @@
-import math
-import re
+import logging
 from dataclasses import dataclass
-from typing import Mapping, Optional
+import math
+from typing import Any, Mapping, Optional
 
 import torch
 import torch.nn as nn
 
-from fms import distributed, models
+from fms import models
 from fms.distributed.strategy import (
     DistributedStrategy,
     NoOpStrategy,
@@ -22,6 +22,9 @@ from fms.utils import serialization
 from fms.utils.activation import str_to_activation
 from fms.utils.config import ModelConfig
 from fms.utils.tokenizers import _has_hf
+
+
+logger = logging.getLogger(__name__)
 
 
 # params emb_dim heads layers lr
@@ -50,6 +53,8 @@ class LLaMAConfig(ModelConfig):
     mlp_bias: bool = False
     tie_heads: bool = False
     rope_theta: float = 10_000.0
+    linear_config: Optional[Mapping[str, Any]] = None
+    unfuse_strategy: Optional[str] = None  # TODO: could be an Enum
 
 
 @dataclass
@@ -96,6 +101,8 @@ class LLaMABlock(nn.Module):
             p_dropout=self.config.p_dropout,
             use_bias=self.config.attn_bias,
             position_encoder=rotary_emb,
+            fused=(self.config.unfuse_strategy != "pre"),
+            linear_config=self.config.linear_config,
         )
         self.ff_sub_layer = GatedLinearUnit(
             self.config.emb_dim,
@@ -104,6 +111,8 @@ class LLaMABlock(nn.Module):
             activation_fn=str_to_activation(self.config.activation_fn),
             p_dropout=self.config.p_dropout,
             use_bias=self.config.mlp_bias,
+            fused=(self.config.unfuse_strategy != "pre"),
+            linear_config=self.config.linear_config,
         )
 
         if self.config.p_dropout != 0:
@@ -183,7 +192,19 @@ class LLaMAHeadless(nn.Module):
         self.max_expected_seq_len = self.config.max_expected_seq_len
 
         embedding = nn.Embedding(self.config.src_vocab_size, self.config.emb_dim)
-        self.embedding = self.distributed_strategy.distribute_module(embedding)
+
+        # TP does not work with tied weights
+        if (
+            not isinstance(self.distributed_strategy, TensorParallelStrategy)
+            or not self.config.tie_heads
+        ):
+            self.embedding = self.distributed_strategy.distribute_module(embedding)
+        else:
+            logger.warning(
+                "You're using TP on a model with tied weights between head and embedding."
+                "The tied weights won't be sharded, which can result in unexpected OOMs."
+            )
+            self.embedding = embedding
 
         self.rot_emb = RotaryEmbedding(
             dim=self.config.emb_dim // self.config.nheads,
@@ -191,6 +212,12 @@ class LLaMAHeadless(nn.Module):
             max_seq_len=self.config.max_expected_seq_len,
             ratio=self.config.rope_theta,
         )
+        # RoPE init
+        for device in set(
+            [param.device for param in self.parameters()]
+            + [buffer.device for buffer in self.buffers()]
+        ):
+            self.rot_emb.compute_freqs_cis(device, self.config.max_expected_seq_len)
 
         layers = []
         for i in range(self.config.nlayers):
@@ -279,6 +306,35 @@ class LLaMAHeadless(nn.Module):
                     check_close(m.value.weight)
                     check_close(m.dense.weight)
 
+    def _clean_up_rot_emb_cache(
+        self,
+        cached_freqs: dict[Optional[torch.device], dict[int, torch.Tensor]],
+        max_seq_len_cached: dict[Optional[torch.device], int],
+    ):
+        # remove meta tensors from cached_freqs
+        for dev in list(cached_freqs.keys()):
+            for alp in list(cached_freqs[dev].keys()):
+                if cached_freqs[dev][alp].device == torch.device("meta"):
+                    del cached_freqs[dev][alp]
+                    if len(cached_freqs[dev]) == 0:
+                        del cached_freqs[dev]
+                        del max_seq_len_cached[dev]
+
+    def post_init(self):
+        # This function is called in `get_model` after the model is
+        # fully initalized on the correct device
+        self._clean_up_rot_emb_cache(
+            self.rot_emb.cached_freqs,
+            self.rot_emb.max_seq_len_cached,
+        )
+
+        # init RoPE on the right device(s)
+        for device in set(
+            [param.device for param in self.parameters()]
+            + [buffer.device for buffer in self.buffers()]
+        ):
+            self.rot_emb.compute_freqs_cis(device, self.config.max_expected_seq_len)
+
     def forward(
         self,
         x,
@@ -364,7 +420,15 @@ class LLaMA(nn.Module):
         )
         if self.config.tie_heads:
             head.weight = self.base_model.embedding.weight
-        self.head = self.distributed_strategy.distribute_module(head)
+        
+        # TP does not work with tied weights
+        if (
+            not isinstance(self.distributed_strategy, TensorParallelStrategy)
+            or not self.config.tie_heads
+        ):
+            self.head = self.distributed_strategy.distribute_module(head)
+        else:
+            self.head = head
 
     def get_config(self) -> LLaMAConfig:
         return self.config
@@ -398,6 +462,17 @@ class LLaMA(nn.Module):
                 assert p.isinf().int().sum() == 0
             self.base_model.validate_reset_parameters()
             check_close(self.head.weight)
+
+    def post_init(self):
+        self.base_model.post_init()
+        
+        # if this model ties weights, they are tied here
+        if self.config.tie_heads:
+            # handle assignment of non-meta weights to meta parameters
+            if self.head.weight.device == torch.device("meta"):
+                self.head.weight = self.base_model.embedding.weight
+            else:
+                self.base_model.embedding.weight = self.head.weight
 
     def forward(
         self,
@@ -482,6 +557,9 @@ class LLaMAForClassification(nn.Module):
                 assert p.isinf().int().sum() == 0
             self.base_model.validate_reset_parameters()
             check_close(self.classification_head.weight)
+    
+    def post_init(self):
+        self.base_model.post_init()
 
     def forward(
         self,
@@ -745,10 +823,125 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
     return fused_sd
 
 
+# TODO: this adapter is not called, it's for reference of
+# non-gptq unfused-ckpt-to-unfused-model process
+# Similar to _hf_sd_to_fms_sd, except:
+# 1) loads self_attn into attn.in_proj (not just attn)
+# 2) transpose pattern of attn.in_proj
+# 3) does not FUSE parameters at the end
+def _hf_unfused_sd_to_fms_unfused_sd(hf_sd: Mapping) -> Mapping:
+    replacements = [
+        (r"^lm_head.weight", "shared.head.weight"),
+        (r"^model.embed_tokens.weight", "shared.emb.weight"),
+        (r"^model.norm", "dec_norm"),
+        (r"^model.layers", "layers"),
+        (r"self_attn\.k_proj", "attn.in_proj.key"),
+        (r"self_attn\.v_proj", "attn.in_proj.value"),
+        (r"self_attn\.q_proj", "attn.in_proj.query"),
+        (r"self_attn\.o_proj", "attn.dense"),
+        (r"mlp\.gate_proj", "ff_sub_layer.wg"),
+        (r"mlp\.up_proj", "ff_sub_layer.w1"),
+        (r"mlp\.down_proj", "ff_sub_layer.w2"),
+        (r"input_layernorm", "ln"),
+        (r"post_attention_layernorm", "ff_ln"),
+    ]
+    new_sd = {}
+
+    trans_required_pattern = re.compile(
+        "layers.[0-9]+.attn.in_proj.(query|key).(weight|bias)"
+    )
+    for name, param in hf_sd.items():
+        new_name = name
+        for pattern, repl in replacements:
+            new_name = re.sub(pattern, repl, new_name)
+        new_sd[new_name] = param
+
+        # hf -> fms requires a transpose operation for the query and key
+        # weight and bias parameters
+        if bool(trans_required_pattern.match(new_name)):
+            temp = new_sd[new_name]
+            # nheads is used in the transformation required for hf->fms
+            if temp.size(0) == 2560:
+                head_size = 80  # granite 3b code
+            else:
+                head_size = 128  # every other Llama model in existence
+            nheads = int(temp.size(0) / head_size)
+
+            if temp.dim() == 2:  # weight
+                temp_view = temp.view(nheads, 2, -1, temp.size(1))
+            else:  # bias
+                temp_view = temp.view(nheads, 2, -1)
+            temp = temp_view.transpose(1, 2).reshape(*temp.size())
+
+            new_sd[new_name] = temp
+
+    return new_sd
+
+
+# TODO: merge with standard _hf_sd_to_fms_sd adapter
+# Very similar except:
+# 1) add in_proj to q,k,v
+# 2) qparams to transpose are qweight|scales|qzeros (not weight|bias)
+# 3) fully transpose params before & after processing
+def _gptq_unfused_sd_to_fms_unfused_sd(hf_sd: Mapping) -> Mapping:
+    replacements = [
+        (r"^lm_head.weight", "shared.head.weight"),
+        (r"^model.embed_tokens.weight", "shared.emb.weight"),
+        (r"^model.norm", "dec_norm"),
+        (r"^model.layers", "layers"),
+        (r"self_attn\.k_proj", "attn.in_proj.key"),
+        (r"self_attn\.v_proj", "attn.in_proj.value"),
+        (r"self_attn\.q_proj", "attn.in_proj.query"),
+        (r"self_attn\.o_proj", "attn.dense"),
+        (r"mlp\.gate_proj", "ff_sub_layer.wg"),
+        (r"mlp\.up_proj", "ff_sub_layer.w1"),
+        (r"mlp\.down_proj", "ff_sub_layer.w2"),
+        (r"input_layernorm", "ln"),
+        (r"post_attention_layernorm", "ff_ln"),
+    ]
+    fms_unfused_sd = {}
+    trans_required_pattern = re.compile(
+        "layers.[0-9]+.attn.in_proj.(query|key).(qweight|scales|qzeros)"
+    )
+    for hf_name, param in hf_sd.items():
+        fms_name = hf_name
+        for pattern, repl in replacements:
+            fms_name = re.sub(pattern, repl, fms_name)
+        fms_unfused_sd[fms_name] = param
+
+        # hf -> fms requires a transpose operation for the query and key
+        # weight and bias parameters
+        # Differently from hf-to-fms conversion, GPTQ qweights are [in_feat, out_feat]
+        # and are fully transposed before & after process
+        # FIXME: is unpack/transpose/repack for qweight and qzeros also needed?
+        # is there any combination of group quantization that requires unpacking?
+        if bool(trans_required_pattern.match(fms_name)):
+            param_t_size = param.t().size()
+
+            # TODO: less hardcoded way to determine head_size?
+            if param_t_size[1] == 2560:
+                head_size = 80  # granite 3b code
+            else:
+                head_size = 128  # every other Llama model in existence
+            nheads = int(param_t_size[0] / head_size)
+
+            fms_unfused_sd[fms_name] = (
+                param.t()
+                .view(nheads, 2, -1, param_t_size[1])
+                .transpose(1, 2)
+                .reshape(*param_t_size)
+                .t()
+            )
+    return fms_unfused_sd
+
+
 serialization.register_adapter("llama", "meta", _rename_meta_weights_to_fms)
 serialization.register_adapter("llama", "hf", _hf_sd_to_fms_sd)
 serialization.register_adapter("llama_classifier", "hf", _hf_sd_to_fms_sd)
 serialization.register_adapter("llama", "fms.pre0.0.6", _convert_to_fused)
+serialization.register_adapter(
+    "llama", "gptq_hf_unfused", _gptq_unfused_sd_to_fms_unfused_sd
+)
 
 
 def convert_hf_llama(hf_model: "LlamaForCausalLM") -> LLaMA:  # type: ignore

@@ -6,12 +6,61 @@ import pytest
 import torch
 
 from fms import models
+from fms.testing.comparison import (
+    HFModelSignatureParams,
+    ModelSignatureParams,
+    compare_model_signatures,
+)
 from fms.utils import serialization
 
 
 def test_register():
     with pytest.raises(KeyError):
         models.register_model("llama", "7b", lambda x: x)
+
+
+def test_get_model_hf_configured():
+    model_inferred = models.get_model("hf_configured", "FacebookAI/roberta-base")
+    model_given = models.get_model("roberta", "base")
+    assert model_inferred.config.as_dict() == model_given.config.as_dict()
+
+
+def test_get_model_hf_pretrained():
+    from transformers import AutoModelForCausalLM
+
+    model_pretrained = models.get_model(
+        "hf_pretrained", "bigcode/gpt_bigcode-santacoder", data_type=torch.float32
+    )
+    hf_model_pretrained = AutoModelForCausalLM.from_pretrained(
+        "bigcode/gpt_bigcode-santacoder", torch_dtype=torch.float32
+    )
+
+    model_pretrained.eval()
+    hf_model_pretrained.eval()
+
+    inp = torch.arange(5, 15).unsqueeze(0)
+    fms_signature_params = ModelSignatureParams(
+        model=model_pretrained, params=1, inp=inp
+    )
+    hf_signature_params = HFModelSignatureParams(
+        model=hf_model_pretrained,
+        params=["input_ids", "labels"],
+        other_params={"return_dict": True},
+        inp=inp,
+    )
+
+    compare_model_signatures(fms_signature_params, hf_signature_params)
+
+
+def test_get_model_hf_pretrained_invalid_arguments():
+    with pytest.raises(ValueError):
+        models.get_model(
+            "hf_pretrained", "bigcode/gpt_bigcode-santacoder", model_path="."
+        )
+    with pytest.raises(ValueError):
+        models.get_model(
+            "hf_pretrained", "bigcode/gpt_bigcode-santacoder", source="meta"
+        )
 
 
 def test_getmodel():

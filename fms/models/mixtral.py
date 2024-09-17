@@ -196,15 +196,11 @@ class MixtralHeadless(nn.Module):
         )
 
         # RoPE init
-        if isinstance(self.distributed_strategy, UniformModelParallelStrategy):
-            for dev_idx in set(self.distributed_strategy.layer_to_device):
-                self.rot_emb.compute_freqs_cis(
-                    torch.device("cuda", dev_idx), self.config.max_expected_seq_len
-                )
-        else:
-            self.rot_emb.compute_freqs_cis(
-                self.embedding.weight.device, self.config.max_expected_seq_len
-            )
+        for device in set(
+            [param.device for param in self.parameters()]
+            + [buffer.device for buffer in self.buffers()]
+        ):
+            self.rot_emb.compute_freqs_cis(device, self.config.max_expected_seq_len)
 
         # Call reset_parameters for relevant sub-layers
         for m in self.modules():
@@ -214,6 +210,16 @@ class MixtralHeadless(nn.Module):
                 or isinstance(m, LayerNormParameterized)
             ):
                 m.reset_parameters()
+
+    def post_init(self):
+        # This function is called in `get_model` after the model is fully initalized in the correct device
+
+        # init RoPE on the right device(s)
+        for device in set(
+            [param.device for param in self.parameters()]
+            + [buffer.device for buffer in self.buffers()]
+        ):
+            self.rot_emb.compute_freqs_cis(device, self.config.max_expected_seq_len)
 
     def forward(
         self,
@@ -319,6 +325,10 @@ class Mixtral(nn.Module):
 
         # Call reset_parameters for relevant sub-layers
         self.base_model.reset_parameters()
+
+    def post_init(self):
+        # This function is called in `get_model` after the model is fully initalized in the correct device
+        self.base_model.post_init()
 
     def forward(
         self,

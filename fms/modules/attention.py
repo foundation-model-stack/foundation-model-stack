@@ -1,5 +1,5 @@
 import abc
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Any, Mapping, Optional, Set, Tuple
 
 import torch
 import torch.distributed
@@ -11,6 +11,12 @@ from fms import distributed
 from fms.distributed.tensorparallel import (
     copy_to_tensor_model_parallel_region,
     reduce_from_tensor_model_parallel_region,
+)
+from fms.modules.linear import (
+    LinearModuleShardingInfo,
+    get_all_linear_type_to_sharding_maps,
+    get_linear,
+    get_linear_type,
 )
 from fms.modules.positions import PositionEncoder
 from fms.modules.tp import TPModule
@@ -27,6 +33,7 @@ class QKV(nn.Module, metaclass=abc.ABCMeta):
         emb_kq_per_head: int,
         emb_v_per_head: int,
         use_bias: bool,
+        linear_config: Optional[Mapping[str, Any]] = None,
         *args,
         **kwargs,
     ):
@@ -37,6 +44,7 @@ class QKV(nn.Module, metaclass=abc.ABCMeta):
         self.emb_kq_per_head = emb_kq_per_head
         self.emb_v_per_head = emb_v_per_head
         self.use_bias = use_bias
+        self.linear_config = linear_config
 
     @abc.abstractmethod
     def forward(
@@ -82,6 +90,7 @@ class UnfusedQKV(QKV):
         emb_kq_per_head: int,
         emb_v_per_head: int,
         use_bias: bool,
+        linear_config: Optional[Mapping[str, Any]] = None,
         *args,
         **kwargs,
     ):
@@ -92,17 +101,28 @@ class UnfusedQKV(QKV):
             emb_kq_per_head,
             emb_v_per_head,
             use_bias,
+            linear_config,
             *args,
             **kwargs,
         )
-        self.query = nn.Linear(
-            self.emb_dim, self.nheads * self.emb_kq_per_head, bias=use_bias
+
+        self.query = get_linear(
+            self.emb_dim,
+            self.nheads * self.emb_kq_per_head,
+            bias=use_bias,
+            linear_config=linear_config,
         )
-        self.key = nn.Linear(
-            self.emb_dim, self.kvheads * self.emb_kq_per_head, bias=use_bias
+        self.key = get_linear(
+            self.emb_dim,
+            self.kvheads * self.emb_kq_per_head,
+            bias=use_bias,
+            linear_config=linear_config,
         )
-        self.value = nn.Linear(
-            self.emb_dim, self.kvheads * self.emb_v_per_head, bias=use_bias
+        self.value = get_linear(
+            self.emb_dim,
+            self.kvheads * self.emb_v_per_head,
+            bias=use_bias,
+            linear_config=linear_config,
         )
 
     def reset_parameters(self):
@@ -143,6 +163,7 @@ class FusedQKV(QKV):
         emb_kq_per_head: int,
         emb_v_per_head: int,
         use_bias: bool,
+        linear_config: Optional[Mapping[str, Any]] = None,
         *args,
         **kwargs,
     ):
@@ -153,6 +174,7 @@ class FusedQKV(QKV):
             emb_kq_per_head,
             emb_v_per_head,
             use_bias,
+            linear_config,
             *args,
             **kwargs,
         )
@@ -162,32 +184,34 @@ class FusedQKV(QKV):
             self.kvheads * self.emb_v_per_head,
         ]
 
-        self.qkv_fused = nn.Linear(
+        self.qkv_fused = get_linear(
             self.emb_dim,
             sum(self.splits),
             bias=self.use_bias,
+            linear_config=linear_config,
         )
 
     def unfuse_weights(self):
-        result = UnfusedQKV(
-            self.emb_dim,
-            self.nheads,
-            self.kvheads,
-            self.emb_kq_per_head,
-            self.emb_v_per_head,
-            self.use_bias,
-        ).to(self.qkv_fused.weight.device)
+        with torch.device("meta"):
+            result = UnfusedQKV(
+                self.emb_dim,
+                self.nheads,
+                self.kvheads,
+                self.emb_kq_per_head,
+                self.emb_v_per_head,
+                self.use_bias,
+            )
         query, key, value = torch.split(self.qkv_fused.weight, self.splits, dim=0)
-        result.query.weight.copy_(query)
-        result.key.weight.copy_(key)
-        result.value.weight.copy_(value)
+        result.query.weight = torch.nn.Parameter(query)
+        result.key.weight = torch.nn.Parameter(key)
+        result.value.weight = torch.nn.Parameter(value)
         if self.use_bias:
             query_bias, key_bias, value_bias = torch.split(
                 self.qkv_fused.bias, self.splits, dim=0
             )
-            result.query.bias.copy_(query_bias)
-            result.key.bias.copy_(key_bias)
-            result.value.bias.copy_(value_bias)
+            result.query.bias = torch.nn.Parameter(query_bias)
+            result.key.bias = torch.nn.Parameter(key_bias)
+            result.value.bias = torch.nn.Parameter(value_bias)
         return result
 
     def reset_parameters(self):
@@ -223,8 +247,13 @@ class MultiHeadAttention(nn.Module):
         Dropout probability. Must be in range [0,1]. If 0 or None, dropout will not be used.
     use_bias : bool
         Include bias terms in fully-connected sublayers?
-    fused: bool
-        if True, qkv weights will be fused, otherwise qkv weights will be unfused
+    fused : bool
+        If True, qkv weights will be fused, otherwise qkv weights will be unfused.
+    linear_config : Mapping[str, Any] | None
+        Configuration for selection of linear modules (QKV, dense).
+        Pass as {"linear_type": str, <other kwargs>}. "linear_type" should provide the string
+        identifier of a registered type (e.g., "torch_linear", "gptq", ...). Additional config
+        options should be provided as kwargs.
     """
 
     def __init__(
@@ -238,6 +267,7 @@ class MultiHeadAttention(nn.Module):
         use_bias=False,
         position_encoder: Optional[PositionEncoder] = None,
         fused: bool = True,
+        linear_config: Optional[Mapping[str, Any]] = None,
     ):
         super(MultiHeadAttention, self).__init__()
         self.nheads = nheads
@@ -248,6 +278,8 @@ class MultiHeadAttention(nn.Module):
         self.p_dropout = p_dropout if p_dropout is not None else 0.0
         self.use_bias = use_bias
         self.fused = fused
+        self.linear_config = linear_config
+        self.linear_type = get_linear_type(linear_config)
 
         self.in_proj: QKV = (FusedQKV if self.fused else UnfusedQKV)(
             self.emb_dim,
@@ -256,11 +288,16 @@ class MultiHeadAttention(nn.Module):
             self.emb_kq_per_head,
             self.emb_v_per_head,
             self.use_bias,
+            linear_config=linear_config,
         )
 
-        self.dense = nn.Linear(
-            self.nheads * self.emb_v_per_head, self.emb_dim, bias=use_bias
+        self.dense = get_linear(
+            self.nheads * self.emb_v_per_head,
+            self.emb_dim,
+            bias=use_bias,
+            linear_config=linear_config,
         )
+
         if self.p_dropout:
             self.attn_dropout = nn.Dropout(self.p_dropout)
         self.position_encoder = position_encoder
@@ -452,6 +489,7 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
         position_encoder: Optional[PositionEncoder] = None,
         fused: bool = True,
         group: Optional[ProcessGroup] = None,
+        linear_config: Optional[Mapping[str, Any]] = None,
     ):
         assert torch.distributed.is_initialized()
 
@@ -473,6 +511,7 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
             use_bias,
             position_encoder,
             fused,
+            linear_config,
         )
         self.pre_tp_nheads = nheads
         self.pre_tp_kvheads = kvheads
@@ -480,108 +519,52 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
 
     def load_weights(
         self,
-        tensor_values: Dict[str, torch.Tensor],
-    ):
-        used_keys: Set[str] = set()
-        dense_weight = self._get_sd_weight(
-            tensor_values, used_keys, ["dense", "weight"]
-        )
-        if self.use_bias:
-            dense_bias = self._get_sd_weight(
-                tensor_values, used_keys, ["dense", "bias"]
-            )
+        tensor_values: dict[str, torch.Tensor],
+    ) -> Optional[set]:
+        """Define sharding info of MHA module as:
+        {'module_name': (module_obj, sharding_dim, max_partition)}
+        Then, call the pre-registered sharding function associated with
+        self.linear_type.
 
-        # 1. Grab the weights from tensor_values
+        `sharding_dim` is sharding dimension of the `weights` parameter
+        of nn.Linear. It may differ for other types of linear or other
+        parameters.
+
+        The numbers in `max_partition` signify the largest world size
+        till we need to duplicate. For instance if we have nheads=16 and
+        world_size=32, then first 2 ranks will get first 1/16th of query
+        """
+
         if self.fused:
-            qkv_weight = self._get_sd_weight(
-                tensor_values, used_keys, ["qkv_fused", "weight"]
-            )
-            if self.use_bias:
-                qkv_bias = self._get_sd_weight(
-                    tensor_values, used_keys, ["qkv_fused", "bias"]
-                )
-
-            # 2. Raise exceptions
-            if len(tensor_values) > (4 if self.use_bias else 2):
-                unused_keys = set(tensor_values.keys()).difference(used_keys)
-                raise AttributeError(f"Unused weight(s): {', '.join(unused_keys)}")
-
-            # 3. Load and shard the weights
-            # The number in max_partition_sizes will signify the largest world size
-            # til we need to duplicate.  For instance if we have nheads=16 and
-            # world_size=32, then first 2 ranks will get first 1/16th of query
-            self.sharded_copy(
-                self.in_proj.qkv_fused.weight,
-                qkv_weight,
-                0,
-                [self.pre_tp_nheads, self.pre_tp_kvheads, self.pre_tp_kvheads],
-            )
-            self.sharded_copy(self.dense.weight, dense_weight, 1, [self.world_size])
-            if self.use_bias:
-                self.sharded_copy(
-                    self.in_proj.qkv_fused.bias,
-                    qkv_bias,
+            module_sharding_info = {
+                "qkv_fused": LinearModuleShardingInfo(
+                    self.in_proj.qkv_fused,
                     0,
                     [self.pre_tp_nheads, self.pre_tp_kvheads, self.pre_tp_kvheads],
-                )
-                self.sharded_copy(
-                    self.dense.bias, dense_bias, 1, [self.world_size], False
-                )
-
+                ),
+                "dense": LinearModuleShardingInfo(self.dense, 1, [self.world_size]),
+            }
         else:
-            query_weight = self._get_sd_weight(
-                tensor_values, used_keys, ["query", "weight"]
-            )
-            key_weight = self._get_sd_weight(
-                tensor_values, used_keys, ["key", "weight"]
-            )
-            value_weight = self._get_sd_weight(
-                tensor_values, used_keys, ["value", "weight"]
-            )
+            module_sharding_info = {
+                "query": LinearModuleShardingInfo(
+                    self.in_proj.query, 0, [self.pre_tp_nheads]
+                ),
+                "key": LinearModuleShardingInfo(
+                    self.in_proj.key, 0, [self.pre_tp_kvheads]
+                ),
+                "value": LinearModuleShardingInfo(
+                    self.in_proj.value, 0, [self.pre_tp_kvheads]
+                ),
+                "dense": LinearModuleShardingInfo(self.dense, 1, [self.world_size]),
+            }
 
-            if self.use_bias:
-                query_bias = self._get_sd_weight(
-                    tensor_values, used_keys, ["query", "bias"]
-                )
-                key_bias = self._get_sd_weight(
-                    tensor_values, used_keys, ["key", "bias"]
-                )
-                value_bias = self._get_sd_weight(
-                    tensor_values, used_keys, ["value", "bias"]
-                )
-
-            # 2. Raise exceptions
-            if len(tensor_values) > (8 if self.use_bias else 4):
-                unused_keys = set(tensor_values.keys()).difference(used_keys)
-                raise AttributeError(f"Unused weight(s): {', '.join(unused_keys)}")
-
-            # 3. Load and shard the weights
-            # The number in max_partition_sizes will signify the largest world size
-            # til we need to duplicate.  For instance if we have nheads=16 and
-            # world_size=32, then first 2 ranks will get first 1/16th of query
-            self.sharded_copy(
-                self.in_proj.query.weight, query_weight, 0, [self.pre_tp_nheads]
-            )
-            self.sharded_copy(
-                self.in_proj.key.weight, key_weight, 0, [self.pre_tp_kvheads]
-            )
-            self.sharded_copy(
-                self.in_proj.value.weight, value_weight, 0, [self.pre_tp_kvheads]
-            )
-            self.sharded_copy(self.dense.weight, dense_weight, 1, [self.world_size])
-            if self.use_bias:
-                self.sharded_copy(
-                    self.in_proj.query.bias, query_bias, 0, [self.pre_tp_nheads]
-                )
-                self.sharded_copy(
-                    self.in_proj.key.bias, key_bias, 0, [self.pre_tp_kvheads]
-                )
-                self.sharded_copy(
-                    self.in_proj.value.bias, value_bias, 0, [self.pre_tp_kvheads]
-                )
-                self.sharded_copy(
-                    self.dense.bias, dense_bias, 1, [self.world_size], False
-                )
+        type_sharding_map = get_all_linear_type_to_sharding_maps()
+        unused_keys = type_sharding_map[self.linear_type](
+            tensor_values,
+            self,
+            module_sharding_info,
+        )
+        return unused_keys
 
     @staticmethod
     def import_module(
@@ -598,6 +581,7 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
             position_encoder=mha.position_encoder,
             group=group,
             fused=mha.fused,
+            linear_config=mha.linear_config,
         )
         return tp_mha
 
@@ -658,8 +642,8 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
         # if use_cache=True, we return the hidden_state as well as the kv cache.
         # We only reduce the output, and keep the cache thread-local
         if use_cache:
-            out = reduce_from_tensor_model_parallel_region(out_par[0])
+            out = reduce_from_tensor_model_parallel_region(out_par[0], self.world_size)
             return out, out_par[1]
         else:
-            out = reduce_from_tensor_model_parallel_region(out_par)
+            out = reduce_from_tensor_model_parallel_region(out_par, self.world_size)
             return out
