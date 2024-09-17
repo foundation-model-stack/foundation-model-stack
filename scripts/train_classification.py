@@ -15,7 +15,7 @@ from torch.utils.data.distributed import DistributedSampler
 from fms import datasets, models
 from fms.training import plugins as trainplugins
 from fms.training import trainer
-from fms.utils import print0, tokenizers
+from fms.utils import fusion, print0, tokenizers
 # from torch_sendnn import torch_sendnn
 
 #
@@ -259,6 +259,7 @@ def main():
         group=group,
         p_dropout=0.,
     )
+    model = fusion.apply_unfuse_weights(model)
     #model.base_model.rot_emb.compute_freqs_cis(device, 512)
     #model.reset_head()
     if args.head_only:
@@ -278,7 +279,7 @@ def main():
     print0("dataset state", dataset_sd)
 
     if args.compile:
-        model = torch.compile(model, backend="sendnn")
+        # model = torch.compile(model, backend="sendnn")
         optimizer.step = torch.compile(optimizer.step, backend="sendnn")
 
     tokenizer = tokenizers.get_tokenizer(args.tokenizer)
@@ -386,6 +387,7 @@ def main():
             prev_step=prev_step,
             trainer_plugins=plugins,
             grad_accum_iters=args.grad_accum_steps,
+            compile_loss=True,
         )
 
 
