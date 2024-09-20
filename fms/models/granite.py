@@ -46,10 +46,10 @@ class GraniteConfig(ModelConfig):
     mlp_bias: bool = False
     tie_heads: bool = False
     rope_theta: float = 10_000.0
-    embedding_multiplier: float = (1.0,)
-    logits_scaling: float = (1.0,)
-    residual_multiplier: float = (1.0,)
-    attention_multiplier: float = (1.0,)
+    embedding_multiplier: float = 1.0
+    logits_scaling: float = 1.0
+    residual_multiplier: float = 1.0
+    attention_multiplier: float = 1.0
     linear_config: Optional[Mapping[str, Any]] = None
     unfuse_strategy: Optional[str] = None  # TODO: could be an Enum
 
