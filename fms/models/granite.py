@@ -246,7 +246,7 @@ class Granite(nn.Module):
         return self.config
 
     @classmethod
-    def from_config(cls, config: GraniteConfig) -> "LLaMA":
+    def from_config(cls, config: GraniteConfig) -> "Granite":
         return cls(config)
 
     def reset_parameters(self):
