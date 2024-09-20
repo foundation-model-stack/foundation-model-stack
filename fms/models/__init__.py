@@ -482,9 +482,11 @@ def get_model(
     # TODO: should we raise a warning? are uninitialized tensors ever acceptable?
     if initial_device != torch.device("meta"):
         fms_model._apply(
-            lambda t: torch.empty_like(t, device=initial_device)
-            if t.device == torch.device("meta")
-            else t
+            lambda t: (
+                torch.empty_like(t, device=initial_device)
+                if t.device == torch.device("meta")
+                else t
+            )
         )
 
     if extra_args.get("unfuse_strategy", None) == "post":
@@ -493,4 +495,4 @@ def get_model(
     return fms_model
 
 
-from fms.models import gpt_bigcode, llama, mixtral, roberta
+from fms.models import gpt_bigcode, llama, mixtral, roberta, granite
