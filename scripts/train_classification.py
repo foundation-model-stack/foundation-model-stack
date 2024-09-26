@@ -1,4 +1,5 @@
 import argparse
+import math
 import os
 from contextlib import nullcontext
 from datetime import timedelta
@@ -16,7 +17,6 @@ from fms import datasets, models
 from fms.training import plugins as trainplugins
 from fms.training import trainer
 from fms.utils import fusion, print0, tokenizers
-# from torch_sendnn import torch_sendnn
 
 #
 # This is a fairly minimal training/tuning script for causal language models.
@@ -92,10 +92,22 @@ parser.add_argument(
     help="Device type. If not specified check for availability of cuda, mps, then cpu",
 )
 parser.add_argument(
+    "--default_dtype",
+    type=str,
+    default=None,
+    choices=["bf16", "fp16", "fp32"],
+    help="If set to one of the choices, overrides the model checkpoint weight format by setting the default pytorch format",
+)
+parser.add_argument(
     "--distributed",
     type=str,
     default=None,
     help="The strategy used for distributing the model. E.g. fsdp, ddp, tp, mp. Default None",
+)
+parser.add_argument(
+    "--unfuse_weights",
+    action="store_true",
+    help="If set to True, this will unfuse any fused weight modules that support the unfuse_weights method",
 )
 
 # Dataset arguments
@@ -137,6 +149,12 @@ parser.add_argument(
     help="Whether to compile the model and optimizer.",
 )
 parser.add_argument(
+    "--compile_backend",
+    type=str,
+    default="inductor",
+    help="What backend to use for compilation.",
+)
+parser.add_argument(
     "--head_only",
     action="store_true",
     help="Whether to only tune the head or the whole model.",
@@ -176,6 +194,15 @@ if device_type == "cuda":
     torch.cuda.set_device(device)
 else:
     device = torch.device(device_type)
+
+default_dtype = None
+dtypes_map = {
+    "fp16": torch.float16,
+    "bf16": torch.bfloat16,
+    "fp32": torch.float32,
+}
+if args.default_dtype is not None:
+    default_dtype = dtypes_map[args.default_dtype]
 
 group = None
 
@@ -246,7 +273,8 @@ def training_state(model_path, model, rank):
 
 
 def main():
-    torch.set_default_dtype(torch.float32)
+    if args.default_dtype:
+        torch.set_default_dtype(default_dtype)
 
     print0("Loading model...")
     model = models.get_model(
@@ -255,15 +283,20 @@ def main():
         args.model_path,
         source=args.checkpoint_format,
         device_type=device_type,
+        data_type=default_dtype,
         distributed_strategy=args.distributed,
         group=group,
         p_dropout=0.,
     )
-    model = fusion.apply_unfuse_weights(model)
+    if args.unfuse_weights:
+        model = fusion.apply_unfuse_weights(model)
     #model.base_model.rot_emb.compute_freqs_cis(device, 512)
-    #model.reset_head()
     if args.head_only:
-        # model.base_model.embedding.weight.requires_grad = False
+        # Initialize the classification head so we don't get NaNs
+        model.classification_head.head.weight.data.normal_(
+            0,
+            1 / math.sqrt(math.sqrt(model.config.emb_dim * model.config.src_vocab_size)),
+        )
         for param in model.parameters():
             param.requires_grad = False
         model.classification_head.head.weight.requires_grad = True
@@ -279,8 +312,9 @@ def main():
     print0("dataset state", dataset_sd)
 
     if args.compile:
-        # model = torch.compile(model, backend="sendnn")
-        optimizer.step = torch.compile(optimizer.step, backend="sendnn")
+        # Handled by trainer to include loss
+        # model = torch.compile(model, backend=args.compile_backend)
+        optimizer.step = torch.compile(optimizer.step, backend=args.compile_backend)
 
     tokenizer = tokenizers.get_tokenizer(args.tokenizer)
 
@@ -387,7 +421,8 @@ def main():
             prev_step=prev_step,
             trainer_plugins=plugins,
             grad_accum_iters=args.grad_accum_steps,
-            compile_loss=True,
+            compile_loss=args.compile,
+            compile_backend=args.compile_backend,
         )
 
 

@@ -18,14 +18,15 @@ def __one_step(
     loss_fn: nn.Module,
     grad_scaler,
     compile_loss: bool = False,
+    compile_backend: Optional[str] = None,
 ):
     def loss_fwd(input, model, label):
         output = model(input, attn_algorithm="math")
         return loss_fn(output, label)
-    
+
     if compile_loss:
-        loss_fwd = torch.compile(loss_fwd, backend="sendnn")
-    
+        loss_fwd = torch.compile(loss_fwd, backend=compile_backend)
+
     autocast = (
         torch.autocast(device_type="cuda") if grad_scaler is not None else nullcontext()
     )
@@ -62,6 +63,7 @@ def __one_epoch(
     plugins: List[TrainerPlugin],
     accum_iters: int = 1,
     compile_loss: bool = False,
+    compile_backend: Optional[str] = None,
 ):
     print0("Epoch", epoch)
     model.train()
@@ -86,7 +88,15 @@ def __one_epoch(
         input = input.to(device)
         label = label.to(device)
 
-        loss = __one_step(model, input, label, loss_fn, grad_scaler, compile_loss=compile_loss)
+        loss = __one_step(
+            model,
+            input,
+            label,
+            loss_fn,
+            grad_scaler,
+            compile_loss=compile_loss,
+            compile_backend=compile_backend,
+        )
         if (step + 1) % accum_iters == 0:
             __optimize(model, optimizer, grad_scaler)
             optimized = True
@@ -122,6 +132,7 @@ def train(
     trainer_plugins: List[TrainerPlugin] = [],
     grad_accum_iters: int = 1,
     compile_loss: bool = False,
+    compile_backend: Optional[str] = None,
 ):
     for epoch in range(start_epoch, start_epoch + epochs):
         __one_epoch(
@@ -135,4 +146,5 @@ def train(
             trainer_plugins,
             accum_iters=grad_accum_iters,
             compile_loss=compile_loss,
+            compile_backend=compile_backend,
         )

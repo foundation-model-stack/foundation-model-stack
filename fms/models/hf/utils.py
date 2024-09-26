@@ -206,7 +206,7 @@ def _infer_model_configuration(
         config_params["activation_fn"] = config.hidden_act
     else:
         raise ValueError(
-            "FMS model implementations currently only support LlamaForCausalLM, GPTBigCodeForCausalLM, MixtralForCausalLM, and RobertaForMaskedLM"
+            f"FMS model implementations currently only support LlamaForCausalLM, GPTBigCodeForCausalLM, MixtralForCausalLM, and RobertaForMaskedLM, you passed {architecture}"
         )
 
     # infer common params

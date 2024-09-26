@@ -1,7 +1,7 @@
 import logging
-from dataclasses import dataclass
 import math
 import re
+from dataclasses import dataclass
 from typing import Any, Mapping, Optional
 
 import torch
@@ -421,7 +421,7 @@ class LLaMA(nn.Module):
         )
         if self.config.tie_heads:
             head.weight = self.base_model.embedding.weight
-        
+
         # TP does not work with tied weights
         if (
             not isinstance(self.distributed_strategy, TensorParallelStrategy)
@@ -466,7 +466,7 @@ class LLaMA(nn.Module):
 
     def post_init(self):
         self.base_model.post_init()
-        
+
         # if this model ties weights, they are tied here
         if self.config.tie_heads:
             # handle assignment of non-meta weights to meta parameters
@@ -558,7 +558,7 @@ class LLaMAForClassification(nn.Module):
                 assert p.isinf().int().sum() == 0
             self.base_model.validate_reset_parameters()
             check_close(self.classification_head.weight)
-    
+
     def post_init(self):
         self.base_model.post_init()
 

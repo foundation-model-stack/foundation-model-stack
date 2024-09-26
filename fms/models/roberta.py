@@ -1,3 +1,4 @@
+import copy
 import math
 import re
 from dataclasses import dataclass
@@ -31,6 +32,7 @@ class RoBERTaConfig(ModelConfig):
     multiquery_attn: bool = False
     norm_eps: float = 1e-12
     tie_heads: bool = False
+    pooling: bool = False
 
 
 @dataclass
@@ -230,6 +232,8 @@ class RoBERTa(nn.Module):
                 activation_fn=str_to_activation(self.config.activation_fn),
                 layer_norm=nn.LayerNorm(self.config.emb_dim, self.config.norm_eps),
                 dropout=self.config.p_dropout,
+                apply_pooling_fn=self.config.pooling,
+                pooling_fn_act=str_to_activation(self.config.classifier_activation_fn),
             ),
             final_layers=True,
         )
@@ -312,8 +316,9 @@ class RoBERTaForClassification(nn.Module):
                 activation_fn=str_to_activation(self.config.activation_fn),
                 layer_norm=nn.LayerNorm(self.config.emb_dim, self.config.norm_eps),
                 dropout=self.config.p_dropout,
-                apply_pooling_fn=True,
-                dense_bias=False,
+                apply_pooling_fn=self.config.pooling,
+                pooling_fn_act=str_to_activation(self.config.classifier_activation_fn),
+                dense_bias=True,
                 head_bias=False,
             ),
             final_layers=True,
@@ -363,8 +368,11 @@ _bert_base_config = RoBERTaConfig(
     src_vocab_size=30522,
 )
 
+_bert_base_classification_config_dict = copy.copy(_bert_base_config.__dict__)
+_bert_base_classification_config_dict["pooling"] = True
 _bert_base_classification_config = RoBERTaClassificationConfig(
-    **_bert_base_config.__dict__, num_classes=2
+    **_bert_base_classification_config_dict,
+    num_classes=2,
 )
 
 _architecture_name = "roberta"
@@ -439,7 +447,44 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping[Any, Any]) -> Mapping[Any, Any]:
     return fused_sd
 
 
-serialization.register_adapter("bert", "hf", _hf_sd_to_fms_sd)
-serialization.register_adapter("bert_classification", "hf", _hf_sd_to_fms_sd)
+def _bert_hf_sd_to_fms_sd(hf_sd: Mapping[Any, Any]) -> Mapping[Any, Any]:
+    replacements = [
+        (r"^bert.embeddings.word_embeddings.weight", "base_model.embedding.weight"),
+        (
+            r"^bert.embeddings.position_embeddings.weight",
+            "base_model.position_embedding.weight",
+        ),
+        (r"^bert.embeddings.LayerNorm", "base_model.enc_norm"),
+        (r"^bert.encoder.layer", "base_model.layers"),
+        (r"attention\.output\.LayerNorm", "ln"),
+        (r"output\.LayerNorm", "ff_ln"),
+        (r"attention\.self\.key", "attn.key"),
+        (r"attention\.self\.value", "attn.value"),
+        (r"attention\.self\.query", "attn.query"),
+        (r"attention\.output\.dense", "attn.dense"),
+        (r"intermediate\.dense", "ff_sub_layer.w1"),
+        (r"output\.dense", "ff_sub_layer.w2"),
+        (r"^cls\.predictions\.transform\.dense", "classification_head.dense"),
+        (r"^cls\.predictions\.transform\.LayerNorm", "classification_head.ln"),
+        (r"^cls\.predictions\.decoder", "classification_head.head"),
+        (r"^cls\.predictions\.bias", "classification_head.head.bias"),
+        (r"gamma", "weight"),
+        (r"beta", "bias"),
+        (r"^bert.pooler.dense", "classification_head.pooler_linear"),
+    ]
+    new_sd = {}
+    for name, param in hf_sd.items():
+        new_name = name
+        for pattern, repl in replacements:
+            new_name = re.sub(pattern, repl, new_name)
+        new_sd[new_name] = param
+
+    fused_sd = _convert_to_fused_qkv(new_sd)
+
+    return fused_sd
+
+
+serialization.register_adapter("bert", "hf", _bert_hf_sd_to_fms_sd)
+serialization.register_adapter("bert_classification", "hf", _bert_hf_sd_to_fms_sd)
 serialization.register_adapter("roberta", "hf", _hf_sd_to_fms_sd)
 serialization.register_adapter("roberta", "fms.pre0.0.6", _convert_to_fused_qkv)

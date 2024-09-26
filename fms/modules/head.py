@@ -30,6 +30,7 @@ class MLPClassificationHead(nn.Module):
         head_bias: bool = True,
         dropout: float = 0.0,
         apply_pooling_fn: bool = False,
+        pooling_fn_act: nn.Module = nn.Tanh(),
     ):
         """
         Initialize a MLPClassificationHead
@@ -61,6 +62,9 @@ class MLPClassificationHead(nn.Module):
         self.ln = layer_norm
         self.head = nn.Linear(emb_dim, num_classes, bias=head_bias)
         self.apply_pooling_fn = apply_pooling_fn
+        if self.apply_pooling_fn:
+            self.pooler_linear = nn.Linear(emb_dim, emb_dim)
+            self.pooler_act = pooling_fn_act
 
     def forward(self, x: torch.Tensor):
         """Run the forward method of a classification head
@@ -77,6 +81,8 @@ class MLPClassificationHead(nn.Module):
         """
         if self.apply_pooling_fn:
             x = x[:, 0]
+            x = self.pooler_linear(x)
+            x = self.pooler_act(x)
         x = self.dense(x)
         x = self.act(x)
         # x = self.dropout(x)
