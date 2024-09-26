@@ -446,7 +446,7 @@ class TPGatedLinearUnit(GatedLinearUnit, TPModule):
             self.a,
             self.p_dropout,
             self.use_bias,
-            fused=self.fused,
+            fused=False,
         ).to(self.w2.weight.device)
 
 
