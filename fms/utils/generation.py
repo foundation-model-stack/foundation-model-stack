@@ -191,6 +191,7 @@ def generate(
     next_input = input_ids
     kwargs["past_key_value_states"] = None
     kwargs["use_cache"] = use_cache
+    kwargs["attn_algorithm"] = "math"
 
     prompt_length = input_ids.shape[1]
 
