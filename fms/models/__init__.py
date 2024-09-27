@@ -93,7 +93,7 @@ def __maybe_infer_model_variant(
             model_path_or_variant = variant
 
         if is_hf_pretrained:
-            if (variant is None == model_path is None) or source is not None:
+            if ((variant is None) == (model_path is None)) or source is not None:
                 raise ValueError(
                     """
                     architecture="hf_pretrained" implies one of two things: 
@@ -106,9 +106,9 @@ def __maybe_infer_model_variant(
                 logger.warning(
                     f"ignoring the following parameters as a pretrained model with an inferred configuration is being loaded: {list(kwargs.keys())}"
                 )
-        if is_hf_configured and (variant is None or model_path is None):
+        if is_hf_configured and variant is None:
             raise ValueError(
-                """architecture="hf_configured" implies model config is loaded from variant and weights are loaded from model_path, therefore both should be set"""
+                """architecture="hf_configured" implies model config is loaded from variant, therefore it should be set"""
             )
 
         logger.info(f"inferring model configuration from {model_path_or_variant}")
