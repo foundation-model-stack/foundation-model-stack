@@ -97,7 +97,7 @@ def __maybe_infer_model_variant(
                 raise ValueError(
                     """
                     architecture="hf_pretrained" implies one of two things: 
-                    1. if variant is defined, model config and weights will be downloaded and extracted from hf cache and loaded into the model, therefore model_path should not be set.
+                    1. if variant is defined, model config and weights will be downloaded if not present, then extracted from hf cache, and finally loaded into the model, therefore model_path should not be set.
                     2. if model_path is defined, model config and weights will be loaded from model_path, therefore variant should not be set.
                     In both cases, source should not be set.
                     """
