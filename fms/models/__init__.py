@@ -93,7 +93,7 @@ def __maybe_infer_model_variant(
                 required_args = [variant]
                 banned_args = [model_path, source]
             if is_hf_configured:
-                required_args = [variant, model_path, source]
+                required_args = [variant, model_path]
                 banned_args = []
         elif architecture == "hf_inferred":
             logger.info(f"inferring model configuration from {model_path}")
