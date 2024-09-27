@@ -81,21 +81,35 @@ def __maybe_infer_model_variant(
     if architecture in ("hf_pretrained", "hf_configured", "hf_inferred"):
         from fms.models.hf.utils import _infer_model_configuration  # type: ignore
 
-        if architecture in ("hf_pretrained", "hf_configured"):
+        is_hf_pretrained = architecture == "hf_pretrained"
+        is_hf_configured = architecture == "hf_configured"
+        is_hf_inferred = architecture == "hf_inferred"
+
+        if is_hf_pretrained or is_hf_configured:
             logger.info(f"inferring model configuration from {variant}")
+            if is_hf_pretrained:
+                required_args = (variant,)
+                banned_args = (model_path, source)
+            if is_hf_configured:
+                required_args = (variant, model_path, source)
+                banned_args = ()
         elif architecture == "hf_inferred":
             logger.info(f"inferring model configuration from {model_path}")
-        is_hf_pretrained = architecture == "hf_pretrained"
-        is_hf_inferred = architecture == "hf_inferred"
-        if is_hf_pretrained or is_hf_inferred:
-            if is_hf_pretrained and model_path is not None or source is not None:
+            required_args = (model_path,)
+            banned_args = (variant, source)
+
+        if any([arg is None for arg in required_args]) or any(
+            [arg is not None for arg in banned_args]
+        ):
+            if is_hf_pretrained:
                 raise ValueError(
                     """architecture="hf_pretrained" implies model weights will be downloaded and extracted from hf cache and loaded into the model, therefore model_path and source should not be set"""
                 )
-            if is_hf_inferred and model_path is None:
+            if is_hf_inferred:
                 raise ValueError(
-                    """architecture="hf_inferred" implies model config and weights are loaded from model_path, therefore it should be set"""
+                    """architecture="hf_inferred" implies model config and weights are loaded from model_path, therefore it should be set, while variant and source should not be set"""
                 )
+        if is_hf_pretrained or is_hf_inferred:
             if len(kwargs) > 0:
                 logger.warning(
                     f"ignoring the following parameters as a pretrained model with an inferred configuration is being loaded: {list(kwargs.keys())}"
@@ -104,7 +118,7 @@ def __maybe_infer_model_variant(
         if architecture in ("hf_pretrained", "hf_configured"):
             model_path_or_variant = variant
         elif is_hf_inferred:
-            model_path_or_variant = model_path
+            model_path_or_variant = model_path  # type: ignore[assignment]
 
         extra_kwargs = _infer_model_configuration(
             model_path_or_variant, download_weights=is_hf_pretrained
@@ -118,6 +132,9 @@ def __maybe_infer_model_variant(
             source = "hf"
         else:
             extra_kwargs = {**extra_kwargs, **kwargs}
+
+    if architecture is None or variant is None:
+        raise ValueError("Architecture and variant inference for get_model failed!")
 
     return architecture, variant, model_path, source, extra_kwargs
 
@@ -313,7 +330,7 @@ def _validate_unfuse_strategy(extra_args, rank: int = 0):
 
 def get_model(
     architecture: str,
-    variant: str,
+    variant: Optional[str] = None,
     model_path: Optional[str] = None,
     source: Optional[str] = None,
     device_type: str = "cpu",
