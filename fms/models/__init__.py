@@ -78,13 +78,17 @@ def __maybe_infer_model_variant(
     """Infer the model variant configuration from different sources, currently only supported sources are hf"""
     extra_kwargs = kwargs
 
-    if architecture in ("hf_pretrained", "hf_configured"):
+    if architecture in ("hf_pretrained", "hf_configured", "hf_inferred"):
         from fms.models.hf.utils import _infer_model_configuration  # type: ignore
 
-        logger.info(f"inferring model configuration from {variant}")
+        if architecture in ("hf_pretrained", "hf_configured"):
+            logger.info(f"inferring model configuration from {variant}")
+        elif architecture == "hf_inferred":
+            logger.info(f"inferring model configuration from {model_path}")
         is_hf_pretrained = architecture == "hf_pretrained"
-        if is_hf_pretrained:
-            if model_path is not None or source is not None:
+        is_hf_inferred = architecture == "hf_inferred"
+        if is_hf_pretrained or is_hf_inferred:
+            if is_hf_pretrained and model_path is not None or source is not None:
                 raise ValueError(
                     """architecture="hf_pretrained" implies model weights will be downloaded and extracted from hf cache and loaded into the model, therefore model_path and source should not be set"""
                 )
@@ -93,14 +97,20 @@ def __maybe_infer_model_variant(
                     f"ignoring the following parameters as a pretrained model with an inferred configuration is being loaded: {list(kwargs.keys())}"
                 )
 
+        if architecture in ("hf_pretrained", "hf_configured"):
+            model_path_or_variant = variant
+        elif is_hf_inferred:
+            model_path_or_variant = model_path
+
         extra_kwargs = _infer_model_configuration(
-            variant, download_weights=is_hf_pretrained
+            model_path_or_variant, download_weights=is_hf_pretrained
         )
         architecture = extra_kwargs.pop("architecture")
         variant = extra_kwargs.pop("variant")
 
-        if is_hf_pretrained:
-            model_path = extra_kwargs.pop("model_path")
+        if is_hf_pretrained or is_hf_inferred:
+            if is_hf_pretrained:
+                model_path = extra_kwargs.pop("model_path")
             source = "hf"
         else:
             extra_kwargs = {**extra_kwargs, **kwargs}
