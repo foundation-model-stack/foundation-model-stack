@@ -1,7 +1,7 @@
 import logging
 from contextlib import nullcontext
 from functools import partial
-from typing import Any, Callable, Dict, List, MutableMapping, Optional, Tuple, Union
+from typing import Any, Callable, Dict, MutableMapping, Optional, Tuple, Union
 
 import torch
 from torch import nn
@@ -78,60 +78,48 @@ def __maybe_infer_model_variant(
     """Infer the model variant configuration from different sources, currently only supported sources are hf"""
     extra_kwargs = kwargs
 
-    if architecture in ("hf_pretrained", "hf_configured", "hf_inferred"):
+    if architecture in ("hf_pretrained", "hf_configured"):
         from fms.models.hf.utils import _infer_model_configuration  # type: ignore
 
         is_hf_pretrained = architecture == "hf_pretrained"
         is_hf_configured = architecture == "hf_configured"
-        is_hf_inferred = architecture == "hf_inferred"
 
-        if is_hf_pretrained or is_hf_configured:
-            model_path_or_variant = variant
-        elif is_hf_inferred:
-            model_path_or_variant = model_path  # type: ignore[assignment]
-
-        required_args: List[Any] = []
-        banned_args: List[Any] = []
         if is_hf_pretrained:
-            required_args = [variant]
-            banned_args = [model_path, source]
+            if variant is None:
+                model_path_or_variant = model_path  # type: ignore[assignment]
+            else:
+                model_path_or_variant = variant
         elif is_hf_configured:
-            required_args = [variant, model_path]
-            banned_args = []
-        elif is_hf_inferred:
-            required_args = [model_path]
-            banned_args = [variant, source]
+            model_path_or_variant = variant
 
-        if any([arg is None for arg in required_args]) or any(
-            [arg is not None for arg in banned_args]
-        ):
-            if is_hf_pretrained:
+        if is_hf_pretrained:
+            if (variant is None == model_path is None) or source is not None:
                 raise ValueError(
-                    """architecture="hf_pretrained" implies model weights will be downloaded and extracted from hf cache and loaded into the model, therefore model_path and source should not be set"""
+                    """
+                    architecture="hf_pretrained" implies one of two things: 
+                    1. if variant is defined, model config and weights will be downloaded and extracted from hf cache and loaded into the model, therefore model_path should not be set.
+                    2. if model_path is defined, model config and weights will be loaded from model_path, therefore variant should not be set.
+                    In both cases, source should not be set.
+                    """
                 )
-            if is_hf_configured:
-                raise ValueError(
-                    """architecture="hf_configured" implies model config is loaded from variant and weights are loaded from model_path, therefore both should be set"""
-                )
-            if is_hf_inferred:
-                raise ValueError(
-                    """architecture="hf_inferred" implies model config and weights are loaded from model_path, therefore it should be set, while variant and source should not be set"""
-                )
-        if is_hf_pretrained or is_hf_inferred:
             if len(kwargs) > 0:
                 logger.warning(
                     f"ignoring the following parameters as a pretrained model with an inferred configuration is being loaded: {list(kwargs.keys())}"
                 )
+        if is_hf_configured and (variant is None or model_path is None):
+            raise ValueError(
+                """architecture="hf_configured" implies model config is loaded from variant and weights are loaded from model_path, therefore both should be set"""
+            )
 
         logger.info(f"inferring model configuration from {model_path_or_variant}")
 
         extra_kwargs = _infer_model_configuration(
-            model_path_or_variant, download_weights=is_hf_pretrained  # type: ignore[arg-type]
+            model_path_or_variant, download_weights=variant is not None  # type: ignore[arg-type]
         )
         architecture = extra_kwargs.pop("architecture")
         variant = extra_kwargs.pop("variant")
 
-        if is_hf_pretrained or is_hf_inferred:
+        if is_hf_pretrained:
             if is_hf_pretrained:
                 model_path = extra_kwargs.pop("model_path")
             source = "hf"
