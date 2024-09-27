@@ -85,18 +85,20 @@ def __maybe_infer_model_variant(
         is_hf_configured = architecture == "hf_configured"
         is_hf_inferred = architecture == "hf_inferred"
 
+        if is_hf_pretrained or is_hf_configured:
+            model_path_or_variant = variant
+        elif is_hf_inferred:
+            model_path_or_variant = model_path  # type: ignore[assignment]
+
         required_args: List[Any] = []
         banned_args: List[Any] = []
-        if is_hf_pretrained or is_hf_configured:
-            logger.info(f"inferring model configuration from {variant}")
-            if is_hf_pretrained:
-                required_args = [variant]
-                banned_args = [model_path, source]
-            if is_hf_configured:
-                required_args = [variant, model_path]
-                banned_args = []
-        elif architecture == "hf_inferred":
-            logger.info(f"inferring model configuration from {model_path}")
+        if is_hf_pretrained:
+            required_args = [variant]
+            banned_args = [model_path, source]
+        elif is_hf_configured:
+            required_args = [variant, model_path]
+            banned_args = []
+        elif is_hf_inferred:
             required_args = [model_path]
             banned_args = [variant, source]
 
@@ -106,6 +108,10 @@ def __maybe_infer_model_variant(
             if is_hf_pretrained:
                 raise ValueError(
                     """architecture="hf_pretrained" implies model weights will be downloaded and extracted from hf cache and loaded into the model, therefore model_path and source should not be set"""
+                )
+            if is_hf_configured:
+                raise ValueError(
+                    """architecture="hf_configured" implies model config is loaded from variant and weights are loaded from model_path, therefore both should be set"""
                 )
             if is_hf_inferred:
                 raise ValueError(
@@ -117,10 +123,7 @@ def __maybe_infer_model_variant(
                     f"ignoring the following parameters as a pretrained model with an inferred configuration is being loaded: {list(kwargs.keys())}"
                 )
 
-        if architecture in ("hf_pretrained", "hf_configured"):
-            model_path_or_variant = variant
-        elif is_hf_inferred:
-            model_path_or_variant = model_path  # type: ignore[assignment]
+        logger.info(f"inferring model configuration from {model_path_or_variant}")
 
         extra_kwargs = _infer_model_configuration(
             model_path_or_variant, download_weights=is_hf_pretrained  # type: ignore[arg-type]
