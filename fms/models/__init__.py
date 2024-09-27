@@ -92,6 +92,10 @@ def __maybe_infer_model_variant(
                 raise ValueError(
                     """architecture="hf_pretrained" implies model weights will be downloaded and extracted from hf cache and loaded into the model, therefore model_path and source should not be set"""
                 )
+            if is_hf_inferred and model_path is None:
+                raise ValueError(
+                    """architecture="hf_inferred" implies model config and weights are loaded from model_path, therefore it should be set"""
+                )
             if len(kwargs) > 0:
                 logger.warning(
                     f"ignoring the following parameters as a pretrained model with an inferred configuration is being loaded: {list(kwargs.keys())}"
