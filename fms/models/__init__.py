@@ -1,7 +1,7 @@
 import logging
 from contextlib import nullcontext
 from functools import partial
-from typing import Any, Callable, Dict, MutableMapping, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, MutableMapping, Optional, Tuple, Union
 
 import torch
 from torch import nn
@@ -70,7 +70,7 @@ def list_variants(architecture: str):
 
 def __maybe_infer_model_variant(
     architecture: str,
-    variant: str,
+    variant: Optional[str],
     model_path: Optional[str],
     source: Optional[str],
     **kwargs,
@@ -85,18 +85,20 @@ def __maybe_infer_model_variant(
         is_hf_configured = architecture == "hf_configured"
         is_hf_inferred = architecture == "hf_inferred"
 
+        required_args: List[Any] = []
+        banned_args: List[Any] = []
         if is_hf_pretrained or is_hf_configured:
             logger.info(f"inferring model configuration from {variant}")
             if is_hf_pretrained:
-                required_args = (variant,)
-                banned_args = (model_path, source)
+                required_args = [variant]
+                banned_args = [model_path, source]
             if is_hf_configured:
-                required_args = (variant, model_path, source)
-                banned_args = ()
+                required_args = [variant, model_path, source]
+                banned_args = []
         elif architecture == "hf_inferred":
             logger.info(f"inferring model configuration from {model_path}")
-            required_args = (model_path,)
-            banned_args = (variant, source)
+            required_args = [model_path]
+            banned_args = [variant, source]
 
         if any([arg is None for arg in required_args]) or any(
             [arg is not None for arg in banned_args]
@@ -121,7 +123,7 @@ def __maybe_infer_model_variant(
             model_path_or_variant = model_path  # type: ignore[assignment]
 
         extra_kwargs = _infer_model_configuration(
-            model_path_or_variant, download_weights=is_hf_pretrained
+            model_path_or_variant, download_weights=is_hf_pretrained  # type: ignore[arg-type]
         )
         architecture = extra_kwargs.pop("architecture")
         variant = extra_kwargs.pop("variant")
