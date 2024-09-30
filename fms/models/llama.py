@@ -1,7 +1,7 @@
 import logging
 import re
 from dataclasses import dataclass
-from typing import Any, Mapping, Optional
+from typing import Any, List, Mapping, Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -400,13 +400,15 @@ class LLaMA(nn.Module):
 
     def forward(
         self,
-        x,
-        mask=None,
-        position_ids=None,
-        past_key_value_states=None,
-        use_cache=False,
-        only_last_token=False,
-        attn_algorithm=None,
+        x: torch.Tensor,
+        mask: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.Tensor] = None,
+        past_key_value_states: Optional[
+            List[Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]
+        ] = None,
+        use_cache: bool = False,
+        only_last_token: bool = False,
+        attn_algorithm: Optional[str] = None,
     ):
         output, cache = self._helper(
             x, mask, position_ids, past_key_value_states, use_cache, attn_algorithm

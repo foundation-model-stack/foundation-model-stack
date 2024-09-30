@@ -335,6 +335,7 @@ class GPTBigCode(nn.Module):
         position_ids: Optional[torch.LongTensor] = None,
         past_key_value_states: Optional[Tuple[torch.FloatTensor,]] = None,
         use_cache: bool = False,
+        only_last_token: bool = False,
         attn_algorithm: Optional[str] = None,
     ):
         output, cache = self.base_model(
@@ -346,6 +347,8 @@ class GPTBigCode(nn.Module):
             attn_algorithm=attn_algorithm,
         )
 
+        if only_last_token:
+            output = output[:, -1, :]
         preds = self.head(output)
 
         if use_cache:
