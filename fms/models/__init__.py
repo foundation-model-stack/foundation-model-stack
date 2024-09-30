@@ -120,8 +120,7 @@ def __maybe_infer_model_variant(
         variant = extra_kwargs.pop("variant")
 
         if is_hf_pretrained:
-            if is_hf_pretrained:
-                model_path = extra_kwargs.pop("model_path")
+            model_path = extra_kwargs.pop("model_path")
             source = "hf"
         else:
             extra_kwargs = {**extra_kwargs, **kwargs}
@@ -339,11 +338,12 @@ def get_model(
     Args:
     architecture: the model architecture, e.g. llama. See
                 `models.list_models()`. If hf_pretrained is given, the model architecture will be inferred by the
-                model_config associated with the hf model_id_or_path and subsequently the weights will be downloaded and
-                loaded into the model. If hf_configured is given, only the model architecture configuration will be and
-                no weights will explicitly be loaded unless following the normal model_path logic. Note, if
-                hf_pretrained is given and model_path or source are set, an exception will be raised as model loading
-                will occur through the hf cache.
+                model_config associated with either the HF model name (e.g. meta-llama/Llama-3.1-8B, passed as `variant` here),
+                or the local path (e.g. /home/fms/models/llama3.1-8b/, passed as `model_path`). If the model architecture is passed
+                through the `variant`, the weights will be loaded from the local HF cache if available, or downloaded otherwise.
+                If hf_configured is given, only the model architecture configuration will be loaded from the HF model name (`variant`)
+                and no weights will explicitly be loaded unless following the normal model_path logic. Note, if hf_pretrained is given
+                and source is set, an exception will be raised as model loading will always be from a HF checkpoint.
     variant: the configuration of the model, e.g. 7b. See
                 `models.list_variants(architecture)`. If architecture is given as "hf_pretrained" or "hf_configured",
                 the variant will refer to the hf model_id_or_path.
