@@ -95,11 +95,12 @@ def __maybe_infer_model_variant(
         if is_hf_pretrained:
             if ((variant is None) == (model_path is None)) or source is not None:
                 raise ValueError(
-                    """
+                    f"""
                     architecture="hf_pretrained" implies one of two things: 
                     1. if variant is defined, model config and weights will be downloaded if not present, then extracted from hf cache, and finally loaded into the model, therefore model_path should not be set.
                     2. if model_path is defined, model config and weights will be loaded from model_path, therefore variant should not be set.
                     In both cases, source should not be set.
+                    Your values are: variant - {variant}; model_path - {model_path}; source - {source}
                     """
                 )
             if len(kwargs) > 0:
