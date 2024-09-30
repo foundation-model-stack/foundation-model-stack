@@ -143,6 +143,11 @@ parser.add_argument(
     default=1,
     help="Number of steps to accumulate gradients before applying",
 )
+parser.add_argument(
+    "--no_embedding_training",
+    action="store_true",
+    help="",
+)
 
 
 args = parser.parse_args()
@@ -303,9 +308,13 @@ def main():
         args.model_path,
         source=args.checkpoint_format,
         device_type=device_type,
+        data_type=torch.bfloat16,
         distributed_strategy=args.distributed,
         group=group,
+        tie_heads=False,
     )
+    if args.no_embedding_training:
+        model.shared.emb.weight.requires_grad = False
     # model.to(torch.half)
     optimizer, dataset_sd, epoch, prev_step, cum_tokens = training_state(
         args.model_path, model, rank
@@ -355,6 +364,9 @@ def main():
         sample_prompt = dataset.make_prompt(sample_prompt)
         sample_prompt2 = {"instruction": "Please provide a recipe for chicken soup."}
         sample_prompt2 = dataset.make_prompt(sample_prompt2)
+    elif args.dataset_style == "jsonl":
+        sample_prompt = "Question:\nYou are given the following SQL schema\n\n```sql\nCREATE TABLE TraditionalArt (name VARCHAR(255), artists_count INT); INSERT INTO TraditionalArt (name, artists_count) VALUES ('Dance of the Maasai', 120), ('Papel Talo', 150);\n```\n\nWhat is the total number of artists in all traditional arts?\n\n\nAnswer:\n"
+        sample_prompt2 = "Question:\nYou are given the following SQL schema\n\n```sql\nCREATE TABLE movies (id INT, title VARCHAR(255), genre VARCHAR(255), runtime INT); INSERT INTO movies (id, title, genre, runtime) VALUES (1, 'Movie1', 'Horror', 90), (2, 'Movie2', 'Comedy', 120), (3, 'Movie3', 'Horror', 110), (4, 'Movie4', 'Action', 130);\n```\n\nProvide the meaning of the query in english\n\n```sql\nSELECT SUM(runtime) FROM movies WHERE genre = 'Horror';\n```\n\n\nAnswer:\n"
     else:
         sample_prompt = "O God! O God!"
         sample_prompt2 = "Romeo O Romeo,"
@@ -368,6 +380,7 @@ def main():
         tokenizer,
         device,
         steps=args.report_steps,
+        bos_token=bos_token,
         eos_token=eos_token,
     )
     validator2 = trainplugins.InferenceValidator(
@@ -376,6 +389,7 @@ def main():
         tokenizer,
         device,
         steps=args.report_steps,
+        bos_token=bos_token,
         eos_token=eos_token,
     )
     if args.distributed == "hsdp":

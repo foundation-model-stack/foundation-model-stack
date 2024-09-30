@@ -75,6 +75,7 @@ class InferenceValidator(TrainerPlugin):
         tokenizer: BaseTokenizer,
         device: Union[torch.device, str],
         steps: Optional[int] = None,
+        bos_token: Optional[str] = None,
         eos_token: Optional[str] = None,
     ):
         super().__init__(steps)
@@ -82,6 +83,11 @@ class InferenceValidator(TrainerPlugin):
         self.tokenizer = tokenizer
         input_ids = tokenizer.convert_tokens_to_ids(prompt_tokens)
         self.input_ids = torch.tensor(input_ids, dtype=torch.long, device=device)
+        self.bos_token_id = (
+            None
+            if bos_token is None
+            else self.tokenizer.convert_tokens_to_ids([bos_token])[0]
+        )
         self.eos_token_id = (
             None
             if eos_token is None
@@ -102,6 +108,7 @@ class InferenceValidator(TrainerPlugin):
                 prefix = prefix + f":{step:04d}"
 
             result = generation.generate(self.model, self.input_ids, use_cache=True)
+            result = generation.trim_prefix(result, self.bos_token_id)
             result = generation.truncate_after_eos(result, self.eos_token_id)
             result = self.tokenizer.convert_ids_to_tokens(result)
             result = self.tokenizer.convert_tokens_to_string(result)
@@ -264,7 +271,10 @@ class Checkpointer(TrainerPlugin):
 
         # other metrics are per-rank so we need to aggregate cumulative tokens
         # manually
-        tokens = metrics["batch_size"] * metrics["input_length"] * steps_since_last
+        if "batch_size" in metrics:
+            tokens = metrics["batch_size"] * metrics["input_length"] * steps_since_last
+        else:
+            tokens = 0
         tokens = torch.tensor(tokens, device=self.device)
         global_world = 1 if not dist.is_initialized() else dist.get_world_size()
         if global_world > 1 and tokens.device.type == "cuda":
@@ -334,9 +344,9 @@ class Checkpointer(TrainerPlugin):
         if step:
             train_dict |= {"step": step}
 
-        if self.dataset is not None:
-            dataset_sd = self.dataset.state_dict()
-            train_dict |= {"dataset": dataset_sd}
+        # if self.dataset is not None:
+        #     dataset_sd = self.dataset.state_dict()
+        #     train_dict |= {"dataset": dataset_sd}
 
         if not dist.is_initialized() or (
             self.group is not None and self.group.rank() == 0

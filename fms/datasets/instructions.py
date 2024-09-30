@@ -100,3 +100,66 @@ class JsonInstructions(Dataset):
             label = input[-self.max_len :]
 
         return input, label
+
+
+class JsonCausal(Dataset):
+    """
+    Expects a json file containing rows of the form:
+    {
+        "full_training_prompt": "a question or request made to the model",
+        "messages": [...],
+    }
+    """
+
+    def __init__(
+        self,
+        path: str,
+        tokenizer: tokenizers.BaseTokenizer,
+        max_len: int = 512,
+        pad_id: int = 0,
+        ignore_index=-100,
+    ):
+        self.tokenizer = tokenizer
+        self.ignore_index = ignore_index
+        self.max_len = max_len
+        self.pad_id = pad_id
+        self.bos_token_id = tokenizer.bos_token_id
+        self.eos_token_id = tokenizer.eos_token_id
+        self.inputs = []
+        file = os.path.expanduser(path)
+        with open(file, "r", encoding="utf-8") as reader:
+            for line in reader:
+                self.inputs.append(json.loads(line))
+
+    def __len__(self):
+        return len(self.inputs)
+
+    def __getitem__(self, index):
+        text = self.inputs[index]["interaction"][0]
+        example = f"Question:\n{text['utterance']}\n\n\nAnswer:\n{text['query']}"
+        example = self.tokenizer.tokenize(example)
+        response_idx = example.index("Answer")
+        example = self.tokenizer.convert_tokens_to_ids(example)
+
+        if self.bos_token_id is not None:
+            example = [self.bos_token_id] + example
+
+        if self.eos_token_id is not None:
+            example = example + [self.eos_token_id]
+
+        example = torch.tensor(example, dtype=torch.long)
+        input = example[:-1]
+        label = example[1:].clone()
+        label[:response_idx] = self.ignore_index
+
+        if self.pad_id is not None and input.shape[0] < self.max_len - 1:
+            pad = torch.zeros(self.max_len - input.shape[0], dtype=torch.long)
+            pad.fill_(self.pad_id)
+            input = torch.cat((pad, input), dim=0)
+            label = torch.cat((pad.fill_(self.ignore_index), label), dim=0)
+
+        if input.shape[0] > self.max_len:
+            input = input[-self.max_len :]
+            label = input[-self.max_len :]
+
+        return input, label
