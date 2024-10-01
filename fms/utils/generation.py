@@ -111,8 +111,17 @@ def _make_cache_contiguous(past_key_value_states):
                 .clone(memory_format=torch.contiguous_format)
                 .detach()
             )
-            # torch._dynamo.mark_dynamic(n_kv_s[layer_idx][tensor_idx], 2)
+            torch._dynamo.mark_dynamic(n_kv_s[layer_idx][tensor_idx], 2)
     return n_kv_s
+
+
+def _make_cache_dynamic(past_key_value_states):
+    # kv updates are required for torch.compile with
+    # mode='reduce-overhead'
+    for layer in past_key_value_states:
+        for tensor in layer:
+            torch._dynamo.mark_dynamic(tensor, 2)
+    return past_key_value_states
 
 
 def generate(
@@ -206,7 +215,6 @@ def generate(
         # iteration 0 is the prefill step (cache has not been filled yet), so no need to extend the mask/position_ids
         if i > 0:
             kwargs = __update_padding_kwargs(use_cache, kwargs)
-
         output = model(input_ids, **kwargs)
         if use_cache:
             logits, past_key_value_states = output
@@ -217,7 +225,7 @@ def generate(
                     past_key_value_states
                 )
             else:
-                kwargs["past_key_value_states"] = past_key_value_states
+                kwargs["past_key_value_states"] = _make_cache_dynamic(past_key_value_states)
         else:
             logits = output
         logits = logits[:, -1, :]
