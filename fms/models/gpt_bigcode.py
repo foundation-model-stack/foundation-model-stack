@@ -330,10 +330,10 @@ class GPTBigCode(nn.Module):
 
     def forward(
         self,
-        x: torch.LongTensor,
+        x: torch.Tensor,
         mask: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.LongTensor] = None,
-        past_key_value_states: Optional[Tuple[torch.FloatTensor,]] = None,
+        position_ids: Optional[torch.Tensor] = None,
+        past_key_value_states: Optional[List[Tuple[torch.Tensor, torch.Tensor]]] = None,
         use_cache: bool = False,
         only_last_token: bool = False,
         attn_algorithm: Optional[str] = None,

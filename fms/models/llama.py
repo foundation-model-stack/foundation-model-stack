@@ -403,9 +403,7 @@ class LLaMA(nn.Module):
         x: torch.Tensor,
         mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.Tensor] = None,
-        past_key_value_states: Optional[
-            List[Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]
-        ] = None,
+        past_key_value_states: Optional[List[Tuple[torch.Tensor, torch.Tensor]]] = None,
         use_cache: bool = False,
         only_last_token: bool = False,
         attn_algorithm: Optional[str] = None,
