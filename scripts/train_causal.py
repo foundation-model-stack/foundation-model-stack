@@ -86,6 +86,13 @@ parser.add_argument(
     help="Device type. If not specified check for availability of cuda, mps, then cpu",
 )
 parser.add_argument(
+    "--default_dtype",
+    type=str,
+    default=None,
+    choices=["bf16", "fp16", "fp32"],
+    help="If set to one of the choices, overrides the model checkpoint weight format by setting the default pytorch format",
+)
+parser.add_argument(
     "--distributed",
     type=str,
     default=None,
@@ -131,6 +138,17 @@ parser.add_argument(
     default="./checkpoints",
     help="Output directory to save trained model checkpoints",
 )
+parser.add_argument(
+    "--compile",
+    action="store_true",
+    help="Whether to compile the model and optimizer.",
+)
+parser.add_argument(
+    "--compile_backend",
+    type=str,
+    default="inductor",
+    help="What backend to use for compilation.",
+)
 
 # Training/tuning parameters
 parser.add_argument(
@@ -142,11 +160,6 @@ parser.add_argument(
     type=int,
     default=1,
     help="Number of steps to accumulate gradients before applying",
-)
-parser.add_argument(
-    "--compile",
-    action="store_true",
-    help="Whether to compile the model and optimizer.",
 )
 parser.add_argument(
     "--head_only",
@@ -176,6 +189,15 @@ if device_type == "cuda":
     torch.cuda.set_device(device)
 else:
     device = torch.device(device_type)
+
+default_dtype = None
+dtypes_map = {
+    "fp16": torch.float16,
+    "bf16": torch.bfloat16,
+    "fp32": torch.float32,
+}
+if args.default_dtype is not None:
+    default_dtype = dtypes_map[args.default_dtype]
 
 group = None
 
@@ -304,7 +326,8 @@ def training_state(model_path, model, rank):
 
 
 def main():
-    torch.set_default_dtype(torch.float32)
+    if args.default_dtype:
+        torch.set_default_dtype(default_dtype)
 
     print0("Loading model...")
     model = models.get_model(
@@ -313,6 +336,7 @@ def main():
         args.model_path,
         source=args.checkpoint_format,
         device_type=device_type,
+        data_type=default_dtype,
         distributed_strategy=args.distributed,
         group=group,
         p_dropout=0.0,
@@ -339,7 +363,7 @@ def main():
 
     if args.compile:
         # model = torch.compile(model, backend="sendnn")
-        optimizer.step = torch.compile(optimizer.step, backend="sendnn")
+        optimizer.step = torch.compile(optimizer.step, backend=args.compile_backend)
 
     tokenizer = tokenizers.get_tokenizer(args.tokenizer)
 
@@ -443,7 +467,8 @@ def main():
             prev_step=prev_step,
             trainer_plugins=plugins,
             grad_accum_iters=args.grad_accum_steps,
-            compile_loss=True,
+            compile_loss=args.compile,
+            compile_backend=args.compile_backend,
         )
 
 
