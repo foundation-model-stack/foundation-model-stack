@@ -228,7 +228,9 @@ def generate(
                 kwargs["past_key_value_states"] = _make_cache_dynamic(past_key_value_states)
         else:
             logits = output
-        logits = logits[:, -1, :]
+
+        if not "only_last_token" in kwargs:
+            logits = logits[:, -1, :]
 
         if do_sample:
             # get logits from last value in sequence nad scale
