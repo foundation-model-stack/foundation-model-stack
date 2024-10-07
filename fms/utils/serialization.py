@@ -114,6 +114,57 @@ def _legacy_attn_unfused_to_fused_adapter(orig_sd):
     return new_sd
 
 
+def _attn_unfused_to_fused_adapter(orig_sd):
+    """
+    Adapter for converting post 0.0.6 unfused attn weights to fused attn weights
+    """
+    new_sd = {}
+    removed_params = set()
+    orig_keys = set(orig_sd.keys())
+    for name in orig_keys:
+        # if the name is part of removed_params, we no longer want to process it
+        if name in removed_params:
+            continue
+
+        if (
+            "attn.in_proj.query" in name
+            or "attn.in_proj.key" in name
+            or "attn.in_proj.value" in name
+        ):
+            # weight_type denotes weight or bias
+            weight_type = name.split(".")[-1]
+
+            unfused_weights = [
+                re.sub(
+                    rf"attn.in_proj.(query|key|value).{weight_type}",
+                    f"attn.in_proj.query.{weight_type}",
+                    name,
+                ),
+                re.sub(
+                    rf"attn.in_proj.(query|key|value).{weight_type}",
+                    f"attn.in_proj.key.{weight_type}",
+                    name,
+                ),
+                re.sub(
+                    rf"attn.in_proj.(query|key|value).{weight_type}",
+                    f"attn.in_proj.value.{weight_type}",
+                    name,
+                ),
+            ]
+            removed_params.update(unfused_weights)
+            new_name = re.sub(
+                rf"attn.in_proj.(query|key|value).{weight_type}",
+                f"attn.in_proj.qkv_fused.{weight_type}",
+                name,
+            )
+            new_sd[new_name] = torch.cat(
+                [orig_sd.pop(w) for w in unfused_weights], dim=0
+            )
+        else:
+            new_sd[name] = orig_sd.pop(name)
+    return new_sd
+
+
 def _legacy_mlp_glu_unfused_to_fused_adapter(orig_sd):
     """
     Legacy adapter for converting pre 0.0.6 unfused mlp glu weights to fused mlp glu weights

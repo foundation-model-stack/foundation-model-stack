@@ -407,7 +407,8 @@ models.register_model(
     _roberta_classification_factory_factory(_bert_base_classification_config),
 )
 
-_convert_to_fused_qkv = serialization._legacy_attn_unfused_to_fused_adapter
+_legacy_convert_to_fused_qkv = serialization._legacy_attn_unfused_to_fused_adapter
+_convert_to_fused_qkv = serialization._attn_unfused_to_fused_adapter
 
 
 def _hf_sd_to_fms_sd(hf_sd: Mapping[Any, Any]) -> Mapping[Any, Any]:
@@ -485,6 +486,11 @@ def _bert_hf_sd_to_fms_sd(hf_sd: Mapping[Any, Any]) -> Mapping[Any, Any]:
 
 
 serialization.register_adapter("bert", "hf", _bert_hf_sd_to_fms_sd)
+serialization.register_adapter("bert", "fms.pre0.0.6", _legacy_convert_to_fused_qkv)
 serialization.register_adapter("bert_classification", "hf", _bert_hf_sd_to_fms_sd)
+serialization.register_adapter(
+    "bert_classification", "fms.pre0.0.6", _legacy_convert_to_fused_qkv
+)
+serialization.register_adapter("bert_classification", "aiu-fms", _convert_to_fused_qkv)
 serialization.register_adapter("roberta", "hf", _hf_sd_to_fms_sd)
-serialization.register_adapter("roberta", "fms.pre0.0.6", _convert_to_fused_qkv)
+serialization.register_adapter("roberta", "fms.pre0.0.6", _legacy_convert_to_fused_qkv)
