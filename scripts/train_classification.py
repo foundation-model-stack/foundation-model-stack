@@ -224,7 +224,7 @@ def get_loss_fn():
 
 
 def training_state(model_path, model, rank):
-    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-6)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-5)
     is_fsdp = isinstance(model, FSDP)
     dataset_sd = {}
     epoch = 0
@@ -286,16 +286,17 @@ def main():
         data_type=default_dtype,
         distributed_strategy=args.distributed,
         group=group,
-        p_dropout=0.,
+        p_dropout=0.0,
     )
     if args.unfuse_weights:
         model = fusion.apply_unfuse_weights(model)
-    #model.base_model.rot_emb.compute_freqs_cis(device, 512)
+    # model.base_model.rot_emb.compute_freqs_cis(device, 512)
     if args.head_only:
         # Initialize the classification head so we don't get NaNs
         model.classification_head.head.weight.data.normal_(
             0,
-            1 / math.sqrt(math.sqrt(model.config.emb_dim * model.config.src_vocab_size)),
+            1
+            / math.sqrt(math.sqrt(model.config.emb_dim * model.config.src_vocab_size)),
         )
         for param in model.parameters():
             param.requires_grad = False

@@ -350,7 +350,9 @@ def main():
         model.head.weight = torch.nn.Parameter(model.head.weight.clone().detach())
         model.head.weight.requires_grad = True
     model.base_model.embedding.weight.requires_grad = False
-    if getattr(model, "base_model", None) and getattr(model.base_model, "rot_emb", None):
+    if getattr(model, "base_model", None) and getattr(
+        model.base_model, "rot_emb", None
+    ):
         model.base_model.rot_emb.compute_freqs_cis(model.head.weight.device, 4096)
     optimizer, dataset_sd, epoch, prev_step, cum_tokens = training_state(
         args.model_path, model, rank
@@ -376,7 +378,9 @@ def main():
     eos_token = tokenizer.convert_ids_to_tokens([eos_token_id])[0]
 
     # TODO: split a validation dataset
-    dataset = datasets.get_dataset(args.dataset_style, tokenizer, args.dataset_path, pad_token=0, max_len=2049)
+    dataset = datasets.get_dataset(
+        args.dataset_style, tokenizer, args.dataset_path, pad_token=0, max_len=2049
+    )
     if len(dataset_sd):
         dataset.load_state_dict(dataset_sd)
 

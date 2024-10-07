@@ -1,9 +1,8 @@
 import csv
 import os
-import urllib
+import random
 from typing import Optional
 
-import requests
 import torch
 from torch.utils.data import Dataset
 
@@ -45,6 +44,9 @@ class AMLDataset(Dataset):
                     header = False
                     continue
                 self.input_data.append(row)
+
+        # shuffle the input data
+        random.shuffle(self.input_data)
 
     def __len__(self):
         return len(self.input_data)
