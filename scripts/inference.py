@@ -96,6 +96,9 @@ parser.add_argument(
     default=0,
 )
 parser.add_argument("--context_file", type=str, default=None, help="File to summarize")
+parser.add_argument(
+    "--mask_dtype", type=str, default=None, choices=["float16", "float32", "bool"]
+)
 
 args = parser.parse_args()
 
@@ -187,14 +190,18 @@ prompt1 = ids_for_prompt(prompt1)
 prompt2 = ids_for_prompt(prompt2)
 max_len = max([len(prompt) for prompt in [prompt1, prompt2]])
 
-
+mask_dtype = args.mask_dtype
 if args.batch_input:
     ids = [prompt1, prompt2]
-    ids, padding_kwargs = pad_input_ids(ids, min_pad_length=args.min_pad_length)
+    ids, padding_kwargs = pad_input_ids(
+        ids, min_pad_length=args.min_pad_length, mask_dtype=mask_dtype
+    )
 else:
     ids = prompt1
     if args.min_pad_length != 0:
-        ids, padding_kwargs = pad_input_ids([ids], min_pad_length=args.min_pad_length)
+        ids, padding_kwargs = pad_input_ids(
+            [ids], min_pad_length=args.min_pad_length, mask_dtype=mask_dtype
+        )
     else:
         padding_kwargs = None
 
