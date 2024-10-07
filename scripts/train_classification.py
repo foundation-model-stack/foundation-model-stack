@@ -4,6 +4,7 @@ import os
 from contextlib import nullcontext
 from datetime import timedelta
 from pathlib import Path
+import random
 
 import torch
 from torch import distributed as dist
@@ -206,6 +207,9 @@ if args.default_dtype is not None:
 
 group = None
 
+torch.manual_seed(1337)
+random.seed(1337)
+
 if args.distributed is not None:
     # gathering optimizer state takes more than 10 minutes, so need a longer timeout.
     dist.init_process_group(backend="nccl")
@@ -224,7 +228,7 @@ def get_loss_fn():
 
 
 def training_state(model_path, model, rank):
-    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-5)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-6)
     is_fsdp = isinstance(model, FSDP)
     dataset_sd = {}
     epoch = 0
@@ -307,14 +311,18 @@ def main():
         args.model_path, model, rank
     )
     print("model loaded on worker", rank)
+    print("Head initialized to: ", model.classification_head.head.weight)
     print0(
         "starting from epoch", epoch, "prior step", prev_step, "cum tokens", cum_tokens
     )
     print0("dataset state", dataset_sd)
 
     if args.compile:
+        torch._dynamo.config.assume_static_by_default = True
+        torch._dynamo.config.dynamic_shapes = False
+        torch._dynamo.config.automatic_dynamic_shapes = False
         # Handled by trainer to include loss
-        # model = torch.compile(model, backend=args.compile_backend)
+        model = torch.compile(model, backend=args.compile_backend)
         optimizer.step = torch.compile(optimizer.step, backend=args.compile_backend)
 
     tokenizer = tokenizers.get_tokenizer(args.tokenizer)
@@ -401,7 +409,7 @@ def main():
         device=device,
     )
     reporting = trainplugins.MetricReporter(
-        seconds=3,
+        steps=1,
         prev_step=prev_step,
         cumulative_tokens=cum_tokens,
         group=group,
@@ -422,8 +430,8 @@ def main():
             prev_step=prev_step,
             trainer_plugins=plugins,
             grad_accum_iters=args.grad_accum_steps,
-            compile_loss=args.compile,
-            compile_backend=args.compile_backend,
+            # compile_loss=args.compile,
+            # compile_backend=args.compile_backend,
         )
 
 
