@@ -62,7 +62,7 @@ class LLaMAConfig(ModelConfig):
     mup_1d_init: float = 0.640  # 1/sqrt(d) * f = 0.02
     mup_ffn_init: float = 0.7575  # 1/sqrt(d) / 6rt(multiple_of_growf) * f  =  .02
     mup_attn_init: float = 0.640  # 1/sqrt(d) / 4rt(emb_v * nheads / d) * f  =  .02
-    mup_attn_temp: float = 32.0  # 1/d * f  =  1/sqrt(d)
+    mup_attn_temp: float = 11.314  # 1/d * f  =  1/sqrt(d)
 
     # muP LRs
     mup_0d_lr: float = 0.001  # f  =  .001
