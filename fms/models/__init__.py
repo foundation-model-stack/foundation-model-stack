@@ -114,17 +114,17 @@ def __maybe_infer_model_variant(
 
         logger.info(f"inferring model configuration from {model_path_or_variant}")
 
-        extra_kwargs = _infer_model_configuration(
+        inferred_kwargs = _infer_model_configuration(
             model_path_or_variant, download_weights=variant is not None  # type: ignore[arg-type]
         )
-        architecture = extra_kwargs.pop("architecture")
-        variant = extra_kwargs.pop("variant")
+        architecture = inferred_kwargs.pop("architecture")
+        variant = inferred_kwargs.pop("variant")
 
         if is_hf_pretrained:
-            model_path = extra_kwargs.pop("model_path")
+            model_path = inferred_kwargs.pop("model_path")
             source = "hf"
         else:
-            extra_kwargs = {**extra_kwargs, **kwargs}
+            extra_kwargs = {**inferred_kwargs, **kwargs}
 
     if architecture is None or variant is None:
         raise ValueError("Architecture and variant inference for get_model failed!")
