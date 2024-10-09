@@ -70,7 +70,7 @@ def list_variants(architecture: str):
 
 def __maybe_infer_model_variant(
     architecture: str,
-    variant: str,
+    variant: Optional[str],
     model_path: Optional[str],
     source: Optional[str],
     **kwargs,
@@ -81,20 +81,41 @@ def __maybe_infer_model_variant(
     if architecture in ("hf_pretrained", "hf_configured"):
         from fms.models.hf.utils import _infer_model_configuration  # type: ignore
 
-        logger.info(f"inferring model configuration from {variant}")
         is_hf_pretrained = architecture == "hf_pretrained"
+        is_hf_configured = architecture == "hf_configured"
+
         if is_hf_pretrained:
-            if model_path is not None or source is not None:
+            if variant is None:
+                model_path_or_variant = model_path  # type: ignore[assignment]
+            else:
+                model_path_or_variant = variant
+        elif is_hf_configured:
+            model_path_or_variant = variant
+
+        if is_hf_pretrained:
+            if ((variant is None) == (model_path is None)) or source is not None:
                 raise ValueError(
-                    """architecture="hf_pretrained" implies model weights will be downloaded and extracted from hf cache and loaded into the model, therefore model_path and source should not be set"""
+                    f"""
+                    architecture="hf_pretrained" implies one of two things: 
+                    1. if variant is defined, model config and weights will be downloaded if not present, then extracted from hf cache, and finally loaded into the model, therefore model_path should not be set.
+                    2. if model_path is defined, model config and weights will be loaded from model_path, therefore variant should not be set.
+                    In both cases, source should not be set.
+                    Your values are: variant - {variant}; model_path - {model_path}; source - {source}
+                    """
                 )
             if len(kwargs) > 0:
                 logger.warning(
                     f"ignoring the following parameters as a pretrained model with an inferred configuration is being loaded: {list(kwargs.keys())}"
                 )
+        if is_hf_configured and variant is None:
+            raise ValueError(
+                """architecture="hf_configured" implies model config is loaded from variant, therefore it should be set"""
+            )
+
+        logger.info(f"inferring model configuration from {model_path_or_variant}")
 
         extra_kwargs = _infer_model_configuration(
-            variant, download_weights=is_hf_pretrained
+            model_path_or_variant, download_weights=variant is not None  # type: ignore[arg-type]
         )
         architecture = extra_kwargs.pop("architecture")
         variant = extra_kwargs.pop("variant")
@@ -104,6 +125,9 @@ def __maybe_infer_model_variant(
             source = "hf"
         else:
             extra_kwargs = {**extra_kwargs, **kwargs}
+
+    if architecture is None or variant is None:
+        raise ValueError("Architecture and variant inference for get_model failed!")
 
     return architecture, variant, model_path, source, extra_kwargs
 
@@ -299,7 +323,7 @@ def _validate_unfuse_strategy(extra_args, rank: int = 0):
 
 def get_model(
     architecture: str,
-    variant: str,
+    variant: Optional[str] = None,
     model_path: Optional[str] = None,
     source: Optional[str] = None,
     device_type: str = "cpu",
@@ -315,11 +339,12 @@ def get_model(
     Args:
     architecture: the model architecture, e.g. llama. See
                 `models.list_models()`. If hf_pretrained is given, the model architecture will be inferred by the
-                model_config associated with the hf model_id_or_path and subsequently the weights will be downloaded and
-                loaded into the model. If hf_configured is given, only the model architecture configuration will be and
-                no weights will explicitly be loaded unless following the normal model_path logic. Note, if
-                hf_pretrained is given and model_path or source are set, an exception will be raised as model loading
-                will occur through the hf cache.
+                model_config associated with either the HF model name (e.g. meta-llama/Llama-3.1-8B, passed as `variant` here),
+                or the local path (e.g. /home/fms/models/llama3.1-8b/, passed as `model_path`). If the model architecture is passed
+                through the `variant`, the weights will be loaded from the local HF cache if available, or downloaded otherwise.
+                If hf_configured is given, only the model architecture configuration will be loaded from the HF model name (`variant`)
+                and no weights will explicitly be loaded unless following the normal model_path logic. Note, if hf_pretrained is given
+                and source is set, an exception will be raised as model loading will always be from a HF checkpoint.
     variant: the configuration of the model, e.g. 7b. See
                 `models.list_variants(architecture)`. If architecture is given as "hf_pretrained" or "hf_configured",
                 the variant will refer to the hf model_id_or_path.
