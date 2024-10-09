@@ -366,6 +366,7 @@ _base_config = RoBERTaConfig(tie_heads=True, norm_eps=1e-5, p_dropout=0.1)
 
 _bert_base_config = RoBERTaConfig(
     src_vocab_size=30522,
+    pad_id=0,
 )
 
 _bert_base_classification_config_dict = copy.copy(_bert_base_config.__dict__)

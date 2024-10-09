@@ -57,6 +57,7 @@ def pad_input_ids(
     mask = torch.stack(mask_list)
     # this is a causal mask for generation
     mask = (mask.unsqueeze(-1) == mask.unsqueeze(-2)).tril()
+    mask = torch.where(mask.logical_not(), -torch.inf, 0.0)
     padding_kwargs["mask"] = mask
 
     position_ids = torch.stack(position_ids_list)
@@ -78,7 +79,7 @@ def __update_padding_kwargs(
         mask = torch.cat(
             (
                 mask,
-                torch.ones(mask.size(0), 1, 1, dtype=torch.bool, device=mask.device),
+                torch.zeros(mask.size(0), 1, 1, device=mask.device),
             ),
             dim=2,
         )
@@ -220,7 +221,9 @@ def generate(
                 kwargs["past_key_value_states"] = past_key_value_states
         else:
             logits = output
-        logits = logits[:, -1, :]
+
+        if not "only_last_token" in kwargs:
+            logits = logits[:, -1, :]
 
         if do_sample:
             # get logits from last value in sequence nad scale

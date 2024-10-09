@@ -19,9 +19,10 @@ def __one_step(
     grad_scaler,
     compile_loss: bool = False,
     compile_backend: Optional[str] = None,
+    **kwargs,
 ):
-    def loss_fwd(input, model, label):
-        output = model(input, attn_algorithm="math")
+    def loss_fwd(input, model, label, **kwargs):
+        output = model(input, attn_algorithm="math", **kwargs)
         return loss_fn(output, label)
 
     if compile_loss:
@@ -31,7 +32,7 @@ def __one_step(
         torch.autocast(device_type="cuda") if grad_scaler is not None else nullcontext()
     )
     with autocast:
-        loss = loss_fwd(input, model, label)
+        loss = loss_fwd(input, model, label, **kwargs)
 
     if grad_scaler is not None:
         grad_scaler.scale(loss).backward()
@@ -78,7 +79,7 @@ def __one_epoch(
     optimizer.zero_grad()
 
     highest_step = prev_step
-    for step, (input, label) in enumerate(data):
+    for step, (input, label, kwargs) in enumerate(data):
         step = prev_step + step + 1
         highest_step = step
 
@@ -87,6 +88,7 @@ def __one_epoch(
 
         input = input.to(device)
         label = label.to(device)
+        kwargs = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in kwargs.items()}
 
         loss = __one_step(
             model,
@@ -96,6 +98,7 @@ def __one_epoch(
             grad_scaler,
             compile_loss=compile_loss,
             compile_backend=compile_backend,
+            **kwargs,
         )
         if (step + 1) % accum_iters == 0:
             __optimize(model, optimizer, grad_scaler)

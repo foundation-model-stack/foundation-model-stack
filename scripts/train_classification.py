@@ -228,7 +228,7 @@ def get_loss_fn():
 
 
 def training_state(model_path, model, rank):
-    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-5)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
     is_fsdp = isinstance(model, FSDP)
     dataset_sd = {}
     epoch = 0
@@ -326,6 +326,7 @@ def main():
 
     tokenizer = tokenizers.get_tokenizer(args.tokenizer)
 
+    pad_token_id = 0
     bos_token_id = 101
     eos_token_id = 102
     bos_token = tokenizer.convert_ids_to_tokens([bos_token_id])[0]
@@ -336,7 +337,9 @@ def main():
         args.dataset_style,
         tokenizer,
         args.dataset_path,
-        pad_token=model.config.pad_id,
+        pad_token_id=pad_token_id,
+        bos_token_id=bos_token_id,
+        eos_token_id=eos_token_id,
         max_len=512,
     )
     if len(dataset_sd):

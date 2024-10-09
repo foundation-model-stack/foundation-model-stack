@@ -22,18 +22,20 @@ class AMLDataset(Dataset):
         path: str,
         tokenizer: tokenizers.BaseTokenizer,
         max_len: int = 512,
-        pad_token: Optional[str] = None,
+        pad_token_id: Optional[int] = None,
+        bos_token_id: Optional[int] = None,
+        eos_token_id: Optional[int] = None,
         ignore_index=-100,
     ):
         self.tokenizer = tokenizer
         self.ignore_index = ignore_index
         self.max_len = max_len
-        if pad_token is not None:
-            self.pad_id = pad_token
+        if pad_token_id is not None:
+            self.pad_id = pad_token_id
         else:
             self.pad_id = None
-        self.bos_token_id = tokenizer.bos_token_id
-        self.eos_token_id = tokenizer.eos_token_id
+        self.bos_token_id = bos_token_id
+        self.eos_token_id = eos_token_id
         self.input_data = []
         full_path = os.path.expanduser(path)
         with open(full_path, "r", newline="", encoding="utf-8") as csv_file:
@@ -63,14 +65,24 @@ class AMLDataset(Dataset):
         if self.eos_token_id is not None:
             input_text = input_text + [self.eos_token_id]
 
-        input = torch.tensor(input_text, dtype=torch.long)
+        input_tensor = torch.tensor(input_text, dtype=torch.long)
 
-        if self.pad_id is not None and input.shape[0] < self.max_len:
-            pad = torch.zeros(self.max_len - input.shape[0], dtype=torch.long)
+        kwargs = {}
+
+        if self.pad_id is not None and input_tensor.shape[0] < self.max_len:
+            pad = torch.zeros(self.max_len - input_tensor.shape[0], dtype=torch.long)
             pad.fill_(self.pad_id)
-            input = torch.cat((pad, input), dim=0)
+            mask = torch.cat(
+                (
+                    torch.ones(input_tensor.size(0), dtype=torch.bool),
+                    torch.zeros(pad.size(0), dtype=torch.bool)
+                ),
+                dim=0
+            )
+            input_tensor = torch.cat((input_tensor, pad), dim=0)
+            kwargs["mask"] = mask
 
-        if input.shape[0] > self.max_len:
-            input = input[-self.max_len :]
+        if input_tensor.shape[0] > self.max_len:
+            input_tensor = input_tensor[-self.max_len :]
 
-        return input, label
+        return input_tensor, label, kwargs

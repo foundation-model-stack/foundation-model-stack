@@ -165,10 +165,11 @@ def test_pad_input_ids():
     )
 
     expected_mask = torch.tensor(
-        [([0] * 5) + [1 for _ in range(0, 4)], [1 for _ in range(0, 9)]],
+        [([1] * 5) + [0 for _ in range(0, 4)], [0 for _ in range(0, 9)]],
         dtype=torch.bool,
     )
     expected_mask = (expected_mask.unsqueeze(-1) == expected_mask.unsqueeze(-2)).tril()
+    expected_mask = torch.where(expected_mask.logical_not(), -torch.inf, 0.0)
 
     torch.testing.assert_close(padded_input_ids, expected_input_ids)
     torch.testing.assert_close(padding_kwargs["position_ids"], expected_position_ids)
@@ -187,10 +188,11 @@ def test_pad_input_ids():
     )
 
     expected_mask = torch.tensor(
-        [([0] * 60) + [1 for _ in range(0, 4)], ([0] * 55) + [1 for _ in range(0, 9)]],
+        [([1] * 60) + [0 for _ in range(0, 4)], ([1] * 55) + [0 for _ in range(0, 9)]],
         dtype=torch.bool,
     )
     expected_mask = (expected_mask.unsqueeze(-1) == expected_mask.unsqueeze(-2)).tril()
+    expected_mask = torch.where(expected_mask.logical_not(), -torch.inf, 0.0)
 
     torch.testing.assert_close(padded_input_ids, expected_input_ids)
     torch.testing.assert_close(padding_kwargs["position_ids"], expected_position_ids)
