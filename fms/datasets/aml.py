@@ -46,7 +46,7 @@ class AMLDataset(Dataset):
                 self.input_data.append(row)
 
         # shuffle the input data
-        # random.shuffle(self.input_data)
+        random.shuffle(self.input_data)
 
     def __len__(self):
         return len(self.input_data)

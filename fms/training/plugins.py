@@ -160,6 +160,8 @@ class MetricReporter(TrainerPlugin):
             self.last_step = step
             if step == self.last_reported_step:
                 return
+            if step % self.steps != 0:
+                return
             time_per_step = elapsed / (step - self.last_reported_step)
             self.time_per_step.fill_(time_per_step)
             steps = step - self.last_reported_step
@@ -312,6 +314,9 @@ class Checkpointer(TrainerPlugin):
             os.makedirs(path, exist_ok=True)
             train_file = path / f"rank_{self.group.rank():02d}.train"
             path = path / f"rank_{self.group.rank():02d}.pth"
+
+        # Remove torch.compile wrapping if it exists
+        model_dict = {k.replace("_orig_mod.", ""): v for k, v in model_dict.items()}
 
         print0("Writing model checkpoint", path)
         if is_fsdp:

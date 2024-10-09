@@ -79,7 +79,6 @@ def __one_epoch(
 
     highest_step = prev_step
     for step, (input, label) in enumerate(data):
-        print("Step input/label", input, label)
         step = prev_step + step + 1
         highest_step = step
 

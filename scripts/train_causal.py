@@ -379,7 +379,7 @@ def main():
 
     # TODO: split a validation dataset
     dataset = datasets.get_dataset(
-        args.dataset_style, tokenizer, args.dataset_path, pad_token=0, max_len=2049
+        args.dataset_style, tokenizer, args.dataset_path, pad_token=0, max_len=513
     )
     if len(dataset_sd):
         dataset.load_state_dict(dataset_sd)
@@ -450,7 +450,7 @@ def main():
         device=device,
     )
     reporting = trainplugins.MetricReporter(
-        seconds=20,
+        steps=1,
         prev_step=prev_step,
         cumulative_tokens=cum_tokens,
         group=group,
