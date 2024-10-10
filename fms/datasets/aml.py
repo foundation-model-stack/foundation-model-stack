@@ -79,6 +79,7 @@ class AMLDataset(Dataset):
                 ),
                 dim=0
             )
+            mask = mask.unsqueeze(-1) == mask.unsqueeze(-2)
             input_tensor = torch.cat((input_tensor, pad), dim=0)
             kwargs["mask"] = mask
 
