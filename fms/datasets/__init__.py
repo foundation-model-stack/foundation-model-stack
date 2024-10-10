@@ -3,7 +3,11 @@ from typing import Any, Callable, List, Mapping, Optional
 import torch
 from torch.utils.data import Dataset, IterableDataset
 
-from fms.datasets import arrow, text
+try:
+    from fms.datasets import arrow
+except:
+    print('warning: arrow is not available')
+from fms.datasets import text
 from fms.datasets.aml import AMLDataset
 from fms.datasets.instructions import JsonInstructions
 from fms.datasets.sentiment import JsonCausal, JsonSentiment
