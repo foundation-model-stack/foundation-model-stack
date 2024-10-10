@@ -96,7 +96,7 @@ def __maybe_infer_model_variant(
             if ((variant is None) == (model_path is None)) or source is not None:
                 raise ValueError(
                     f"""
-                    architecture="hf_pretrained" implies one of two things: 
+                    architecture="hf_pretrained" implies one of two things:
                     1. if variant is defined, model config and weights will be downloaded if not present, then extracted from hf cache, and finally loaded into the model, therefore model_path should not be set.
                     2. if model_path is defined, model config and weights will be loaded from model_path, therefore variant should not be set.
                     In both cases, source should not be set.
@@ -393,7 +393,7 @@ def get_model(
 
     is_gptq = (
         extra_args.get("linear_config", None)
-        and extra_args["linear_config"].get("linear_type", None) == "gptq"
+        and "gptq" in extra_args["linear_config"].get("linear_type", None)
     )
 
     hsdp = distributed_strategy == "hsdp"
@@ -445,11 +445,11 @@ def get_model(
         _validate_unfuse_strategy(extra_args, rank)
 
         # change source for "gptq + pre" (= unfused gptq ckpt into unfused model)
-        if is_gptq and extra_args.get("unfuse_strategy") == "pre":
-            if source != "hf":  # GPTQ ckpt is always "hf" style
-                raise ValueError(
-                    f"Expected GPTQ checkpoint of type `hf` but source is `{source}` instead"
-                )
+        if (
+            is_gptq
+            and extra_args.get("unfuse_strategy") == "pre"
+            and source == "hf"
+        ):
             source = "gptq_" + source + "_unfused"
 
     # Create the model on meta device to allocate weights lazily
