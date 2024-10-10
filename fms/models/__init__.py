@@ -391,10 +391,9 @@ def get_model(
     else:
         data_type_parsed = data_type
 
-    is_gptq = (
-        extra_args.get("linear_config", None)
-        and "gptq" in extra_args["linear_config"].get("linear_type", None)
-    )
+    is_gptq = extra_args.get("linear_config", None) and "gptq" in extra_args[
+        "linear_config"
+    ].get("linear_type", None)
 
     hsdp = distributed_strategy == "hsdp"
     fsdp = distributed_strategy == "fsdp"
@@ -445,11 +444,7 @@ def get_model(
         _validate_unfuse_strategy(extra_args, rank)
 
         # change source for "gptq + pre" (= unfused gptq ckpt into unfused model)
-        if (
-            is_gptq
-            and extra_args.get("unfuse_strategy") == "pre"
-            and source == "hf"
-        ):
+        if is_gptq and extra_args.get("unfuse_strategy") == "pre" and source == "hf":
             source = "gptq_" + source + "_unfused"
 
     # Create the model on meta device to allocate weights lazily
