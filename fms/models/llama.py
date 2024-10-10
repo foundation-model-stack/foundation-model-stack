@@ -682,7 +682,7 @@ def _hf_unfused_sd_to_fms_unfused_sd(hf_sd: Mapping) -> Mapping:
 # TODO: merge with standard _hf_sd_to_fms_sd adapter
 # Very similar except:
 # 1) add in_proj to q,k,v
-# 2) qparams to transpose are qweight|scales|qzeros (not weight|bias)
+# 2) qparams to transpose are qweight|scales|qzeros|bias (not weight)
 # 3) fully transpose params before & after processing
 def _gptq_unfused_sd_to_fms_unfused_sd(hf_sd: Mapping) -> Mapping:
     replacements = [
@@ -702,7 +702,7 @@ def _gptq_unfused_sd_to_fms_unfused_sd(hf_sd: Mapping) -> Mapping:
     ]
     fms_unfused_sd = {}
     trans_required_pattern = re.compile(
-        "layers.[0-9]+.attn.in_proj.(query|key).(qweight|scales|qzeros)"
+        "layers.[0-9]+.attn.in_proj.(query|key).(qweight|scales|qzeros|bias)"
     )
     for hf_name, param in hf_sd.items():
         fms_name = hf_name
@@ -714,25 +714,28 @@ def _gptq_unfused_sd_to_fms_unfused_sd(hf_sd: Mapping) -> Mapping:
         # weight and bias parameters
         # Differently from hf-to-fms conversion, GPTQ qweights are [in_feat, out_feat]
         # and are fully transposed before & after process
-        # FIXME: is unpack/transpose/repack for qweight and qzeros also needed?
-        # is there any combination of group quantization that requires unpacking?
         if bool(trans_required_pattern.match(fms_name)):
-            param_t_size = param.t().size()
-
             # TODO: less hardcoded way to determine head_size?
-            if param_t_size[1] == 2560:
+            if param.size(0) == 2560:
                 head_size = 80  # granite 3b code
             else:
                 head_size = 128  # every other Llama model in existence
+
+            param_t_size = param.t().size()
             nheads = int(param_t_size[0] / head_size)
 
-            fms_unfused_sd[fms_name] = (
-                param.t()
-                .view(nheads, 2, -1, param_t_size[1])
-                .transpose(1, 2)
-                .reshape(*param_t_size)
-                .t()
-            )
+            if param.dim() == 2:  # all qparams except bias
+                fms_unfused_sd[fms_name] = (
+                    param.t()
+                    .view(nheads, 2, -1, param_t_size[1])
+                    .transpose(1, 2)
+                    .reshape(*param_t_size)
+                    .t()
+                )
+            else:  # bias
+                fms_unfused_sd[fms_name] = (
+                    param.view(nheads, 2, -1).transpose(1, 2).reshape(*param.size())
+                )
     return fms_unfused_sd
 
 
