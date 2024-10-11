@@ -1,4 +1,4 @@
-import math
+import re
 from dataclasses import dataclass
 from typing import Any, List, Mapping, Optional, Tuple
 
@@ -445,7 +445,9 @@ _convert_to_fused_qkv = serialization._legacy_attn_unfused_to_fused_adapter
 
 
 def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
-    import re
+    """Fused-checkpoint-to-fused-model adapter.
+    Works for non-quantized as well as GPTQ W4A16 fused models.
+    """
 
     replacements = [
         ("lm_head.weight", "head.weight"),
@@ -453,7 +455,6 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
         (r"^transformer.wpe.weight", "base_model.position_embedding.weight"),
         (r"^transformer.ln_f", "base_model.dec_norm"),
         (r"^transformer.h", "base_model.layers"),
-        # need to do kqv manually
         (r"attn\.c_attn", "attn.in_proj.qkv_fused"),
         (r"attn\.c_proj", "attn.dense"),
         (r"mlp\.c_fc", "ff_sub_layer.w1"),
@@ -473,7 +474,85 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
     return new_sd
 
 
+def _gptq_fused_sd_to_fms_unfused_sd(hf_sd: Mapping) -> Mapping:
+    """Fused-checkpoint-to-unfused-GPTQ-model adapter.
+    Works for GPTQ models instantiated as unfused using unfused_strategy="pre"
+    """
+
+    replacements = [
+        ("lm_head.weight", "head.weight"),
+        (r"^transformer.wte.weight", "base_model.embedding.weight"),
+        (r"^transformer.wpe.weight", "base_model.position_embedding.weight"),
+        (r"^transformer.ln_f", "base_model.dec_norm"),
+        (r"^transformer.h", "base_model.layers"),
+        # need to do kqv manually
+        (r"attn\.c_proj", "attn.dense"),
+        (r"mlp\.c_fc", "ff_sub_layer.w1"),
+        (r"mlp\.c_proj", "ff_sub_layer.w2"),
+        (r"ln_1", "ln"),
+        (r"ln_2", "ff_ln"),
+    ]
+
+    pack_ratio = 8  # assume 4 bits => packing/compression ratio = 32 / 4
+
+    # derive out_feature from g_idx (instead of passing it to the adapter)
+    # TODO: improve this, it may be fragile...
+    for hf_name, param in hf_sd.items():
+        if "attn.c_attn.g_idx" in hf_name:
+            query_out_feat = param.size(0)
+            break
+
+    fms_unfused_sd = {}
+    for hf_name, param in hf_sd.items():
+        fms_name = hf_name
+        for pattern, repl in replacements:
+            fms_name = re.sub(pattern, repl, fms_name)
+
+        # extract qparams for unfused QKV model (prior any TP)
+        if "attn.c_attn" in hf_name:
+            query_fms_name = fms_name.replace("attn.c_attn", "attn.in_proj.query")
+            key_fms_name = fms_name.replace("attn.c_attn", "attn.in_proj.key")
+            value_fms_name = fms_name.replace("attn.c_attn", "attn.in_proj.value")
+
+            if "qweight" in fms_name:
+                in_feat_packed, out_feat = param.size()
+                kv_out_feat = (out_feat - query_out_feat) // 2
+                fms_unfused_sd[query_fms_name] = param[:, :query_out_feat]
+                fms_unfused_sd[key_fms_name] = param[:, query_out_feat:query_out_feat + kv_out_feat]
+                fms_unfused_sd[value_fms_name] = param[:, -kv_out_feat:]
+            elif "qzeros" in fms_name:
+                q_groups, out_feat_packed = param.size()
+                query_out_feat_packed = query_out_feat // pack_ratio
+                kv_out_feat_packed = (out_feat_packed - query_out_feat_packed) // 2
+                fms_unfused_sd[query_fms_name] = param[:, :query_out_feat_packed]
+                fms_unfused_sd[key_fms_name] = param[:, query_out_feat_packed:query_out_feat_packed + kv_out_feat_packed]
+                fms_unfused_sd[value_fms_name] = param[:, -kv_out_feat_packed:]
+            elif "scales" in fms_name:
+                q_groups, out_feat = param.size()
+                kv_out_feat = (out_feat - query_out_feat) // 2
+                fms_unfused_sd[query_fms_name] = param[:, :query_out_feat]
+                fms_unfused_sd[key_fms_name] = param[:, query_out_feat:query_out_feat + kv_out_feat]
+                fms_unfused_sd[value_fms_name] = param[:, -kv_out_feat:]
+            elif "bias" in fms_name:
+                out_feat = param.size()[0]
+                kv_out_feat = (out_feat - query_out_feat) // 2
+                fms_unfused_sd[query_fms_name] = param[:query_out_feat]
+                fms_unfused_sd[key_fms_name] = param[query_out_feat:query_out_feat + kv_out_feat]
+                fms_unfused_sd[value_fms_name] = param[-kv_out_feat:]
+            elif "g_idx" in fms_name:
+                fms_unfused_sd[query_fms_name] = param
+                fms_unfused_sd[key_fms_name] = param
+                fms_unfused_sd[value_fms_name] = param
+        else:
+            fms_unfused_sd[fms_name] = param
+
+    return fms_unfused_sd
+
+
 serialization.register_adapter(_architecture_name, "hf", _hf_sd_to_fms_sd)
 serialization.register_adapter(
     _architecture_name, "fms.pre0.0.6", _convert_to_fused_qkv
+)
+serialization.register_adapter(
+    _architecture_name, "gptq_hf_fused", _gptq_fused_sd_to_fms_unfused_sd
 )
