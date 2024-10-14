@@ -518,26 +518,35 @@ def _gptq_fused_sd_to_fms_unfused_sd(hf_sd: Mapping) -> Mapping:
                 in_feat_packed, out_feat = param.size()
                 kv_out_feat = (out_feat - query_out_feat) // 2
                 fms_unfused_sd[query_fms_name] = param[:, :query_out_feat]
-                fms_unfused_sd[key_fms_name] = param[:, query_out_feat:query_out_feat + kv_out_feat]
+                fms_unfused_sd[key_fms_name] = param[
+                    :, query_out_feat : query_out_feat + kv_out_feat
+                ]
                 fms_unfused_sd[value_fms_name] = param[:, -kv_out_feat:]
             elif "qzeros" in fms_name:
                 q_groups, out_feat_packed = param.size()
                 query_out_feat_packed = query_out_feat // pack_ratio
                 kv_out_feat_packed = (out_feat_packed - query_out_feat_packed) // 2
                 fms_unfused_sd[query_fms_name] = param[:, :query_out_feat_packed]
-                fms_unfused_sd[key_fms_name] = param[:, query_out_feat_packed:query_out_feat_packed + kv_out_feat_packed]
+                fms_unfused_sd[key_fms_name] = param[
+                    :,
+                    query_out_feat_packed : query_out_feat_packed + kv_out_feat_packed,
+                ]
                 fms_unfused_sd[value_fms_name] = param[:, -kv_out_feat_packed:]
             elif "scales" in fms_name:
                 q_groups, out_feat = param.size()
                 kv_out_feat = (out_feat - query_out_feat) // 2
                 fms_unfused_sd[query_fms_name] = param[:, :query_out_feat]
-                fms_unfused_sd[key_fms_name] = param[:, query_out_feat:query_out_feat + kv_out_feat]
+                fms_unfused_sd[key_fms_name] = param[
+                    :, query_out_feat : query_out_feat + kv_out_feat
+                ]
                 fms_unfused_sd[value_fms_name] = param[:, -kv_out_feat:]
             elif "bias" in fms_name:
                 out_feat = param.size()[0]
                 kv_out_feat = (out_feat - query_out_feat) // 2
                 fms_unfused_sd[query_fms_name] = param[:query_out_feat]
-                fms_unfused_sd[key_fms_name] = param[query_out_feat:query_out_feat + kv_out_feat]
+                fms_unfused_sd[key_fms_name] = param[
+                    query_out_feat : query_out_feat + kv_out_feat
+                ]
                 fms_unfused_sd[value_fms_name] = param[-kv_out_feat:]
             elif "g_idx" in fms_name:
                 fms_unfused_sd[query_fms_name] = param
