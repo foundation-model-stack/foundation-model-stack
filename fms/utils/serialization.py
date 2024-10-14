@@ -370,7 +370,7 @@ def load_state_dict(
     else:
         with torch.no_grad():
             checkpoint_sds = [
-                torch.load(str(ckpt_path), mmap=True) for ckpt_path in checkpoints
+                torch.load(str(ckpt_path), mmap=True, map_location=initial_device) for ckpt_path in checkpoints
             ]
     return ChainMap(*checkpoint_sds)
 

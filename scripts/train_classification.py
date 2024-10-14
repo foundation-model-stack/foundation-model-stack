@@ -228,7 +228,7 @@ def get_loss_fn():
 
 
 def training_state(model_path, model, rank):
-    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4)
     is_fsdp = isinstance(model, FSDP)
     dataset_sd = {}
     epoch = 0
@@ -291,6 +291,7 @@ def main():
         distributed_strategy=args.distributed,
         group=group,
         p_dropout=0.0,
+        # classifier_activation_fn="gelu",
     )
     if args.unfuse_weights:
         model = fusion.apply_unfuse_weights(model)
