@@ -1,8 +1,12 @@
+import logging
 import time
 from typing import Any, Callable, List, MutableMapping, Optional, Tuple, Union
 
 import torch
 import torch.nn.functional as F
+
+
+logger = logging.getLogger(__name__)
 
 
 def pad_input_ids(
@@ -166,7 +170,7 @@ def generate(
             past_key_value_states args in forward method.
         contiguous_cache: ensures the cache is contiguous in device memory
         dynamic_cache: marks the sequence length in the kv cache as dynamic for
-            torch.compile(). If forcing static shapes, will throw
+            torch.compile(). If forcing static shapes, will ignore.
         eos_token_id: the optional token id representing the end of sequence
         timing: whether to measure timings: "per-token" for each token generation time,
             "e2e" for full generation loop. Both options make `generate` return a tuple
@@ -229,9 +233,14 @@ def generate(
                     kwargs["past_key_value_states"]
                 )
             if dynamic_cache:
-                kwargs["past_key_value_states"] = _make_cache_dynamic(
-                    kwargs["past_key_value_states"]
-                )
+                if torch._dynamo.config.dynamic_shapes:
+                    kwargs["past_key_value_states"] = _make_cache_dynamic(
+                        kwargs["past_key_value_states"]
+                    )
+                else:
+                    logger.warning(
+                        "Ignoring dynamic_cache flag as static shapes are turned off in torch.compile()"
+                    )
         else:
             logits = output
 
