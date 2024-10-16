@@ -1,8 +1,12 @@
+import logging
 import time
 from typing import Any, Callable, List, MutableMapping, Optional, Tuple, Union
 
 import torch
 import torch.nn.functional as F
+
+
+logger = logging.getLogger(__name__)
 
 
 def pad_input_ids(
@@ -111,8 +115,16 @@ def _make_cache_contiguous(past_key_value_states):
                 .clone(memory_format=torch.contiguous_format)
                 .detach()
             )
-            # torch._dynamo.mark_dynamic(n_kv_s[layer_idx][tensor_idx], 2)
     return n_kv_s
+
+
+def _make_cache_dynamic(past_key_value_states):
+    # kv updates are required for torch.compile with
+    # mode='reduce-overhead'
+    for layer in past_key_value_states:
+        for tensor in layer:
+            torch._dynamo.mark_dynamic(tensor, 2)
+    return past_key_value_states
 
 
 def generate(
@@ -155,6 +167,7 @@ def generate(
         num_beams: TODO: support beam search
         use_cache: requires that the model accept use_cache and
             past_key_value_states args in forward method.
+        contiguous_cache: ensures the cache is contiguous in device memory
         eos_token_id: the optional token id representing the end of sequence
         timing: whether to measure timings: "per-token" for each token generation time,
             "e2e" for full generation loop. Both options make `generate` return a tuple
@@ -207,18 +220,20 @@ def generate(
         # iteration 0 is the prefill step (cache has not been filled yet), so no need to extend the mask/position_ids
         if i > 0:
             kwargs = __update_padding_kwargs(use_cache, kwargs)
-
         output = model(input_ids, **kwargs)
         if use_cache:
             logits, past_key_value_states = output
             # TODO: this should go away when reduce-overhead issues are fixed, or
             # maybe could be moved into model code to be more portable.
+            kwargs["past_key_value_states"] = past_key_value_states
             if contiguous_cache:
                 kwargs["past_key_value_states"] = _make_cache_contiguous(
-                    past_key_value_states
+                    kwargs["past_key_value_states"]
                 )
-            else:
-                kwargs["past_key_value_states"] = past_key_value_states
+            if torch._dynamo.config.dynamic_shapes:
+                kwargs["past_key_value_states"] = _make_cache_dynamic(
+                    kwargs["past_key_value_states"]
+                )
         else:
             logits = output
 
