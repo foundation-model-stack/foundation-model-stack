@@ -111,7 +111,6 @@ def _make_cache_contiguous(past_key_value_states):
                 .clone(memory_format=torch.contiguous_format)
                 .detach()
             )
-            torch._dynamo.mark_dynamic(n_kv_s[layer_idx][tensor_idx], 2)
     return n_kv_s
 
 
