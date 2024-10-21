@@ -566,7 +566,7 @@ def _rename_meta_weights_to_fms(orig_sd):
     return fused_sd
 
 
-def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
+def _hf_sd_to_fms_sd(hf_sd: Mapping, model_config: LLaMAConfig) -> Mapping:
     replacements = [
         (r"^lm_head.weight", "shared.head.weight"),
         (r"^model.embed_tokens.weight", "shared.emb.weight"),
@@ -605,16 +605,11 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
         if bool(trans_required_pattern.match(new_name)):
             temp = new_sd[new_name]
             # nheads is used in the transformation required for hf->fms
-            if temp.size(0) == 2560:
-                head_size = 80  # granite 3b code
-            else:
-                head_size = 128  # every other Llama model in existence
-            nheads = int(temp.size(0) / head_size)
 
             if temp.dim() == 2:  # weight
-                temp_view = temp.view(nheads, 2, -1, temp.size(1))
+                temp_view = temp.view(model_config.nheads, 2, -1, temp.size(1))
             else:  # bias
-                temp_view = temp.view(nheads, 2, -1)
+                temp_view = temp.view(model_config.nheads, 2, -1)
             temp = temp_view.transpose(1, 2).reshape(*temp.size())
 
             new_sd[new_name] = temp
@@ -630,7 +625,9 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
 # 1) loads self_attn into attn.in_proj (not just attn)
 # 2) transpose pattern of attn.in_proj
 # 3) does not FUSE parameters at the end
-def _hf_unfused_sd_to_fms_unfused_sd(hf_sd: Mapping) -> Mapping:
+def _hf_unfused_sd_to_fms_unfused_sd(
+    hf_sd: Mapping, model_config: LLaMAConfig
+) -> Mapping:
     replacements = [
         (r"^lm_head.weight", "shared.head.weight"),
         (r"^model.embed_tokens.weight", "shared.emb.weight"),
@@ -662,16 +659,11 @@ def _hf_unfused_sd_to_fms_unfused_sd(hf_sd: Mapping) -> Mapping:
         if bool(trans_required_pattern.match(new_name)):
             temp = new_sd[new_name]
             # nheads is used in the transformation required for hf->fms
-            if temp.size(0) == 2560:
-                head_size = 80  # granite 3b code
-            else:
-                head_size = 128  # every other Llama model in existence
-            nheads = int(temp.size(0) / head_size)
 
             if temp.dim() == 2:  # weight
-                temp_view = temp.view(nheads, 2, -1, temp.size(1))
+                temp_view = temp.view(model_config.nheads, 2, -1, temp.size(1))
             else:  # bias
-                temp_view = temp.view(nheads, 2, -1)
+                temp_view = temp.view(model_config.nheads, 2, -1)
             temp = temp_view.transpose(1, 2).reshape(*temp.size())
 
             new_sd[new_name] = temp
@@ -684,7 +676,9 @@ def _hf_unfused_sd_to_fms_unfused_sd(hf_sd: Mapping) -> Mapping:
 # 1) add in_proj to q,k,v
 # 2) qparams to transpose are qweight|scales|qzeros|bias (not weight)
 # 3) fully transpose params before & after processing
-def _gptq_unfused_sd_to_fms_unfused_sd(hf_sd: Mapping) -> Mapping:
+def _gptq_unfused_sd_to_fms_unfused_sd(
+    hf_sd: Mapping, model_config: LLaMAConfig
+) -> Mapping:
     replacements = [
         (r"^lm_head.weight", "shared.head.weight"),
         (r"^model.embed_tokens.weight", "shared.emb.weight"),
@@ -715,26 +709,21 @@ def _gptq_unfused_sd_to_fms_unfused_sd(hf_sd: Mapping) -> Mapping:
         # Differently from hf-to-fms conversion, GPTQ qweights are [in_feat, out_feat]
         # and are fully transposed before & after process
         if bool(trans_required_pattern.match(fms_name)):
-            # TODO: less hardcoded way to determine head_size?
-            if param.size(0) == 2560:
-                head_size = 80  # granite 3b code
-            else:
-                head_size = 128  # every other Llama model in existence
-
             param_t_size = param.t().size()
-            nheads = int(param_t_size[0] / head_size)
 
             if param.dim() == 2:  # all qparams except bias
                 fms_unfused_sd[fms_name] = (
                     param.t()
-                    .view(nheads, 2, -1, param_t_size[1])
+                    .view(model_config.nheads, 2, -1, param_t_size[1])
                     .transpose(1, 2)
                     .reshape(*param_t_size)
                     .t()
                 )
             else:  # bias
                 fms_unfused_sd[fms_name] = (
-                    param.view(nheads, 2, -1).transpose(1, 2).reshape(*param.size())
+                    param.view(model_config.nheads, 2, -1)
+                    .transpose(1, 2)
+                    .reshape(*param.size())
                 )
     return fms_unfused_sd
 
