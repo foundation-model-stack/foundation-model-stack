@@ -1,4 +1,5 @@
 import collections
+import inspect
 import os
 import re
 from collections import ChainMap
@@ -18,17 +19,24 @@ from typing import (
 )
 
 import torch
+from tokenizers.models import Model
 
 from fms.modules.tp import TPModule
+from fms.utils.config import ModelConfig, T
 
 
-__adapters: MutableMapping[str, MutableMapping[str, Callable[[Mapping], Mapping]]] = {}
+__adapters: MutableMapping[
+    str, MutableMapping[str, Callable[[Mapping[str, Any], T], Mapping[str, Any]]]
+] = {}
 
 
 def register_adapter(
     architecture: str,
     source: str,
-    adapter: Callable[[Mapping], Mapping],
+    adapter: Union[
+        Callable[[Mapping[str, Any], T], Mapping[str, Any]],
+        Callable[[Mapping[str, Any]], Mapping[str, Any]],
+    ],
 ):
     """
     Registers a state dict adapter to be available to the (de) serialization
@@ -39,9 +47,14 @@ def register_adapter(
     source: A label representing the format of the weights to be converted.
             E.g. 'hf'
     adapter: the class of the adapter. The class must accept one constructor
-                parameter, which will be a state dict (`OrderedDict`)
+                parameter, which will be a state dict (`OrderedDict`), OR two
+                constructor parameters, the state dict (`OrderedDict`) as well
+                as the model's configuration (`ModelConfig`) for the given
+                model
     """
-    sources: MutableMapping[str, Callable[[Mapping], Mapping]] = {}
+    sources: MutableMapping[
+        str, Callable[[Mapping[str, Any], T], Mapping[str, Any]]
+    ] = {}
     if architecture in __adapters:
         sources = __adapters[architecture]
 
@@ -50,7 +63,14 @@ def register_adapter(
             f"Variant {source} already registered for architecture {architecture}"
         )
 
-    sources[source] = adapter
+    if len(inspect.signature(adapter).parameters) == 1:
+
+        def new_mapping(m: Mapping[str, Any], _: T) -> Mapping[str, Any]:
+            return adapter(m)  # type: ignore
+
+        sources[source] = new_mapping  # type: ignore
+    else:
+        sources[source] = adapter  # type: ignore
     __adapters[architecture] = sources
 
 
@@ -159,7 +179,7 @@ def _legacy_mlp_glu_unfused_to_fused_adapter(orig_sd):
 
 def _get_adapter(
     architecture: str, source: Optional[str]
-) -> Callable[[Mapping[str, Any]], Mapping[str, Any]]:
+) -> Callable[[Mapping[str, Any], ModelConfig], Mapping[str, Any]]:
     if (
         source is None
         or architecture not in __adapters
@@ -168,7 +188,7 @@ def _get_adapter(
         # if no adapter is registered, assume the attributes are already in
         # fms format.
         # should we raise an error here instead?
-        return lambda x: x
+        return lambda x, _: x
     else:
         return __adapters[architecture][source]
 
@@ -189,7 +209,7 @@ def get_adapted(
     if not len(state_dict):
         return state_dict
     adapter = _get_adapter(architecture, source)
-    adapted = adapter(state_dict)
+    adapted = adapter(state_dict, None)  # TODO: are we using this??? I see this in a test, but this will break with None
     return adapted
 
 
@@ -412,6 +432,7 @@ def load_state_dict_into_model(
     used_keys = set()
     unused_keys = set()
     sd_keys = set(state_dict.keys())
+    model_config = getattr(model, "config", None)
 
     with torch.no_grad():
         for key in sd_keys:
@@ -430,7 +451,7 @@ def load_state_dict_into_model(
             for psd_key in partial_sd.keys():
                 if partial_sd[psd_key].device != initial_device:
                     partial_sd[psd_key] = partial_sd[psd_key].to(device=initial_device)
-            fms_partial_sd = adapter(partial_sd)
+            fms_partial_sd = adapter(partial_sd, model_config) # type: ignore
             unused_keys_partial = _load_partial_state_dict(
                 model=model,
                 state_dict=fms_partial_sd,
