@@ -17,6 +17,7 @@ from fms.modules.attention import MultiHeadAttention
 from fms.modules.embedding import WordEmbedding
 from fms.modules.feedforward import GatedLinearUnit
 from fms.modules.layernorm import LayerNormParameterized
+from fms.modules.linear import __type_rope_params_map
 from fms.modules.positions import RotaryEmbedding
 from fms.utils import serialization
 from fms.utils.activation import str_to_activation
@@ -54,7 +55,7 @@ class LLaMAConfig(ModelConfig):
     tie_heads: bool = False
     rope_theta: float = 10_000.0
     linear_config: Optional[Mapping[str, Any]] = None
-    unfuse_strategy: Optional[str] = None  # TODO: could be an Enum
+    fused_weights: bool = True
 
 
 class LLaMABlock(nn.Module):
@@ -96,7 +97,7 @@ class LLaMABlock(nn.Module):
             p_dropout=self.config.p_dropout,
             use_bias=self.config.attn_bias,
             position_encoder=rotary_emb,
-            fused=(self.config.unfuse_strategy != "pre"),
+            fused=self.config.fused_weights,
             linear_config=self.config.linear_config,
         )
         self.ff_sub_layer = GatedLinearUnit(
@@ -106,7 +107,7 @@ class LLaMABlock(nn.Module):
             activation_fn=str_to_activation(self.config.activation_fn),
             p_dropout=self.config.p_dropout,
             use_bias=self.config.mlp_bias,
-            fused=(self.config.unfuse_strategy != "pre"),
+            fused=self.config.fused_weights,
             linear_config=self.config.linear_config,
         )
 
@@ -531,22 +532,68 @@ models.register_model(
     _llama_factory_factory((_granite_8b_code_config)),
 )
 
+# Create all the pieces to generate adapters for different checkpoints
+_legacy_unfused_to_fused = (
+    lambda sd, ea: serialization._mlp_glu_unfused_to_fused_adapter(
+        serialization._attn_unfused_to_fused_adapter(sd, {"legacy": True})
+    )
+)
+serialization.register_adapter_step(
+    "llama", "pre0.0.6_unfused_to_fused", _legacy_unfused_to_fused
+)
 
-_convert_to_fused = lambda sd: serialization._legacy_mlp_glu_unfused_to_fused_adapter(
-    serialization._legacy_attn_unfused_to_fused_adapter(sd)
+_unfused_to_fused = lambda sd, ea: serialization._mlp_glu_unfused_to_fused_adapter(
+    serialization._attn_unfused_to_fused_adapter(sd, {"legacy": False})
 )
 
 
-def _rename_meta_weights_to_fms(orig_sd):
+def _weight_fusion(input_sd: Mapping, extra_kwargs: Optional[Mapping] = None):
+    has_fused_weights = True
+    if extra_kwargs and "model_config" in extra_kwargs:
+        if not extra_kwargs["model_config"]["fused_weights"]:
+            has_fused_weights = False
+
+    new_sd = input_sd
+    if has_fused_weights:
+        new_sd = _unfused_to_fused(new_sd, extra_kwargs)
+    return new_sd
+
+
+serialization.register_adapter_step("llama", "weight_fusion", _weight_fusion)
+
+
+def _hf_gptq_llama_check(input_sd: Mapping, extra_kwargs: Optional[Mapping] = None):
+    has_fused_weights = True
+    linear_type = "torch_linear"
+    if extra_kwargs and "model_config" in extra_kwargs:
+        if not extra_kwargs["model_config"]["fused_weights"]:
+            has_fused_weights = False
+        if extra_kwargs["model_config"]["linear_config"]:
+            linear_type = extra_kwargs["model_config"]["linear_config"]["linear_type"]
+
+    if "gptq" in linear_type and has_fused_weights:
+        raise ValueError(
+            "GPTQ HF llama checkpoints cannot be loaded into a model with fused weights"
+        )
+
+    return input_sd
+
+
+serialization.register_adapter_step(
+    "llama", "hf_gptq_fusion_check", _hf_gptq_llama_check
+)
+
+
+def _meta_to_fms_names(input_sd: Mapping, extra_kwargs: Optional[Mapping] = None):
     replacements = [
         (r"^tok_embeddings", "shared.emb"),
         (r"^norm", "dec_norm"),
         (r"^output", "shared.head"),
         (r"^layers", "layers"),
         (r"\.attention\.", ".attn."),
-        (r"attn\.wq", "attn.query"),
-        (r"attn\.wk", "attn.key"),
-        (r"attn\.wv", "attn.value"),
+        (r"attn\.wq", "attn.in_proj.query"),
+        (r"attn\.wk", "attn.in_proj.key"),
+        (r"attn\.wv", "attn.in_proj.value"),
         (r"attn\.wo", "attn.dense"),
         (r"attention_norm", "ln"),
         (r"feed_forward\.w1", "ff_sub_layer.wg"),
@@ -555,26 +602,29 @@ def _rename_meta_weights_to_fms(orig_sd):
         (r"ffn_norm", "ff_ln"),
     ]
     new_sd = {}
-    for name, param in orig_sd.items():
+    for name, param in input_sd.items():
         new_name = name
         for pattern, repl in replacements:
             new_name = re.sub(pattern, repl, new_name)
         new_sd[new_name] = param
 
-    fused_sd = _convert_to_fused(new_sd)
-
-    return fused_sd
+    return new_sd
 
 
-def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
+serialization.register_adapter_step("llama", "meta_to_fms_names", _meta_to_fms_names)
+
+
+def _hf_to_fms_names(
+    input_sd: Mapping, extra_kwargs: Optional[Mapping] = None
+) -> Mapping:
     replacements = [
         (r"^lm_head.weight", "shared.head.weight"),
         (r"^model.embed_tokens.weight", "shared.emb.weight"),
         (r"^model.norm", "dec_norm"),
         (r"^model.layers", "layers"),
-        (r"self_attn\.k_proj", "attn.key"),
-        (r"self_attn\.v_proj", "attn.value"),
-        (r"self_attn\.q_proj", "attn.query"),
+        (r"self_attn\.k_proj", "attn.in_proj.key"),
+        (r"self_attn\.v_proj", "attn.in_proj.value"),
+        (r"self_attn\.q_proj", "attn.in_proj.query"),
         (r"self_attn\.o_proj", "attn.dense"),
         (r"mlp\.gate_proj", "ff_sub_layer.wg"),
         (r"mlp\.up_proj", "ff_sub_layer.w1"),
@@ -583,16 +633,40 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
         (r"post_attention_layernorm", "ff_ln"),
     ]
     new_sd = {}
-
-    trans_required_pattern = re.compile("layers.[0-9]+.attn.(query|key).(weight|bias)")
-    for name, param in hf_sd.items():
+    for name, param in input_sd.items():
         new_name = name
         for pattern, repl in replacements:
             new_name = re.sub(pattern, repl, new_name)
         new_sd[new_name] = param
+    return new_sd
 
+
+serialization.register_adapter_step("llama", "hf_to_fms_names", _hf_to_fms_names)
+
+
+def _hf_to_fms_rope(
+    input_sd: Mapping, extra_kwargs: Optional[Mapping] = None
+) -> Mapping:
+    new_sd = {}
+
+    if extra_kwargs and "model_config" in extra_kwargs:
+        num_heads = extra_kwargs["model_config"]["nheads"]
+        head_size = extra_kwargs["model_config"]["emb_dim"] // num_heads
+        linear_type = "torch_linear"
+        if extra_kwargs["model_config"]["linear_config"]:
+            linear_type = extra_kwargs["model_config"]["linear_config"]["linear_type"]
+    else:
+        head_size = 128  # Good default for most models
+        num_heads = None
+        linear_type = "torch_linear"
+
+    rope_params = __type_rope_params_map[linear_type]
+    trans_required_pattern = re.compile(
+        f"layers.[0-9]+.attn.in_proj.(query|key).({'|'.join(rope_params)})"
+    )
+    for name, param in input_sd.items():
         # hf -> fms requires a transpose operation for the query and key
-        # weight and bias parameters
+        # weight and bias parameters for Llama models
         # This transpose is due to the different implementation of RoPE in
         # HF and FMS. While FMS follows the original RoPE paper
         # (https://arxiv.org/abs/2104.09864), HF has its own implementation
@@ -602,149 +676,40 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
         # Therefore, to make FMS produce the correct order of outputs when
         # loading from an HF checkpoint, we need to undo the transformation
         # that HF does from the original Meta weights:
-        if bool(trans_required_pattern.match(new_name)):
-            temp = new_sd[new_name]
-            # nheads is used in the transformation required for hf->fms
-            if temp.size(0) == 2560:
-                head_size = 80  # granite 3b code
-            else:
-                head_size = 128  # every other Llama model in existence
-            nheads = int(temp.size(0) / head_size)
+        if bool(trans_required_pattern.match(name)):
+            temp = param
+            if linear_type == "gptq" and temp.dim() == 2:
+                # GPTQ qweights are [in_feat, out_feat] (unlike usual [out_feat, in_feat])
+                # and are fully transposed before & after process
+                temp = temp.transpose(0, 1)
+            # num_heads is used in the transformation required for hf->fms
+            if num_heads is None:
+                num_heads = temp.size(0) // head_size
 
             if temp.dim() == 2:  # weight
-                temp_view = temp.view(nheads, 2, -1, temp.size(1))
+                temp_view = temp.view(num_heads, 2, -1, temp.size(1))
             else:  # bias
-                temp_view = temp.view(nheads, 2, -1)
+                temp_view = temp.view(num_heads, 2, -1)
             temp = temp_view.transpose(1, 2).reshape(*temp.size())
 
-            new_sd[new_name] = temp
+            if "gptq" in linear_type and temp.dim() == 2:
+                temp = temp.transpose(0, 1)
 
-    fused_sd = _convert_to_fused(new_sd)
-
-    return fused_sd
-
-
-# TODO: this adapter is not called, it's for reference of
-# non-gptq unfused-ckpt-to-unfused-model process
-# Similar to _hf_sd_to_fms_sd, except:
-# 1) loads self_attn into attn.in_proj (not just attn)
-# 2) transpose pattern of attn.in_proj
-# 3) does not FUSE parameters at the end
-def _hf_unfused_sd_to_fms_unfused_sd(hf_sd: Mapping) -> Mapping:
-    replacements = [
-        (r"^lm_head.weight", "shared.head.weight"),
-        (r"^model.embed_tokens.weight", "shared.emb.weight"),
-        (r"^model.norm", "dec_norm"),
-        (r"^model.layers", "layers"),
-        (r"self_attn\.k_proj", "attn.in_proj.key"),
-        (r"self_attn\.v_proj", "attn.in_proj.value"),
-        (r"self_attn\.q_proj", "attn.in_proj.query"),
-        (r"self_attn\.o_proj", "attn.dense"),
-        (r"mlp\.gate_proj", "ff_sub_layer.wg"),
-        (r"mlp\.up_proj", "ff_sub_layer.w1"),
-        (r"mlp\.down_proj", "ff_sub_layer.w2"),
-        (r"input_layernorm", "ln"),
-        (r"post_attention_layernorm", "ff_ln"),
-    ]
-    new_sd = {}
-
-    trans_required_pattern = re.compile(
-        "layers.[0-9]+.attn.in_proj.(query|key).(weight|bias)"
-    )
-    for name, param in hf_sd.items():
-        new_name = name
-        for pattern, repl in replacements:
-            new_name = re.sub(pattern, repl, new_name)
-        new_sd[new_name] = param
-
-        # hf -> fms requires a transpose operation for the query and key
-        # weight and bias parameters
-        if bool(trans_required_pattern.match(new_name)):
-            temp = new_sd[new_name]
-            # nheads is used in the transformation required for hf->fms
-            if temp.size(0) == 2560:
-                head_size = 80  # granite 3b code
-            else:
-                head_size = 128  # every other Llama model in existence
-            nheads = int(temp.size(0) / head_size)
-
-            if temp.dim() == 2:  # weight
-                temp_view = temp.view(nheads, 2, -1, temp.size(1))
-            else:  # bias
-                temp_view = temp.view(nheads, 2, -1)
-            temp = temp_view.transpose(1, 2).reshape(*temp.size())
-
-            new_sd[new_name] = temp
+            new_sd[name] = temp
 
     return new_sd
 
 
-# TODO: merge with standard _hf_sd_to_fms_sd adapter
-# Very similar except:
-# 1) add in_proj to q,k,v
-# 2) qparams to transpose are qweight|scales|qzeros|bias (not weight)
-# 3) fully transpose params before & after processing
-def _gptq_unfused_sd_to_fms_unfused_sd(hf_sd: Mapping) -> Mapping:
-    replacements = [
-        (r"^lm_head.weight", "shared.head.weight"),
-        (r"^model.embed_tokens.weight", "shared.emb.weight"),
-        (r"^model.norm", "dec_norm"),
-        (r"^model.layers", "layers"),
-        (r"self_attn\.k_proj", "attn.in_proj.key"),
-        (r"self_attn\.v_proj", "attn.in_proj.value"),
-        (r"self_attn\.q_proj", "attn.in_proj.query"),
-        (r"self_attn\.o_proj", "attn.dense"),
-        (r"mlp\.gate_proj", "ff_sub_layer.wg"),
-        (r"mlp\.up_proj", "ff_sub_layer.w1"),
-        (r"mlp\.down_proj", "ff_sub_layer.w2"),
-        (r"input_layernorm", "ln"),
-        (r"post_attention_layernorm", "ff_ln"),
-    ]
-    fms_unfused_sd = {}
-    trans_required_pattern = re.compile(
-        "layers.[0-9]+.attn.in_proj.(query|key).(qweight|scales|qzeros|bias)"
-    )
-    for hf_name, param in hf_sd.items():
-        fms_name = hf_name
-        for pattern, repl in replacements:
-            fms_name = re.sub(pattern, repl, fms_name)
-        fms_unfused_sd[fms_name] = param
-
-        # hf -> fms requires a transpose operation for the query and key
-        # weight and bias parameters
-        # Differently from hf-to-fms conversion, GPTQ qweights are [in_feat, out_feat]
-        # and are fully transposed before & after process
-        if bool(trans_required_pattern.match(fms_name)):
-            # TODO: less hardcoded way to determine head_size?
-            if param.size(0) == 2560:
-                head_size = 80  # granite 3b code
-            else:
-                head_size = 128  # every other Llama model in existence
-
-            param_t_size = param.t().size()
-            nheads = int(param_t_size[0] / head_size)
-
-            if param.dim() == 2:  # all qparams except bias
-                fms_unfused_sd[fms_name] = (
-                    param.t()
-                    .view(nheads, 2, -1, param_t_size[1])
-                    .transpose(1, 2)
-                    .reshape(*param_t_size)
-                    .t()
-                )
-            else:  # bias
-                fms_unfused_sd[fms_name] = (
-                    param.view(nheads, 2, -1).transpose(1, 2).reshape(*param.size())
-                )
-    return fms_unfused_sd
+serialization.register_adapter_step("llama", "hf_to_fms_rope", _hf_to_fms_rope)
 
 
-serialization.register_adapter("llama", "meta", _rename_meta_weights_to_fms)
-serialization.register_adapter("llama", "hf", _hf_sd_to_fms_sd)
-serialization.register_adapter("llama", "fms.pre0.0.6", _convert_to_fused)
+serialization.register_adapter("llama", "meta", ["meta_to_fms_names", "weight_fusion"])
 serialization.register_adapter(
-    "llama", "gptq_hf_unfused", _gptq_unfused_sd_to_fms_unfused_sd
+    "llama",
+    "hf",
+    ["hf_to_fms_names", "hf_to_fms_rope", "hf_gptq_fusion_check", "weight_fusion"],
 )
+serialization.register_adapter("llama", "fms.pre0.0.6", ["pre0.0.6_unfused_to_fused"])
 
 
 def convert_hf_llama(hf_model: "LlamaForCausalLM") -> LLaMA:  # type: ignore

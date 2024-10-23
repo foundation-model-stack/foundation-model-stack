@@ -33,7 +33,7 @@ class GPTBigCodeConfig(ModelConfig):
     linear_config: Optional[
         Mapping[str, Any]
     ] = None  # pass as {"linear_type": str, <other kwargs>}
-    unfuse_strategy: Optional[str] = None  # TODO: could be an Enum
+    fused_weights: bool = True
 
 
 class GPTBigCodeBlock(nn.Module):
@@ -52,7 +52,7 @@ class GPTBigCodeBlock(nn.Module):
             kvheads=1 if self.config.multiquery_attn else self.config.nheads,
             p_dropout=self.config.p_dropout,
             use_bias=True,
-            fused=(self.config.unfuse_strategy != "pre"),
+            fused=self.config.fused_weights,
             linear_config=self.config.linear_config,
         )
 
@@ -441,10 +441,32 @@ models.register_model(
     _architecture_name, "ibm.20b", _gpt_bigcode_factory_factory(_20b_config)
 )
 
-_convert_to_fused_qkv = serialization._legacy_attn_unfused_to_fused_adapter
+
+# Create all the pieces to generate adapters for different checkpoints
+_legacy_unfused_to_fused = lambda sd, ea: serialization._attn_unfused_to_fused_adapter(
+    sd, {"legacy": True}
+)
+serialization.register_adapter_step(
+    _architecture_name, "pre0.0.6_unfused_to_fused", _legacy_unfused_to_fused
+)
 
 
-def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
+def _weight_fusion(input_sd: Mapping, extra_kwargs: Optional[Mapping] = None):
+    has_fused_weights = True
+    if extra_kwargs and "model_config" in extra_kwargs:
+        if not extra_kwargs["model_config"]["fused_weights"]:
+            has_fused_weights = False
+
+    new_sd = input_sd
+    if not has_fused_weights:
+        new_sd = _fused_to_unfused(new_sd, extra_kwargs)
+    return new_sd
+
+
+serialization.register_adapter_step(_architecture_name, "weight_fusion", _weight_fusion)
+
+
+def _hf_to_fms_names(hf_sd: Mapping, extra_kwargs: Optional[Mapping] = None) -> Mapping:
     import re
 
     replacements = [
@@ -473,7 +495,14 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
     return new_sd
 
 
-serialization.register_adapter(_architecture_name, "hf", _hf_sd_to_fms_sd)
+serialization.register_adapter_step(
+    _architecture_name, "hf_to_fms_names", _hf_to_fms_names
+)
+
+
 serialization.register_adapter(
-    _architecture_name, "fms.pre0.0.6", _convert_to_fused_qkv
+    _architecture_name, "hf", ["hf_to_fms_names", "weight_fusion"]
+)
+serialization.register_adapter(
+    _architecture_name, "fms.pre0.0.6", ["pre0.0.6_unfused_to_fused"]
 )

@@ -1,8 +1,10 @@
 import collections
+import dataclasses
 import os
 import re
 from collections import ChainMap
 from collections.abc import Iterable
+from functools import reduce
 from pathlib import Path
 from typing import (
     Any,
@@ -23,12 +25,45 @@ from fms.modules.tp import TPModule
 
 
 __adapters: MutableMapping[str, MutableMapping[str, Callable[[Mapping], Mapping]]] = {}
+__adapter_steps: MutableMapping[
+    str, MutableMapping[str, Callable[[Mapping, Mapping], Mapping]]
+] = {}
+
+
+def register_adapter_step(
+    architecture: str,
+    adapter_name: str,
+    adapter_step: Callable[[Mapping, Mapping], Mapping],
+):
+    """
+    Registers a state dict adapter step to be available to the (de) serialization
+    API.
+
+    Args:
+    architecture: The name of the model architecture, e.g. 'llama'
+    adapter_name: A name to identiy the step for the checkpoint and model
+    adapter_step: the class of the adapter. The class must accept two constructor
+                parameter, which will be a state dict (`OrderedDict`), and a dictionary
+                with extra information that might be needed by the step (such as ModelConfig,
+                linear_config, device specific info, etc.)
+    """
+    adapter_steps: MutableMapping[str, Callable[[Mapping, Mapping], Mapping]] = {}
+    if architecture in __adapter_steps:
+        adapter_steps = __adapter_steps[architecture]
+
+    if adapter_name in adapter_steps:
+        raise KeyError(
+            f"Adapter step {adapter_name} already registered for architecture {architecture}"
+        )
+
+    adapter_steps[adapter_name] = adapter_step
+    __adapter_steps[architecture] = adapter_steps
 
 
 def register_adapter(
     architecture: str,
     source: str,
-    adapter: Callable[[Mapping], Mapping],
+    adapter_steps: list[str],
 ):
     """
     Registers a state dict adapter to be available to the (de) serialization
@@ -38,8 +73,9 @@ def register_adapter(
     architecture: The name of the model architecture, e.g. 'llama'
     source: A label representing the format of the weights to be converted.
             E.g. 'hf'
-    adapter: the class of the adapter. The class must accept one constructor
-                parameter, which will be a state dict (`OrderedDict`)
+    adapter_steps: a list of registered steps to build the basic adapter for an
+            architecture and source combination. This can be augmented with extra
+            steps if needed during call to _get_adapter()
     """
     sources: MutableMapping[str, Callable[[Mapping], Mapping]] = {}
     if architecture in __adapters:
@@ -47,9 +83,16 @@ def register_adapter(
 
     if source in sources:
         raise KeyError(
-            f"Variant {source} already registered for architecture {architecture}"
+            f"Source {source} already registered for architecture {architecture}"
         )
 
+    # Create a new base adapter for this source
+    step_functions = [__adapter_steps[step] for step in adapter_steps]
+    adapter = lambda initial_sd, extra_args: reduce(
+        lambda state_dict, step_func: step_func(state_dict, extra_args),
+        step_functions,
+        initial_sd,
+    )
     sources[source] = adapter
     __adapters[architecture] = sources
 
@@ -67,42 +110,53 @@ def list_sources(architecture: str):
     return list(__adapters[architecture].keys())
 
 
-def _legacy_attn_unfused_to_fused_adapter(orig_sd):
+def _attn_unfused_to_fused_adapter(
+    orig_sd: Mapping, extra_kwargs: Optional[Mapping] = None
+):
     """
     Legacy adapter for converting pre 0.0.6 unfused attn weights to fused attn weights
     """
     new_sd = {}
     removed_params = set()
     orig_keys = set(orig_sd.keys())
+    if extra_kwargs and "legacy" in extra_kwargs and not extra_kwargs["legacy"]:
+        attn_prefix = "attn.in_proj"
+    else:
+        # Keep old default for backwards compat
+        attn_prefix = "attn"
     for name in orig_keys:
         # if the name is part of removed_params, we no longer want to process it
         if name in removed_params:
             continue
 
-        if "attn.query" in name or "attn.key" in name or "attn.value" in name:
+        if (
+            f"{attn_prefix}.query" in name
+            or f"{attn_prefix}.key" in name
+            or f"{attn_prefix}.value" in name
+        ):
             # weight_type denotes weight or bias
             weight_type = name.split(".")[-1]
 
             unfused_weights = [
                 re.sub(
-                    rf"attn.(query|key|value).{weight_type}",
-                    f"attn.query.{weight_type}",
+                    rf"{attn_prefix}.(query|key|value).{weight_type}",
+                    f"{attn_prefix}.query.{weight_type}",
                     name,
                 ),
                 re.sub(
-                    rf"attn.(query|key|value).{weight_type}",
-                    f"attn.key.{weight_type}",
+                    rf"{attn_prefix}.(query|key|value).{weight_type}",
+                    f"{attn_prefix}.key.{weight_type}",
                     name,
                 ),
                 re.sub(
-                    rf"attn.(query|key|value).{weight_type}",
-                    f"attn.value.{weight_type}",
+                    rf"{attn_prefix}.(query|key|value).{weight_type}",
+                    f"{attn_prefix}.value.{weight_type}",
                     name,
                 ),
             ]
             removed_params.update(unfused_weights)
             new_name = re.sub(
-                rf"attn.(query|key|value).{weight_type}",
+                rf"{attn_prefix}.(query|key|value).{weight_type}",
                 f"attn.in_proj.qkv_fused.{weight_type}",
                 name,
             )
@@ -114,7 +168,9 @@ def _legacy_attn_unfused_to_fused_adapter(orig_sd):
     return new_sd
 
 
-def _legacy_mlp_glu_unfused_to_fused_adapter(orig_sd):
+def _mlp_glu_unfused_to_fused_adapter(
+    orig_sd: Mapping, extra_kwargs: Optional[Mapping] = None
+):
     """
     Legacy adapter for converting pre 0.0.6 unfused mlp glu weights to fused mlp glu weights
     """
@@ -168,7 +224,7 @@ def _get_adapter(
         # if no adapter is registered, assume the attributes are already in
         # fms format.
         # should we raise an error here instead?
-        return lambda x: x
+        return lambda x, ea: x
     else:
         return __adapters[architecture][source]
 
@@ -404,6 +460,11 @@ def load_state_dict_into_model(
 
     # 1. Get the adapter from checkpoint sd to fms sd
     adapter = _get_adapter(architecture, source)
+
+    # Prepare the extra_kwargs for the adapter
+    adapter_kwargs = {}
+    if hasattr(model, "config"):
+        adapter_kwargs["model_config"] = dataclasses.asdict(model.config)
 
     # 2. Decide if model needs sharding and how (for now only TP)
     needs_tp_sharding = checkpoint_sharding != "tp" and distributed_strategy == "tp"

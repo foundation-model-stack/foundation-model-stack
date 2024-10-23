@@ -20,11 +20,11 @@ from fms.models import get_model
 
 
 # FP16 model
-unfuse_strategies = [None, "post"]
-unfuse_ids = ["unfuse=None", "unfuse=post"]
+fused_weights = [True, False]
+unfuse_ids = ["fused=True", "fused=False"]
 # gptq model
-unfuse_strategies_gptq = [None, "pre"]
-unfuse_ids_gptq = ["unfuse=None", "unfuse=pre"]
+fused_weights_gptq = [True, False]
+unfuse_ids_gptq = ["fused=True", "fused=False"]
 
 expected_layers_from_fusion = {
     "fused": [".qkv_fused.", ".wg1_fused."],
@@ -35,7 +35,7 @@ expected_layers_from_fusion = {
 class TestUnfuseStrategy:
     @pytest.fixture(
         scope="class",
-        params=unfuse_strategies,
+        params=fused_weights,
         ids=unfuse_ids,
     )
     def get_state_dict(self, request):
@@ -47,7 +47,7 @@ class TestUnfuseStrategy:
             variant="micro",
             model_path=None,
             source="hf",
-            unfuse_strategy=request.param,
+            fused_weights=request.param,
             linear_config={"linear_type": "torch_linear"},  # same as None
         ).state_dict()
         torch.set_default_dtype(orig_dtype)
@@ -93,7 +93,7 @@ class TestUnfuseStrategy:
 
     def test_strategy_none_from_ckpt(self, get_state_dict):
         # reload unfused or fused state dict from file
-        # unfuse_strategy=None => always expect fused output model
+        # fused_weights=None => always expect fused output model
         sd, _ = get_state_dict
         expected_layers = expected_layers_from_fusion["fused"]
         with tempfile.NamedTemporaryFile(suffix=".pth") as f:
@@ -103,7 +103,6 @@ class TestUnfuseStrategy:
                 variant="micro",
                 model_path=f.name,
                 source="hf",
-                unfuse_strategy=None,
             ).state_dict()
             assert all(
                 [
@@ -114,7 +113,7 @@ class TestUnfuseStrategy:
 
     def test_strategy_post_from_ckpt(self, get_state_dict):
         # reload unfused or fused state dict from file
-        # unfuse_strategy="post" => always expect unfused output model
+        # fused_weights=False => always expect unfused output model
         sd, _ = get_state_dict
         expected_layers = expected_layers_from_fusion["unfused"]
         with tempfile.NamedTemporaryFile(suffix=".pth") as f:
@@ -123,7 +122,7 @@ class TestUnfuseStrategy:
                 architecture="llama",
                 variant="micro",
                 model_path=f.name,
-                unfuse_strategy="post",
+                fused_weights=False,
             ).state_dict()
             assert all(
                 [

@@ -9,6 +9,7 @@ from fms.modules.tp import ShardType, TPModule
 
 __type_factory_map: dict[str, Callable] = {}
 __type_sharding_map: dict[str, Callable] = {}
+__type_rope_params_map: dict[str, list[str]] = {}
 
 
 def register_linear_type_to_module_map(linear_type: str, factory: Callable) -> None:
@@ -38,6 +39,17 @@ def register_linear_type_to_sharding_map(linear_type: str, factory: Callable) ->
             f"Sharding map of linear type `{linear_type}` already registered"
         )
     __type_sharding_map[linear_type] = factory
+
+
+def register_linear_type_to_rope_params_map(
+    linear_type: str, rope_params: list[str]
+) -> None:
+    """Registration of a linear type (e.g., "gptq") and associated params for RoPE correction."""
+    if linear_type in __type_sharding_map:
+        raise KeyError(
+            f"RoPE corrected params of linear type `{linear_type}` already registered"
+        )
+    __type_rope_params_map[linear_type] = rope_params
 
 
 def get_all_linear_type_to_sharding_maps() -> dict[str, Callable]:
@@ -189,3 +201,4 @@ def shard_torch_linear(
 
 register_linear_type_to_module_map("torch_linear", nn.Linear)
 register_linear_type_to_sharding_map("torch_linear", shard_torch_linear)
+register_linear_type_to_rope_params_map("torch_linear", ["weight", "bias"])
