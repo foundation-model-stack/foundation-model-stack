@@ -491,7 +491,7 @@ def load_state_dict_into_model(
             for psd_key in partial_sd.keys():
                 if partial_sd[psd_key].device != initial_device:
                     partial_sd[psd_key] = partial_sd[psd_key].to(device=initial_device)
-            fms_partial_sd = adapter(partial_sd)
+            fms_partial_sd = adapter(partial_sd, adapter_kwargs)
             unused_keys_partial = _load_partial_state_dict(
                 model=model,
                 state_dict=fms_partial_sd,
