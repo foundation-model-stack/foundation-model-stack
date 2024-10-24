@@ -464,7 +464,7 @@ def load_state_dict_into_model(
     # Prepare the extra_kwargs for the adapter
     adapter_kwargs = {}
     if hasattr(model, "config"):
-        adapter_kwargs["model_config"] = dataclasses.asdict(model.config)
+        adapter_kwargs["model_config"] = model.config.as_dict()
 
     # 2. Decide if model needs sharding and how (for now only TP)
     needs_tp_sharding = checkpoint_sharding != "tp" and distributed_strategy == "tp"

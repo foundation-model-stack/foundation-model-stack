@@ -132,7 +132,6 @@ def __maybe_infer_model_variant(
                     )
                 else:
                     extra_kwargs[kwarg] = kwargs[kwarg]
-            source = "hf"
         else:
             extra_kwargs = {**extra_kwargs, **kwargs}
 
