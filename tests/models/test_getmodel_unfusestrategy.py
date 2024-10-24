@@ -82,7 +82,7 @@ class TestUnfuseStrategy:
     def test_fusion_no_ckpt(self, get_state_dict):
         # validate fused/unfused output after instantiating FP16 model without ckpt
         sd, strategy = get_state_dict
-        fusion = {None: "fused", "post": "unfused"}
+        fusion = {True: "fused", False: "unfused"}
         expected_layers = expected_layers_from_fusion[fusion[strategy]]
         assert all(
             [
@@ -135,7 +135,7 @@ class TestUnfuseStrategy:
     def test_gptq_fusion_no_ckpt(self, get_gptq_state_dict):
         # validate fused/unfused output after instantiating GPTQ model without ckpt
         sd, strategy = get_gptq_state_dict
-        fusion = "fused" if strategy == None else "unfused"
+        fusion = "fused" if strategy == True else "unfused"
         expected_layers = expected_layers_from_fusion[fusion]
         assert all(
             [

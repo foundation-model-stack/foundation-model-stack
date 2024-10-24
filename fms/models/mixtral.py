@@ -1,7 +1,7 @@
 import math
 import re
 from dataclasses import dataclass
-from typing import List, Mapping, Optional, Tuple
+from typing import Any, List, Mapping, MutableMapping, Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -386,13 +386,15 @@ _unfused_to_fused = lambda sd, ea: serialization._attn_unfused_to_fused_adapter(
 )
 
 
-def _weight_fusion(input_sd: Mapping, extra_kwargs: Optional[Mapping] = None):
+def _weight_fusion(
+    input_sd: Mapping[str, Any], extra_kwargs: Optional[Mapping[str, Any]] = None
+) -> Mapping[str, Any]:
     has_fused_weights = True
     if extra_kwargs and "model_config" in extra_kwargs:
         if not extra_kwargs["model_config"]["fused_weights"]:
             raise ValueError("Unfused weights unsupported on FMS Mixtral!")
 
-    new_sd = input_sd
+    new_sd: MutableMapping[str, Any] = dict(input_sd)
     if has_fused_weights:
         for key in list(new_sd.keys()):
             if key not in new_sd:
@@ -404,7 +406,7 @@ def _weight_fusion(input_sd: Mapping, extra_kwargs: Optional[Mapping] = None):
                 del new_sd[key]
                 del new_sd[w3_weight]
 
-        new_sd = _unfused_to_fused(new_sd, extra_kwargs)
+        new_sd = dict(_unfused_to_fused(new_sd, extra_kwargs))
 
     return new_sd
 

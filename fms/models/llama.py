@@ -696,6 +696,8 @@ def _hf_to_fms_rope(
                 temp = temp.transpose(0, 1)
 
             new_sd[name] = temp
+        else:
+            new_sd[name] = param
 
     return new_sd
 

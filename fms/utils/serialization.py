@@ -1,4 +1,5 @@
 import collections
+import copy
 import dataclasses
 import os
 import re
@@ -24,16 +25,24 @@ import torch
 from fms.modules.tp import TPModule
 
 
-__adapters: MutableMapping[str, MutableMapping[str, Callable[[Mapping], Mapping]]] = {}
+__adapters: MutableMapping[
+    str,
+    MutableMapping[
+        str, Callable[[Mapping[str, Any], Mapping[str, Any]], Mapping[str, Any]]
+    ],
+] = {}
 __adapter_steps: MutableMapping[
-    str, MutableMapping[str, Callable[[Mapping, Mapping], Mapping]]
+    str,
+    MutableMapping[
+        str, Callable[[Mapping[str, Any], Mapping[str, Any]], Mapping[str, Any]]
+    ],
 ] = {}
 
 
 def register_adapter_step(
     architecture: str,
     adapter_name: str,
-    adapter_step: Callable[[Mapping, Mapping], Mapping],
+    adapter_step: Callable[[Mapping[str, Any], Mapping[str, Any]], Mapping[str, Any]],
 ):
     """
     Registers a state dict adapter step to be available to the (de) serialization
@@ -47,7 +56,9 @@ def register_adapter_step(
                 with extra information that might be needed by the step (such as ModelConfig,
                 linear_config, device specific info, etc.)
     """
-    adapter_steps: MutableMapping[str, Callable[[Mapping, Mapping], Mapping]] = {}
+    adapter_steps: MutableMapping[
+        str, Callable[[Mapping[str, Any], Mapping[str, Any]], Mapping[str, Any]]
+    ] = {}
     if architecture in __adapter_steps:
         adapter_steps = __adapter_steps[architecture]
 
@@ -77,7 +88,9 @@ def register_adapter(
             architecture and source combination. This can be augmented with extra
             steps if needed during call to _get_adapter()
     """
-    sources: MutableMapping[str, Callable[[Mapping], Mapping]] = {}
+    sources: MutableMapping[
+        str, Callable[[Mapping[str, Any], Mapping[str, Any]], Mapping[str, Any]]
+    ] = {}
     if architecture in __adapters:
         sources = __adapters[architecture]
 
@@ -111,12 +124,12 @@ def list_sources(architecture: str):
 
 
 def _attn_unfused_to_fused_adapter(
-    orig_sd: Mapping, extra_kwargs: Optional[Mapping] = None
-):
+    orig_sd: Mapping[str, Any], extra_kwargs: Optional[Mapping[str, Any]] = None
+) -> Mapping[str, Any]:
     """
     Legacy adapter for converting pre 0.0.6 unfused attn weights to fused attn weights
     """
-    new_sd = {}
+    mutable_sd = dict(orig_sd)
     removed_params = set()
     orig_keys = set(orig_sd.keys())
     if extra_kwargs and "legacy" in extra_kwargs and not extra_kwargs["legacy"]:
@@ -160,21 +173,19 @@ def _attn_unfused_to_fused_adapter(
                 f"attn.in_proj.qkv_fused.{weight_type}",
                 name,
             )
-            new_sd[new_name] = torch.cat(
-                [orig_sd.pop(w) for w in unfused_weights], dim=0
+            mutable_sd[new_name] = torch.cat(
+                [mutable_sd.pop(w) for w in unfused_weights], dim=0
             )
-        else:
-            new_sd[name] = orig_sd.pop(name)
-    return new_sd
+    return mutable_sd
 
 
 def _mlp_glu_unfused_to_fused_adapter(
-    orig_sd: Mapping, extra_kwargs: Optional[Mapping] = None
-):
+    orig_sd: Mapping[str, Any], extra_kwargs: Optional[Mapping[str, Any]] = None
+) -> Mapping[str, Any]:
     """
     Legacy adapter for converting pre 0.0.6 unfused mlp glu weights to fused mlp glu weights
     """
-    new_sd = {}
+    mutable_sd = dict(orig_sd)
     removed_params = set()
     orig_keys = set(orig_sd.keys())
     for name in orig_keys:
@@ -205,17 +216,15 @@ def _mlp_glu_unfused_to_fused_adapter(
                 f"ff_sub_layer.wg1_fused.{weight_type}",
                 name,
             )
-            new_sd[new_name] = torch.cat(
-                [orig_sd.pop(w) for w in unfused_weights], dim=0
+            mutable_sd[new_name] = torch.cat(
+                [mutable_sd.pop(w) for w in unfused_weights], dim=0
             )
-        else:
-            new_sd[name] = orig_sd.pop(name)
-    return new_sd
+    return mutable_sd
 
 
 def _get_adapter(
     architecture: str, source: Optional[str]
-) -> Callable[[Mapping[str, Any]], Mapping[str, Any]]:
+) -> Callable[[Mapping[str, Any], Mapping[str, Any]], Mapping[str, Any]]:
     if (
         source is None
         or architecture not in __adapters
@@ -230,7 +239,10 @@ def _get_adapter(
 
 
 def get_adapted(
-    architecture: str, source: Optional[str], state_dict: Mapping[str, Any]
+    architecture: str,
+    source: Optional[str],
+    state_dict: Mapping[str, Any],
+    adapter_kwargs: Mapping[str, Any],
 ) -> Mapping[str, Any]:
     """
     Convert a state dict to FMS format, using an adapter specified by name.
@@ -245,7 +257,7 @@ def get_adapted(
     if not len(state_dict):
         return state_dict
     adapter = _get_adapter(architecture, source)
-    adapted = adapter(state_dict)
+    adapted = adapter(state_dict, adapter_kwargs)
     return adapted
 
 

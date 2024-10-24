@@ -63,6 +63,13 @@ parser.add_argument(
     help="If set to True, this will unfuse any fused weight modules that support the unfuse_weights method",
 )
 parser.add_argument(
+    "--default_dtype",
+    type=str,
+    default=None,
+    choices=["bf16", "fp16", "fp32"],
+    help="If set to one of the choices, overrides the model checkpoint weight format by setting the default pytorch format",
+)
+parser.add_argument(
     "--compile",
     action="store_true",
     help="Use torch.compile (slow for first inference pass)",
@@ -107,7 +114,14 @@ if args.device_type == "cuda":
 else:
     device = torch.device(args.device_type)
 
-torch.set_default_dtype(torch.float16)
+default_dtype = None
+dtypes_map = {
+    "fp16": torch.float16,
+    "bf16": torch.bfloat16,
+    "fp32": torch.float32,
+}
+if args.default_dtype is not None:
+    default_dtype = dtypes_map[args.default_dtype]
 
 # requires setting environment variable: `CUBLAS_WORKSPACE_CONFIG=:4096:8`
 if args.deterministic:
@@ -139,11 +153,8 @@ model = get_model(
     source=args.model_source,
     distributed_strategy=distr_param,
     group=dist.group.WORLD,
+    fused_weights=not args.unfuse_weights,
 )
-
-if args.unfuse_weights:
-    print("unfusing weights")
-    model = fusion.apply_unfuse_weights(model)
 
 tokenizer = tokenizers.get_tokenizer(args.tokenizer)
 model.eval()
