@@ -11,7 +11,6 @@ from fms.distributed.strategy import (
     DistributedStrategy,
     NoOpStrategy,
     TensorParallelStrategy,
-    UniformModelParallelStrategy,
 )
 from fms.modules.attention import MultiHeadAttention
 from fms.modules.embedding import WordEmbedding
@@ -22,7 +21,7 @@ from fms.modules.positions import RotaryEmbedding
 from fms.utils import serialization
 from fms.utils.activation import str_to_activation
 from fms.utils.config import ModelConfig
-from fms.utils.tokenizers import _has_hf, get_tokenizer
+from fms.utils.tokenizers import _has_hf
 
 
 logger = logging.getLogger(__name__)
@@ -204,8 +203,8 @@ class LLaMA(nn.Module):
         ):
             self.shared = self.distributed_strategy.distribute_module(shared)
         else:
-            logger.warn(
-                "You're using TP on a model with tied weights between head and embedding."
+            logger.warning(
+                "You're using TP on a model with tied weights between head and embedding. "
                 "The tied weights won't be sharded, which can result in unexpected OOMs."
             )
             self.shared = shared
@@ -650,14 +649,16 @@ def _hf_to_fms_rope(
     new_sd = {}
 
     if extra_kwargs and "model_config" in extra_kwargs:
-        num_heads = extra_kwargs["model_config"]["nheads"]
-        head_size = extra_kwargs["model_config"]["emb_dim"] // num_heads
+        head_size = (
+            extra_kwargs["model_config"]["emb_dim"]
+            // extra_kwargs["model_config"]["nheads"]
+        )
         linear_type = "torch_linear"
         if extra_kwargs["model_config"]["linear_config"]:
             linear_type = extra_kwargs["model_config"]["linear_config"]["linear_type"]
     else:
+        logger.warning("Missing model_config, assuming defaults for head_size")
         head_size = 128  # Good default for most models
-        num_heads = None
         linear_type = "torch_linear"
 
     rope_params = __type_rope_params_map[linear_type]
@@ -678,13 +679,13 @@ def _hf_to_fms_rope(
         # that HF does from the original Meta weights:
         if bool(trans_required_pattern.match(name)):
             temp = param
-            if linear_type == "gptq" and temp.dim() == 2:
+            if "gptq" in linear_type and temp.dim() == 2:
                 # GPTQ qweights are [in_feat, out_feat] (unlike usual [out_feat, in_feat])
                 # and are fully transposed before & after process
                 temp = temp.transpose(0, 1)
             # num_heads is used in the transformation required for hf->fms
-            if num_heads is None:
-                num_heads = temp.size(0) // head_size
+            # can't be precomputed because q and k might have different num_heads
+            num_heads = temp.size(0) // head_size
 
             if temp.dim() == 2:  # weight
                 temp_view = temp.view(num_heads, 2, -1, temp.size(1))

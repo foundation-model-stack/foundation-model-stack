@@ -213,11 +213,19 @@ else:
 def print_result(result):
     if local_rank != 0:
         return
-    # stop at EOS token if present
+    if padding_kwargs is not None:
+        result = generation.trim_prefix(result)
+
+    result = generation.trim_prefix(result, tokenizer.bos_token_id)
+
+    # stop at EOS token if present and remove padding
     result = generation.truncate_after_eos(result, tokenizer.eos_token_id)
-    # print(result)
-    # print(tokenizer.convert_ids_to_tokens(result))
-    print(tokenizer.convert_tokens_to_string(tokenizer.convert_ids_to_tokens(result)))
+
+    output_str = tokenizer.convert_tokens_to_string(
+        tokenizer.convert_ids_to_tokens(result)
+    )
+
+    print(output_str)
     print()
 
 
