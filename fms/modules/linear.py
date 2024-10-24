@@ -1,3 +1,4 @@
+import traceback
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Optional
 
@@ -45,7 +46,7 @@ def register_linear_type_to_rope_params_map(
     linear_type: str, rope_params: list[str]
 ) -> None:
     """Registration of a linear type (e.g., "gptq") and associated params for RoPE correction."""
-    if linear_type in __type_sharding_map:
+    if linear_type in __type_rope_params_map:
         raise KeyError(
             f"RoPE corrected params of linear type `{linear_type}` already registered"
         )

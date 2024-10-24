@@ -87,7 +87,7 @@ def register_adapter(
         )
 
     # Create a new base adapter for this source
-    step_functions = [__adapter_steps[step] for step in adapter_steps]
+    step_functions = [__adapter_steps[architecture][step] for step in adapter_steps]
     adapter = lambda initial_sd, extra_args: reduce(
         lambda state_dict, step_func: step_func(state_dict, extra_args),
         step_functions,

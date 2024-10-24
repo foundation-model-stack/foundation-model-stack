@@ -1,3 +1,4 @@
+import functools
 import math
 from dataclasses import dataclass
 from typing import Any, List, Mapping, Optional, Tuple
@@ -451,6 +452,56 @@ serialization.register_adapter_step(
 )
 
 
+def _gptq_unfuse(fused_weight, fused_weight_name, emb_size, pack_ratio):
+    if "qweight" in fused_weight_name:
+        out_feat = fused_weight.size(1)
+        kv_out_feat = (out_feat - emb_size) // 2
+        return (
+            fused_weight[:, :emb_size],
+            fused_weight[:, emb_size : emb_size + kv_out_feat],
+            fused_weight[:, -kv_out_feat:],
+        )
+    elif "qzeros" in fused_weight_name:
+        out_feat_packed = fused_weight.size(1)
+        query_out_feat_packed = emb_size // pack_ratio
+        kv_out_feat_packed = (out_feat_packed - query_out_feat_packed) // 2
+        return (
+            fused_weight[:, :query_out_feat_packed],
+            fused_weight[
+                :, query_out_feat_packed : query_out_feat_packed + kv_out_feat_packed
+            ],
+            fused_weight[:, -kv_out_feat_packed:],
+        )
+    elif "scales" in fused_weight_name:
+        out_feat = fused_weight.size(1)
+        kv_out_feat = (out_feat - emb_size) // 2
+        return (
+            fused_weight[:, :emb_size],
+            fused_weight[:, emb_size : emb_size + kv_out_feat],
+            fused_weight[:, -kv_out_feat:],
+        )
+    elif "bias" in fused_weight_name:
+        out_feat = fused_weight.size()[0]
+        kv_out_feat = (out_feat - emb_size) // 2
+        return (
+            fused_weight[:emb_size],
+            fused_weight[emb_size : emb_size + kv_out_feat],
+            fused_weight[-kv_out_feat:],
+        )
+    elif "g_idx" in fused_weight_name:
+        return fused_weight, fused_weight, fused_weight
+
+
+def _torch_unfuse(fused_weight, fused_weight_name, emb_size):
+    out_feat = fused_weight.size(0)
+    kv_out_feat = (out_feat - emb_size) // 2
+    return (
+        fused_weight[:emb_size],
+        fused_weight[emb_size : emb_size + kv_out_feat],
+        fused_weight[-kv_out_feat:],
+    )
+
+
 def _weight_fusion(input_sd: Mapping, extra_kwargs: Optional[Mapping] = None):
     has_fused_weights = True
     if extra_kwargs and "model_config" in extra_kwargs:
@@ -459,7 +510,37 @@ def _weight_fusion(input_sd: Mapping, extra_kwargs: Optional[Mapping] = None):
 
     new_sd = input_sd
     if not has_fused_weights:
-        new_sd = _fused_to_unfused(new_sd, extra_kwargs)
+        if extra_kwargs and "model_config" in extra_kwargs:
+            emb_size = extra_kwargs["model_config"]["emb_dim"]
+            is_gptq = "gptq" in extra_kwargs["model_config"]["linear_config"]
+        else:
+            raise ValueError(
+                "Missing model_config for the weight unfusion adapter not supported"
+            )
+
+        if is_gptq:
+            pack_ratio = 8  # assume 4 bits => packing/compression ratio = 32 / 4
+            unfuse_op = functools.partial(
+                _gptq_unfuse, emb_size=emb_size, pack_ratio=pack_ratio
+            )
+        else:
+            unfuse_op = functools.partial(_torch_unfuse, emb_size=emb_size)
+
+        unfused_sd = {}
+        for name, param in input_sd.items():
+            if "attn.in_proj.qkv_fused" in name:
+                query_param_name = name.replace("qkv_fused", "query")
+                key_param_name = name.replace("qkv_fused", "key")
+                value_param_name = name.replace("qkv_fused", "value")
+
+                qw, kw, vw = unfuse_op(param, name)
+                unfused_sd[query_param_name] = qw
+                unfused_sd[key_param_name] = kw
+                unfused_sd[value_param_name] = vw
+            else:
+                unfused_sd[name] = param
+
+        return unfused_sd
     return new_sd
 
 

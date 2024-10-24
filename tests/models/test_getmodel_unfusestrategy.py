@@ -55,7 +55,7 @@ class TestUnfuseStrategy:
 
     @pytest.fixture(
         scope="class",
-        params=unfuse_strategies_gptq,
+        params=fused_weights_gptq,
         ids=unfuse_ids_gptq,
     )
     def get_gptq_state_dict(self, request):
