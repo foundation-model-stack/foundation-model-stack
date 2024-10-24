@@ -103,10 +103,6 @@ def __maybe_infer_model_variant(
                     Your values are: variant - {variant}; model_path - {model_path}; source - {source}
                     """
                 )
-            if len(kwargs) > 0:
-                logger.warning(
-                    f"ignoring the following parameters as a pretrained model with an inferred configuration is being loaded: {list(kwargs.keys())}"
-                )
         if is_hf_configured and variant is None:
             raise ValueError(
                 """architecture="hf_configured" implies model config is loaded from variant, therefore it should be set"""
