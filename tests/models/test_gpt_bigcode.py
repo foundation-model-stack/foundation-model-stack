@@ -33,7 +33,6 @@ class GPTBigCodeFixtures(ConfigFixtureMixin, ModelFixtureMixin):
             hidden_grow_factor=2.0,
             pad_id=0,
             linear_config={"linear_type": "torch_linear"},
-            unfuse_strategy=None,
         )
 
 

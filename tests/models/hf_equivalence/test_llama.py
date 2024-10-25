@@ -23,7 +23,7 @@ def test_llama_7b_equivalence():
     hf_model = AutoModelForCausalLM.from_pretrained(llama_model_path)
 
     # convert the hf model to fms
-    model = get_model("llama", "7b", llama_model_path, "hf")
+    model = get_model("hf_pretrained", llama_model_path)
 
     hf_model_fms = to_hf_api(
         model,

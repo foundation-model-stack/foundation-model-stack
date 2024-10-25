@@ -18,14 +18,14 @@ def test_adapt():
     w1 = torch.arange(0, 5)
     w3 = torch.arange(5, 10)
     sd = {"feed_forward.w1.weight": w1, "feed_forward.w3.weight": w3}
-    adapted = serialization.get_adapted("llama", "meta", sd)
+    adapted = serialization.get_adapted("llama", "meta", sd, {})
 
     newkey = "ff_sub_layer.wg1_fused.weight"
     assert newkey in adapted
     torch.testing.assert_close(adapted[newkey][:5], w1)
     torch.testing.assert_close(adapted[newkey][-5:], w3)
 
-    adapted = serialization.get_adapted("foo", "foo", sd)
+    adapted = serialization.get_adapted("foo", "foo", sd, {})
     print(adapted.keys())
     assert id(adapted["feed_forward.w1.weight"]) == id(w1)
     assert id(adapted["feed_forward.w3.weight"]) == id(w3)

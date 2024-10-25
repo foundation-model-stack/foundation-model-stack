@@ -8,6 +8,7 @@ from fms.modules.linear import (
     LinearModuleShardingInfo,
     LinearParameterShardingInfo,
     register_linear_type_to_module_map,
+    register_linear_type_to_rope_params_map,
     register_linear_type_to_sharding_map,
     shard_base_linear,
 )
@@ -174,3 +175,4 @@ def shard_gptq_linear(
 
 register_linear_type_to_module_map("gptq", get_gptq_linear)
 register_linear_type_to_sharding_map("gptq", shard_gptq_linear)
+register_linear_type_to_rope_params_map("gptq", ["qweight", "scales", "qzeros", "bias"])

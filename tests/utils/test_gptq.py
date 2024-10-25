@@ -87,7 +87,6 @@ class TestGPTQModel:
             variant="micro",
             model_path=None,
             source="hf",
-            unfuse_strategy=None,
             linear_config=linear_config,
         )
         torch.set_default_dtype(orig_dtype)
