@@ -15,7 +15,6 @@ from fms.distributed.strategy import (
     UniformModelParallelStrategy,
 )
 from fms.modules.attention import MultiHeadAttention
-from fms.modules.embedding import WordEmbedding
 from fms.modules.feedforward import GatedLinearUnit
 from fms.modules.layernorm import LayerNormParameterized
 from fms.modules.positions import RotaryEmbedding
@@ -495,7 +494,7 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
     ]
     new_sd = {}
 
-    trans_required_pattern = re.compile("layers.[0-9]+.attn.(query|key).(weight|bias)")
+    trans_required_pattern = re.compile("base_model.layers.[0-9]+.attn.(query|key).(weight|bias)")
     for name, param in hf_sd.items():
         new_name = name
         for pattern, repl in replacements:
