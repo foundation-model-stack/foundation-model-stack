@@ -8,7 +8,6 @@ from fms.modules.linear import (
     LinearModuleShardingInfo,
     LinearParameterShardingInfo,
     register_linear_type_to_module_map,
-    register_linear_type_to_rope_params_map,
     register_linear_type_to_sharding_map,
     shard_base_linear,
 )
