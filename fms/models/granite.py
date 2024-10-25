@@ -1,4 +1,5 @@
 import logging
+import math
 import re
 from dataclasses import dataclass
 from typing import Any, Mapping, Optional
@@ -169,43 +170,17 @@ class GraniteHeadless(nn.Module):
     def __init__(
         self,
         config: Optional[GraniteConfig] = None,
-        distributed_strategy: DistributedStrategy = NoOpStrategy,
-        **kwargs,
+        distributed_strategy: DistributedStrategy = NoOpStrategy
     ):
         super(GraniteHeadless, self).__init__()
-        if config is not None:
-            self.config = config
-        else:
-            self.config = GraniteConfig()
-        self.config = self.config.updated(**kwargs)
+        self.config = config
         self.distributed_strategy = distributed_strategy
 
         self.width = self.config.emb_dim
         self.pad_id = self.config.pad_id
         self.max_expected_seq_len = self.config.max_expected_seq_len
 
-        shared = WordEmbedding(
-            self.config.src_vocab_size,
-            self.config.emb_dim,
-            padding_idx=self.config.pad_id,
-            abs_pos=False,
-            reversible=True,
-            tie_weights=self.config.tie_heads,
-            bias=False,
-        )
-
-        # TP does not work with tied weights
-        if (
-            not isinstance(self.distributed_strategy, TensorParallelStrategy)
-            or not self.config.tie_heads
-        ):
-            self.shared = self.distributed_strategy.distribute_module(shared)
-        else:
-            logger.warn(
-                "You're using TP on a model with tied weights between head and embedding."
-                "The tied weights won't be sharded, which can result in unexpected OOMs."
-            )
-            self.shared = shared
+        self.embedding = nn.Embedding(self.config.src_vocab_size, self.config.emb_dim, padding_idx=self.config.pad_id)
 
         self.rot_emb = RotaryEmbedding(
             dim=self.config.emb_dim // self.config.nheads,
@@ -243,49 +218,59 @@ class GraniteHeadless(nn.Module):
             self.dropout = nn.Dropout(self.config.p_dropout)
 
     def reset_parameters(self):
+        nn.init.trunc_normal_(
+            self.embedding.weight, mean=0.0, std=self.config.emb_dim ** -0.5
+        )
+
+        # RoPE init
+        for device in set(
+                [param.device for param in self.parameters()]
+                + [buffer.device for buffer in self.buffers()]
+        ):
+            self.rot_emb.compute_freqs_cis(device, self.config.max_expected_seq_len)
+
         # Call reset_parameters for relevant sub-layers
         for m in self.modules():
             if (
-                isinstance(m, MultiHeadAttention)
-                or isinstance(m, WordEmbedding)
-                or isinstance(m, GatedLinearUnit)
-                or isinstance(m, LayerNormParameterized)
+                    isinstance(m, MultiHeadAttention)
+                    or isinstance(m, GatedLinearUnit)
+                    or isinstance(m, LayerNormParameterized)
             ):
                 m.reset_parameters()
 
-    def validate_reset_parameters(self):
-        # Verifies that the above self.reset_parameters() executed correctly.
-        # This may not always be the case for distributed settings with sharded tensors,
-        # such as FSDP or TP. Note that performing this check may require unsharding /
-        # re-materializing the full model on a single rank to access the underlying tensors.
-        tolerance = 1e-3
-
-        def check_close(x):
-            assert x.mean().abs() < tolerance
-            assert x.std().sub(0.02).abs() < tolerance
-
-        with torch.no_grad():
-            for p in self.parameters():
-                assert p.isnan().int().sum() == 0
-                assert p.isinf().int().sum() == 0
-            for m in self.modules():
-                if isinstance(LayerNormParameterized):
-                    if m.elementwise_scale:
-                        assert m.weight.sum() == m.weight.numel()
-                    if m.elementwise_shift:
-                        assert m.bias.add(1).sum() == m.bias.numel()
-                elif isinstance(WordEmbedding):
-                    check_close(m.emb.weight)
-                    check_close(m.head.weight)
-                elif isinstance(GatedLinearUnit):
-                    check_close(m.w1.weight)
-                    check_close(m.w2.weight)
-                    check_close(m.wg.weight)
-                elif isinstance(MultiHeadAttention):
-                    check_close(m.query.weight)
-                    check_close(m.key.weight)
-                    check_close(m.value.weight)
-                    check_close(m.dense.weight)
+    # def validate_reset_parameters(self):
+    #     # Verifies that the above self.reset_parameters() executed correctly.
+    #     # This may not always be the case for distributed settings with sharded tensors,
+    #     # such as FSDP or TP. Note that performing this check may require unsharding /
+    #     # re-materializing the full model on a single rank to access the underlying tensors.
+    #     tolerance = 1e-3
+    #
+    #     def check_close(x):
+    #         assert x.mean().abs() < tolerance
+    #         assert x.std().sub(0.02).abs() < tolerance
+    #
+    #     with torch.no_grad():
+    #         for p in self.parameters():
+    #             assert p.isnan().int().sum() == 0
+    #             assert p.isinf().int().sum() == 0
+    #         for m in self.modules():
+    #             if isinstance(LayerNormParameterized):
+    #                 if m.elementwise_scale:
+    #                     assert m.weight.sum() == m.weight.numel()
+    #                 if m.elementwise_shift:
+    #                     assert m.bias.add(1).sum() == m.bias.numel()
+    #             elif isinstance(WordEmbedding):
+    #                 check_close(m.emb.weight)
+    #                 check_close(m.head.weight)
+    #             elif isinstance(GatedLinearUnit):
+    #                 check_close(m.w1.weight)
+    #                 check_close(m.w2.weight)
+    #                 check_close(m.wg.weight)
+    #             elif isinstance(MultiHeadAttention):
+    #                 check_close(m.query.weight)
+    #                 check_close(m.key.weight)
+    #                 check_close(m.value.weight)
+    #                 check_close(m.dense.weight)
 
     def _clean_up_rot_emb_cache(
         self,
@@ -305,14 +290,6 @@ class GraniteHeadless(nn.Module):
         # This function is called in `get_model` after the model is
         # fully initalized on the correct device
 
-        # if this model ties weights, they are tied here
-        if self.config.tie_heads:
-            # handle assignment of non-meta weights to meta parameters
-            if self.shared.head.weight.device == torch.device("meta"):
-                self.shared.head.weight = self.shared.emb.weight
-            else:
-                self.shared.emb.weight = self.shared.head.weight
-
         self._clean_up_rot_emb_cache(
             self.rot_emb.cached_freqs,
             self.rot_emb.max_seq_len_cached,
@@ -324,6 +301,7 @@ class GraniteHeadless(nn.Module):
             + [buffer.device for buffer in self.buffers()]
         ):
             self.rot_emb.compute_freqs_cis(device, self.config.max_expected_seq_len)
+
 
     def forward(
         self,
@@ -359,7 +337,7 @@ class GraniteHeadless(nn.Module):
         else:
             is_causal_mask = False
 
-        x_in = self.shared(x_in)
+        x_in = self.embedding(x_in)
         x_in = x_in * self.config.embedding_multiplier
 
         # this is the output cache for all the decoder layers
@@ -408,7 +386,9 @@ class Granite(nn.Module):
         self.distributed_strategy = distributed_strategy
         
         self.base_model = GraniteHeadless(self.config, self.distributed_strategy)
-        #self.shared = self.base_model.shared
+        self.head = nn.Linear(
+            self.config.emb_dim, self.config.src_vocab_size, bias=False
+        )
 
     @classmethod
     def from_config(cls, config: GraniteConfig) -> "Granite":
@@ -418,9 +398,20 @@ class Granite(nn.Module):
         return self.config
 
     def reset_parameters(self):
+        self.head.weight.data.normal_(
+            0, 1 / math.sqrt(math.sqrt(self.config.emb_dim * self.config.src_vocab_size))
+        )
         self.base_model.reset_parameters()
 
     def post_init(self):
+        # if this model ties weights, they are tied here
+        if self.config.tie_heads:
+            # handle assignment of non-meta weights to meta parameters
+            if self.head.weight.device == torch.device("meta"):
+                self.head.weight = self.base_model.embedding.weight
+            else:
+                self.base_model.embedding.weight = self.head.weight
+
         self.base_model.post_init()
     
     def forward(
@@ -439,7 +430,7 @@ class Granite(nn.Module):
 
         if only_last_token:
             output = output[:, -1, :]
-        preds = self.base_model.shared(output, reverse=True)
+        preds = self.head(output)
         #preds = self.shared(output, reverse=True)
         preds = preds / self.config.logits_scaling
 
@@ -488,8 +479,8 @@ _convert_to_fused = lambda sd: serialization._legacy_mlp_glu_unfused_to_fused_ad
 
 def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
     replacements = [
-        (r"^lm_head.weight", "base_model.shared.head.weight"),
-        (r"^model.embed_tokens.weight", "base_model.shared.emb.weight"),
+        (r"^lm_head.weight", "head.weight"),
+        (r"^model.embed_tokens.weight", "base_model.embedding.weight"),
         (r"^model.norm", "base_model.dec_norm"),
         (r"^model.layers", "base_model.layers"),
         (r"self_attn\.k_proj", "attn.key"),
@@ -589,7 +580,7 @@ def convert_hf_granite(hf_model: "GraniteForCausalLM") -> Granite:  # type: igno
     hf_sd = hf_model.model.state_dict()
 
     replacements = [
-        (r"^embed_tokens.weight", "base_model.shared.emb.weight"),
+        (r"^embed_tokens.weight", "base_model.embedding.weight"),
         (r"^norm", "base_model.dec_norm"),
         (r"^layers", "base_model.layers"),
         (r"self_attn\.k_proj", "attn.key"),

@@ -141,6 +141,9 @@ model = get_model(
     group=dist.group.WORLD,
 )
 
+for name, param in model.named_parameters():
+    print(name, param)
+
 if args.unfuse_weights:
     print("unfusing weights")
     model = fusion.apply_unfuse_weights(model)
@@ -203,7 +206,7 @@ def print_result(result):
     if local_rank != 0:
         return
     # stop at EOS token if present
-    result = generation.truncate_after_eos(result, tokenizer.eos_token_id)
+    # result = generation.truncate_after_eos(result, tokenizer.eos_token_id)
     # print(result)
     # print(tokenizer.convert_ids_to_tokens(result))
     print(tokenizer.convert_tokens_to_string(tokenizer.convert_ids_to_tokens(result)))
