@@ -512,7 +512,11 @@ def _weight_fusion(input_sd: Mapping, extra_kwargs: Optional[Mapping] = None):
     if not has_fused_weights:
         if extra_kwargs and "model_config" in extra_kwargs:
             emb_size = extra_kwargs["model_config"]["emb_dim"]
-            is_gptq = "gptq" in extra_kwargs["model_config"]["linear_config"]
+            is_gptq = (
+                extra_kwargs["model_config"]["linear_config"] is not None
+                and "gptq"
+                in extra_kwargs["model_config"]["linear_config"]["linear_type"]
+            )
         else:
             raise ValueError(
                 "Missing model_config for the weight unfusion adapter not supported"
