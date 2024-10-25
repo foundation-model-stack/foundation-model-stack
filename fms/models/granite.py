@@ -168,7 +168,7 @@ class GraniteBlock(nn.Module):
 class GraniteHeadless(nn.Module):
     def __init__(
         self,
-        config: Optional[GraniteConfig] = None,
+        config: GraniteConfig,
         distributed_strategy: DistributedStrategy = NoOpStrategy,
     ):
         super(GraniteHeadless, self).__init__()
