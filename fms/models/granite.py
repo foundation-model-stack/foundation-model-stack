@@ -165,14 +165,14 @@ class GraniteBlock(nn.Module):
             return x
 
 
-class Granite(nn.Module):
+class GraniteHeadless(nn.Module):
     def __init__(
         self,
         config: Optional[GraniteConfig] = None,
         distributed_strategy: DistributedStrategy = NoOpStrategy,
         **kwargs,
     ):
-        super(Granite, self).__init__()
+        super(GraniteHeadless, self).__init__()
         if config is not None:
             self.config = config
         else:
@@ -241,13 +241,6 @@ class Granite(nn.Module):
 
         if self.config.p_dropout:
             self.dropout = nn.Dropout(self.config.p_dropout)
-
-    def get_config(self) -> GraniteConfig:
-        return self.config
-
-    @classmethod
-    def from_config(cls, config: GraniteConfig) -> "Granite":
-        return cls(config)
 
     def reset_parameters(self):
         # Call reset_parameters for relevant sub-layers
@@ -332,7 +325,7 @@ class Granite(nn.Module):
         ):
             self.rot_emb.compute_freqs_cis(device, self.config.max_expected_seq_len)
 
-    def _helper(
+    def forward(
         self,
         x_in,
         mask=None,
@@ -397,6 +390,39 @@ class Granite(nn.Module):
 
         return dec_out, present_key_value_states
 
+
+
+class Granite(nn.Module):
+    def __init__(
+        self,
+        config: Optional[GraniteConfig] = None,
+        distributed_strategy: DistributedStrategy = NoOpStrategy,
+        **kwargs,
+    ):
+        super(Granite, self).__init__()
+        if config is not None:
+            self.config = config
+        else:
+            self.config = GraniteConfig()
+        self.config = self.config.updated(**kwargs)
+        self.distributed_strategy = distributed_strategy
+        
+        self.base_model = GraniteHeadless(self.config, self.distributed_strategy)
+        #self.shared = self.base_model.shared
+
+    @classmethod
+    def from_config(cls, config: GraniteConfig) -> "Granite":
+        return cls(config)
+
+    def get_config(self) -> GraniteConfig:
+        return self.config
+
+    def reset_parameters(self):
+        self.base_model.reset_parameters()
+
+    def post_init(self):
+        self.base_model.post_init()
+    
     def forward(
         self,
         x,
@@ -407,13 +433,14 @@ class Granite(nn.Module):
         only_last_token=False,
         attn_algorithm=None,
     ):
-        output, cache = self._helper(
+        output, cache = self.base_model(
             x, mask, position_ids, past_key_value_states, use_cache, attn_algorithm
         )
 
         if only_last_token:
             output = output[:, -1, :]
-        preds = self.shared(output, reverse=True)
+        preds = self.base_model.shared(output, reverse=True)
+        #preds = self.shared(output, reverse=True)
         preds = preds / self.config.logits_scaling
 
         if use_cache:
@@ -461,10 +488,10 @@ _convert_to_fused = lambda sd: serialization._legacy_mlp_glu_unfused_to_fused_ad
 
 def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
     replacements = [
-        (r"^lm_head.weight", "shared.head.weight"),
-        (r"^model.embed_tokens.weight", "shared.emb.weight"),
-        (r"^model.norm", "dec_norm"),
-        (r"^model.layers", "layers"),
+        (r"^lm_head.weight", "base_model.shared.head.weight"),
+        (r"^model.embed_tokens.weight", "base_model.shared.emb.weight"),
+        (r"^model.norm", "base_model.dec_norm"),
+        (r"^model.layers", "base_model.layers"),
         (r"self_attn\.k_proj", "attn.key"),
         (r"self_attn\.v_proj", "attn.value"),
         (r"self_attn\.q_proj", "attn.query"),
@@ -562,9 +589,9 @@ def convert_hf_granite(hf_model: "GraniteForCausalLM") -> Granite:  # type: igno
     hf_sd = hf_model.model.state_dict()
 
     replacements = [
-        (r"^embed_tokens.weight", "shared.emb.weight"),
-        (r"^norm", "dec_norm"),
-        (r"^layers", "layers"),
+        (r"^embed_tokens.weight", "base_model.shared.emb.weight"),
+        (r"^norm", "base_model.dec_norm"),
+        (r"^layers", "base_model.layers"),
         (r"self_attn\.k_proj", "attn.key"),
         (r"self_attn\.v_proj", "attn.value"),
         (r"self_attn\.q_proj", "attn.query"),
