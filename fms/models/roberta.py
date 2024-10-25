@@ -306,16 +306,11 @@ models.register_model(
     _architecture_name, "base", _roberta_factory_factory(_base_config)
 )
 
-_legacy_unfused_to_fused = lambda sd, ea: serialization._attn_unfused_to_fused_adapter(
-    sd, {"legacy": True}
-)
 serialization.register_adapter_step(
-    _architecture_name, "pre0.0.6_unfused_to_fused", _legacy_unfused_to_fused
+    _architecture_name, "pre0.0.6_unfused_to_fused", serialization._pre006_adapter_step
 )
 
-_unfused_to_fused = lambda sd, ea: serialization._attn_unfused_to_fused_adapter(
-    sd, {"legacy": False}
-)
+_unfused_to_fused = lambda sd, ea: serialization._attn_unfused_to_fused_step(sd, ea)
 
 
 def _weight_fusion(input_sd: Mapping, extra_kwargs: Optional[Mapping] = None):

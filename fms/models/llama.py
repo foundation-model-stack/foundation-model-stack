@@ -16,7 +16,6 @@ from fms.modules.attention import MultiHeadAttention
 from fms.modules.embedding import WordEmbedding
 from fms.modules.feedforward import GatedLinearUnit
 from fms.modules.layernorm import LayerNormParameterized
-from fms.modules.linear import __type_rope_params_map
 from fms.modules.positions import RotaryEmbedding
 from fms.utils import serialization
 from fms.utils.activation import str_to_activation
@@ -532,17 +531,12 @@ models.register_model(
 )
 
 # Create all the pieces to generate adapters for different checkpoints
-_legacy_unfused_to_fused = (
-    lambda sd, ea: serialization._mlp_glu_unfused_to_fused_adapter(
-        serialization._attn_unfused_to_fused_adapter(sd, {"legacy": True})
-    )
-)
 serialization.register_adapter_step(
-    "llama", "pre0.0.6_unfused_to_fused", _legacy_unfused_to_fused
+    "llama", "pre0.0.6_unfused_to_fused", serialization._pre006_adapter_step
 )
 
 _unfused_to_fused = lambda sd, ea: serialization._mlp_glu_unfused_to_fused_adapter(
-    serialization._attn_unfused_to_fused_adapter(sd, {"legacy": False})
+    serialization._attn_unfused_to_fused_step(sd, ea), ea
 )
 
 
@@ -643,6 +637,13 @@ def _hf_to_fms_names(
 serialization.register_adapter_step("llama", "hf_to_fms_names", _hf_to_fms_names)
 
 
+def _get_rope_params(linear_type):
+    if "gptq" in linear_type:
+        return ["qweight", "scales", "qzeros", "bias"]
+    else:  # torch.nn.Linear
+        return ["weight", "bias"]
+
+
 def _hf_to_fms_rope(
     input_sd: Mapping, extra_kwargs: Optional[Mapping] = None
 ) -> Mapping:
@@ -661,7 +662,7 @@ def _hf_to_fms_rope(
         head_size = 128  # Good default for most models
         linear_type = "torch_linear"
 
-    rope_params = __type_rope_params_map[linear_type]
+    rope_params = _get_rope_params(linear_type)
     trans_required_pattern = re.compile(
         f"layers.[0-9]+.attn.in_proj.(query|key).({'|'.join(rope_params)})"
     )

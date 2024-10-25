@@ -1,24 +1,11 @@
 import collections
-import copy
-import dataclasses
 import os
 import re
 from collections import ChainMap
 from collections.abc import Iterable
 from functools import reduce
 from pathlib import Path
-from typing import (
-    Any,
-    Callable,
-    Dict,
-    List,
-    Mapping,
-    MutableMapping,
-    Optional,
-    Set,
-    Tuple,
-    Union,
-)
+from typing import Any, Callable, Mapping, MutableMapping, Optional, Set, Union
 
 import torch
 
@@ -123,20 +110,30 @@ def list_sources(architecture: str):
     return list(__adapters[architecture].keys())
 
 
-def _attn_unfused_to_fused_adapter(
+def _pre006_adapter_step(
     orig_sd: Mapping[str, Any], extra_kwargs: Optional[Mapping[str, Any]] = None
 ) -> Mapping[str, Any]:
     """
-    Legacy adapter for converting pre 0.0.6 unfused attn weights to fused attn weights
+    Legacy adapter step for converting pre 0.0.6 unfused attn weights to fused attn weights
     """
+    return _attn_unfused_to_fused(orig_sd, attn_prefix="attn")
+
+
+def _attn_unfused_to_fused_step(
+    orig_sd: Mapping[str, Any], extra_kwargs: Optional[Mapping[str, Any]] = None
+) -> Mapping[str, Any]:
+    """
+    Adapter step for converting unfused attn weights to fused attn weights
+    """
+    return _attn_unfused_to_fused(orig_sd, attn_prefix="attn.in_proj")
+
+
+def _attn_unfused_to_fused(
+    orig_sd: Mapping[str, Any], attn_prefix: str
+) -> Mapping[str, Any]:
     mutable_sd = dict(orig_sd)
     removed_params = set()
     orig_keys = set(orig_sd.keys())
-    if extra_kwargs and "legacy" in extra_kwargs and not extra_kwargs["legacy"]:
-        attn_prefix = "attn.in_proj"
-    else:
-        # Keep old default for backwards compat
-        attn_prefix = "attn"
     for name in orig_keys:
         # if the name is part of removed_params, we no longer want to process it
         if name in removed_params:
