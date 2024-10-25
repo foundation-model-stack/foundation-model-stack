@@ -141,9 +141,6 @@ model = get_model(
     group=dist.group.WORLD,
 )
 
-for name, param in model.named_parameters():
-    print(name, param)
-
 if args.unfuse_weights:
     print("unfusing weights")
     model = fusion.apply_unfuse_weights(model)
