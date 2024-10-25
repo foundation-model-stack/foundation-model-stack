@@ -146,7 +146,6 @@ def compare_model_signatures(
         optional_params=model_params_1.other_params,
         logits_getter_fn=model_params_1.logits_getter_fn,
         inp=model_params_1.inp,
-        device="cuda",
     )
     signature2 = get_signature(
         model_params_2.model,
@@ -154,7 +153,6 @@ def compare_model_signatures(
         optional_params=model_params_2.other_params,
         logits_getter_fn=model_params_2.logits_getter_fn,
         inp=model_params_2.inp,
-        device="cuda",
     )
 
     signature = np.array(signature)
