@@ -217,7 +217,7 @@ def _infer_model_configuration(
         config_params["residual_multiplier"] = config.residual_multiplier
         config_params["attention_multiplier"] = config.attention_multiplier
         config_params["logits_scaling"] = config.logits_scaling
-        config_params["embedding_multiplier"] = config.embedding_multiplier        
+        config_params["embedding_multiplier"] = config.embedding_multiplier
     else:
         raise ValueError(
             "FMS model implementations currently only support LlamaForCausalLM, GPTBigCodeForCausalLM, MixtralForCausalLM, and RobertaForMaskedLM"
