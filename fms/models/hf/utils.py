@@ -220,7 +220,7 @@ def _infer_model_configuration(
         config_params["embedding_multiplier"] = config.embedding_multiplier
     else:
         raise ValueError(
-            "FMS model implementations currently only support LlamaForCausalLM, GPTBigCodeForCausalLM, MixtralForCausalLM, and RobertaForMaskedLM"
+            "FMS model implementations currently only support LlamaForCausalLM, GPTBigCodeForCausalLM, MixtralForCausalLM, RobertaForMaskedLM and GraniteForCausalLM"
         )
 
     # infer common params
