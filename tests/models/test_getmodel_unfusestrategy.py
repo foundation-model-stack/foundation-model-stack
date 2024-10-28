@@ -6,17 +6,15 @@ import torch
 from fms.models import get_model
 
 
-# How to set unfuse_strategy to obtain desired `target_model` fusion
+# How to set fused_weights to obtain desired `target_model` fusion
 #
-# ckpt       target_model   unfuse_strategy   tested
+# ckpt       target_model   fused_weights     tested
 #                            FP16    GPTQ
 # --------------------------------------------------
-# none       fused           None    None     (Y, Y)
-# none       unfused         post    pre      (Y, Y)
-# fused      fused           None    None     (Y, N)
-# fused      unfused         post    n/a      (Y, N)
-# unfused    fused           None    n/a      (Y, N)
-# unfused    unfused         post    pre      (Y, N)
+# fused      fused           True    True     (Y, N)
+# fused      unfused         False   False    (Y, N)
+# unfused    fused           True    Error    (Y, N)
+# unfused    unfused         False   False    (Y, N)
 
 
 # FP16 model
@@ -67,7 +65,7 @@ class TestUnfuseStrategy:
             variant="micro",
             model_path=None,
             source="hf",
-            unfuse_strategy=request.param,
+            fused_weights=request.param,
             linear_config={
                 "linear_type": "gptq",
                 "group_size": 2,
