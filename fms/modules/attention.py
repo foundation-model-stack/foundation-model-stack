@@ -268,6 +268,7 @@ class MultiHeadAttention(nn.Module):
         position_encoder: Optional[PositionEncoder] = None,
         fused: bool = True,
         linear_config: Optional[Mapping[str, Any]] = None,
+        scale_factor: Optional[float] = None,
     ):
         super(MultiHeadAttention, self).__init__()
         self.nheads = nheads
@@ -280,6 +281,7 @@ class MultiHeadAttention(nn.Module):
         self.fused = fused
         self.linear_config = linear_config
         self.linear_type = get_linear_type(linear_config)
+        self.scale_factor = scale_factor
 
         self.in_proj: QKV = (FusedQKV if self.fused else UnfusedQKV)(
             self.emb_dim,
@@ -440,6 +442,7 @@ class MultiHeadAttention(nn.Module):
             attn_mask=attn_mask,
             dropout_p=self.p_dropout if self.training else 0.0,
             is_causal=is_causal_mask,
+            scale=self.scale_factor,
         )
 
         if attn_algorithm:
