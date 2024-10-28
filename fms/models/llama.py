@@ -535,7 +535,7 @@ serialization.register_adapter_step(
     "llama", "pre0.0.6_unfused_to_fused", serialization._pre006_adapter_step
 )
 
-_unfused_to_fused = lambda sd, ea: serialization._mlp_glu_unfused_to_fused_adapter(
+_unfused_to_fused = lambda sd, ea: serialization._mlp_glu_unfused_to_fused_adapter_step(
     serialization._attn_unfused_to_fused_step(sd, ea), ea
 )
 

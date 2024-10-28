@@ -176,11 +176,11 @@ def _attn_unfused_to_fused(
     return mutable_sd
 
 
-def _mlp_glu_unfused_to_fused_adapter(
+def _mlp_glu_unfused_to_fused_adapter_step(
     orig_sd: Mapping[str, Any], extra_kwargs: Optional[Mapping[str, Any]] = None
 ) -> Mapping[str, Any]:
     """
-    Legacy adapter for converting pre 0.0.6 unfused mlp glu weights to fused mlp glu weights
+    Adapter step for converting pre 0.0.6 unfused mlp glu weights to fused mlp glu weights
     """
     mutable_sd = dict(orig_sd)
     removed_params = set()
