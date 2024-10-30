@@ -11,6 +11,8 @@ from fms.models import get_model
 # ckpt       target_model   fused_weights     tested
 #                            FP16    GPTQ
 # --------------------------------------------------
+# none       fused           True    True     (Y, Y)
+# none       unfused         False   False    (Y, Y)
 # fused      fused           True    True     (Y, N)
 # fused      unfused         False   False    (Y, N)
 # unfused    fused           True    Error    (Y, N)
@@ -89,7 +91,7 @@ class TestUnfuseStrategy:
             ]
         )
 
-    def test_strategy_none_from_ckpt(self, get_state_dict):
+    def test_fused_weights_none_from_ckpt(self, get_state_dict):
         # reload unfused or fused state dict from file
         # fused_weights=None => always expect fused output model
         sd, _ = get_state_dict
@@ -109,7 +111,7 @@ class TestUnfuseStrategy:
                 ]
             )
 
-    def test_strategy_post_from_ckpt(self, get_state_dict):
+    def test_fused_weights_false_from_ckpt(self, get_state_dict):
         # reload unfused or fused state dict from file
         # fused_weights=False => always expect unfused output model
         sd, _ = get_state_dict
