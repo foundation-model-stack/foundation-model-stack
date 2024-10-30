@@ -532,37 +532,45 @@ models.register_model(
 
 # Create all the pieces to generate adapters for different checkpoints
 serialization.register_adapter_step(
-    "llama", "pre0.0.6_unfused_to_fused", serialization._pre006_adapter_step
+    "llama", "pre0.0.6_attn_unfused_to_fused", serialization._pre006_attn_adapter_step
 )
 
-_unfused_to_fused = lambda sd, ea: serialization._mlp_glu_unfused_to_fused_adapter_step(
-    serialization._attn_unfused_to_fused_step(sd, ea), ea
+serialization.register_adapter_step(
+    "llama",
+    "swiglu_unfused_to_fused",
+    serialization._mlp_glu_unfused_to_fused_adapter_step,
 )
 
 
-def _weight_fusion(input_sd: Mapping, extra_kwargs: Optional[Mapping] = None):
+def _weight_fusion(
+    input_sd: Mapping[str, Any], model_config: Optional[LLaMAConfig] = None, **kwargs
+) -> Mapping[str, Any]:
     has_fused_weights = True
-    if extra_kwargs and "model_config" in extra_kwargs:
-        if not extra_kwargs["model_config"]["fused_weights"]:
+    if model_config:
+        if not model_config.fused_weights:
             has_fused_weights = False
 
     new_sd = input_sd
     if has_fused_weights:
-        new_sd = _unfused_to_fused(new_sd, extra_kwargs)
+        new_sd = serialization._mlp_glu_unfused_to_fused_adapter_step(
+            serialization._attn_unfused_to_fused_step(new_sd)
+        )
     return new_sd
 
 
 serialization.register_adapter_step("llama", "weight_fusion", _weight_fusion)
 
 
-def _hf_gptq_llama_check(input_sd: Mapping, extra_kwargs: Optional[Mapping] = None):
+def _hf_gptq_llama_check(
+    input_sd: Mapping[str, Any], model_config: Optional[LLaMAConfig] = None, **kwargs
+) -> Mapping[str, Any]:
     has_fused_weights = True
     linear_type = "torch_linear"
-    if extra_kwargs and "model_config" in extra_kwargs:
-        if not extra_kwargs["model_config"]["fused_weights"]:
+    if model_config:
+        if not model_config.fused_weights:
             has_fused_weights = False
-        if extra_kwargs["model_config"]["linear_config"]:
-            linear_type = extra_kwargs["model_config"]["linear_config"]["linear_type"]
+        if model_config.linear_config:
+            linear_type = model_config.linear_config["linear_type"]
 
     if "gptq" in linear_type and has_fused_weights:
         raise ValueError(
@@ -577,7 +585,7 @@ serialization.register_adapter_step(
 )
 
 
-def _meta_to_fms_names(input_sd: Mapping, extra_kwargs: Optional[Mapping] = None):
+def _meta_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]:
     replacements = [
         (r"^tok_embeddings", "shared.emb"),
         (r"^norm", "dec_norm"),
@@ -607,9 +615,7 @@ def _meta_to_fms_names(input_sd: Mapping, extra_kwargs: Optional[Mapping] = None
 serialization.register_adapter_step("llama", "meta_to_fms_names", _meta_to_fms_names)
 
 
-def _hf_to_fms_names(
-    input_sd: Mapping, extra_kwargs: Optional[Mapping] = None
-) -> Mapping:
+def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]:
     replacements = [
         (r"^lm_head.weight", "shared.head.weight"),
         (r"^model.embed_tokens.weight", "shared.emb.weight"),
@@ -637,7 +643,7 @@ def _hf_to_fms_names(
 serialization.register_adapter_step("llama", "hf_to_fms_names", _hf_to_fms_names)
 
 
-def _get_rope_params(linear_type):
+def _get_rope_params(linear_type: str) -> list[str]:
     if "gptq" in linear_type:
         return ["qweight", "scales", "qzeros", "bias"]
     else:  # torch.nn.Linear
@@ -645,18 +651,15 @@ def _get_rope_params(linear_type):
 
 
 def _hf_to_fms_rope(
-    input_sd: Mapping, extra_kwargs: Optional[Mapping] = None
-) -> Mapping:
+    input_sd: Mapping[str, Any], model_config: Optional[LLaMAConfig] = None, **kwargs
+) -> Mapping[str, Any]:
     new_sd = {}
 
-    if extra_kwargs and "model_config" in extra_kwargs:
-        head_size = (
-            extra_kwargs["model_config"]["emb_dim"]
-            // extra_kwargs["model_config"]["nheads"]
-        )
+    if model_config:
+        head_size = model_config.emb_dim // model_config.nheads
         linear_type = "torch_linear"
-        if extra_kwargs["model_config"]["linear_config"]:
-            linear_type = extra_kwargs["model_config"]["linear_config"]["linear_type"]
+        if model_config.linear_config:
+            linear_type = model_config.linear_config["linear_type"]
     else:
         logger.warning("Missing model_config, assuming defaults for head_size")
         head_size = 128  # Good default for most models
@@ -713,7 +716,11 @@ serialization.register_adapter(
     "hf",
     ["hf_to_fms_names", "hf_to_fms_rope", "hf_gptq_fusion_check", "weight_fusion"],
 )
-serialization.register_adapter("llama", "fms.pre0.0.6", ["pre0.0.6_unfused_to_fused"])
+serialization.register_adapter(
+    "llama",
+    "fms.pre0.0.6",
+    ["pre0.0.6_attn_unfused_to_fused", "swiglu_unfused_to_fused"],
+)
 
 
 def convert_hf_llama(hf_model: "LlamaForCausalLM") -> LLaMA:  # type: ignore

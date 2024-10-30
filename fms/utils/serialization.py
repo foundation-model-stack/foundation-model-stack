@@ -13,23 +13,17 @@ from fms.modules.tp import TPModule
 
 
 __adapters: MutableMapping[
-    str,
-    MutableMapping[
-        str, Callable[[Mapping[str, Any], Mapping[str, Any]], Mapping[str, Any]]
-    ],
+    str, MutableMapping[str, Callable[[Mapping[str, Any]], Mapping[str, Any]]]
 ] = {}
 __adapter_steps: MutableMapping[
-    str,
-    MutableMapping[
-        str, Callable[[Mapping[str, Any], Mapping[str, Any]], Mapping[str, Any]]
-    ],
+    str, MutableMapping[str, Callable[[Mapping[str, Any]], Mapping[str, Any]]]
 ] = {}
 
 
 def register_adapter_step(
     architecture: str,
     adapter_name: str,
-    adapter_step: Callable[[Mapping[str, Any], Mapping[str, Any]], Mapping[str, Any]],
+    adapter_step: Callable[[Mapping[str, Any]], Mapping[str, Any]],
 ):
     """
     Registers a state dict adapter step to be available to the (de) serialization
@@ -39,12 +33,11 @@ def register_adapter_step(
     architecture: The name of the model architecture, e.g. 'llama'
     adapter_name: A name to identiy the step for the checkpoint and model
     adapter_step: the class of the adapter. The class must accept two constructor
-                parameter, which will be a state dict (`OrderedDict`), and a dictionary
-                with extra information that might be needed by the step (such as ModelConfig,
-                linear_config, device specific info, etc.)
+        parameters, which will be a state dict (`OrderedDict`), and a collection
+        of supported kwargs (such as model_config, etc.)
     """
     adapter_steps: MutableMapping[
-        str, Callable[[Mapping[str, Any], Mapping[str, Any]], Mapping[str, Any]]
+        str, Callable[[Mapping[str, Any]], Mapping[str, Any]]
     ] = {}
     if architecture in __adapter_steps:
         adapter_steps = __adapter_steps[architecture]
@@ -75,9 +68,7 @@ def register_adapter(
             architecture and source combination. This can be augmented with extra
             steps if needed during call to _get_adapter()
     """
-    sources: MutableMapping[
-        str, Callable[[Mapping[str, Any], Mapping[str, Any]], Mapping[str, Any]]
-    ] = {}
+    sources: MutableMapping[str, Callable[[Mapping[str, Any]], Mapping[str, Any]]] = {}
     if architecture in __adapters:
         sources = __adapters[architecture]
 
@@ -88,12 +79,21 @@ def register_adapter(
 
     # Create a new base adapter for this source
     step_functions = [__adapter_steps[architecture][step] for step in adapter_steps]
-    adapter = lambda initial_sd, extra_args: reduce(
-        lambda state_dict, step_func: step_func(state_dict, extra_args),
-        step_functions,
-        initial_sd,
-    )
-    sources[source] = adapter
+
+    def adapter_fn(initial_sd: Mapping[str, Any], **extra_kwargs) -> Mapping[str, Any]:
+        def reduce_fn(
+            state_dict: Mapping[str, Any],
+            step_func: Callable[[Mapping[str, Any]], Mapping[str, Any]],
+        ) -> Mapping[str, Any]:
+            return step_func(state_dict, **extra_kwargs)
+
+        return reduce(
+            reduce_fn,
+            step_functions,
+            initial_sd,
+        )
+
+    sources[source] = adapter_fn
     __adapters[architecture] = sources
 
 
@@ -110,8 +110,8 @@ def list_sources(architecture: str):
     return list(__adapters[architecture].keys())
 
 
-def _pre006_adapter_step(
-    orig_sd: Mapping[str, Any], extra_kwargs: Optional[Mapping[str, Any]] = None
+def _pre006_attn_adapter_step(
+    orig_sd: Mapping[str, Any], **kwargs
 ) -> Mapping[str, Any]:
     """
     Legacy adapter step for converting pre 0.0.6 unfused attn weights to fused attn weights
@@ -120,7 +120,7 @@ def _pre006_adapter_step(
 
 
 def _attn_unfused_to_fused_step(
-    orig_sd: Mapping[str, Any], extra_kwargs: Optional[Mapping[str, Any]] = None
+    orig_sd: Mapping[str, Any], **kwargs
 ) -> Mapping[str, Any]:
     """
     Adapter step for converting unfused attn weights to fused attn weights
@@ -177,10 +177,10 @@ def _attn_unfused_to_fused(
 
 
 def _mlp_glu_unfused_to_fused_adapter_step(
-    orig_sd: Mapping[str, Any], extra_kwargs: Optional[Mapping[str, Any]] = None
+    orig_sd: Mapping[str, Any], **kwargs
 ) -> Mapping[str, Any]:
     """
-    Adapter step for converting pre 0.0.6 unfused mlp glu weights to fused mlp glu weights
+    Adapter step for converting unfused mlp glu weights to fused mlp glu weights
     """
     mutable_sd = dict(orig_sd)
     removed_params = set()
@@ -221,7 +221,7 @@ def _mlp_glu_unfused_to_fused_adapter_step(
 
 def _get_adapter(
     architecture: str, source: Optional[str]
-) -> Callable[[Mapping[str, Any], Mapping[str, Any]], Mapping[str, Any]]:
+) -> Callable[[Mapping[str, Any]], Mapping[str, Any]]:
     if (
         source is None
         or architecture not in __adapters
@@ -230,7 +230,10 @@ def _get_adapter(
         # if no adapter is registered, assume the attributes are already in
         # fms format.
         # should we raise an error here instead?
-        return lambda x, ea: x
+        def id_fn(state_dict: Mapping[str, Any], **kwargs) -> Mapping[str, Any]:
+            return state_dict
+
+        return id_fn
     else:
         return __adapters[architecture][source]
 
@@ -254,7 +257,7 @@ def get_adapted(
     if not len(state_dict):
         return state_dict
     adapter = _get_adapter(architecture, source)
-    adapted = adapter(state_dict, adapter_kwargs)
+    adapted = adapter(state_dict, **adapter_kwargs)
     return adapted
 
 
@@ -473,7 +476,7 @@ def load_state_dict_into_model(
     # Prepare the extra_kwargs for the adapter
     adapter_kwargs = {}
     if hasattr(model, "config"):
-        adapter_kwargs["model_config"] = model.config.as_dict()
+        adapter_kwargs["model_config"] = model.config
 
     # 2. Decide if model needs sharding and how (for now only TP)
     needs_tp_sharding = checkpoint_sharding != "tp" and distributed_strategy == "tp"
@@ -500,7 +503,7 @@ def load_state_dict_into_model(
             for psd_key in partial_sd.keys():
                 if partial_sd[psd_key].device != initial_device:
                     partial_sd[psd_key] = partial_sd[psd_key].to(device=initial_device)
-            fms_partial_sd = adapter(partial_sd, adapter_kwargs)
+            fms_partial_sd = adapter(partial_sd, **adapter_kwargs)
             unused_keys_partial = _load_partial_state_dict(
                 model=model,
                 state_dict=fms_partial_sd,

@@ -445,11 +445,13 @@ models.register_model(
 
 # Create all the pieces to generate adapters for different checkpoints
 serialization.register_adapter_step(
-    _architecture_name, "pre0.0.6_unfused_to_fused", serialization._pre006_adapter_step
+    _architecture_name,
+    "pre0.0.6_attn_unfused_to_fused",
+    serialization._pre006_attn_adapter_step,
 )
 
 
-def _gptq_unfuse(fused_weight, fused_weight_name, emb_size, pack_ratio):
+def _gptq_unfuse(fused_weight, fused_weight_name: str, emb_size: int, pack_ratio: int):
     if "qweight" in fused_weight_name:
         out_feat = fused_weight.size(1)
         kv_out_feat = (out_feat - emb_size) // 2
@@ -489,7 +491,7 @@ def _gptq_unfuse(fused_weight, fused_weight_name, emb_size, pack_ratio):
         return fused_weight, fused_weight, fused_weight
 
 
-def _torch_unfuse(fused_weight, fused_weight_name, emb_size):
+def _torch_unfuse(fused_weight, fused_weight_name: str, emb_size: int):
     out_feat = fused_weight.size(0)
     kv_out_feat = (out_feat - emb_size) // 2
     return (
@@ -499,20 +501,23 @@ def _torch_unfuse(fused_weight, fused_weight_name, emb_size):
     )
 
 
-def _weight_fusion(input_sd: Mapping, extra_kwargs: Optional[Mapping] = None):
+def _weight_fusion(
+    input_sd: Mapping[str, Any],
+    model_config: Optional[GPTBigCodeConfig] = None,
+    **kwargs,
+) -> Mapping[str, Any]:
     has_fused_weights = True
-    if extra_kwargs and "model_config" in extra_kwargs:
-        if not extra_kwargs["model_config"]["fused_weights"]:
+    if model_config:
+        if not model_config.fused_weights:
             has_fused_weights = False
 
     new_sd = input_sd
     if not has_fused_weights:
-        if extra_kwargs and "model_config" in extra_kwargs:
-            emb_size = extra_kwargs["model_config"]["emb_dim"]
+        if model_config:
+            emb_size = model_config.emb_dim
             is_gptq = (
-                extra_kwargs["model_config"]["linear_config"] is not None
-                and "gptq"
-                in extra_kwargs["model_config"]["linear_config"]["linear_type"]
+                model_config.linear_config is not None
+                and "gptq" in model_config.linear_config["linear_type"]
             )
         else:
             raise ValueError(
@@ -548,7 +553,7 @@ def _weight_fusion(input_sd: Mapping, extra_kwargs: Optional[Mapping] = None):
 serialization.register_adapter_step(_architecture_name, "weight_fusion", _weight_fusion)
 
 
-def _hf_to_fms_names(hf_sd: Mapping, extra_kwargs: Optional[Mapping] = None) -> Mapping:
+def _hf_to_fms_names(hf_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]:
     import re
 
     replacements = [
@@ -586,5 +591,7 @@ serialization.register_adapter(
     _architecture_name, "hf", ["hf_to_fms_names", "weight_fusion"]
 )
 serialization.register_adapter(
-    _architecture_name, "fms.pre0.0.6", ["pre0.0.6_unfused_to_fused"]
+    _architecture_name,
+    "fms.pre0.0.6",
+    ["pre0.0.6_attn_unfused_to_fused", "weight_fusion"],
 )

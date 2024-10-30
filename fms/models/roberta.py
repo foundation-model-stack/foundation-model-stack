@@ -307,30 +307,30 @@ models.register_model(
 )
 
 serialization.register_adapter_step(
-    _architecture_name, "pre0.0.6_unfused_to_fused", serialization._pre006_adapter_step
+    _architecture_name,
+    "pre0.0.6_attn_unfused_to_fused",
+    serialization._pre006_attn_adapter_step,
 )
 
-_unfused_to_fused = lambda sd, ea: serialization._attn_unfused_to_fused_step(sd, ea)
 
-
-def _weight_fusion(input_sd: Mapping, extra_kwargs: Optional[Mapping] = None):
+def _weight_fusion(
+    input_sd: Mapping[str, Any], model_config: Optional[RoBERTaConfig] = None, **kwargs
+) -> Mapping[str, Any]:
     has_fused_weights = True
-    if extra_kwargs and "model_config" in extra_kwargs:
-        if not extra_kwargs["model_config"]["fused_weights"]:
+    if model_config:
+        if not model_config.fused_weights:
             has_fused_weights = False
 
     new_sd = input_sd
     if has_fused_weights:
-        new_sd = _unfused_to_fused(new_sd, extra_kwargs)
+        new_sd = serialization._attn_unfused_to_fused_step(new_sd)
     return new_sd
 
 
 serialization.register_adapter_step(_architecture_name, "weight_fusion", _weight_fusion)
 
 
-def _hf_to_fms_names(
-    hf_sd: Mapping[Any, Any], extra_kwargs: Optional[Mapping] = None
-) -> Mapping[Any, Any]:
+def _hf_to_fms_names(hf_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]:
     replacements = [
         (r"^roberta.embeddings.word_embeddings.weight", "base_model.embedding.weight"),
         (
@@ -370,4 +370,6 @@ serialization.register_adapter_step(
 )
 
 serialization.register_adapter("roberta", "hf", ["hf_to_fms_names", "weight_fusion"])
-serialization.register_adapter("roberta", "fms.pre0.0.6", ["pre0.0.6_unfused_to_fused"])
+serialization.register_adapter(
+    "roberta", "fms.pre0.0.6", ["pre0.0.6_attn_unfused_to_fused"]
+)

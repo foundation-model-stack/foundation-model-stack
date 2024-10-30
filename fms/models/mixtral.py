@@ -375,18 +375,18 @@ models.register_model(
 
 # Create all the pieces to generate adapters for different checkpoints
 serialization.register_adapter_step(
-    _architecture_name, "pre0.0.6_unfused_to_fused", serialization._pre006_adapter_step
+    _architecture_name,
+    "pre0.0.6_attn_unfused_to_fused",
+    serialization._pre006_attn_adapter_step,
 )
-
-_unfused_to_fused = lambda sd, ea: serialization._attn_unfused_to_fused_step(sd, ea)
 
 
 def _weight_fusion(
-    input_sd: Mapping[str, Any], extra_kwargs: Optional[Mapping[str, Any]] = None
+    input_sd: Mapping[str, Any], model_config: Optional[MixtralConfig] = None, **kwargs
 ) -> Mapping[str, Any]:
     has_fused_weights = True
-    if extra_kwargs and "model_config" in extra_kwargs:
-        if not extra_kwargs["model_config"]["fused_weights"]:
+    if model_config:
+        if not model_config.fused_weights:
             raise ValueError("Unfused weights unsupported on FMS Mixtral!")
 
     new_sd: MutableMapping[str, Any] = dict(input_sd)
@@ -401,7 +401,7 @@ def _weight_fusion(
                 del new_sd[key]
                 del new_sd[w3_weight]
 
-        new_sd = dict(_unfused_to_fused(new_sd, extra_kwargs))
+        new_sd = dict(serialization._attn_unfused_to_fused_step(new_sd))
 
     return new_sd
 
@@ -409,9 +409,7 @@ def _weight_fusion(
 serialization.register_adapter_step(_architecture_name, "weight_fusion", _weight_fusion)
 
 
-def _hf_to_fms_names(
-    input_sd: Mapping, extra_kwargs: Optional[Mapping] = None
-) -> Mapping:
+def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]:
     replacements = [
         (r"output.weight", "head.weight"),
         (r"tok_embeddings.weight", "base_model.embedding.weight"),
@@ -481,5 +479,5 @@ serialization.register_adapter(
     _architecture_name, "hf", ["hf_to_fms_names", "weight_fusion"]
 )
 serialization.register_adapter(
-    _architecture_name, "fms.pre0.0.6", ["pre0.0.6_unfused_to_fused"]
+    _architecture_name, "fms.pre0.0.6", ["pre0.0.6_attn_unfused_to_fused"]
 )
