@@ -371,7 +371,5 @@ serialization.register_adapter_step(
 
 serialization.register_adapter("roberta", "hf", ["hf_to_fms_names", "weight_fusion"])
 serialization.register_adapter(
-    "roberta",
-    "fms.pre0.0.6",
-    ["pre0.0.6_attn_unfused_to_fused", "weight_fusion"]
+    "roberta", "fms.pre0.0.6", ["pre0.0.6_attn_unfused_to_fused", "weight_fusion"]
 )

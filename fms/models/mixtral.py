@@ -481,5 +481,5 @@ serialization.register_adapter(
 serialization.register_adapter(
     _architecture_name,
     "fms.pre0.0.6",
-    ["pre0.0.6_attn_unfused_to_fused", "weight_fusion"]
+    ["pre0.0.6_attn_unfused_to_fused", "weight_fusion"],
 )
