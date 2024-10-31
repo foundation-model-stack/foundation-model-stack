@@ -719,7 +719,7 @@ serialization.register_adapter(
 serialization.register_adapter(
     "llama",
     "fms.pre0.0.6",
-    ["pre0.0.6_attn_unfused_to_fused", "swiglu_unfused_to_fused"],
+    ["pre0.0.6_attn_unfused_to_fused", "swiglu_unfused_to_fused", "weight_fusion"],
 )
 
 
