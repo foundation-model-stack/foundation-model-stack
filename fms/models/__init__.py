@@ -103,10 +103,6 @@ def __maybe_infer_model_variant(
                     Your values are: variant - {variant}; model_path - {model_path}; source - {source}
                     """
                 )
-            if len(kwargs) > 0:
-                logger.warning(
-                    f"ignoring the following parameters as a pretrained model with an inferred configuration is being loaded: {list(kwargs.keys())}"
-                )
         if is_hf_configured and variant is None:
             raise ValueError(
                 """architecture="hf_configured" implies model config is loaded from variant, therefore it should be set"""
@@ -121,8 +117,17 @@ def __maybe_infer_model_variant(
         variant = extra_kwargs.pop("variant")
 
         if is_hf_pretrained:
-            model_path = extra_kwargs.pop("model_path")
+            model_path = (
+                model_path if model_path is not None else extra_kwargs.pop("model_path")
+            )
             source = "hf"
+            for kwarg in kwargs:
+                if kwarg in extra_kwargs:
+                    logger.warning(
+                        f"ignoring {kwarg} as the pretrained model config overrides it"
+                    )
+                else:
+                    extra_kwargs[kwarg] = kwargs[kwarg]
         else:
             extra_kwargs = {**extra_kwargs, **kwargs}
 
@@ -284,43 +289,6 @@ def _is_dp(distributed_strategy):
     return distributed_strategy in {"fsdp", "hsdp", "ddp"}
 
 
-def _validate_unfuse_strategy(extra_args, rank: int = 0):
-    """Input checkpoint and output model may be fused or unfused, thus
-    support is needed for all 4 possible combinations of fusion.
-
-    For FP16 models, the checkpoint is always fused (converting from
-    unfused if needed), then its parameters are copied into a fused model.
-    If an unfused output model is desired, `unfuse_strategy` can be set
-    to `post` such that the fused model will be unfused as the last
-    step of processing.
-
-    For GPTQ, handling an unfused checkpoint requires instantiation of
-    an unfused model. This is obtained by setting `unfuse_strategy` to
-    `pre`.
-
-    ckpt       target_model   unfuse_strategy
-                              FP16     GPTQ
-    -----------------------------------------
-    fused      fused          None     None
-    fused      unfused        post     n/a
-    unfused    fused          None     n/a
-    unfused    unfused        post     pre
-    """
-
-    unfuse = extra_args["unfuse_strategy"]
-    if unfuse is not None and unfuse not in ["post", "pre"]:
-        raise ValueError(
-            f"Unsupported unfuse strategy `{unfuse}`. Choose between [None, `post`, `pre`]"
-        )
-    if rank == 0:
-        model_str = "fused" if unfuse is None else "unfused"
-        print(
-            f"Output model will use {model_str} projections "
-            f"(unfuse_strategy = {unfuse}). "
-            "Select a different unfuse_strategy to change this behavior."
-        )
-
-
 def get_model(
     architecture: str,
     variant: Optional[str] = None,
@@ -440,13 +408,6 @@ def get_model(
                 devices, _guess_num_layers(lazy_sd)
             )
 
-    if extra_args.get("unfuse_strategy", None):
-        _validate_unfuse_strategy(extra_args, rank)
-
-        # change source for "gptq + pre" (= unfused gptq ckpt into unfused model)
-        if is_gptq and extra_args.get("unfuse_strategy") == "pre" and source == "hf":
-            source = "gptq_" + source + "_unfused"
-
     # Create the model on meta device to allocate weights lazily
     fms_model = _get_model_instance(
         architecture,
@@ -506,9 +467,6 @@ def get_model(
             if t.device == torch.device("meta")
             else t
         )
-
-    if extra_args.get("unfuse_strategy", None) == "post":
-        fms_model = fusion.apply_unfuse_weights(fms_model)
 
     return fms_model
 

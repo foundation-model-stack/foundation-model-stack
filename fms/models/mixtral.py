@@ -1,7 +1,7 @@
 import math
 import re
 from dataclasses import dataclass
-from typing import List, Mapping, Optional, Tuple
+from typing import Any, List, Mapping, MutableMapping, Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -36,6 +36,7 @@ class MixtralConfig(ModelConfig):
     max_expected_seq_len: int = 32768
     rope_base: float = 1000000.0
     ntk_scaling: bool = False
+    fused_weights: bool = True  # Doesn't work with False!
 
 
 class MixtralBlock(nn.Module):
@@ -371,18 +372,52 @@ models.register_model(
     _architecture_name, "8x7b", _mixtral_factory_factory(_8x7b_config)
 )
 
-_convert_to_fused_qkv = serialization._legacy_attn_unfused_to_fused_adapter
+
+# Create all the pieces to generate adapters for different checkpoints
+serialization.register_adapter_step(
+    _architecture_name,
+    "pre0.0.6_attn_unfused_to_fused",
+    serialization._pre006_attn_adapter_step,
+)
 
 
-def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
+def _weight_fusion(
+    input_sd: Mapping[str, Any], model_config: Optional[MixtralConfig] = None, **kwargs
+) -> Mapping[str, Any]:
+    has_fused_weights = True
+    if model_config:
+        if not model_config.fused_weights:
+            raise ValueError("Unfused weights unsupported on FMS Mixtral!")
+
+    new_sd: MutableMapping[str, Any] = dict(input_sd)
+    if has_fused_weights:
+        for key in list(new_sd.keys()):
+            if key not in new_sd:
+                continue
+            if "w1" in key:
+                w3_weight = key.replace("w1", "w3")
+                fused_name = key.replace("w1", "w13")
+                new_sd[fused_name] = torch.cat([new_sd[key], new_sd[w3_weight]], dim=1)
+                del new_sd[key]
+                del new_sd[w3_weight]
+
+        new_sd = dict(serialization._attn_unfused_to_fused_step(new_sd))
+
+    return new_sd
+
+
+serialization.register_adapter_step(_architecture_name, "weight_fusion", _weight_fusion)
+
+
+def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]:
     replacements = [
         (r"output.weight", "head.weight"),
         (r"tok_embeddings.weight", "base_model.embedding.weight"),
         (r"^norm", "base_model.dec_norm"),
         (r"^layers", "base_model.layers"),
-        (r"attention\.wk", "attn.key"),
-        (r"attention\.wv", "attn.value"),
-        (r"attention\.wq", "attn.query"),
+        (r"attention\.wk", "attn.in_proj.key"),
+        (r"attention\.wv", "attn.in_proj.value"),
+        (r"attention\.wq", "attn.in_proj.query"),
         (r"attention\.wo", "attn.dense"),
         (r"block_sparse_moe\.w1", "ff_sub_layer.cond_ffn.w1"),
         (r"block_sparse_moe\.w2", "ff_sub_layer.cond_ffn.w2"),
@@ -392,8 +427,7 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
         (r"ffn_norm", "ff_ln"),
     ]
     new_sd = {}
-
-    for name, param in hf_sd.items():
+    for name, param in input_sd.items():
         new_name = name
         for pattern, repl in replacements:
             new_name = re.sub(pattern, repl, new_name)
@@ -401,7 +435,7 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
 
         if "gate" in new_name:
             weight_name = name.replace("gate", "w1")[:-7]
-            if weight_name not in hf_sd:
+            if weight_name not in input_sd:
                 missing_weights = [
                     name.replace("gate", "w1")[:-7],
                     name.replace("gate", "w2")[:-7],
@@ -411,7 +445,7 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
 
         if "w1" in new_name or "w2" in new_name or "w3" in new_name:
             gate_name = re.sub(r"w\d", "gate", name) + ".weight"
-            if gate_name not in hf_sd:
+            if gate_name not in input_sd:
                 missing_weights = [
                     gate_name,
                     re.sub(r"w\d", "w1", name),
@@ -420,7 +454,7 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
                 ]
                 missing_weights = [w for w in missing_weights if w != name]
                 raise ValueError(f"Missing {missing_weights}")
-            num_experts = hf_sd[gate_name].size(0)
+            num_experts = input_sd[gate_name].size(0)
             temp = new_sd[new_name]
             new_sd[new_name] = temp.reshape(
                 num_experts, temp.size(0) // num_experts, temp.size(1)
@@ -431,19 +465,21 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
             continue
         if "gate" in key:
             new_sd[key] = new_sd[key].contiguous()
-        if "w1" in key:
-            w3_weight = key.replace("w1", "w3")
-            fused_name = key.replace("w1", "w13")
-            new_sd[fused_name] = torch.cat([new_sd[key], new_sd[w3_weight]], dim=1)
-            del new_sd[key]
-            del new_sd[w3_weight]
         if "w2" in key:
             new_sd[key] = new_sd[key].transpose(1, 2).contiguous()
-
-    new_sd = _convert_to_fused_qkv(new_sd)
 
     return new_sd
 
 
-serialization.register_adapter("mixtral", "hf", _hf_sd_to_fms_sd)
-serialization.register_adapter("mixtral", "fms.pre0.0.6", _convert_to_fused_qkv)
+serialization.register_adapter_step(
+    _architecture_name, "hf_to_fms_names", _hf_to_fms_names
+)
+
+serialization.register_adapter(
+    _architecture_name, "hf", ["hf_to_fms_names", "weight_fusion"]
+)
+serialization.register_adapter(
+    _architecture_name,
+    "fms.pre0.0.6",
+    ["pre0.0.6_attn_unfused_to_fused", "weight_fusion"],
+)

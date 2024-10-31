@@ -8,12 +8,7 @@ import torch
 import torch.nn as nn
 
 from fms import models
-from fms.distributed.strategy import (
-    DistributedStrategy,
-    NoOpStrategy,
-    TensorParallelStrategy,
-    UniformModelParallelStrategy,
-)
+from fms.distributed.strategy import DistributedStrategy, NoOpStrategy
 from fms.modules.attention import MultiHeadAttention
 from fms.modules.feedforward import GatedLinearUnit
 from fms.modules.layernorm import LayerNormParameterized
@@ -21,7 +16,6 @@ from fms.modules.positions import RotaryEmbedding
 from fms.utils import serialization
 from fms.utils.activation import str_to_activation
 from fms.utils.config import ModelConfig
-from fms.utils.tokenizers import _has_hf, get_tokenizer
 
 
 logger = logging.getLogger(__name__)
@@ -51,7 +45,7 @@ class GraniteConfig(ModelConfig):
     residual_multiplier: float = 1.0
     attention_multiplier: float = 1.0
     linear_config: Optional[Mapping[str, Any]] = None
-    unfuse_strategy: Optional[str] = None  # TODO: could be an Enum
+    fused_weights: bool = True
 
 
 class GraniteBlock(nn.Module):
@@ -93,7 +87,7 @@ class GraniteBlock(nn.Module):
             p_dropout=self.config.p_dropout,
             use_bias=self.config.attn_bias,
             position_encoder=rotary_emb,
-            fused=(self.config.unfuse_strategy != "pre"),
+            fused=self.config.fused_weights,
             linear_config=self.config.linear_config,
             scale_factor=self.config.attention_multiplier,
         )
@@ -104,7 +98,7 @@ class GraniteBlock(nn.Module):
             activation_fn=str_to_activation(self.config.activation_fn),
             p_dropout=self.config.p_dropout,
             use_bias=self.config.mlp_bias,
-            fused=(self.config.unfuse_strategy != "pre"),
+            fused=self.config.fused_weights,
             linear_config=self.config.linear_config,
         )
 
@@ -435,20 +429,34 @@ def _granite_factory_factory(config):
 models.register_model(_architecture_name, "8b", _granite_factory_factory(_8b_config))
 
 
-_convert_to_fused = lambda sd: serialization._legacy_mlp_glu_unfused_to_fused_adapter(
-    serialization._legacy_attn_unfused_to_fused_adapter(sd)
-)
+def _weight_fusion(
+    input_sd: Mapping, model_config: Optional[GraniteConfig] = None, **kwargs
+):
+    has_fused_weights = True
+    if model_config:
+        if not model_config.fused_weights:
+            has_fused_weights = False
+
+    new_sd = input_sd
+    if has_fused_weights:
+        new_sd = serialization._mlp_glu_unfused_to_fused_adapter_step(
+            serialization._attn_unfused_to_fused_step(new_sd)
+        )
+    return new_sd
 
 
-def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
+serialization.register_adapter_step(_architecture_name, "weight_fusion", _weight_fusion)
+
+
+def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]:
     replacements = [
         (r"^lm_head.weight", "head.weight"),
         (r"^model.embed_tokens.weight", "base_model.embedding.weight"),
         (r"^model.norm", "base_model.dec_norm"),
         (r"^model.layers", "base_model.layers"),
-        (r"self_attn\.k_proj", "attn.key"),
-        (r"self_attn\.v_proj", "attn.value"),
-        (r"self_attn\.q_proj", "attn.query"),
+        (r"self_attn\.k_proj", "attn.in_proj.key"),
+        (r"self_attn\.v_proj", "attn.in_proj.value"),
+        (r"self_attn\.q_proj", "attn.in_proj.query"),
         (r"self_attn\.o_proj", "attn.dense"),
         (r"mlp\.gate_proj", "ff_sub_layer.wg"),
         (r"mlp\.up_proj", "ff_sub_layer.w1"),
@@ -457,18 +465,48 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
         (r"post_attention_layernorm", "ff_ln"),
     ]
     new_sd = {}
-
-    trans_required_pattern = re.compile(
-        "base_model.layers.[0-9]+.attn.(query|key).(weight|bias)"
-    )
-    for name, param in hf_sd.items():
+    for name, param in input_sd.items():
         new_name = name
         for pattern, repl in replacements:
             new_name = re.sub(pattern, repl, new_name)
         new_sd[new_name] = param
+    return new_sd
 
+
+serialization.register_adapter_step(
+    _architecture_name, "hf_to_fms_names", _hf_to_fms_names
+)
+
+
+def _get_rope_params(linear_type: str) -> list[str]:
+    if "gptq" in linear_type:
+        return ["qweight", "scales", "qzeros", "bias"]
+    else:  # torch.nn.Linear
+        return ["weight", "bias"]
+
+
+def _hf_to_fms_rope(
+    input_sd: Mapping[str, Any], model_config: Optional[GraniteConfig] = None, **kwargs
+) -> Mapping[str, Any]:
+    new_sd = {}
+
+    if model_config:
+        head_size = model_config.emb_dim // model_config.nheads
+        linear_type = "torch_linear"
+        if model_config.linear_config:
+            linear_type = model_config.linear_config["linear_type"]
+    else:
+        logger.warning("Missing model_config, assuming defaults for head_size")
+        head_size = 128  # Good default for most models
+        linear_type = "torch_linear"
+
+    rope_params = _get_rope_params(linear_type)
+    trans_required_pattern = re.compile(
+        f"base_model.layers.[0-9]+.attn.in_proj.(query|key).({'|'.join(rope_params)})"
+    )
+    for name, param in input_sd.items():
         # hf -> fms requires a transpose operation for the query and key
-        # weight and bias parameters
+        # weight and bias parameters for Llama models
         # This transpose is due to the different implementation of RoPE in
         # HF and FMS. While FMS follows the original RoPE paper
         # (https://arxiv.org/abs/2104.09864), HF has its own implementation
@@ -478,26 +516,36 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
         # Therefore, to make FMS produce the correct order of outputs when
         # loading from an HF checkpoint, we need to undo the transformation
         # that HF does from the original Meta weights:
-        if bool(trans_required_pattern.match(new_name)):
-            temp = new_sd[new_name]
-            # nheads is used in the transformation required for hf->fms
-            if temp.size(0) == 2560:
-                head_size = 80  # granite 3b code
-            else:
-                head_size = 128  # every other Granite model in existence
-            nheads = int(temp.size(0) / head_size)
+        if bool(trans_required_pattern.match(name)):
+            temp = param
+            if "gptq" in linear_type and temp.dim() == 2:
+                # GPTQ qweights are [in_feat, out_feat] (unlike usual [out_feat, in_feat])
+                # and are fully transposed before & after process
+                temp = temp.transpose(0, 1)
+            # num_heads is used in the transformation required for hf->fms
+            # can't be precomputed because q and k might have different num_heads
+            num_heads = temp.size(0) // head_size
 
             if temp.dim() == 2:  # weight
-                temp_view = temp.view(nheads, 2, -1, temp.size(1))
+                temp_view = temp.view(num_heads, 2, -1, temp.size(1))
             else:  # bias
-                temp_view = temp.view(nheads, 2, -1)
+                temp_view = temp.view(num_heads, 2, -1)
             temp = temp_view.transpose(1, 2).reshape(*temp.size())
 
-            new_sd[new_name] = temp
+            if "gptq" in linear_type and temp.dim() == 2:
+                temp = temp.transpose(0, 1)
 
-    fused_sd = _convert_to_fused(new_sd)
+            new_sd[name] = temp
+        else:
+            new_sd[name] = param
 
-    return fused_sd
+    return new_sd
 
 
-serialization.register_adapter("granite", "hf", _hf_sd_to_fms_sd)
+serialization.register_adapter_step(
+    _architecture_name, "hf_to_fms_rope", _hf_to_fms_rope
+)
+
+serialization.register_adapter(
+    _architecture_name, "hf", ["hf_to_fms_names", "hf_to_fms_rope", "weight_fusion"]
+)

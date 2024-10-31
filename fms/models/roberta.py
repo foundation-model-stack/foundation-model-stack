@@ -31,6 +31,7 @@ class RoBERTaConfig(ModelConfig):
     multiquery_attn: bool = False
     norm_eps: float = 1e-12
     tie_heads: bool = False
+    fused_weights: bool = True
 
 
 class RoBERTaBlock(nn.Module):
@@ -305,10 +306,31 @@ models.register_model(
     _architecture_name, "base", _roberta_factory_factory(_base_config)
 )
 
-_convert_to_fused_qkv = serialization._legacy_attn_unfused_to_fused_adapter
+serialization.register_adapter_step(
+    _architecture_name,
+    "pre0.0.6_attn_unfused_to_fused",
+    serialization._pre006_attn_adapter_step,
+)
 
 
-def _hf_sd_to_fms_sd(hf_sd: Mapping[Any, Any]) -> Mapping[Any, Any]:
+def _weight_fusion(
+    input_sd: Mapping[str, Any], model_config: Optional[RoBERTaConfig] = None, **kwargs
+) -> Mapping[str, Any]:
+    has_fused_weights = True
+    if model_config:
+        if not model_config.fused_weights:
+            has_fused_weights = False
+
+    new_sd = input_sd
+    if has_fused_weights:
+        new_sd = serialization._attn_unfused_to_fused_step(new_sd)
+    return new_sd
+
+
+serialization.register_adapter_step(_architecture_name, "weight_fusion", _weight_fusion)
+
+
+def _hf_to_fms_names(hf_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]:
     replacements = [
         (r"^roberta.embeddings.word_embeddings.weight", "base_model.embedding.weight"),
         (
@@ -319,9 +341,9 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping[Any, Any]) -> Mapping[Any, Any]:
         (r"^roberta.encoder.layer", "base_model.layers"),
         (r"attention\.output\.LayerNorm", "ln"),
         (r"output\.LayerNorm", "ff_ln"),
-        (r"attention\.self\.key", "attn.key"),
-        (r"attention\.self\.value", "attn.value"),
-        (r"attention\.self\.query", "attn.query"),
+        (r"attention\.self\.key", "attn.in_proj.key"),
+        (r"attention\.self\.value", "attn.in_proj.value"),
+        (r"attention\.self\.query", "attn.in_proj.query"),
         (r"attention\.output\.dense", "attn.dense"),
         (r"intermediate\.dense", "ff_sub_layer.w1"),
         (r"output\.dense", "ff_sub_layer.w2"),
@@ -340,10 +362,14 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping[Any, Any]) -> Mapping[Any, Any]:
         if name == "roberta.embeddings.position_embeddings.weight":
             new_sd[new_name] = new_sd[new_name][2:]
 
-    fused_sd = _convert_to_fused_qkv(new_sd)
-
-    return fused_sd
+    return new_sd
 
 
-serialization.register_adapter("roberta", "hf", _hf_sd_to_fms_sd)
-serialization.register_adapter("roberta", "fms.pre0.0.6", _convert_to_fused_qkv)
+serialization.register_adapter_step(
+    _architecture_name, "hf_to_fms_names", _hf_to_fms_names
+)
+
+serialization.register_adapter("roberta", "hf", ["hf_to_fms_names", "weight_fusion"])
+serialization.register_adapter(
+    "roberta", "fms.pre0.0.6", ["pre0.0.6_attn_unfused_to_fused", "weight_fusion"]
+)
