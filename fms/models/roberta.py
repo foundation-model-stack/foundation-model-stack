@@ -31,6 +31,7 @@ class RoBERTaConfig(ModelConfig):
     multiquery_attn: bool = False
     norm_eps: float = 1e-12
     tie_heads: bool = False
+    linear_config: Optional[Mapping[str, Any]] = None
     fused_weights: bool = True
 
 
@@ -50,6 +51,8 @@ class RoBERTaBlock(nn.Module):
             kvheads=1 if self.config.multiquery_attn else self.config.nheads,
             p_dropout=self.config.p_dropout,
             use_bias=True,
+            fused=self.config.fused_weights,
+            linear_config=self.config.linear_config,
         )
 
         self.ff_sub_layer = FeedForwardBlock(
@@ -58,6 +61,7 @@ class RoBERTaBlock(nn.Module):
             activation_fn=str_to_activation(self.config.activation_fn),
             p_dropout=self.config.p_dropout,
             use_bias=True,
+            linear_config=self.config.linear_config,
         )
 
         if self.config.p_dropout != 0:
