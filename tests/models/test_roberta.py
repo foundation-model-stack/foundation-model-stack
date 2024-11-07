@@ -61,3 +61,28 @@ class TestRoBERTa(
         # modify pad_id to the new value expected and check equivalence
         config.pad_id = config.pad_id + 1
         assert model.get_config().as_dict() == config.as_dict()
+
+
+class RoBERTaGPTQFixtures(ModelFixtureMixin):
+    @pytest.fixture(scope="class", autouse=True)
+    def uninitialized_model(self):
+        return RoBERTa(
+            src_vocab_size=384,
+            emb_dim=32,
+            nheads=8,
+            nlayers=2,
+            max_pos=512,
+            hidden_grow_factor=2.0,
+            tie_heads=True,
+            linear_config={"linear_type": "gptq_cpu"},
+        )
+
+
+class TestRoBERTaGPTQ(
+    ModelConsistencyTestSuite, ModelCompileTestSuite, RoBERTaGPTQFixtures
+):
+    # x is the main parameter for this model which is the input tensor
+    _get_signature_params = ["x"]
+
+    def test_model_unfused(self, model, signature):
+        pytest.skip("weight unfuse is not implemented for GPTQ")

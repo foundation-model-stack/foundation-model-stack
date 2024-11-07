@@ -106,3 +106,38 @@ class TestLlama2GQA(
 
     # x is the main parameter for this model which is the input tensor
     _get_signature_params = ["x"]
+
+
+class LLaMA2GPTQFixtures(ModelFixtureMixin):
+    @pytest.fixture(scope="class", autouse=True)
+    def uninitialized_model(self):
+        return LLaMA(
+            src_vocab_size=381,
+            emb_dim=32,
+            norm_eps=1e-05,
+            nheads=2,
+            kvheads=0,
+            nlayers=2,
+            pad_id=0,
+            hidden_grow_factor=2.0,
+            multiple_of=2,
+            activation_fn="swish",
+            p_dropout=0.0,
+            max_expected_seq_len=4096,
+            ntk_scaling=False,
+            linear_config={"linear_type": "gptq_cpu"},
+        )
+
+
+class TestLlama2GPTQ(
+    ModelConsistencyTestSuite, ModelCompileTestSuite, LLaMA2GPTQFixtures
+):
+    """
+    Test LLaMA2-GPTQ model consistency
+    """
+
+    # x is the main parameter for this model which is the input tensor
+    _get_signature_params = ["x"]
+
+    def test_model_unfused(self, model, signature):
+        pytest.skip("weight unfuse is not implemented for GPTQ")

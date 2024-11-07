@@ -1,3 +1,4 @@
+import math
 from dataclasses import dataclass
 from typing import Any, Dict, Mapping, Optional
 
@@ -174,3 +175,181 @@ def shard_gptq_linear(
 
 register_linear_type_to_module_map("gptq", get_gptq_linear)
 register_linear_type_to_sharding_map("gptq", shard_gptq_linear)
+
+
+class GPTQLinearCPU(nn.Module):
+    def __init__(
+        self,
+        in_features: int,
+        out_features: int,
+        bias: bool,
+        config: GPTQLinearConfig,
+    ):
+        super().__init__()
+
+        self.in_features = in_features
+        self.out_features = out_features
+        self.bits = config.bits
+        self.group_size = config.group_size if config.group_size != -1 else in_features
+        self.desc_act = config.desc_act
+
+        if self.bits not in [4]:
+            raise NotImplementedError(
+                "GPTQLinear for CPU only supports 4 bits quantization."
+            )
+        if in_features % self.group_size != 0:
+            raise ValueError("`in_features` must be divisible by `group_size`.")
+        if (
+            in_features % 32 or out_features % 32
+        ):  # TODO: this requirement may not be needed
+            raise ValueError("`in_features` and `out_features` must be divisible by 32")
+        if self.desc_act:
+            raise NotImplementedError(
+                "GPTQLinear for CPU does not support activation reordering (`desc_act`)"
+            )
+
+        # Register quantization parameters
+        self.register_buffer(
+            "weight",
+            torch.zeros(
+                (in_features // 32 * self.bits, out_features),
+                dtype=torch.int32,
+            ),
+        )
+        self.register_buffer(
+            "qzeros",
+            torch.zeros(
+                (
+                    math.ceil(in_features / self.group_size),
+                    out_features // 32 * self.bits,
+                ),
+                dtype=torch.int32,
+            ),
+        )
+        self.register_buffer(
+            "scales",
+            torch.zeros(
+                (math.ceil(in_features / self.group_size), out_features),
+                dtype=torch.float16,
+            ),
+        )
+        self.register_buffer("g_idx", torch.zeros(in_features, dtype=torch.int32))
+        if bias:
+            self.register_buffer(
+                "bias", torch.zeros((out_features), dtype=torch.float16)
+            )
+        else:
+            self.bias = None
+
+    def unpack_qparam(
+        self,
+        qparam: torch.Tensor,
+        bits: int = 4,
+        transpose: bool = False,
+    ) -> torch.Tensor:
+        """Unpack GPTQ tensor of quantized qweight or qzeros, expanding
+        input matrix "32 // bits" times along originally packed dimension.
+
+        - qweights are packed by GPTQ along dim=0 and expanded row-wise
+        - qzeros are packed by GPTQ along dim=1 and expanded column-wise
+        (matrix is transposed before and after packing)
+
+        qweight packed size: [in_feat * bits // 32, out_feat]
+        qzeros packed size: [n_grp, out_feat * bits // 32]
+                            with n_grp = in_feat / grp_size
+
+        qweight unpacked size: [in_feat, out_feat]
+        qzeros unpacked size: [n_grp, out_feat]
+
+        Parameters
+        ----------
+        qparam : torch.Tensor
+            a packed quantization parameter (qweight or qzeros)
+        bits : int
+            number of quantization bits
+        transpose : bool
+            apply transpose before and after unpacking (needed by qzeros)
+
+        Return
+        ------
+        qparam_unpacked : torch.Tensor
+            the quantization parameter (qweight or qzeros) unpacked
+        """
+
+        if transpose:
+            qparam = qparam.t()
+
+        device = qparam.device
+        unpack_size = 32 // bits
+        qparam_unpacked = torch.zeros(
+            (qparam.size(0) * unpack_size, qparam.size(1)),
+            dtype=torch.int,
+            device=device,
+        )
+
+        for j in range(unpack_size):
+            qparam_unpacked[j::unpack_size, :] = (qparam >> (j * bits)) & 0xF
+        return qparam_unpacked.t() if transpose else qparam_unpacked
+
+    def dequantize(self, qweights_unpacked, scales):
+        """Dequantize unpacked weight tensor
+
+        qweights_unpacked: [in_feat, out_feat]
+        scales: [n_groups, out_feat]
+        qzeros: assume symmetric quantization => constant (8)
+        g_idx: activation reordering not supported
+        """
+
+        zp = 8
+        in_feat, _ = qweights_unpacked.size()
+        n_grp, _ = scales.size()
+        return torch.mul(
+            (qweights_unpacked - zp).to(torch.float16),
+            scales.repeat_interleave(in_feat // n_grp, dim=0),
+        )
+
+    def forward(self, x):
+        # start = time.time()
+        qweights_unpacked = self.unpack_qparam(self.weight, self.bits)
+        weights = self.dequantize(qweights_unpacked, self.scales)
+        x = torch.matmul(x.to(weights.dtype), weights)
+        if self.bias is not None:
+            x.add_(self.bias)
+        # matmul printout is useful in case of very long runtimes
+        # print(
+        #     f"matmul: {time.time() - start:6.1f} s  |  "
+        #     f"w {str(list(weights.size())):15}  |  out {list(x.size())}"
+        # )
+        return x
+
+    def __repr__(self) -> str:
+        return (
+            f"{self.__class__.__name__}"
+            f"(in={self.in_features}, out={self.out_features}, "
+            f"bias={self.bias is not None}, group={self.group_size})"
+        )
+
+
+def get_gptq_cpu_linear(
+    in_features: int,
+    out_features: int,
+    bias: bool,
+    linear_config: Optional[Mapping[str, Any]] = None,
+):
+    if linear_config is not None:
+        gptq_config = GPTQLinearConfig(**linear_config)
+    else:
+        raise ValueError("GPTQLinearConfig requires a linear config")
+    if gptq_config.desc_act:
+        raise NotImplementedError("Activation reordering (desc_act=True) not supported")
+    linear = GPTQLinearCPU(
+        in_features=in_features,
+        out_features=out_features,
+        bias=bias,
+        config=gptq_config,
+    )
+    return linear
+
+
+register_linear_type_to_module_map("gptq_cpu", get_gptq_cpu_linear)
+register_linear_type_to_sharding_map("gptq_cpu", shard_gptq_linear)

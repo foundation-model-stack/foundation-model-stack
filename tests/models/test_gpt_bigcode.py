@@ -90,3 +90,28 @@ class TestGPTBigCode(
             is_pad, True, past_key_value_states
         )
         assert actual.tolist() == expected.tolist()
+
+
+class GPTBigCodeGPTQFixtures(ModelFixtureMixin):
+    @pytest.fixture(scope="class", autouse=True)
+    def uninitialized_model(self):
+        return GPTBigCode(
+            src_vocab_size=384,
+            emb_dim=32,
+            nheads=2,
+            nlayers=2,
+            max_expected_seq_len=512,
+            hidden_grow_factor=2.0,
+            pad_id=0,
+            linear_config={"linear_type": "gptq_cpu"},
+        )
+
+
+class TestGPTBigCodeGPTQ(
+    ModelConsistencyTestSuite, ModelCompileTestSuite, GPTBigCodeGPTQFixtures
+):
+    # x is the main parameter for this model which is the input tensor
+    _get_signature_params = ["x"]
+
+    def test_model_unfused(self, model, signature):
+        pytest.skip("weight unfuse is not implemented for GPTQ")
