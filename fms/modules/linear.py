@@ -67,7 +67,7 @@ def get_linear_type(linear_config: Optional[Mapping[str, Any]]) -> str:
     return linear_type.lower()
 
 
-def get_smoothquant_selection(linear_config: Optional[Mapping[str, Any]]) -> bool:
+def get_smoothquant_selection(linear_config: Mapping[str, Any]) -> bool:
     use_smoothquant = linear_config["smoothquant"]
     if use_smoothquant and "smoothquant_layers" in linear_config:
         frame = [
@@ -104,7 +104,7 @@ def get_linear(
     """
     linear_type = get_linear_type(linear_config)
 
-    if "smoothquant" in linear_config:
+    if linear_config and "smoothquant" in linear_config:
         use_smoothquant = get_smoothquant_selection(linear_config)
 
     if linear_type in __type_factory_map:
