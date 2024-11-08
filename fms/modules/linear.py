@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from inspect import signature
 from typing import Any, Callable, Mapping, Optional
 
 import torch
@@ -71,6 +72,7 @@ def get_linear(
     out_features: int,
     bias: bool,
     linear_config: Optional[Mapping[str, Any]] = None,
+    use_smoothquant: bool = True,
 ) -> nn.Module:
     """Return linear module or module factory function of selected type.
     Linear type is extracted from provided configuration (`linear_config`) and
@@ -83,6 +85,10 @@ def get_linear(
     if linear_type in __type_factory_map:
         if linear_type == "torch_linear":
             return __type_factory_map[linear_type](in_features, out_features, bias)
+        elif "use_smoothquant" in signature(__type_factory_map[linear_type]).parameters:
+            return __type_factory_map[linear_type](
+                in_features, out_features, bias, linear_config, use_smoothquant
+            )
         else:
             return __type_factory_map[linear_type](
                 in_features, out_features, bias, linear_config
