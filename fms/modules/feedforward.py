@@ -73,7 +73,6 @@ class FeedForwardBlock(nn.Module):
             emb_dim,
             bias=use_bias,
             linear_config=linear_config,
-            use_smoothquant=False,
         )
         self.use_bias = use_bias
         self.linear_config = linear_config
