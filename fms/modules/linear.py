@@ -74,7 +74,8 @@ def get_smoothquant_selection(linear_config: Mapping[str, Any]) -> bool:
             f
             for f in inspect.stack()
             if (
-                "get_linear" in f.code_context[0]
+                isinstance(f.code_context[0], str)
+                and "get_linear" in f.code_context[0]
                 and "inspect.stack" not in f.code_context[0]
             )
         ]
@@ -85,7 +86,13 @@ def get_smoothquant_selection(linear_config: Mapping[str, Any]) -> bool:
                 "Ambiguous frame determination for call to `get_linear`:\n"
                 f"{str(frame)}"
             )
-        layer = frame[0].code_context[0].split("=")[0].split(".")[1].strip()
+        if isinstance(frame[0].code_context[0], str):
+            layer = frame[0].code_context[0].split("=")[0].split(".")[1].strip()
+        else:
+            raise ValueError(
+                "Failed to determine layer type from inspect.stack() frame:\n"
+                f"{frame}"
+            )
         if layer not in linear_config["smoothquant_layers"]:
             use_smoothquant = False
     return use_smoothquant
