@@ -496,6 +496,7 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
         fused: bool = True,
         group: Optional[ProcessGroup] = None,
         linear_config: Optional[Mapping[str, Any]] = None,
+        scale_factor: Optional[float] = None,
     ):
         assert torch.distributed.is_initialized()
 
@@ -518,6 +519,7 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
             position_encoder,
             fused,
             linear_config,
+            scale_factor,
         )
         self.pre_tp_nheads = nheads
         self.pre_tp_kvheads = kvheads
@@ -588,6 +590,7 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
             group=group,
             fused=mha.fused,
             linear_config=mha.linear_config,
+            scale_factor=mha.scale_factor,
         )
         return tp_mha
 
