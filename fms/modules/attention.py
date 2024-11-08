@@ -298,7 +298,6 @@ class MultiHeadAttention(nn.Module):
             self.emb_dim,
             bias=use_bias,
             linear_config=linear_config,
-            use_smoothquant=False,
         )
 
         if self.p_dropout:
