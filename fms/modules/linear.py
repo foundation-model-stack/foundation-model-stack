@@ -71,7 +71,8 @@ def get_smoothquant_selection(linear_config: Optional[Mapping[str, Any]]) -> boo
     use_smoothquant = linear_config["smoothquant"]
     if use_smoothquant and "smoothquant_layers" in linear_config:
         frame = [
-            f for f in inspect.stack()
+            f
+            for f in inspect.stack()
             if (
                 "get_linear" in f.code_context[0]
                 and "inspect.stack" not in f.code_context[0]
@@ -106,11 +107,13 @@ def get_linear(
     if "smoothquant" in linear_config:
         use_smoothquant = get_smoothquant_selection(linear_config)
 
-    # TODO: how to merge these calls that get different arguments?
     if linear_type in __type_factory_map:
         if linear_type == "torch_linear":
             return __type_factory_map[linear_type](in_features, out_features, bias)
-        elif "use_smoothquant" in inspect.signature(__type_factory_map[linear_type]).parameters:
+        elif (
+            "use_smoothquant"
+            in inspect.signature(__type_factory_map[linear_type]).parameters
+        ):
             return __type_factory_map[linear_type](
                 in_features, out_features, bias, linear_config, use_smoothquant
             )
