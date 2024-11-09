@@ -90,9 +90,8 @@ def get_smoothquant_selection(linear_config: Mapping[str, Any]) -> bool:
                 "Ambiguous frame determination for call to `get_linear`:\n"
                 f"{str(frame)}"
             )
-        if (
-            isinstance(frame[0].code_context, Iterable)
-            and isinstance(frame[0].code_context[0], str)
+        if isinstance(frame[0].code_context, Iterable) and isinstance(
+                frame[0].code_context[0], str
         ):
             layer = frame[0].code_context[0].split("=")[0].split(".")[1].strip()
         else:
