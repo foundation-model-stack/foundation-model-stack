@@ -1,4 +1,5 @@
 import inspect
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Optional
 
@@ -74,19 +75,25 @@ def get_smoothquant_selection(linear_config: Mapping[str, Any]) -> bool:
             f
             for f in inspect.stack()
             if (
-                isinstance(f.code_context[0], str)
+                isinstance(f.code_context, Iterable)
+                and isinstance(f.code_context[0], str)
                 and "get_linear" in f.code_context[0]
                 and "inspect.stack" not in f.code_context[0]
             )
         ]
         if len(frame) == 0:
-            raise ValueError("Could not determine origin of `get_linear` call")
+            raise ValueError(
+                "Could not determine origin of `get_linear` call from stack inspection"
+            )
         if len(frame) > 1:
             raise ValueError(
                 "Ambiguous frame determination for call to `get_linear`:\n"
                 f"{str(frame)}"
             )
-        if isinstance(frame[0].code_context[0], str):
+        if (
+            isinstance(frame[0].code_context, Iterable)
+            and isinstance(frame[0].code_context[0], str)
+        ):
             layer = frame[0].code_context[0].split("=")[0].split(".")[1].strip()
         else:
             raise ValueError(
