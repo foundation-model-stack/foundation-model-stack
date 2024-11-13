@@ -210,7 +210,7 @@ class GPTQLinearCPU(nn.Module):
 
         # Register quantization parameters
         self.register_buffer(
-            "weight",
+            "qweight",
             torch.zeros(
                 (in_features // 32 * self.bits, out_features),
                 dtype=torch.int32,
@@ -309,17 +309,11 @@ class GPTQLinearCPU(nn.Module):
         )
 
     def forward(self, x):
-        # start = time.time()
-        qweights_unpacked = self.unpack_qparam(self.weight, self.bits)
+        qweights_unpacked = self.unpack_qparam(self.qweight, self.bits)
         weights = self.dequantize(qweights_unpacked, self.scales)
         x = torch.matmul(x.to(weights.dtype), weights)
         if self.bias is not None:
             x.add_(self.bias)
-        # matmul printout is useful in case of very long runtimes
-        # print(
-        #     f"matmul: {time.time() - start:6.1f} s  |  "
-        #     f"w {str(list(weights.size())):15}  |  out {list(x.size())}"
-        # )
         return x
 
     def __repr__(self) -> str:
