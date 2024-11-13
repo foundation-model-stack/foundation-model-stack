@@ -364,6 +364,13 @@ _micro_char_config = RoBERTaConfig(
 
 _base_config = RoBERTaConfig(tie_heads=True, norm_eps=1e-5, p_dropout=0.1)
 
+_base_classification_config_dict = copy.copy(_base_config.__dict__)
+_base_classification_config_dict["pooling"] = True
+_base_classification_config = RoBERTaClassificationConfig(
+    **_base_classification_config_dict,
+    num_classes=2,
+)
+
 _bert_base_config = RoBERTaConfig(
     src_vocab_size=30522,
     pad_id=0,
@@ -406,6 +413,12 @@ models.register_model(
     "bert_classification",
     "base",
     _roberta_classification_factory_factory(_bert_base_classification_config),
+)
+
+models.register_model(
+    "watbert_classification",
+    "base",
+    _roberta_classification_factory_factory(_base_classification_config),
 )
 
 _legacy_convert_to_fused_qkv = serialization._legacy_attn_unfused_to_fused_adapter
@@ -486,9 +499,65 @@ def _bert_hf_sd_to_fms_sd(hf_sd: Mapping[Any, Any]) -> Mapping[Any, Any]:
     return fused_sd
 
 
+def _watbert_hf_sd_to_fms_sd(hf_sd: Mapping[Any, Any]) -> Mapping[Any, Any]:
+    replacements = [
+        (r"^roberta.embeddings.word_embeddings.weight", "base_model.embedding.weight"),
+        (
+            r"^roberta.embeddings.position_embeddings.weight",
+            "base_model.position_embedding.weight",
+        ),
+        (r"^roberta.embeddings.LayerNorm", "base_model.enc_norm"),
+        (r"^roberta.encoder.layer", "base_model.layers"),
+        (r"attention\.output\.LayerNorm", "ln"),
+        (r"output\.LayerNorm", "ff_ln"),
+        (r"attention\.self\.key", "attn.in_proj.key"),
+        (r"attention\.self\.value", "attn.in_proj.value"),
+        (r"attention\.self\.query", "attn.in_proj.query"),
+        (r"attention\.output\.dense", "attn.dense"),
+        (r"intermediate\.dense", "ff_sub_layer.w1"),
+        (r"output\.dense", "ff_sub_layer.w2"),
+        (r"^lm_head\.dense", "classification_head.dense"),
+        (r"^lm_head\.layer_norm", "classification_head.ln"),
+        (r"^lm_head\.decoder", "classification_head.head"),
+        (r"^lm_head\.bias", "classification_head.head.bias"),
+        (r"gamma", "weight"),
+        (r"beta", "bias"),
+        (r"^roberta.pooler.dense", "classification_head.pooler_linear"),
+    ]
+    new_sd = {}
+    for name, param in hf_sd.items():
+        new_name = name
+        for pattern, repl in replacements:
+            new_name = re.sub(pattern, repl, new_name)
+        new_sd[new_name] = param
+
+        # hf always has the first 2 spots set, we need to remove them as they are not used
+        if name == "roberta.embeddings.position_embeddings.weight":
+            new_sd[new_name] = new_sd[new_name][2:]
+
+    fused_sd = _convert_to_fused_qkv(new_sd)
+        (r"^roberta.pooler.dense", "classification_head.pooler_linear"),
+    ]
+    new_sd = {}
+    for name, param in hf_sd.items():
+        new_name = name
+        for pattern, repl in replacements:
+            new_name = re.sub(pattern, repl, new_name)
+        new_sd[new_name] = param
+
+        # hf always has the first 2 spots set, we need to remove them as they are not used
+        if name == "roberta.embeddings.position_embeddings.weight":
+            new_sd[new_name] = new_sd[new_name][2:]
+
+    fused_sd = _convert_to_fused_qkv(new_sd)
+
+    return fused_sd
+
+
 serialization.register_adapter("bert", "hf", _bert_hf_sd_to_fms_sd)
 serialization.register_adapter("bert", "fms.pre0.0.6", _legacy_convert_to_fused_qkv)
 serialization.register_adapter("bert_classification", "hf", _bert_hf_sd_to_fms_sd)
++serialization.register_adapter("watbert_classification", "hf", _watbert_hf_sd_to_fms_sd)
 serialization.register_adapter(
     "bert_classification", "fms.pre0.0.6", _legacy_convert_to_fused_qkv
 )
