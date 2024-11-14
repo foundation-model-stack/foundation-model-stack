@@ -49,12 +49,21 @@ def get_all_linear_type_to_sharding_maps() -> dict[str, Callable]:
     return __type_sharding_map
 
 
-def get_linear_type(linear_config: Optional[Mapping[str, Any]]) -> str:
+def get_linear_type(
+    linear_config: Optional[Mapping[str, Any]], module_name: Optional[str] = None
+) -> str:
     """Parse linear configuration mapping to extract selected linear type.
     If no mapping is provided, defaults to "torch_linear" type, which maps
     to torch.nn.Linear.
     """
     if not linear_config:
+        return "torch_linear"
+
+    if (
+        "filter_fn" in linear_config
+        and module_name is not None
+        and not linear_config["filter_fn"](module_name)
+    ):
         return "torch_linear"
 
     linear_type = linear_config.get("linear_type", None)
@@ -68,45 +77,16 @@ def get_linear_type(linear_config: Optional[Mapping[str, Any]]) -> str:
     return linear_type.lower()
 
 
-def get_smoothquant_selection(linear_config: Mapping[str, Any]) -> bool:
-    """Determine usage of smoothquant at module level.
-    If model-wise smoothquant is enabled, inspect the call stack to determine
-    whether the call to this function originated from a module for which
-    module-wise smoothquant is to be enabled.
-    """
-    use_smoothquant = linear_config["smoothquant"]
-    if use_smoothquant and "smoothquant_layers" in linear_config:
-        frame = [
-            f
-            for f in inspect.stack()
-            if (
-                isinstance(f.code_context, Iterable)
-                and isinstance(f.code_context[0], str)
-                and "get_linear" in f.code_context[0]
-                and "inspect.stack" not in f.code_context[0]
-            )
-        ]
-        if len(frame) == 0:
-            raise ValueError(
-                "Could not determine origin of `get_linear` call from stack inspection"
-            )
-        if len(frame) > 1:
-            raise ValueError(
-                "Ambiguous frame determination for call to `get_linear`:\n"
-                f"{str(frame)}"
-            )
-        if isinstance(frame[0].code_context, Iterable) and isinstance(
-            frame[0].code_context[0], str
-        ):
-            layer = frame[0].code_context[0].split("=")[0].split(".")[1].strip()
-        else:
-            raise ValueError(
-                "Failed to determine layer type from inspect.stack() frame:\n"
-                f"{frame}"
-            )
-        if layer not in linear_config["smoothquant_layers"]:
-            use_smoothquant = False
-    return use_smoothquant
+class UninitializedLinear(nn.Module):
+    def __init__(self, in_features, out_features, bias, linear_config):
+        super().__init__()
+        self.in_features = in_features
+        self.out_features = out_features
+        self.bias = bias
+        self.linear_config = linear_config
+
+    def forward():
+        raise RuntimeError("I haven't been initialized yet!")
 
 
 def get_linear(
@@ -114,27 +94,25 @@ def get_linear(
     out_features: int,
     bias: bool,
     linear_config: Optional[Mapping[str, Any]] = None,
+    module_name: Optional[str] = None,
 ) -> nn.Module:
     """Return linear module or module factory function of selected type.
     Linear type is extracted from provided configuration (`linear_config`) and
     associated module is determined from existing mapping (`__type_factory_map`).
     Selected module must have been registered with `register_linear_type_to_module_map`.
-    """
-    linear_type = get_linear_type(linear_config)
 
-    if linear_config and "smoothquant" in linear_config:
-        use_smoothquant = get_smoothquant_selection(linear_config)
+    In the cases where a module can be quantized or not depending on its name (given by
+    boolean check in filter_fn as part of linear_config, True meaning quantize), returns
+    UnitializedLinear so a later loop can correctly initialize the model.
+    """
+    if "filter_fn" in linear_config and module_name is None:
+        return UninitializedLinear(in_features, out_features, bias, linear_config)
+
+    linear_type = get_linear_type(linear_config, module_name)
 
     if linear_type in __type_factory_map:
         if linear_type == "torch_linear":
             return __type_factory_map[linear_type](in_features, out_features, bias)
-        if (
-            "use_smoothquant"
-            in inspect.signature(__type_factory_map[linear_type]).parameters
-        ):
-            return __type_factory_map[linear_type](
-                in_features, out_features, bias, linear_config, use_smoothquant
-            )
         return __type_factory_map[linear_type](
             in_features, out_features, bias, linear_config
         )

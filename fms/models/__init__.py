@@ -19,6 +19,7 @@ from fms.distributed.strategy import (
     TensorParallelStrategy,
     UniformModelParallelStrategy,
 )
+from fms.modules.linear import UninitializedLinear, get_linear
 from fms.utils import fusion, serialization
 
 
@@ -416,6 +417,27 @@ def get_model(
         device=torch.device("meta"),
         extra_args=extra_args,
     )
+
+    # Run post-model instantiation linear layer init (for quantization mostly)
+    replacements_list = []
+    for name, module in fms_model.named_modules():
+        if isinstance(module, UninitializedLinear):
+            replacements_list.append(name)
+    for mod_name in replacements_list:
+        fqn_list = mod_name.split(".")
+        parent_name = ".".join(fqn_list[:-1])
+        orig_mod = fms_model.get_submodule(mod_name)
+        setattr(
+            fms_model.get_submodule(parent_name),
+            fqn_list[-1],
+            get_linear(
+                orig_mod.in_features,
+                orig_mod.out_features,
+                orig_mod.bias,
+                orig_mod.linear_config,
+                mod_name,
+            ),
+        )
 
     # Choose when to wrap and load the model weights based on the combination
     # distribution strategy and checkpoint sharding
