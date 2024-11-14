@@ -39,7 +39,6 @@ class LLaMA2Fixtures(ConfigFixtureMixin, ModelFixtureMixin):
             max_expected_seq_len=4096,
             ntk_scaling=False,
             linear_config={"linear_type": "torch_linear"},
-            unfuse_strategy=None,
         )
 
 

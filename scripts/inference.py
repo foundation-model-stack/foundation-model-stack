@@ -33,7 +33,7 @@ parser.add_argument(
 parser.add_argument(
     "--variant",
     type=str,
-    default="7b",
+    default=None,
     help="The model variant (configuration) to benchmark. E.g. 7b, 13b, 70b.",
 )
 parser.add_argument(
@@ -61,6 +61,13 @@ parser.add_argument(
     "--unfuse_weights",
     action="store_true",
     help="If set to True, this will unfuse any fused weight modules that support the unfuse_weights method",
+)
+parser.add_argument(
+    "--default_dtype",
+    type=str,
+    default=None,
+    choices=["bf16", "fp16", "fp32"],
+    help="If set to one of the choices, overrides the model checkpoint weight format by setting the default pytorch format",
 )
 parser.add_argument(
     "--compile",
@@ -107,7 +114,14 @@ if args.device_type == "cuda":
 else:
     device = torch.device(args.device_type)
 
-torch.set_default_dtype(torch.float16)
+default_dtype = None
+dtypes_map = {
+    "fp16": torch.float16,
+    "bf16": torch.bfloat16,
+    "fp32": torch.float32,
+}
+if args.default_dtype is not None:
+    default_dtype = dtypes_map[args.default_dtype]
 
 # requires setting environment variable: `CUBLAS_WORKSPACE_CONFIG=:4096:8`
 if args.deterministic:
@@ -139,11 +153,8 @@ model = get_model(
     source=args.model_source,
     distributed_strategy=distr_param,
     group=dist.group.WORLD,
+    fused_weights=not args.unfuse_weights,
 )
-
-if args.unfuse_weights:
-    print("unfusing weights")
-    model = fusion.apply_unfuse_weights(model)
 
 tokenizer = tokenizers.get_tokenizer(args.tokenizer)
 model.eval()
@@ -202,11 +213,19 @@ else:
 def print_result(result):
     if local_rank != 0:
         return
-    # stop at EOS token if present
+    if padding_kwargs is not None:
+        result = generation.trim_prefix(result)
+
+    result = generation.trim_prefix(result, tokenizer.bos_token_id)
+
+    # stop at EOS token if present and remove padding
     result = generation.truncate_after_eos(result, tokenizer.eos_token_id)
-    # print(result)
-    # print(tokenizer.convert_ids_to_tokens(result))
-    print(tokenizer.convert_tokens_to_string(tokenizer.convert_ids_to_tokens(result)))
+
+    output_str = tokenizer.convert_tokens_to_string(
+        tokenizer.convert_ids_to_tokens(result)
+    )
+
+    print(output_str)
     print()
 
 

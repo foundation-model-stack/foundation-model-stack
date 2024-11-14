@@ -1,3 +1,4 @@
+import functools
 import math
 from dataclasses import dataclass
 from typing import Any, List, Mapping, Optional, Tuple
@@ -33,7 +34,7 @@ class GPTBigCodeConfig(ModelConfig):
     linear_config: Optional[
         Mapping[str, Any]
     ] = None  # pass as {"linear_type": str, <other kwargs>}
-    unfuse_strategy: Optional[str] = None  # TODO: could be an Enum
+    fused_weights: bool = True
 
 
 class GPTBigCodeBlock(nn.Module):
@@ -52,7 +53,7 @@ class GPTBigCodeBlock(nn.Module):
             kvheads=1 if self.config.multiquery_attn else self.config.nheads,
             p_dropout=self.config.p_dropout,
             use_bias=True,
-            fused=(self.config.unfuse_strategy != "pre"),
+            fused=self.config.fused_weights,
             linear_config=self.config.linear_config,
         )
 
@@ -441,10 +442,118 @@ models.register_model(
     _architecture_name, "ibm.20b", _gpt_bigcode_factory_factory(_20b_config)
 )
 
-_convert_to_fused_qkv = serialization._legacy_attn_unfused_to_fused_adapter
+
+# Create all the pieces to generate adapters for different checkpoints
+serialization.register_adapter_step(
+    _architecture_name,
+    "pre0.0.6_attn_unfused_to_fused",
+    serialization._pre006_attn_adapter_step,
+)
 
 
-def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
+def _gptq_unfuse(fused_weight, fused_weight_name: str, emb_size: int, pack_ratio: int):
+    if "qweight" in fused_weight_name:
+        out_feat = fused_weight.size(1)
+        kv_out_feat = (out_feat - emb_size) // 2
+        return (
+            fused_weight[:, :emb_size],
+            fused_weight[:, emb_size : emb_size + kv_out_feat],
+            fused_weight[:, -kv_out_feat:],
+        )
+    elif "qzeros" in fused_weight_name:
+        out_feat_packed = fused_weight.size(1)
+        query_out_feat_packed = emb_size // pack_ratio
+        kv_out_feat_packed = (out_feat_packed - query_out_feat_packed) // 2
+        return (
+            fused_weight[:, :query_out_feat_packed],
+            fused_weight[
+                :, query_out_feat_packed : query_out_feat_packed + kv_out_feat_packed
+            ],
+            fused_weight[:, -kv_out_feat_packed:],
+        )
+    elif "scales" in fused_weight_name:
+        out_feat = fused_weight.size(1)
+        kv_out_feat = (out_feat - emb_size) // 2
+        return (
+            fused_weight[:, :emb_size],
+            fused_weight[:, emb_size : emb_size + kv_out_feat],
+            fused_weight[:, -kv_out_feat:],
+        )
+    elif "bias" in fused_weight_name:
+        out_feat = fused_weight.size()[0]
+        kv_out_feat = (out_feat - emb_size) // 2
+        return (
+            fused_weight[:emb_size],
+            fused_weight[emb_size : emb_size + kv_out_feat],
+            fused_weight[-kv_out_feat:],
+        )
+    elif "g_idx" in fused_weight_name:
+        return fused_weight, fused_weight, fused_weight
+
+
+def _torch_unfuse(fused_weight, fused_weight_name: str, emb_size: int):
+    out_feat = fused_weight.size(0)
+    kv_out_feat = (out_feat - emb_size) // 2
+    return (
+        fused_weight[:emb_size],
+        fused_weight[emb_size : emb_size + kv_out_feat],
+        fused_weight[-kv_out_feat:],
+    )
+
+
+def _weight_fusion(
+    input_sd: Mapping[str, Any],
+    model_config: Optional[GPTBigCodeConfig] = None,
+    **kwargs,
+) -> Mapping[str, Any]:
+    has_fused_weights = True
+    if model_config:
+        if not model_config.fused_weights:
+            has_fused_weights = False
+
+    new_sd = input_sd
+    if not has_fused_weights:
+        if model_config:
+            emb_size = model_config.emb_dim
+            is_gptq = (
+                model_config.linear_config is not None
+                and "gptq" in model_config.linear_config["linear_type"]
+            )
+        else:
+            raise ValueError(
+                "Missing model_config for the weight unfusion adapter not supported"
+            )
+
+        if is_gptq:
+            pack_ratio = 8  # assume 4 bits => packing/compression ratio = 32 / 4
+            unfuse_op = functools.partial(
+                _gptq_unfuse, emb_size=emb_size, pack_ratio=pack_ratio
+            )
+        else:
+            unfuse_op = functools.partial(_torch_unfuse, emb_size=emb_size)
+
+        unfused_sd = {}
+        for name, param in input_sd.items():
+            if "attn.in_proj.qkv_fused" in name:
+                query_param_name = name.replace("qkv_fused", "query")
+                key_param_name = name.replace("qkv_fused", "key")
+                value_param_name = name.replace("qkv_fused", "value")
+
+                qw, kw, vw = unfuse_op(param, name)
+                unfused_sd[query_param_name] = qw
+                unfused_sd[key_param_name] = kw
+                unfused_sd[value_param_name] = vw
+            else:
+                unfused_sd[name] = param
+
+        return unfused_sd
+    return new_sd
+
+
+serialization.register_adapter_step(_architecture_name, "weight_fusion", _weight_fusion)
+
+
+def _hf_to_fms_names(hf_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]:
     import re
 
     replacements = [
@@ -473,7 +582,16 @@ def _hf_sd_to_fms_sd(hf_sd: Mapping) -> Mapping:
     return new_sd
 
 
-serialization.register_adapter(_architecture_name, "hf", _hf_sd_to_fms_sd)
+serialization.register_adapter_step(
+    _architecture_name, "hf_to_fms_names", _hf_to_fms_names
+)
+
+
 serialization.register_adapter(
-    _architecture_name, "fms.pre0.0.6", _convert_to_fused_qkv
+    _architecture_name, "hf", ["hf_to_fms_names", "weight_fusion"]
+)
+serialization.register_adapter(
+    _architecture_name,
+    "fms.pre0.0.6",
+    ["pre0.0.6_attn_unfused_to_fused", "weight_fusion"],
 )
