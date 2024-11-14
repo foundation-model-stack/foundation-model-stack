@@ -228,7 +228,7 @@ def get_loss_fn():
 
 
 def training_state(model_path, model, rank):
-    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-5, eps=1e-7)
     is_fsdp = isinstance(model, FSDP)
     dataset_sd = {}
     epoch = 0
@@ -275,6 +275,33 @@ def training_state(model_path, model, rank):
                 return (optimizer, dataset_sd, epoch, prev_step, cumulative_tokens)
     return (optimizer, dataset_sd, epoch, prev_step, cumulative_tokens)
 
+from torch.utils._python_dispatch import TorchDispatchMode
+
+
+class DispatchLog(TorchDispatchMode):
+    def __torch_dispatch__(self, func, types, args, kwargs=None):
+        names = []
+        for arg in list(args) + list(kwargs.values()):
+            name = getattr(arg, "model_name", None)
+            names.append(name)
+        print(f"{func} input names: ", names)
+        outputs = func(*args, **(kwargs or {}))
+        print(f"{func} output shapes:")
+        if isinstance(outputs, (list, tuple)):
+            for output in outputs:
+                if isinstance(output, torch.Tensor):
+                    print(output.shape)
+                else:
+                    print("not a tensor")
+        else:
+            if isinstance(outputs, torch.Tensor):
+                print(outputs.shape)
+            else:
+                print("not a tensor")
+        print(f"{func}; outputs: {outputs}")
+
+        return outputs
+
 
 def main():
     if args.default_dtype:
@@ -287,7 +314,7 @@ def main():
         args.model_path,
         source=args.checkpoint_format,
         device_type=device_type,
-        data_type=default_dtype,
+        data_type=torch.float32,
         distributed_strategy=args.distributed,
         group=group,
         p_dropout=0.0,
@@ -295,14 +322,18 @@ def main():
     )
     if args.unfuse_weights:
         model = fusion.apply_unfuse_weights(model)
+
+    for name, param in model.named_parameters():
+        param.model_name = name
+        param.data.model_name = name
     # model.base_model.rot_emb.compute_freqs_cis(device, 512)
+    model.classification_head.head.weight.data.normal_(
+        0,
+        1
+        / math.sqrt(math.sqrt(model.config.emb_dim * model.config.src_vocab_size)),
+    )
     if args.head_only:
         # Initialize the classification head so we don't get NaNs
-        model.classification_head.head.weight.data.normal_(
-            0,
-            1
-            / math.sqrt(math.sqrt(model.config.emb_dim * model.config.src_vocab_size)),
-        )
         for param in model.parameters():
             param.requires_grad = False
         model.classification_head.head.weight.requires_grad = True
@@ -323,7 +354,7 @@ def main():
         torch._dynamo.config.automatic_dynamic_shapes = False
         # Handled by trainer to include loss
         model = torch.compile(model, backend=args.compile_backend)
-        optimizer.step = torch.compile(optimizer.step, backend=args.compile_backend)
+        # optimizer.step = torch.compile(optimizer.step, backend=args.compile_backend)
 
     tokenizer = tokenizers.get_tokenizer(args.tokenizer)
 
@@ -421,6 +452,7 @@ def main():
 
     plugins = [reporting, checkpointing]  #  validator, validator2
     print0("training...")
+    # with DispatchLog():
     with torch.cuda.device(local_rank) if device.type == "cuda" else nullcontext():
         trainer.train(
             model,

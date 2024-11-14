@@ -369,6 +369,13 @@ _micro_char_config = RoBERTaConfig(
 
 _base_config = RoBERTaConfig(tie_heads=True, norm_eps=1e-5, p_dropout=0.1)
 
+_base_classification_config_dict = copy.copy(_base_config.__dict__)
+_base_classification_config_dict["pooling"] = True
+_base_classification_config = RoBERTaClassificationConfig(
+    **_base_classification_config_dict,
+    num_classes=2,
+)
+
 _bert_base_config = RoBERTaConfig(
     src_vocab_size=30522,
     pad_id=0,
@@ -404,9 +411,13 @@ models.register_model(
 models.register_model(
     _architecture_name, "base", _roberta_factory_factory(_base_config)
 )
+models.register_model(
+    "roberta_classification",
+    "base",
+    _roberta_classification_factory_factory(_base_classification_config),
+)
 
 models.register_model("bert", "base", _roberta_factory_factory(_bert_base_config))
-
 models.register_model(
     "bert_classification",
     "base",
@@ -458,6 +469,8 @@ def _hf_to_fms_names(hf_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]:
         (r"^lm_head\.dense", "classification_head.dense"),
         (r"^lm_head\.layer_norm", "classification_head.ln"),
         (r"^lm_head\.decoder", "classification_head.head"),
+        (r"^lm_head\.bias", "classification_head.head.bias"),
+        (r"^roberta.pooler.dense", "classification_head.pooler_linear"),
     ]
     new_sd = {}
     for name, param in hf_sd.items():
@@ -522,6 +535,7 @@ serialization.register_adapter("roberta", "hf", ["hf_to_fms_names", "weight_fusi
 serialization.register_adapter(
     "roberta", "fms.pre0.0.6", ["pre0.0.6_attn_unfused_to_fused", "weight_fusion"]
 )
+serialization.register_adapter("roberta_classification", "hf", ["hf_to_fms_names", "weight_fusion"])
 
 
 serialization.register_adapter("bert", "hf", ["bert_hf_to_fms_names", "weight_fusion"])

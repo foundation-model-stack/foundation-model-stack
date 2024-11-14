@@ -1,9 +1,8 @@
-import functools
 from contextlib import nullcontext
 from typing import List, Optional
 
 import torch
-from torch import amp, nn
+from torch import nn
 from torch.optim import Optimizer
 from torch.utils.data import DataLoader, DistributedSampler
 
@@ -29,12 +28,17 @@ def __one_step(
         loss_fwd = torch.compile(loss_fwd, backend=compile_backend)
 
     autocast = (
-        torch.autocast(device_type="cuda") if grad_scaler is not None else nullcontext()
+        torch.autocast(device_type="cpu", dtype=torch.float16)
+        if grad_scaler is not None
+        else nullcontext()
     )
+    # autocast = nullcontext()
     with autocast:
         loss = loss_fwd(input, model, label, **kwargs)
+    print(f"Loss before bwd: {loss}")
 
     if grad_scaler is not None:
+        print("Running grad scaler scale")
         grad_scaler.scale(loss).backward()
     else:
         loss.backward()
@@ -43,6 +47,7 @@ def __one_step(
 
 def __optimize(model, optimizer, grad_scaler):
     if grad_scaler is not None:
+        print("Running grad scaler step")
         grad_scaler.unscale_(optimizer)
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         grad_scaler.step(optimizer)
@@ -69,8 +74,10 @@ def __one_epoch(
     print0("Epoch", epoch)
     model.train()
 
-    grad_scaler = None
-    # grad_scaler = torch.cuda.amp.GradScaler()
+    # grad_scaler = None
+    grad_scaler = torch.amp.GradScaler("cpu")
+    # grad_scaler.scale = torch.compile(grad_scaler.scale, backend=compile_backend)
+    # grad_scaler.unscale_ = torch.compile(grad_scaler.unscale_, backend=compile_backend)
 
     if data.sampler is not None and isinstance(data.sampler, DistributedSampler):
         data.sampler.set_epoch(epoch)
