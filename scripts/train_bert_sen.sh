@@ -42,7 +42,7 @@ echo ${BACKEND}
 
 DEE_DUMP_GRAPHS=bert DTCOMPILER_KEEP_EXPORT=1 PYTHONUNBUFFERED=1 TORCH_SENDNN_TRAIN=1 TORCH_LOGS=dynamo \
 python3 -u ./train_classification.py \
-	--architecture=bert_classification \
+	--architecture=watbert_classification \
 	--variant=base \
 	--num_classes=2 \
 	--checkpoint_format=hf \

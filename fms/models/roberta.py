@@ -536,20 +536,6 @@ def _watbert_hf_sd_to_fms_sd(hf_sd: Mapping[Any, Any]) -> Mapping[Any, Any]:
             new_sd[new_name] = new_sd[new_name][2:]
 
     fused_sd = _convert_to_fused_qkv(new_sd)
-        (r"^roberta.pooler.dense", "classification_head.pooler_linear"),
-    ]
-    new_sd = {}
-    for name, param in hf_sd.items():
-        new_name = name
-        for pattern, repl in replacements:
-            new_name = re.sub(pattern, repl, new_name)
-        new_sd[new_name] = param
-
-        # hf always has the first 2 spots set, we need to remove them as they are not used
-        if name == "roberta.embeddings.position_embeddings.weight":
-            new_sd[new_name] = new_sd[new_name][2:]
-
-    fused_sd = _convert_to_fused_qkv(new_sd)
 
     return fused_sd
 
@@ -557,7 +543,7 @@ def _watbert_hf_sd_to_fms_sd(hf_sd: Mapping[Any, Any]) -> Mapping[Any, Any]:
 serialization.register_adapter("bert", "hf", _bert_hf_sd_to_fms_sd)
 serialization.register_adapter("bert", "fms.pre0.0.6", _legacy_convert_to_fused_qkv)
 serialization.register_adapter("bert_classification", "hf", _bert_hf_sd_to_fms_sd)
-+serialization.register_adapter("watbert_classification", "hf", _watbert_hf_sd_to_fms_sd)
+serialization.register_adapter("watbert_classification", "hf", _watbert_hf_sd_to_fms_sd)
 serialization.register_adapter(
     "bert_classification", "fms.pre0.0.6", _legacy_convert_to_fused_qkv
 )
