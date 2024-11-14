@@ -430,6 +430,11 @@ serialization.register_adapter_step(
     "pre0.0.6_attn_unfused_to_fused",
     serialization._pre006_attn_adapter_step,
 )
+serialization.register_adapter_step(
+    "bert",
+    "pre0.0.6_attn_unfused_to_fused",
+    serialization._pre006_attn_adapter_step,
+)
 
 
 def _weight_fusion(
@@ -447,6 +452,9 @@ def _weight_fusion(
 
 
 serialization.register_adapter_step(_architecture_name, "weight_fusion", _weight_fusion)
+serialization.register_adapter_step("roberta_classification", "weight_fusion", _weight_fusion)
+serialization.register_adapter_step("bert", "weight_fusion", _weight_fusion)
+serialization.register_adapter_step("bert_classification", "weight_fusion", _weight_fusion)
 
 
 def _hf_to_fms_names(hf_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]:
@@ -489,9 +497,12 @@ def _hf_to_fms_names(hf_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]:
 serialization.register_adapter_step(
     _architecture_name, "hf_to_fms_names", _hf_to_fms_names
 )
+serialization.register_adapter_step(
+    "roberta_classification", "hf_to_fms_names", _hf_to_fms_names
+)
 
 
-def _bert_hf_to_fms_names(hf_sd: Mapping[Any, Any]) -> Mapping[Any, Any]:
+def _bert_hf_to_fms_names(hf_sd: Mapping[str, Any], **kwargs) -> Mapping[Any, Any]:
     replacements = [
         (r"^bert.embeddings.word_embeddings.weight", "base_model.embedding.weight"),
         (
@@ -525,9 +536,11 @@ def _bert_hf_to_fms_names(hf_sd: Mapping[Any, Any]) -> Mapping[Any, Any]:
 
     return new_sd
 
-
 serialization.register_adapter_step(
-    _architecture_name, "bert_hf_to_fms_names", _bert_hf_to_fms_names
+    "bert", "bert_hf_to_fms_names", _bert_hf_to_fms_names
+)
+serialization.register_adapter_step(
+    "bert_classification", "bert_hf_to_fms_names", _bert_hf_to_fms_names
 )
 
 
@@ -544,10 +557,5 @@ serialization.register_adapter(
 )
 serialization.register_adapter(
     "bert_classification", "hf", ["bert_hf_to_fms_names", "weight_fusion"]
-)
-serialization.register_adapter(
-    "bert_classification",
-    "fms.pre0.0.6",
-    ["pre0.0.6_attn_unfused_to_fused", "weight_fusion"],
 )
 serialization.register_adapter("bert_classification", "aiu-fms", ["weight_fusion"])

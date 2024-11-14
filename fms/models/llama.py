@@ -759,6 +759,7 @@ def _weight_fusion(
 
 
 serialization.register_adapter_step("llama", "weight_fusion", _weight_fusion)
+serialization.register_adapter_step("llama_classifier", "weight_fusion", _weight_fusion)
 
 
 def _hf_gptq_llama_check(
@@ -782,6 +783,9 @@ def _hf_gptq_llama_check(
 
 serialization.register_adapter_step(
     "llama", "hf_gptq_fusion_check", _hf_gptq_llama_check
+)
+serialization.register_adapter_step(
+    "llama_classifier", "hf_gptq_fusion_check", _hf_gptq_llama_check
 )
 
 
@@ -841,6 +845,7 @@ def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]
 
 
 serialization.register_adapter_step("llama", "hf_to_fms_names", _hf_to_fms_names)
+serialization.register_adapter_step("llama_classifier", "hf_to_fms_names", _hf_to_fms_names)
 
 
 def _get_rope_params(linear_type: str) -> list[str]:
@@ -908,6 +913,7 @@ def _hf_to_fms_rope(
 
 
 serialization.register_adapter_step("llama", "hf_to_fms_rope", _hf_to_fms_rope)
+serialization.register_adapter_step("llama_classifier", "hf_to_fms_rope", _hf_to_fms_rope)
 
 
 serialization.register_adapter("llama", "meta", ["meta_to_fms_names", "weight_fusion"])
