@@ -21,6 +21,7 @@ import torch
 
 from fms.modules.tp import TPModule
 
+import platform
 
 __adapters: MutableMapping[str, MutableMapping[str, Callable[[Mapping], Mapping]]] = {}
 
@@ -369,9 +370,11 @@ def load_state_dict(
             )
     else:
         with torch.no_grad():
+            is_mmap = (platform.machine() != "s390x")
             checkpoint_sds = [
-                torch.load(str(ckpt_path), mmap=False) for ckpt_path in checkpoints
+                torch.load(str(ckpt_path), mmap=is_mmap) for ckpt_path in checkpoints
             ]
+
     return ChainMap(*checkpoint_sds)
 
 
