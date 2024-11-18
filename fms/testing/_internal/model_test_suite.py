@@ -66,12 +66,30 @@ class ModelFixtureMixin(metaclass=abc.ABCMeta):
         params = sorted(sd.keys())
         for key in params:
             parameter = sd[key]
-            if parameter.dtype != torch.int:
-                values = torch.randn_like(parameter)
-                values -= 0.5
-                values /= 20.0
-                parameter.copy_(values)
+            parameter.copy_(self._default_parameter_initialization(key, parameter))
         return uninitialized_model
+
+    def _default_parameter_initialization(
+        self, key: str, parameter: torch.Tensor
+    ) -> torch.Tensor:
+        """Override this method if your parameter should require some other random initialization (i.e. gptq ints, etc.)
+
+        Parameters
+        ----------
+        key: str
+            state dict key for tensor
+        parameter: torch.Tensor
+            the parameter tensor associated with a key in a state dict
+
+        Returns
+        -------
+        torch.Tensor
+            randomly initialized tensor for this model
+        """
+        values = torch.randn_like(parameter)
+        values -= 0.5
+        values /= 20.0
+        return values
 
 
 class SignatureFixtureMixin:

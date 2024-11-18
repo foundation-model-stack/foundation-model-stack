@@ -106,6 +106,21 @@ class GPTBigCodeGPTQFixtures(ModelFixtureMixin):
             linear_config={"linear_type": "gptq_cpu"},
         )
 
+    def _default_parameter_initialization(self, key, parameter):
+        if "qweight" in key:
+            return torch.randint(
+                low=0,
+                high=torch.iinfo(torch.int32).max,
+                size=parameter.shape,
+                dtype=torch.int32,
+            )
+        elif "qzeros" in key:
+            return torch.ones(parameter.shape, dtype=torch.int32) * 8
+        elif "g_idx" in key:
+            return parameter
+        else:
+            return super()._default_parameter_initialization(key, parameter)
+
 
 class TestGPTBigCodeGPTQ(
     ModelConsistencyTestSuite, ModelCompileTestSuite, GPTBigCodeGPTQFixtures
