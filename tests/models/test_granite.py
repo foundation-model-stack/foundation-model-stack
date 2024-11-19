@@ -88,7 +88,7 @@ class GraniteGPTQFixtures(ModelFixtureMixin):
             linear_config={"linear_type": "gptq_cpu"},
         )
 
-    def _default_parameter_initialization(self, key, parameter):
+    def _maybe_get_initialized_parameter(self, key, parameter):
         if "qweight" in key:
             return torch.randint(
                 low=0,
@@ -101,7 +101,7 @@ class GraniteGPTQFixtures(ModelFixtureMixin):
         elif "g_idx" in key:
             return parameter
         else:
-            return super()._default_parameter_initialization(key, parameter)
+            return None
 
 
 class TestGraniteGPTQ(
