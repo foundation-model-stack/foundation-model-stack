@@ -1,4 +1,5 @@
 import collections
+import itertools
 import os
 import re
 from collections import ChainMap
@@ -13,7 +14,7 @@ from fms.modules.tp import TPModule
 
 
 __adapters: MutableMapping[
-    str, MutableMapping[str, Callable[[Mapping[str, Any]], Mapping[str, Any]]]
+    str, MutableMapping[frozenset, Callable[[Mapping[str, Any]], Mapping[str, Any]]]
 ] = {}
 __adapter_steps: MutableMapping[
     str, MutableMapping[str, Callable[[Mapping[str, Any]], Mapping[str, Any]]]
@@ -55,6 +56,7 @@ def register_adapter(
     architecture: str,
     source: str,
     adapter_steps: list[str],
+    **extra_adapter_keys,
 ):
     """
     Registers a state dict adapter to be available to the (de) serialization
@@ -68,13 +70,18 @@ def register_adapter(
             architecture and source combination. This can be augmented with extra
             steps if needed during call to _get_adapter()
     """
-    sources: MutableMapping[str, Callable[[Mapping[str, Any]], Mapping[str, Any]]] = {}
+    sources: MutableMapping[
+        frozenset, Callable[[Mapping[str, Any]], Mapping[str, Any]]
+    ] = {}
     if architecture in __adapters:
         sources = __adapters[architecture]
 
-    if source in sources:
+    _key = {"source": source, **extra_adapter_keys}
+    key = frozenset(_key.items())
+
+    if key in sources:
         raise KeyError(
-            f"Source {source} already registered for architecture {architecture}"
+            f"Source {key} already registered for architecture {architecture}"
         )
 
     # Create a new base adapter for this source
@@ -93,8 +100,36 @@ def register_adapter(
             initial_sd,
         )
 
-    sources[source] = adapter_fn
+    sources[key] = adapter_fn
     __adapters[architecture] = sources
+
+
+def __get_most_specific(
+    source_key: frozenset, sources: MutableMapping, opt_adapter_keys
+):
+    if source_key in sources:
+        return source_key
+
+    found_key = False
+    pop_items_list = itertools.chain(
+        *map(
+            lambda x: itertools.combinations(opt_adapter_keys, x),
+            range(1, len(opt_adapter_keys) + 1),
+        )
+    )
+    for pop_items in pop_items_list:
+        source_key_dict = dict(source_key.copy())
+        for pop_item in pop_items:
+            source_key_dict.pop(pop_item, None)
+        source_key = frozenset(source_key_dict.items())
+
+        if source_key in sources:
+            found_key = True
+            break
+
+    if not found_key:
+        raise KeyError()
+    return source_key
 
 
 def list_sources(architecture: str):
@@ -220,13 +255,17 @@ def _mlp_glu_unfused_to_fused_adapter_step(
 
 
 def _get_adapter(
-    architecture: str, source: Optional[str]
+    architecture: str, source: Optional[str], extra_adapter_keys: dict
 ) -> Callable[[Mapping[str, Any]], Mapping[str, Any]]:
-    if (
-        source is None
-        or architecture not in __adapters
-        or source not in __adapters[architecture]
-    ):
+    result_source = None
+    if source is not None and architecture in __adapters:
+        source_key = {"source": source, **extra_adapter_keys}
+
+        result_source = __get_most_specific(
+            frozenset(source_key.items()), __adapters[architecture], extra_adapter_keys
+        )
+
+    if result_source is None:
         # if no adapter is registered, assume the attributes are already in
         # fms format.
         # should we raise an error here instead?
@@ -235,7 +274,7 @@ def _get_adapter(
 
         return id_fn
     else:
-        return __adapters[architecture][source]
+        return __adapters[architecture][result_source]
 
 
 def get_adapted(
@@ -256,7 +295,7 @@ def get_adapted(
     # sometimes we only load onto rank 0 so may not have a state_dict here.
     if not len(state_dict):
         return state_dict
-    adapter = _get_adapter(architecture, source)
+    adapter = _get_adapter(architecture, source, {})
     adapted = adapter(state_dict, **adapter_kwargs)
     return adapted
 
@@ -470,13 +509,15 @@ def load_state_dict_into_model(
     initial_device: where the weights will be loaded from disk.
     """
 
-    # 1. Get the adapter from checkpoint sd to fms sd
-    adapter = _get_adapter(architecture, source)
-
     # Prepare the extra_kwargs for the adapter
     adapter_kwargs = {}
     if hasattr(model, "config"):
         adapter_kwargs["model_config"] = model.config
+
+    # 1. Get the adapter from checkpoint sd to fms sd
+    adapter = _get_adapter(
+        architecture, source, {"device_type": initial_device.type}
+    )  # todo: add linear type
 
     # 2. Decide if model needs sharding and how (for now only TP)
     needs_tp_sharding = checkpoint_sharding != "tp" and distributed_strategy == "tp"
