@@ -85,7 +85,7 @@ class UninitializedLinear(nn.Module):
         self.bias = bias
         self.linear_config = linear_config
 
-    def forward():
+    def forward(self, *args, **kwargs):
         raise RuntimeError("I haven't been initialized yet!")
 
 
@@ -105,7 +105,7 @@ def get_linear(
     boolean check in filter_fn as part of linear_config, True meaning quantize), returns
     UnitializedLinear so a later loop can correctly initialize the model.
     """
-    if "filter_fn" in linear_config and module_name is None:
+    if linear_config and "filter_fn" in linear_config and module_name is None:
         return UninitializedLinear(in_features, out_features, bias, linear_config)
 
     linear_type = get_linear_type(linear_config, module_name)
