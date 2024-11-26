@@ -6,6 +6,7 @@ from typing import Any, Callable, Mapping, Optional
 import torch
 from torch import nn
 
+from fms.modules import UninitializedModule
 from fms.modules.tp import ShardType, TPModule
 
 
@@ -77,7 +78,7 @@ def get_linear_type(
     return linear_type.lower()
 
 
-class UninitializedLinear(nn.Module):
+class UninitializedLinear(UninitializedModule):
     def __init__(self, in_features, out_features, bias, linear_config):
         super().__init__()
         self.in_features = in_features
@@ -85,8 +86,10 @@ class UninitializedLinear(nn.Module):
         self.bias = bias
         self.linear_config = linear_config
 
-    def forward(self, *args, **kwargs):
-        raise RuntimeError("I haven't been initialized yet!")
+    def initialize(self, name):
+        return get_linear(
+            self.in_features, self.out_features, self.bias, self.linear_config, name
+        )
 
 
 def get_linear(
