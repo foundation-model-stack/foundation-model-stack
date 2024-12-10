@@ -1,9 +1,12 @@
+import inspect
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Optional
 
 import torch
-import torch.nn as nn
+from torch import nn
 
+from fms.modules import UninitializedModule
 from fms.modules.tp import ShardType, TPModule
 
 
@@ -47,12 +50,21 @@ def get_all_linear_type_to_sharding_maps() -> dict[str, Callable]:
     return __type_sharding_map
 
 
-def get_linear_type(linear_config: Optional[Mapping[str, Any]]) -> str:
+def get_linear_type(
+    linear_config: Optional[Mapping[str, Any]], module_name: Optional[str] = None
+) -> str:
     """Parse linear configuration mapping to extract selected linear type.
     If no mapping is provided, defaults to "torch_linear" type, which maps
     to torch.nn.Linear.
     """
     if not linear_config:
+        return "torch_linear"
+
+    if (
+        "filter_fn" in linear_config
+        and module_name is not None
+        and not linear_config["filter_fn"](module_name)
+    ):
         return "torch_linear"
 
     linear_type = linear_config.get("linear_type", None)
@@ -66,29 +78,48 @@ def get_linear_type(linear_config: Optional[Mapping[str, Any]]) -> str:
     return linear_type.lower()
 
 
+class UninitializedLinear(UninitializedModule):
+    def __init__(self, in_features, out_features, bias, linear_config):
+        super().__init__()
+        self.in_features = in_features
+        self.out_features = out_features
+        self.bias = bias
+        self.linear_config = linear_config
+
+    def initialize(self, name):
+        return get_linear(
+            self.in_features, self.out_features, self.bias, self.linear_config, name
+        )
+
+
 def get_linear(
     in_features: int,
     out_features: int,
     bias: bool,
     linear_config: Optional[Mapping[str, Any]] = None,
+    module_name: Optional[str] = None,
 ) -> nn.Module:
     """Return linear module or module factory function of selected type.
     Linear type is extracted from provided configuration (`linear_config`) and
     associated module is determined from existing mapping (`__type_factory_map`).
     Selected module must have been registered with `register_linear_type_to_module_map`.
-    """
-    linear_type = get_linear_type(linear_config)
 
-    # TODO: how to merge these calls that get different arguments?
+    In the cases where a module can be quantized or not depending on its name (given by
+    boolean check in filter_fn as part of linear_config, True meaning quantize), returns
+    UnitializedLinear so a later loop can correctly initialize the model.
+    """
+    if linear_config and "filter_fn" in linear_config and module_name is None:
+        return UninitializedLinear(in_features, out_features, bias, linear_config)
+
+    linear_type = get_linear_type(linear_config, module_name)
+
     if linear_type in __type_factory_map:
         if linear_type == "torch_linear":
             return __type_factory_map[linear_type](in_features, out_features, bias)
-        else:
-            return __type_factory_map[linear_type](
-                in_features, out_features, bias, linear_config
-            )
-    else:
-        raise KeyError(f"Unsupported linear type `{linear_type}`")
+        return __type_factory_map[linear_type](
+            in_features, out_features, bias, linear_config
+        )
+    raise KeyError(f"Unsupported linear type `{linear_type}`")
 
 
 @dataclass
@@ -125,7 +156,6 @@ def shard_base_linear(
         for param_name in param_sharding_info[module_name]:
             if module_name not in all_params:
                 all_params[module_name] = {}
-            # TODO: reusing method '_get_sd_weight' but consider changing its name
             all_params[module_name][param_name] = tp_module._get_sd_weight(
                 tensor_values, used_keys, [module_name, param_name]
             )
