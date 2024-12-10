@@ -19,14 +19,14 @@ class BambaFixtures(ConfigFixtureMixin, ModelFixtureMixin):
     """
 
     @pytest.fixture(scope="class", autouse=True)
-    def uninitialized_model(self, config: GraniteConfig):
+    def uninitialized_model(self, config: BambaConfig):
         return Bamba(config)
 
     @pytest.fixture(scope="class", autouse=True)
     def config(self) -> ModelConfig:
         return BambaConfig(
             src_vocab_size=384,
-            emb_dim=16,
+            emb_dim=128,
             norm_eps=1e-05,
             nheads=8,
             kvheads=8,
@@ -39,7 +39,8 @@ class BambaFixtures(ConfigFixtureMixin, ModelFixtureMixin):
             ntk_scaling=False,
             linear_config={"linear_type": "torch_linear"},
             fused_weights=True,
-            attn_layer_indices={1}
+            attn_layer_indices={1},
+            head_dim=32,
         )
 
 class TestBamba(

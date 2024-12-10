@@ -13,6 +13,9 @@ from fms.modules.positions import RotaryEmbedding
 from fms.modules.ssm import SSM, SSMCacheUnit
 from fms.utils.activation import str_to_activation
 from fms.utils.config import ModelConfig
+from fms import models
+from utils.past_ci_versions import past_versions_testing
+
 
 @dataclasses.dataclass
 class BambaConfig(ModelConfig):
@@ -33,6 +36,8 @@ class BambaConfig(ModelConfig):
     conv_kernel: int = 4
     state_size: int = 256
     hidden_grow_factor: float = 2.0
+    mamba_expand: float = 2.0
+    mamba_n_heads: int = 128
     multiple_of: int = 256
     use_bias: bool = False
     use_conv_bias: bool = True
@@ -47,15 +52,8 @@ class BambaConfig(ModelConfig):
 class BambaBlock(nn.Module):
     def __init__(self, config: BambaConfig, rotary_emb, layer_index: int):
         super(BambaBlock, self).__init__()
+        self.config = config
         self.layer_index = layer_index
-        self.norm = LayerNormParameterized(
-            self.config.emb_dim,
-            elementwise_scale=True,
-            elementwise_shift=False,
-            use_mean=False,
-            eps=self.config.norm_eps,
-            use_high_precision_pow=True,
-        )
 
         if layer_index in config.attn_layer_indices:
             if self.config.kvheads == 0:
@@ -77,11 +75,11 @@ class BambaBlock(nn.Module):
             )
         else:
             self.attn_ssm = SSM(
-                self.config.nheads,
+                self.config.mamba_n_heads,
                 self.config.emb_dim,
                 self.config.state_size,
                 self.config.conv_kernel,
-                self.config.hidden_grow_factor,
+                self.config.mamba_expand,
                 self.config.use_bias,
                 self.config.use_conv_bias,
                 self.config.activation_fn,
@@ -150,7 +148,7 @@ class BambaBlock(nn.Module):
         )
 
         cache = None
-        if use_cache:
+        if use_cache or isinstance(x, tuple):
             x, cache = x
         if self.config.p_dropout != 0:
             x = self.dropout(x)
@@ -219,7 +217,7 @@ class BambaHeadless(nn.Module):
         if self.config.p_dropout:
             self.dropout = nn.Dropout(self.config.p_dropout)
 
-        self.attn_layer_ind = -1 if len(self.attn_layer_ind) == 0 else next(iter(self.config.attn_layer_indices))
+        self.attn_layer_ind = -1 if len(self.config.attn_layer_indices) == 0 else next(iter(self.config.attn_layer_indices))
 
     def reset_parameters(self):
         nn.init.trunc_normal_(
@@ -287,7 +285,28 @@ class BambaHeadless(nn.Module):
         # mask: batch_size x seq_len x seq_len
         # bias: nheads x seq_len x seq_len
         if past_key_value_states is None or len(past_key_value_states) == 0:
-            past_key_value_states = [None for _ in range(len(self.layers))]
+            if use_cache:
+                past_key_value_states = []
+                for i in range(len(self.layers)):
+                    if i in self.config.attn_layer_indices:
+                        past_key_value_states.append(None)
+                    else:
+                        past_key_value_states.append(
+                            SSMCacheUnit(
+                                self.config.emb_dim,
+                                self.config.mamba_n_heads,
+                                self.config.head_dim,
+                                self.config.conv_kernel,
+                                self.config.mamba_expand,
+                                self.config.n_groups,
+                                self.config.state_size,
+                                x_in.size(0),
+                                self.embedding.weight.dtype,
+                                str(self.embedding.weight.device)
+                            )
+                        )
+            else:
+                past_key_value_states = [None for _ in range(len(self.layers))]
 
         qlen = x_in.size(1)
         klen = x_in.size(1)
@@ -401,3 +420,35 @@ class Bamba(nn.Module):
             return preds, cache
         else:
             return preds
+
+_architecture_name = "bamba"
+
+
+def _bamba_factory_factory(config):
+    def factory(**kwargs):
+        return Bamba(config, **kwargs)
+
+    return factory
+
+_bamba_9_8b_config = BambaConfig(
+    src_vocab_size=128256,
+    emb_dim=4096,
+    tie_heads=False,
+    norm_eps=1e-5,
+    kvheads=8,
+    nlayers=32,
+    nheads=32,
+    use_bias=False,
+    head_dim=64,
+    n_groups=1,
+    hidden_grow_factor=3.5,
+    mamba_expand=2.0,
+    state_size=128,
+    conv_kernel=4,
+    use_conv_bias=True,
+    chunk_size=256,
+    attn_layer_indices={9,18,27},
+    mamba_n_heads=128,
+)
+
+models.register_model(_architecture_name, "9_8b", _bamba_factory_factory(_bamba_9_8b_config))
