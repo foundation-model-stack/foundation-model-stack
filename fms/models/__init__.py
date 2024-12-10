@@ -421,16 +421,15 @@ def get_model(
 
     # Run post-model instantiation for layers that require their own name
     # This is usually the case for quantization strategies
-    replacements_list = []
-    new_modules = []
     for name, module in fms_model.named_modules():
         if isinstance(module, UninitializedModule):
-            replacements_list.append(name)
-            new_modules.append(module.initialize(name))
-    for mod_name, new_mod in zip(replacements_list, new_modules):
-        fqn_list = mod_name.split(".")
-        parent_name = ".".join(fqn_list[:-1])
-        setattr(fms_model.get_submodule(parent_name), fqn_list[-1], new_mod)
+            fqn_list = name.split(".")
+            parent_name = ".".join(fqn_list[:-1])
+            setattr(
+                fms_model.get_submodule(parent_name),
+                fqn_list[-1],
+                module.initialize(name),
+            )
 
     # Choose when to wrap and load the model weights based on the combination
     # distribution strategy and checkpoint sharding
