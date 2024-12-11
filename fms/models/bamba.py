@@ -14,8 +14,11 @@ from fms.modules.ssm import SSM, SSMCacheUnit
 from fms.utils.activation import str_to_activation
 from fms.utils.config import ModelConfig
 from fms import models
-from utils.past_ci_versions import past_versions_testing
+from fms.utils import serialization
+import re
+import logging
 
+logger = logging.getLogger(__name__)
 
 @dataclasses.dataclass
 class BambaConfig(ModelConfig):
@@ -62,7 +65,7 @@ class BambaBlock(nn.Module):
                 kvheads = self.config.kvheads
                 assert self.config.nheads % self.config.kvheads == 0
 
-            self.attn_ssm = MultiHeadAttention(
+            self.attn = MultiHeadAttention(
                 self.config.emb_dim,
                 self.config.emb_dim // self.config.nheads,
                 self.config.emb_dim // self.config.nheads,
@@ -74,7 +77,7 @@ class BambaBlock(nn.Module):
                 linear_config=self.config.linear_config,
             )
         else:
-            self.attn_ssm = SSM(
+            self.ssm = SSM(
                 self.config.mamba_n_heads,
                 self.config.emb_dim,
                 self.config.state_size,
@@ -88,6 +91,8 @@ class BambaBlock(nn.Module):
                 self.config.head_dim,
                 self.config.chunk_size,
             )
+
+        self.block_fn = self.attn if hasattr(self, "attn") else self.ssm
 
         self.ff_sub_layer = GatedLinearUnit(
             self.config.emb_dim,
@@ -135,7 +140,7 @@ class BambaBlock(nn.Module):
         residual = x
         x = self.ln(x)
 
-        x = self.attn_ssm(
+        x = self.block_fn(
             x,
             mask=mask,
             position_ids=position_ids,
@@ -452,3 +457,149 @@ _bamba_9_8b_config = BambaConfig(
 )
 
 models.register_model(_architecture_name, "9_8b", _bamba_factory_factory(_bamba_9_8b_config))
+
+def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]:
+    replacements = [
+        (r"^lm_head.weight", "head.weight"),
+        (r"^model.embed_tokens.weight", "base_model.embedding.weight"),
+        (r"^model.final_layernorm", "base_model.dec_norm"),
+        (r"^model.layers", "base_model.layers"),
+        (r"self_attn\.k_proj", "attn.in_proj.key"),
+        (r"self_attn\.v_proj", "attn.in_proj.value"),
+        (r"self_attn\.q_proj", "attn.in_proj.query"),
+        (r"self_attn\.o_proj", "attn.dense"),
+        (r"mamba\.conv1d", "ssm.conv1d"),
+        (r"mamba\.in_proj", "ssm.in_proj"),
+        (r"mamba\.norm", "ssm.norm"),
+        (r"mamba\.out_proj", "ssm.out_proj"),
+        (r"mamba\.dt_bias", "ssm.dt_bias"),
+        (r"mamba\.D", "ssm.D"),
+        (r"mamba\.A_log", "ssm.A_log"),
+        (r"feed_forward\.gate_proj", "ff_sub_layer.wg"),
+        (r"feed_forward\.up_proj", "ff_sub_layer.w1"),
+        (r"feed_forward\.down_proj", "ff_sub_layer.w2"),
+        (r"input_layernorm", "ln"),
+        (r"pre_ff_layernorm", "ff_ln"),
+    ]
+    new_sd = {}
+    for name, param in input_sd.items():
+        new_name = name
+        for pattern, repl in replacements:
+            new_name = re.sub(pattern, repl, new_name)
+        new_sd[new_name] = param
+    return new_sd
+
+
+serialization.register_adapter_step("bamba", "hf_to_fms_names", _hf_to_fms_names)
+
+def _get_rope_params(linear_type: str) -> list[str]:
+    if "gptq" in linear_type:
+        return ["qweight", "scales", "qzeros", "bias"]
+    else:  # torch.nn.Linear
+        return ["weight", "bias"]
+
+def _hf_to_fms_rope(
+    input_sd: Mapping[str, Any], model_config: Optional[BambaConfig] = None, **kwargs
+) -> Mapping[str, Any]:
+    new_sd = {}
+
+    if model_config:
+        head_size = model_config.emb_dim // model_config.nheads
+        linear_type = "torch_linear"
+        if model_config.linear_config:
+            linear_type = model_config.linear_config["linear_type"]
+    else:
+        logger.warning("Missing model_config, assuming defaults for head_size")
+        head_size = 128  # Good default for most models
+        linear_type = "torch_linear"
+
+    rope_params = _get_rope_params(linear_type)
+    trans_required_pattern = re.compile(
+        f"layers.[0-9]+.attn.in_proj.(query|key).({'|'.join(rope_params)})"
+    )
+    for name, param in input_sd.items():
+        # hf -> fms requires a transpose operation for the query and key
+        # weight and bias parameters for Bamba models
+        # This transpose is due to the different implementation of RoPE in
+        # HF and FMS. While FMS follows the original RoPE paper
+        # (https://arxiv.org/abs/2104.09864), HF has its own implementation
+        # that doesn't respect the order of outputs. This is OK as long as you
+        # rearrange the weights of the query and key projections, as the
+        # combination projection + RoPE ends up producing the same outputs.
+        # Therefore, to make FMS produce the correct order of outputs when
+        # loading from an HF checkpoint, we need to undo the transformation
+        # that HF does from the original Meta weights:
+        if bool(trans_required_pattern.match(name)):
+            temp = param
+            if "gptq" in linear_type and temp.dim() == 2:
+                # GPTQ qweights are [in_feat, out_feat] (unlike usual [out_feat, in_feat])
+                # and are fully transposed before & after process
+                temp = temp.transpose(0, 1)
+            # num_heads is used in the transformation required for hf->fms
+            # can't be precomputed because q and k might have different num_heads
+            num_heads = temp.size(0) // head_size
+
+            if temp.dim() == 2:  # weight
+                temp_view = temp.view(num_heads, 2, -1, temp.size(1))
+            else:  # bias
+                temp_view = temp.view(num_heads, 2, -1)
+            temp = temp_view.transpose(1, 2).reshape(*temp.size())
+
+            if "gptq" in linear_type and temp.dim() == 2:
+                temp = temp.transpose(0, 1)
+
+            new_sd[name] = temp
+        else:
+            new_sd[name] = param
+
+    return new_sd
+
+serialization.register_adapter_step("bamba", "hf_to_fms_rope", _hf_to_fms_rope)
+
+def _weight_fusion(
+    input_sd: Mapping[str, Any], model_config: Optional[BambaConfig] = None, **kwargs
+) -> Mapping[str, Any]:
+    has_fused_weights = True
+    if model_config:
+        if not model_config.fused_weights:
+            has_fused_weights = False
+
+    new_sd = input_sd
+    if has_fused_weights:
+        new_sd = serialization._mlp_glu_unfused_to_fused_adapter_step(
+            serialization._attn_unfused_to_fused_step(new_sd)
+        )
+    return new_sd
+
+
+serialization.register_adapter_step("bamba", "weight_fusion", _weight_fusion)
+
+
+def _hf_gptq_bamba_check(
+    input_sd: Mapping[str, Any], model_config: Optional[BambaConfig] = None, **kwargs
+) -> Mapping[str, Any]:
+    has_fused_weights = True
+    linear_type = "torch_linear"
+    if model_config:
+        if not model_config.fused_weights:
+            has_fused_weights = False
+        if model_config.linear_config:
+            linear_type = model_config.linear_config["linear_type"]
+
+    if "gptq" in linear_type and has_fused_weights:
+        raise ValueError(
+            "GPTQ HF Bamba checkpoints cannot be loaded into a model with fused weights"
+        )
+
+    return input_sd
+
+
+serialization.register_adapter_step(
+    "bamba", "hf_gptq_fusion_check", _hf_gptq_bamba_check
+)
+
+serialization.register_adapter(
+    "bamba",
+    "hf",
+    ["hf_to_fms_names", "hf_to_fms_rope", "hf_gptq_fusion_check", "weight_fusion"],
+)
