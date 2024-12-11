@@ -1,8 +1,10 @@
+import inspect
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Optional
 
 import torch
-import torch.nn as nn
+from torch import nn
 
 from fms.modules.tp import ShardType, TPModule
 
@@ -66,6 +68,47 @@ def get_linear_type(linear_config: Optional[Mapping[str, Any]]) -> str:
     return linear_type.lower()
 
 
+def get_smoothquant_selection(linear_config: Mapping[str, Any]) -> bool:
+    """Determine usage of smoothquant at module level.
+    If model-wise smoothquant is enabled, inspect the call stack to determine
+    whether the call to this function originated from a module for which
+    module-wise smoothquant is to be enabled.
+    """
+    use_smoothquant = linear_config["smoothquant"]
+    if use_smoothquant and "smoothquant_layers" in linear_config:
+        frame = [
+            f
+            for f in inspect.stack()
+            if (
+                isinstance(f.code_context, Iterable)
+                and isinstance(f.code_context[0], str)
+                and "get_linear" in f.code_context[0]
+                and "inspect.stack" not in f.code_context[0]
+            )
+        ]
+        if len(frame) == 0:
+            raise ValueError(
+                "Could not determine origin of `get_linear` call from stack inspection"
+            )
+        if len(frame) > 1:
+            raise ValueError(
+                "Ambiguous frame determination for call to `get_linear`:\n"
+                f"{str(frame)}"
+            )
+        if isinstance(frame[0].code_context, Iterable) and isinstance(
+            frame[0].code_context[0], str
+        ):
+            layer = frame[0].code_context[0].split("=")[0].split(".")[1].strip()
+        else:
+            raise ValueError(
+                "Failed to determine layer type from inspect.stack() frame:\n"
+                f"{frame}"
+            )
+        if layer not in linear_config["smoothquant_layers"]:
+            use_smoothquant = False
+    return use_smoothquant
+
+
 def get_linear(
     in_features: int,
     out_features: int,
@@ -79,16 +122,23 @@ def get_linear(
     """
     linear_type = get_linear_type(linear_config)
 
-    # TODO: how to merge these calls that get different arguments?
+    if linear_config and "smoothquant" in linear_config:
+        use_smoothquant = get_smoothquant_selection(linear_config)
+
     if linear_type in __type_factory_map:
         if linear_type == "torch_linear":
             return __type_factory_map[linear_type](in_features, out_features, bias)
-        else:
+        if (
+            "use_smoothquant"
+            in inspect.signature(__type_factory_map[linear_type]).parameters
+        ):
             return __type_factory_map[linear_type](
-                in_features, out_features, bias, linear_config
+                in_features, out_features, bias, linear_config, use_smoothquant
             )
-    else:
-        raise KeyError(f"Unsupported linear type `{linear_type}`")
+        return __type_factory_map[linear_type](
+            in_features, out_features, bias, linear_config
+        )
+    raise KeyError(f"Unsupported linear type `{linear_type}`")
 
 
 @dataclass
@@ -125,7 +175,6 @@ def shard_base_linear(
         for param_name in param_sharding_info[module_name]:
             if module_name not in all_params:
                 all_params[module_name] = {}
-            # TODO: reusing method '_get_sd_weight' but consider changing its name
             all_params[module_name][param_name] = tp_module._get_sd_weight(
                 tensor_values, used_keys, [module_name, param_name]
             )
