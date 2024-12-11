@@ -74,7 +74,7 @@ class RMSNormGated(nn.Module):
 
 class SSMCacheUnit:
 
-    def __init__(self, emb_dim: int, nheads: int, head_dim: int, conv_kernel, expand: float, n_groups: int, state_size: int, batch_size: int, act, dtype: torch.float16, device: Optional[str] = None):
+    def __init__(self, emb_dim: int, nheads: int, head_dim: int, conv_kernel, expand: float, n_groups: int, state_size: int, batch_size: int, dtype: torch.float16, device: Optional[str] = None):
         self.seqlen_offset = 0
         self.dtype = dtype
         self.conv_kernel_size = conv_kernel
@@ -90,7 +90,6 @@ class SSMCacheUnit:
         self.ssm_state = torch.zeros(
             batch_size, nheads, head_dim, state_size, device=device, dtype=dtype
         )
-        self.act = act
 
     def update_conv_state(self, new_conv_state: torch.Tensor, cache_position: torch.Tensor):
         conv_state = self.conv_state
@@ -162,7 +161,7 @@ class SSM(nn.Module):
         batch_size, seq_len, _ = input_states.shape
         dtype = input_states.dtype
         # Gated MLP's linear projection
-        projected_states = self.in_proj(input_states.squeeze(1))
+        projected_states = self.in_proj(input_states)
         d_mlp = (projected_states.shape[
                      -1] - 2 * self.intermediate_size - 2 * self.n_groups * self.ssm_state_size - self.nheads) // 2
         _, _, gate, hidden_states, dt = projected_states.split(

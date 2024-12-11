@@ -31,8 +31,8 @@ class BambaConfig(ModelConfig):
     nlayers: int = 64
     activation_fn: str = "swish"
     attn_layer_indices: set[int] =dataclasses.field(default_factory=lambda: set([]))
+    attn_rotary_emb: int = 2048
     ntk_scaling: bool = False
-    max_expected_seq_len: int = 4096
     tie_heads: bool = False
     rope_theta: float = 10_000.0
     p_dropout: float = 0.0
@@ -92,7 +92,7 @@ class BambaBlock(nn.Module):
                 self.config.chunk_size,
             )
 
-        self.block_fn = self.attn if hasattr(self, "attn") else self.ssm
+        self.is_mamba_layer = hasattr(self, "ssm")
 
         self.ff_sub_layer = GatedLinearUnit(
             self.config.emb_dim,
@@ -136,25 +136,37 @@ class BambaBlock(nn.Module):
         use_cache=False,
         is_causal_mask=False,
         attn_algorithm=None,
+        cache_position=None,
     ):
+        seqlen_offset = x.shape[1]
         residual = x
         x = self.ln(x)
 
-        x = self.block_fn(
-            x,
-            mask=mask,
-            position_ids=position_ids,
-            past_key_value_state=past_key_value_state,
-            use_cache=use_cache,
-            # everything after here is ignored in ssm
-            attn_algorithm=attn_algorithm,
-            is_self=True,
-            is_causal_mask=is_causal_mask,
-        )
+        if self.is_mamba_layer:
+            x = self.ssm(
+                x,
+                past_key_value_state=past_key_value_state,
+                use_cache=use_cache,
+                cache_position=cache_position,
+                mask=None, # FIXME: This needs to be fixed
+            )
+        else:
+            x = self.attn(
+                x,
+                mask=mask,
+                position_ids=position_ids,
+                past_key_value_state=past_key_value_state,
+                use_cache=use_cache,
+                # everything after here is ignored in ssm
+                attn_algorithm=attn_algorithm,
+                is_self=True,
+                is_causal_mask=is_causal_mask,
+            )
 
         cache = None
         if use_cache or isinstance(x, tuple):
             x, cache = x
+
         if self.config.p_dropout != 0:
             x = self.dropout(x)
 
@@ -170,6 +182,9 @@ class BambaBlock(nn.Module):
         # another residual
         x = x + residual
         if use_cache:
+            if self.is_mamba_layer:
+                cache.seqlen_offset += seqlen_offset
+
             return x, cache
         else:
             return x
@@ -189,7 +204,7 @@ class BambaHeadless(nn.Module):
         self.rot_emb = RotaryEmbedding(
             dim=self.config.emb_dim // self.config.nheads,
             ntk_scaling=self.config.ntk_scaling,
-            max_seq_len=self.config.max_expected_seq_len,
+            max_seq_len=self.config.attn_rotary_emb,
             ratio=self.config.rope_theta,
         )
 
@@ -198,7 +213,7 @@ class BambaHeadless(nn.Module):
             [param.device for param in self.parameters()]
             + [buffer.device for buffer in self.buffers()]
         ):
-            self.rot_emb.compute_freqs_cis(device, self.config.max_expected_seq_len)
+            self.rot_emb.compute_freqs_cis(device, self.config.attn_rotary_emb)
 
         layers = []
         for i in range(self.config.nlayers):
@@ -234,7 +249,7 @@ class BambaHeadless(nn.Module):
             [param.device for param in self.parameters()]
             + [buffer.device for buffer in self.buffers()]
         ):
-            self.rot_emb.compute_freqs_cis(device, self.config.max_expected_seq_len)
+            self.rot_emb.compute_freqs_cis(device, self.config.attn_rotary_emb)
 
         # Call reset_parameters for relevant sub-layers
         for m in self.modules():
@@ -273,7 +288,7 @@ class BambaHeadless(nn.Module):
             [param.device for param in self.parameters()]
             + [buffer.device for buffer in self.buffers()]
         ):
-            self.rot_emb.compute_freqs_cis(device, self.config.max_expected_seq_len)
+            self.rot_emb.compute_freqs_cis(device, self.config.attn_rotary_emb)
 
 
     def forward(
@@ -337,6 +352,11 @@ class BambaHeadless(nn.Module):
         # this is the output cache for all the decoder layers
         present_key_value_states = []
 
+        if position_ids is None:
+            cache_position = torch.arange(x_in.shape[1], device=x_in.device)
+        else:
+            cache_position = position_ids.max(dim=0).values
+
         for i, layer in enumerate(self.layers):
             output = layer(
                 x=x_in,
@@ -346,12 +366,12 @@ class BambaHeadless(nn.Module):
                 use_cache=use_cache,
                 is_causal_mask=is_causal_mask,
                 attn_algorithm=attn_algorithm,
+                cache_position=cache_position
             )
 
             if use_cache:
                 x_in, present_key_value_state = output
                 present_key_value_states.append(present_key_value_state)
-
             else:
                 x_in = output
 
@@ -454,6 +474,7 @@ _bamba_9_8b_config = BambaConfig(
     chunk_size=256,
     attn_layer_indices={9,18,27},
     mamba_n_heads=128,
+    attn_rotary_emb=2048,
 )
 
 models.register_model(_architecture_name, "9_8b", _bamba_factory_factory(_bamba_9_8b_config))
