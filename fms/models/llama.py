@@ -134,7 +134,7 @@ class LLaMABlock(nn.Module):
         residual = x
         x = self.ln(x)
         x = self.attn(
-            q=x,
+            x,
             mask=mask,
             position_ids=position_ids,
             attn_algorithm=attn_algorithm,
@@ -412,6 +412,8 @@ class LLaMA(nn.Module):
         )
 
         if only_last_token:
+            #print(output)
+            output = output.to_local()
             output = output[:, -1, :]
         preds = self.shared(output, reverse=True)
 
