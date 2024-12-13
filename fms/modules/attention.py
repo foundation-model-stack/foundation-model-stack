@@ -226,7 +226,10 @@ class FusedQKV(QKV):
             qkv = q
         else:
             raise ValueError("q, k, and v must be the same or k and v must be None")
-        return self.qkv_fused(qkv).split(self.splits, dim=-1)
+        world_size = torch.distributed.get_world_size()
+        dim_split = [s//world_size for s in self.splits]
+
+        return self.qkv_fused(qkv).split(dim_split, dim=-1)
 
 
 class MultiHeadAttention(nn.Module):
@@ -318,9 +321,6 @@ class MultiHeadAttention(nn.Module):
                     m.bias.data.zero_()
             elif isinstance(m, QKV):
                 m.reset_parameters()
-
-    def to_tp(self, group: ProcessGroup) -> "TPMultiHeadAttention":
-        return TPMultiHeadAttention.import_module(self, group)
 
     def forward(
         self,
@@ -465,194 +465,4 @@ class MultiHeadAttention(nn.Module):
         if use_cache:
             return out, (keys, values)
         else:
-            return out
-
-
-class TPMultiHeadAttention(MultiHeadAttention, TPModule):
-    """
-    Performs multi-headed self- or cross-attention, with optional attention masking.
-    This subclass adds support for Tensor Parallel
-    ...
-    Args
-    ----
-    Check MultiHeadAttention for up-to-date docs
-
-    world_size: int
-        the number of processes running this model in TP
-    rank: int
-        the index of this process wrt to the rest running the model in TP
-    """
-
-    def __init__(
-        self,
-        emb_dim,
-        emb_kq,
-        emb_v,
-        nheads,
-        kvheads,
-        p_dropout=None,
-        use_bias=False,
-        position_encoder: Optional[PositionEncoder] = None,
-        fused: bool = True,
-        group: Optional[ProcessGroup] = None,
-        linear_config: Optional[Mapping[str, Any]] = None,
-        scale_factor: Optional[float] = None,
-    ):
-        assert torch.distributed.is_initialized()
-
-        rank, world_size = distributed.rank_and_world(group)
-        assert (
-            nheads % world_size == 0
-        ), "The number of heads must be divisible by world size"
-        assert (kvheads >= world_size and kvheads % world_size == 0) or (
-            kvheads < world_size and world_size % kvheads == 0
-        ), "the kv heads must be divisible by the world size or the world size must be divisible by kv heads"
-        MultiHeadAttention.__init__(
-            self,
-            emb_dim,
-            emb_kq,
-            emb_v,
-            nheads // world_size,
-            (kvheads // world_size) if kvheads >= world_size else 1,
-            p_dropout,
-            use_bias,
-            position_encoder,
-            fused,
-            linear_config,
-            scale_factor,
-        )
-        self.pre_tp_nheads = nheads
-        self.pre_tp_kvheads = kvheads
-        self.setup_tp(rank, world_size)
-
-    def load_weights(
-        self,
-        tensor_values: dict[str, torch.Tensor],
-    ) -> Optional[set]:
-        """Define sharding info of MHA module as:
-        {'module_name': (module_obj, sharding_dim, max_partition)}
-        Then, call the pre-registered sharding function associated with
-        self.linear_type.
-
-        `sharding_dim` is sharding dimension of the `weights` parameter
-        of nn.Linear. It may differ for other types of linear or other
-        parameters.
-
-        The numbers in `max_partition` signify the largest world size
-        till we need to duplicate. For instance if we have nheads=16 and
-        world_size=32, then first 2 ranks will get first 1/16th of query
-        """
-
-        if self.fused:
-            module_sharding_info = {
-                "qkv_fused": LinearModuleShardingInfo(
-                    self.in_proj.qkv_fused,
-                    0,
-                    [self.pre_tp_nheads, self.pre_tp_kvheads, self.pre_tp_kvheads],
-                ),
-                "dense": LinearModuleShardingInfo(self.dense, 1, [self.world_size]),
-            }
-        else:
-            module_sharding_info = {
-                "query": LinearModuleShardingInfo(
-                    self.in_proj.query, 0, [self.pre_tp_nheads]
-                ),
-                "key": LinearModuleShardingInfo(
-                    self.in_proj.key, 0, [self.pre_tp_kvheads]
-                ),
-                "value": LinearModuleShardingInfo(
-                    self.in_proj.value, 0, [self.pre_tp_kvheads]
-                ),
-                "dense": LinearModuleShardingInfo(self.dense, 1, [self.world_size]),
-            }
-
-        type_sharding_map = get_all_linear_type_to_sharding_maps()
-        unused_keys = type_sharding_map[self.linear_type](
-            tensor_values,
-            self,
-            module_sharding_info,
-        )
-        return unused_keys
-
-    @staticmethod
-    def import_module(
-        mha: MultiHeadAttention, group: ProcessGroup
-    ) -> "TPMultiHeadAttention":
-        tp_mha = TPMultiHeadAttention(
-            emb_dim=mha.emb_dim,
-            emb_kq=mha.emb_kq_per_head,
-            emb_v=mha.emb_v_per_head,
-            nheads=mha.nheads,
-            kvheads=mha.kvheads,
-            p_dropout=mha.p_dropout,
-            use_bias=mha.use_bias,
-            position_encoder=mha.position_encoder,
-            group=group,
-            fused=mha.fused,
-            linear_config=mha.linear_config,
-            scale_factor=mha.scale_factor,
-        )
-        return tp_mha
-
-    def _copy_to_tp_region(
-        self,
-        q: torch.Tensor,
-        k: Optional[torch.Tensor] = None,
-        v: Optional[torch.Tensor] = None,
-    ):
-        if (k is None and v is None) or (k is q and v is q):
-            q_par = copy_to_tensor_model_parallel_region(q)
-            if self.fused:
-                k_par = None
-                v_par = None
-            else:
-                k_par = copy_to_tensor_model_parallel_region(k)
-                v_par = copy_to_tensor_model_parallel_region(v)
-        else:
-            raise ValueError(
-                "both k and v must either be given as tensors or both None"
-            )
-
-        return q_par, k_par, v_par
-
-    def forward(
-        self,
-        q,
-        k=None,
-        v=None,
-        mask=None,
-        position_ids=None,
-        attn_algorithm=None,
-        past_key_value_state=None,
-        use_cache=False,
-        is_self=True,
-        is_causal_mask=False,
-    ):
-        """
-        Check MultiHeadAttention for up-to-date arguments and docs
-        """
-
-        q_par, k_par, v_par = self._copy_to_tp_region(q, k, v)
-
-        out_par = MultiHeadAttention.forward(
-            self,
-            q_par,
-            k_par,
-            v_par,
-            mask,
-            position_ids,
-            attn_algorithm,
-            past_key_value_state,
-            use_cache,
-            is_self,
-            is_causal_mask,
-        )
-
-        # if use_cache=True, we return the hidden_state as well as the kv cache.
-        # We only reduce the output, and keep the cache thread-local
-        if use_cache:
-            out = reduce_from_tensor_model_parallel_region(out_par[0], self.world_size)
-            return out, out_par[1]
-        else:
-            out = reduce_from_tensor_model_parallel_region(out_par, self.world_size)
             return out
