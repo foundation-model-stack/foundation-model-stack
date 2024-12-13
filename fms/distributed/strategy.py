@@ -7,6 +7,18 @@ import torch.distributed
 from torch import nn
 
 from fms.utils import tp_wrapping
+from torch.distributed.device_mesh import init_device_mesh
+
+
+from torch.distributed.tensor import Shard, Replicate
+from torch.distributed.tensor.parallel import (
+   parallelize_module,
+   ColwiseParallel,
+   RowwiseParallel,
+   SequenceParallel,
+   PrepareModuleInput,
+   PrepareModuleOutput
+)
 
 
 if "DISTRIBUTED_STRATEGY_IGNORE_MODULES" in os.environ:
@@ -151,11 +163,52 @@ class TensorParallelStrategy(DistributedStrategy):
         super().__init__(from_meta)
         assert torch.distributed.is_initialized(), "must initialize a process group"
         self.group = group if group is not None else torch.distributed.GroupMember.WORLD
+        device_type = "cuda" if torch.cuda.is_available() else "cpu"
+        world = torch.distributed.get_world_size()
+        self.device_mesh = init_device_mesh(device_type, (world,))
 
     def _distribute_module(
         self, module: nn.Module, final_layers: bool = False
     ) -> nn.Module:
-        return tp_wrapping.apply_tp(module, self.group)
+        tp_plan = {
+              "shared.emb": RowwiseParallel(input_layouts=Replicate(),output_layouts=Shard(1)),
+              "shared.head": ColwiseParallel(input_layouts=Shard(1), output_layouts=Replicate(),),
+              "dec_norm": SequenceParallel(),
+           }
+        return parallelize_module(module, self.device_mesh, tp_plan)
+        #return module
 
     def _distribute_layer(self, block: nn.Module, layer: int) -> nn.Module:
-        return tp_wrapping.apply_tp(block, self.group)
+        layer_tp_plan = {
+            "ln": SequenceParallel(),
+            "attn": PrepareModuleInput(
+                input_layouts=(Shard(1),),
+                desired_input_layouts=(Replicate(),),
+                ),
+            "attn.in_proj.qkv_fused": ColwiseParallel(),
+            "attn.in_proj.query": ColwiseParallel(),
+            "attn.in_proj.key": ColwiseParallel(),
+            "attn.in_proj.value": ColwiseParallel(),
+            "attn.dense": RowwiseParallel(output_layouts=Shard(1)),
+            "ffn_ln": SequenceParallel(),
+            "ff_sub_layer": PrepareModuleInput(
+                input_layouts=(Shard(1),),
+                desired_input_layouts=(Replicate(),),
+                ),
+            "ff_sub_layer.wg": ColwiseParallel(),
+            "ff_sub_layer.wg1_fused": ColwiseParallel(),
+            "ff_sub_layer.w2": RowwiseParallel(output_layouts=Shard(1)),
+            "ff_sub_layer.w1": ColwiseParallel(),
+            }
+        # Adjust attention module to use the local number of heads
+        attn_layer = block.attn
+        attn_layer.nheads = attn_layer.nheads // self.device_mesh.size()
+        attn_layer.kvheads = attn_layer.kvheads // self.device_mesh.size()
+
+        #Custom parallelization plan for the model
+        return parallelize_module(
+            module=block,
+            device_mesh=self.device_mesh,
+            parallelize_plan=layer_tp_plan
+        )
+        return block
