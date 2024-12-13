@@ -20,19 +20,15 @@ from fms.distributed.strategy import (
     UniformModelParallelStrategy,
 )
 from fms.utils import fusion, serialization
-from torch.distributed.device_mesh import init_device_mesh
-
-
-from torch.distributed.tensor import Shard, Replicate
+from torch.distributed.tensor import init_device_mesh, Shard, Replicate
 from torch.distributed.tensor.parallel import (
-   parallelize_module,
-   ColwiseParallel,
-   RowwiseParallel,
-   SequenceParallel,
-   PrepareModuleInput,
+    ColwiseParallel,
+    PrepareModuleInput,
+    RowwiseParallel,
+    SequenceParallel,
+    parallelize_module,
+    PrepareModuleOutput
 )
-
-
 logger = logging.getLogger(__name__)
 
 __models: MutableMapping[str, MutableMapping[str, Callable[[], nn.Module]]] = {}
@@ -478,50 +474,6 @@ def get_model(
             if t.device == torch.device("meta")
             else t
         )
-    device_type = "cuda" if torch.cuda.is_available() else "cpu"
-    num_gpus = torch.distributed.get_world_size()
-    device_mesh = init_device_mesh(device_type, (num_gpus,))
-    tp_plan = {
-              "shared.emb": RowwiseParallel(output_layouts=Shard(1)),
-              "shared.head": ColwiseParallel(input_layouts=Replicate()),
-              "dec_norm": SequenceParallel(),
-           }
-    fms_model = parallelize_module(fms_model, device_mesh, tp_plan)
-
-    for layer_id, transformer_block in enumerate(fms_model.layers):
-        layer_tp_plan = {
-            "attn": PrepareModuleInput(
-              input_layouts=(Shard(1),),
-              desired_input_layouts=(Replicate(),)
-            ),
-              "attn.in_proj.qkv_fused": ColwiseParallel(output_layouts=Replicate()),
-              "attn.query": ColwiseParallel(output_layouts=Replicate()),
-              "attn.key": ColwiseParallel(output_layouts=Replicate()),
-              "attn.value": ColwiseParallel(output_layouts=Replicate()),
-              "attn.dense": ColwiseParallel(input_layouts=Replicate(), output_layouts=Shard(1)),
-              "ff_sub_layer": PrepareModuleInput(
-              input_layouts=(Shard(1),),
-              desired_input_layouts=(Replicate(),)
-               ),
-              "ff_sub_layer.wg": ColwiseParallel(),
-              "ff_sub_layer.w2": RowwiseParallel(input_layouts=Replicate()),
-              "ff_sub_layer.w1": ColwiseParallel(),
-              "ff_sub_layer.wg1_fused": RowwiseParallel(output_layouts=Shard(1)),
-              "ln": SequenceParallel(),
-              "ff_ln": SequenceParallel(),
-              "a" : SequenceParallel()
-               }
-        # Adjust attention module to use the local number of heads
-        # attn_layer = transformer_block.attn
-        # attn_layer.nheads = attn_layer.nheads // device_mesh.size()
-        # attn_layer.kvheads = attn_layer.kvheads // device_mesh.size()
-
-        # Custom parallelization plan for the model
-        parallelize_module(
-            module=transformer_block,
-            device_mesh=device_mesh,
-            parallelize_plan=layer_tp_plan
-            )
     return fms_model
 
 
