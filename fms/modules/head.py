@@ -10,7 +10,6 @@ from fms.distributed.tensorparallel import (
     all_gather_from_tensor_model_parallel_region,
     copy_to_tensor_model_parallel_region,
 )
-from fms.modules.tp import TPModule
 
 
 class MLPClassificationHead(nn.Module):
@@ -93,85 +92,3 @@ class LinearClassificationHead(nn.Linear):
 
     def to_tp(self, group: ProcessGroup) -> "TPLinearClassificationHead":
         return TPLinearClassificationHead.import_module(self, group)
-
-
-class TPLinearClassificationHead(LinearClassificationHead, TPModule):
-    """
-    Output embedding layer for language models.
-
-    Args
-    ----
-    Check nn.Linear for up-to-date docs
-
-    world_size: int
-        the number of processes running this model in TP
-    rank: int
-        the index of this process wrt to the rest running the model in TP
-    """
-
-    def __init__(
-        self,
-        vocab_size,
-        emb_dim,
-        bias=False,
-        device=None,
-        dtype=None,
-        group: Optional[ProcessGroup] = None,
-    ):
-        assert torch.distributed.is_initialized()
-        rank, world_size = distributed.rank_and_world(group)
-        assert (
-            vocab_size % world_size == 0
-        ), "The number of tokens must be divisible by world size"
-        LinearClassificationHead.__init__(
-            self,
-            emb_dim,
-            vocab_size // world_size,
-            bias=bias,
-            device=device,
-            dtype=dtype,
-        )
-        self.setup_tp(rank, world_size)
-
-    @staticmethod
-    def import_module(
-        head: LinearClassificationHead, group: ProcessGroup
-    ) -> "TPLinearClassificationHead":
-        tp_lmh = TPLinearClassificationHead(
-            vocab_size=head.out_features,
-            emb_dim=head.in_features,
-            bias=head.bias,
-            device=head.weight.device,
-            dtype=head.weight.dtype,
-            group=group,
-        )
-        return tp_lmh
-
-    def load_weights(
-        self,
-        tensor_values: Dict[str, torch.Tensor],
-    ):
-        # 1. Grab the weights from tensor_values
-        used_keys: Set[str] = set()
-        head_weight = self._get_sd_weight(tensor_values, used_keys, ["weight"])
-        if self.bias != None:
-            head_bias = self._get_sd_weight(tensor_values, used_keys, ["bias"])
-
-        # 2. Raise exceptions
-        if len(tensor_values) > (2 if self.bias != None else 1):
-            unused_keys = set(tensor_values.keys()).difference(used_keys)
-            raise AttributeError(f"Unused weight(s): {', '.join(unused_keys)}")
-
-        # 3. Load and shard the weights
-        self.sharded_copy(self.weight, head_weight, 0, [self.world_size])
-        if self.bias != None:
-            self.sharded_copy(self.bias, head_bias, 0, [self.world_size])
-
-    def forward(self, inp):
-        # vocab_idx: b n d if reverse, else b n
-        inp_par = copy_to_tensor_model_parallel_region(inp)
-        out_par = LinearClassificationHead.forward(self, inp_par)
-        # with ints this wasn't `torch.compile`ing
-        rank = torch.tensor(self.rank)
-        world_size = torch.tensor(self.world_size)
-        return all_gather_from_tensor_model_parallel_region(out_par, rank, world_size)
