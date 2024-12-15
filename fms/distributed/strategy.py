@@ -170,34 +170,27 @@ class TensorParallelStrategy(DistributedStrategy):
     def _distribute_module(
         self, module: nn.Module, final_layers: bool = False
     ) -> nn.Module:
-        tp_plan = {
-              "shared.emb": RowwiseParallel(input_layouts=Replicate(),output_layouts=Shard(1)),
-              "shared.head": ColwiseParallel(input_layouts=Shard(1), output_layouts=Replicate(),),
-              "dec_norm": SequenceParallel(),
-           }
-        return parallelize_module(module, self.device_mesh, tp_plan)
-        #return module
+        if final_layers:
+            tp_plan = {
+                "shared.head": ColwiseParallel(output_layouts=Replicate(),),
+            }
+            return parallelize_module(module, self.device_mesh, tp_plan)
+        else:
+            tp_plan = {
+                "shared.emb": RowwiseParallel(input_layouts=Replicate()),
+            }
+            return parallelize_module(module, self.device_mesh, tp_plan)
 
     def _distribute_layer(self, block: nn.Module, layer: int) -> nn.Module:
         layer_tp_plan = {
-            "ln": SequenceParallel(),
-            "attn": PrepareModuleInput(
-                input_layouts=(Shard(1),),
-                desired_input_layouts=(Replicate(),),
-                ),
             "attn.in_proj.qkv_fused": ColwiseParallel(),
             "attn.in_proj.query": ColwiseParallel(),
             "attn.in_proj.key": ColwiseParallel(),
             "attn.in_proj.value": ColwiseParallel(),
-            "attn.dense": RowwiseParallel(output_layouts=Shard(1)),
-            "ffn_ln": SequenceParallel(),
-            "ff_sub_layer": PrepareModuleInput(
-                input_layouts=(Shard(1),),
-                desired_input_layouts=(Replicate(),),
-                ),
+            "attn.dense": RowwiseParallel(),
             "ff_sub_layer.wg": ColwiseParallel(),
             "ff_sub_layer.wg1_fused": ColwiseParallel(),
-            "ff_sub_layer.w2": RowwiseParallel(output_layouts=Shard(1)),
+            "ff_sub_layer.w2": RowwiseParallel(),
             "ff_sub_layer.w1": ColwiseParallel(),
             }
         # Adjust attention module to use the local number of heads
