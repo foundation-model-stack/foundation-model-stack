@@ -378,10 +378,16 @@ class MultiHeadAttention(nn.Module):
                 queries, keys = self.position_encoder.adjusted_qk(
                     queries, keys, position_ids, past_key_value_state, use_cache
                 )
+                # print(queries)
+                # print(keys)
+                # exit()
 
         queries = queries.transpose(2, 1)  # / (self.emb_kq_per_head**(1/4))
         keys = keys.transpose(2, 1)  # / (self.emb_kq_per_head**(1/4))
         values = values.transpose(2, 1)  # compatible with QK.T
+        print(queries[0, 0:2, 0:2, :])
+        print(keys[0, 0:2, 0:2, :])
+        exit()
 
         # if you want to use caching and past_key_value_state is not None meaning you have values in your cache
         if (

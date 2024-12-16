@@ -101,7 +101,7 @@ class Alibi(PositionEncoder):
 
 class RotaryEmbedding(PositionEncoder):
     def __init__(
-        self, dim: int, ratio: float = 10_000.0, max_seq_len=2048, ntk_scaling=False
+        self, dim: int, ratio: float = 10_000.0, max_seq_len=2048, ntk_scaling=False,
     ):
         """
         This implementation of Rotary Position Embeddings (RoPE) avoids
@@ -118,6 +118,8 @@ class RotaryEmbedding(PositionEncoder):
             Maximum expected sequence length for the model, if exceeded the cached freqs will be recomputed
         ratio: int
             The ratio for the geometric progression to compute the rotation angles
+        partial_rotary_factor: float
+
         """
         super(RotaryEmbedding, self).__init__()
         self.dim = dim
@@ -231,6 +233,8 @@ class RotaryEmbedding(PositionEncoder):
             not always be the pre-cached position 0...S. For kv-caching without dynamic batching
             or variable per-row left padding position_ids is shared for all the batch.
         """
+        # q = q[:,:,:,:64]
+        # k = k[:,:,:,:64]
         assert len(q.size()) == 4
         assert len(k.size()) == 4
 
@@ -242,7 +246,8 @@ class RotaryEmbedding(PositionEncoder):
             ).repeat(k.size(0), 1)
             if use_cache and past_kv_state is not None and past_kv_state[0].numel() > 0:
                 position_ids += past_kv_state[0].size(2)
-
+        # q_rope = q[..., :self.dim]
+        # k_rope = k[..., :self.dim]
         q_ = q.float().view(*q.size()[:-1], -1, 2)  # B L H D/2 2
         k_ = k.float().view(*k.size()[:-1], -1, 2)  # B L H D/2 2
 
@@ -252,17 +257,20 @@ class RotaryEmbedding(PositionEncoder):
         freqs = self.cached_freqs[q.device.index][alpha][position_ids]
 
         freqs = freqs.float()  # 1 L D/2 2 2
+        freqs_q_cat = torch.cat([freqs[:, -q.size(1) :, None, :, :, :], torch.eye(2, 2, device=q.device).repeat(freqs.size(0), q.size(1), 1, (q.size(-1) - self.dim) // 2, 1, 1)], dim=-3)
+        freqs_q_cat = freqs_q_cat.view(*freqs.size()[:3], 2, -1, *freqs.size()[-2:]).transpose(3, 4).view_as(freqs_q_cat)
         q_out = (
-            freqs[:, -q.size(1) :, None, :, :, :]
+            freqs_q_cat
             .mul(q_.unsqueeze(-2))
             .sum(5)
             .flatten(3)
         ).type_as(q)
         k_out = (
-            freqs[:, -k.size(1) :, None, :, :, :]
+            torch.cat([freqs[:, -k.size(1) :, None, :, :, :], torch.eye(2, 2, device=k.device).repeat(freqs.size(0), k.size(1), 1, (k.size(-1) - self.dim) // 2, 1, 1)], dim=-3)
             .mul(k_.unsqueeze(-2))
             .sum(5)
             .flatten(3)
         ).type_as(k)
 
         return q_out.view_as(q), k_out.view_as(k)
+        # return torch.cat([q_out.view_as(q), q[..., self.dim:]], dim=-1), torch.cat([k_out.view_as(k_rope), k[..., self.dim:]], dim=-1)

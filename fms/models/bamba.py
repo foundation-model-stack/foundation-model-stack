@@ -31,7 +31,7 @@ class BambaConfig(ModelConfig):
     nlayers: int = 64
     activation_fn: str = "swish"
     attn_layer_indices: set[int] =dataclasses.field(default_factory=lambda: set([]))
-    attn_rotary_emb: int = 2048
+    max_expected_seq_len: int = 262144
     ntk_scaling: bool = False
     tie_heads: bool = False
     rope_theta: float = 10_000.0
@@ -48,9 +48,6 @@ class BambaConfig(ModelConfig):
     chunk_size: int = 256
     linear_config: Optional[Mapping[str, Any]] = None
     fused_weights: bool = True
-
-
-
 
 class BambaBlock(nn.Module):
     def __init__(self, config: BambaConfig, rotary_emb, layer_index: int):
@@ -101,7 +98,7 @@ class BambaBlock(nn.Module):
             activation_fn=str_to_activation(self.config.activation_fn),
             p_dropout=self.config.p_dropout,
             use_bias=False,
-            fused=True,
+            fused=self.config.fused_weights,
             linear_config=None,
         )
 
@@ -137,6 +134,7 @@ class BambaBlock(nn.Module):
         is_causal_mask=False,
         attn_algorithm=None,
         cache_position=None,
+        idx=None,
     ):
         seqlen_offset = x.shape[1]
         residual = x
@@ -184,6 +182,7 @@ class BambaBlock(nn.Module):
         if use_cache:
             if self.is_mamba_layer:
                 cache.seqlen_offset += seqlen_offset
+                cache.has_previous_state = True
 
             return x, cache
         else:
@@ -202,10 +201,10 @@ class BambaHeadless(nn.Module):
         )
 
         self.rot_emb = RotaryEmbedding(
-            dim=self.config.emb_dim // self.config.nheads,
+            dim=(self.config.emb_dim // self.config.nheads) // 2,
             ntk_scaling=self.config.ntk_scaling,
-            max_seq_len=self.config.attn_rotary_emb,
-            ratio=self.config.rope_theta,
+            max_seq_len=self.config.max_expected_seq_len,
+            ratio=self.config.rope_theta
         )
 
         # RoPE init
@@ -213,7 +212,7 @@ class BambaHeadless(nn.Module):
             [param.device for param in self.parameters()]
             + [buffer.device for buffer in self.buffers()]
         ):
-            self.rot_emb.compute_freqs_cis(device, self.config.attn_rotary_emb)
+            self.rot_emb.compute_freqs_cis(device, self.config.max_expected_seq_len)
 
         layers = []
         for i in range(self.config.nlayers):
@@ -249,7 +248,7 @@ class BambaHeadless(nn.Module):
             [param.device for param in self.parameters()]
             + [buffer.device for buffer in self.buffers()]
         ):
-            self.rot_emb.compute_freqs_cis(device, self.config.attn_rotary_emb)
+            self.rot_emb.compute_freqs_cis(device, self.config.max_expected_seq_len)
 
         # Call reset_parameters for relevant sub-layers
         for m in self.modules():
@@ -288,7 +287,7 @@ class BambaHeadless(nn.Module):
             [param.device for param in self.parameters()]
             + [buffer.device for buffer in self.buffers()]
         ):
-            self.rot_emb.compute_freqs_cis(device, self.config.attn_rotary_emb)
+            self.rot_emb.compute_freqs_cis(device, self.config.max_expected_seq_len)
 
 
     def forward(
@@ -366,7 +365,8 @@ class BambaHeadless(nn.Module):
                 use_cache=use_cache,
                 is_causal_mask=is_causal_mask,
                 attn_algorithm=attn_algorithm,
-                cache_position=cache_position
+                cache_position=cache_position,
+                idx=i
             )
 
             if use_cache:
@@ -375,6 +375,10 @@ class BambaHeadless(nn.Module):
             else:
                 x_in = output
 
+            # print("is mamba layer: ", layer.is_mamba_layer)
+            # print(x_in)
+            # if i == 10:
+            #     exit()
         dec_out = x_in
         dec_out = self.dec_norm(dec_out)
         if self.config.p_dropout:
@@ -474,7 +478,8 @@ _bamba_9_8b_config = BambaConfig(
     chunk_size=256,
     attn_layer_indices={9,18,27},
     mamba_n_heads=128,
-    attn_rotary_emb=2048,
+    max_expected_seq_len=262144,
+    p_dropout=0.0
 )
 
 models.register_model(_architecture_name, "9_8b", _bamba_factory_factory(_bamba_9_8b_config))
