@@ -355,7 +355,13 @@ class MultiHeadAttention(nn.Module):
         """
         # q, k, v: batch_size x seq_len x emb_dim
         # mask: batch_size x seq_len x seq_len
-        batch_size, q_len, _ = q.size()
+        # batch_size, q_len, _ = q.size()
+
+        # hpml_ibm
+        if not q.is_nested:
+            batch_size, q_len, _ = q.size()
+        else:
+            batch_size, q_len = len(q.unbind(0)), [ele.size(0) for ele in q.unbind(0)]
 
         # if this is self attention, we always recompute
         # cross attention only gets computed when a cache does not exist
@@ -369,9 +375,19 @@ class MultiHeadAttention(nn.Module):
             q_out, k_out, v_out = self.in_proj(q, k, v)
 
             # note: transposes will be moved in a later PR to fix dis-contiguous tensor issues
-            queries = q_out.view(batch_size, q_len, self.nheads, self.emb_kq_per_head)
-            keys = k_out.view(batch_size, q_len, self.kvheads, self.emb_kq_per_head)
-            values = v_out.view(batch_size, q_len, self.kvheads, self.emb_v_per_head)
+            # queries = q_out.view(batch_size, q_len, self.nheads, self.emb_kq_per_head)
+            # keys = k_out.view(batch_size, q_len, self.kvheads, self.emb_kq_per_head)
+            # values = v_out.view(batch_size, q_len, self.kvheads, self.emb_v_per_head)
+
+            # hpml_ibm
+            if not q.is_nested:
+                queries = q_out.view(batch_size, q_len, self.nheads, self.emb_kq_per_head)
+                keys = k_out.view(batch_size, q_len, self.kvheads, self.emb_kq_per_head)
+                values = v_out.view(batch_size, q_len, self.kvheads, self.emb_v_per_head)
+            else:
+                queries = torch.nested.nested_tensor([q_nst_out.view(q_nst_len, self.nheads, self.emb_kq_per_head) for (q_nst_out, q_nst_len) in zip(q_out, q_len)])
+                keys = torch.nested.nested_tensor([k_nst_out.view(q_nst_len, self.kvheads, self.emb_kq_per_head) for (k_nst_out, q_nst_len) in zip(k_out, q_len)])
+                values = torch.nested.nested_tensor([v_nst_out.view(q_nst_len, self.kvheads, self.emb_v_per_head) for (v_nst_out, q_nst_len) in zip(v_out, q_len)])
 
             # You want to apply rotary embeddings pre-cache
             if self.position_encoder is not None:
@@ -400,8 +416,17 @@ class MultiHeadAttention(nn.Module):
         if mask is not None:
             # Our expected mask format is bs x q_len x k_len, so to make it broadcastable
             # we need to create the nheads dimension
-            while len(mask.size()) != 4:  # expects bs (x nheads) x q_len x kv_len
-                mask = mask.unsqueeze(1)
+            # while len(mask.size()) != 4:  # expects bs (x nheads) x q_len x kv_len
+            #     mask = mask.unsqueeze(1)
+
+            # hpml_ibm
+            if not mask.is_nested:
+                while len(mask.size()) != 4:  # expects bs (x nheads) x q_len x kv_len
+                    mask = mask.unsqueeze(1)
+                
+            else:
+                while len(mask.unbind(0)[0].size()) + 1 != 4:  # expects bs (x nheads) x q_len x kv_len
+                    mask = torch.nested.nested_tensor([ele.unsqueeze(0) for ele in mask.unbind(0)])
 
         if self.position_encoder is not None:
             attn_mask: Optional[Tensor] = self.position_encoder.adjusted_mask(
@@ -435,15 +460,40 @@ class MultiHeadAttention(nn.Module):
         if attn_mask is not None and attn_mask.dtype != torch.bool:
             attn_mask = attn_mask.to(dtype=queries.dtype)
 
-        attn = F.scaled_dot_product_attention(
-            queries,
-            keys_e,
-            values_e,
-            attn_mask=attn_mask,
-            dropout_p=self.p_dropout if self.training else 0.0,
-            is_causal=is_causal_mask,
-            scale=self.scale_factor,
-        )
+        # attn = F.scaled_dot_product_attention(
+        #     queries,
+        #     keys_e,
+        #     values_e,
+        #     attn_mask=attn_mask,
+        #     dropout_p=self.p_dropout if self.training else 0.0,
+        #     is_causal=is_causal_mask,
+        #     scale=self.scale_factor,
+        # )
+
+        # hpml_ibm
+        if not attn_mask.is_nested:
+            attn = F.scaled_dot_product_attention(
+                queries,
+                keys_e,
+                values_e,
+                attn_mask=None,
+                dropout_p=self.p_dropout if self.training else 0.0,
+                # is_causal=is_causal_mask,
+                is_causal=True,
+                scale=self.scale_factor,
+            )
+        else:
+            # TODO: apparently this function doesnt take attn_mask when the input is nested... so pytorch needs to fix this
+            attn = F.scaled_dot_product_attention(
+                queries,
+                keys_e,
+                values_e,
+                attn_mask=None,
+                dropout_p=self.p_dropout if self.training else 0.0,
+                # is_causal=is_causal_mask,
+                is_causal=True,
+                scale=self.scale_factor,
+            )
 
         if attn_algorithm:
             torch.backends.cuda.enable_flash_sdp(self.previous_flash)
@@ -454,11 +504,23 @@ class MultiHeadAttention(nn.Module):
         # attn: b x h x qlen x ds
         # attn after permute: b x qlen x h x ds
         # b x qlen x (d)
-        attn = (
-            attn.transpose(2, 1)
-            .contiguous()
-            .view(batch_size, q_len, self.nheads * self.emb_v_per_head)
-        )
+        # attn = (
+        #     attn.transpose(2, 1)
+        #     .contiguous()
+        #     .view(batch_size, q_len, self.nheads * self.emb_v_per_head)
+        # )
+
+        # hpml_ibm
+        if not attn.is_nested:
+            attn = (
+                attn.transpose(2, 1)
+                .contiguous()
+                .view(batch_size, q_len, self.nheads * self.emb_v_per_head)
+            )
+        else:
+            attn = attn.transpose(2, 1).contiguous()
+            attn = torch.nested.as_nested_tensor([ele.view(q_len_, self.nheads * self.emb_v_per_head).contiguous() for (ele, q_len_) in zip(attn.unbind(0), q_len)], layout=torch.jagged)
+
         out = self.dense(attn)
 
         # if use_cache=True, we return the hidden_state as well as the kv cache
