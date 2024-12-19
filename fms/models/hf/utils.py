@@ -48,8 +48,22 @@ def mask_2d_to_3d(inp: torch.Tensor) -> torch.Tensor:
     mask : torch.Tensor
         Mask tensor corresponding to inp. Will be of shape [batch_size, sequence_length, sequence_length].
     """
-    is_pad = inp == 0
-    mask = is_pad.unsqueeze(-1) == is_pad.unsqueeze(-2)
+    # is_pad = inp == 0
+    # mask = is_pad.unsqueeze(-1) == is_pad.unsqueeze(-2)
+
+    # hpml_ibm
+    if not inp.is_nested:
+        is_pad = inp == 0    
+        mask = is_pad.unsqueeze(-1) == is_pad.unsqueeze(-2)
+    else:    
+        sequence_masks = []
+        for sequence in inp.unbind(0):
+            is_pad = sequence == 0
+            single_mask = is_pad.unsqueeze(-1) == is_pad.unsqueeze(-2)
+            sequence_masks.append(single_mask)
+        
+        mask = torch.nested.nested_tensor(sequence_masks)
+
     return mask
 
 
