@@ -148,17 +148,18 @@ class LLaMABlock(nn.Module):
             x, cache = x
         if self.config.p_dropout != 0:
             x = self.dropout(x)
-        # residual connection
-        # x = x + residual
-
-        # hpml_ibm
-        if not (x.is_nested ^ residual.is_nested):
-            if not x.is_nested:
-                x = x + residual
-            else:
-                x = torch.nested.as_nested_tensor([x_ + residual_ for (x_, residual_) in zip(x.unbind(0), residual.unbind(0))], layout=torch.jagged)
-        else:
-            raise ValueError("Either of the two, X or residual, is not nested... the other is")
+            
+        # Clone and copy to handle shape mismatch errors
+        # while adding nested tensors
+        if x.is_nested:
+            src_clone = x.clone()
+            num_samples = len(residual)
+            for idx in range(num_samples):
+                src_clone[idx].copy_(residual[idx])
+            residual = src_clone
+            
+        # residual connection        
+        x = x + residual
 
         # then we do FF and Add&Norm
         residual = x
@@ -167,16 +168,7 @@ class LLaMABlock(nn.Module):
         if self.config.p_dropout != 0:
             x = self.dropout(x)
         # another residual
-        # x = x + residual
-
-        # hpml_ibm
-        if not (x.is_nested ^ residual.is_nested):
-            if not x.is_nested:
-                x = x + residual
-            else:
-                x = torch.nested.as_nested_tensor([x_ + residual_ for (x_, residual_) in zip(x.unbind(0), residual.unbind(0))], layout=torch.jagged)
-        else:
-            raise ValueError("Either of the two, X or residual, is not nested... the other is")
+        x = x + residual
 
         if use_cache:
             return (x, cache)
@@ -367,17 +359,12 @@ class LLaMA(nn.Module):
         if past_key_value_states is None or len(past_key_value_states) == 0:
             past_key_value_states = [None for _ in range(len(self.layers))]
 
-        # qlen = x_in.size(1)
-        # klen = x_in.size(1)
-
-        # hpml_ibm
-        if not x_in.is_nested: 
+        if not x_in.is_nested:
             qlen = x_in.size(1)
-            klen = x_in.size(1)
+            klen = qlen
         else:
-            # need to check for qlen if only one token has been passed in the tensors
             qlen = max([ele.size(0) for ele in x_in.unbind(0)])
-            klen = qlen 
+            klen = qlen
 
         # if we are using the cache, the key length needs to be extended with the past keys length
         if use_cache and past_key_value_states[0] is not None:
