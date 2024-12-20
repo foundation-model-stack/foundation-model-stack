@@ -1,5 +1,3 @@
-import inspect
-from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Optional
 
@@ -113,11 +111,16 @@ def get_linear(
 
     linear_type = get_linear_type(linear_config, module_name)
 
+    named_linear_config = None
+    if linear_config:
+        named_linear_config = dict(linear_config)
+        named_linear_config["module_name"] = module_name
+
     if linear_type in __type_factory_map:
         if linear_type == "torch_linear":
             return __type_factory_map[linear_type](in_features, out_features, bias)
         return __type_factory_map[linear_type](
-            in_features, out_features, bias, linear_config
+            in_features, out_features, bias, named_linear_config
         )
     raise KeyError(f"Unsupported linear type `{linear_type}`")
 
