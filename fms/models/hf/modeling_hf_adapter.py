@@ -992,14 +992,10 @@ class HFDecoderModelArchitecture(HFModelArchitecture):
         decoder_attention_mask = mask_2d_to_3d(hf_dec_attention_mask)
         # if user provides labels and decoder mask during training, we expect them to be compatible and do not check
         # we simply convert the decoder mask to a causal mask
-        # decoder_attention_mask = decoder_attention_mask.tril(diagonal=0)
-
-        # hpml_ibm
         if not decoder_attention_mask.is_nested:
             decoder_attention_mask = decoder_attention_mask.tril(diagonal=0)
         else:
             decoder_attention_mask = torch.nested.nested_tensor([single_decoder_mask.tril(diagonal=0) for single_decoder_mask in decoder_attention_mask.unbind(0)])
-            
         if is_cache_used_and_filled:
             decoder_attention_mask = decoder_attention_mask[:, -1:, :]
         return decoder_attention_mask, hf_dec_attention_mask

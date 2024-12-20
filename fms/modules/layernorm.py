@@ -60,46 +60,10 @@ class LayerNormParameterized(nn.Module):
         xf = x
         if self.use_high_precision_pow:
             xf = x.float()
-        # xf = xf * torch.rsqrt(xf.pow(2).mean(-1, keepdim=True) + self.eps)
-
-        # hpml_ibm
-        if not xf.is_nested: 
-            xf = xf * torch.rsqrt(xf.pow(2).mean(-1, keepdim=True) + self.eps)
-        else:
-            xf_list = []
-            for ele in xf.unbind(0):
-                temp = ele.pow(2).mean(-1, keepdim=True)
-                temp = temp + self.eps
-                temp = torch.rsqrt(temp)
-                temp = ele * temp 
-                xf_list.append(temp)
-
-            xf = torch.nested.nested_tensor(xf_list)
-            
-        # x = xf.type_as(x)
-
-        # hpml_ibm
-        if not xf.is_nested:
-            x = xf.type_as(x)
-        else:
-            first_vector = xf.unbind(0)[0]
-            x = torch.nested.nested_tensor([ele.type_as(first_vector) for ele in xf.unbind(0)])
-
-        # if self.elementwise_scale:
-        #     x = self.weight * x
-        # if self.elementwise_shift:
-        #     x = x + self.bias
-
-        # hpml_ibm
-        if not x.is_nested:
-            if self.elementwise_scale:
-                x = self.weight * x
-            if self.elementwise_shift:
-                x = x + self.bias
-        else:
-            if self.elementwise_scale:
-                x = torch.nested.nested_tensor([self.weight * ele for ele in x.unbind(0)])
-            if self.elementwise_shift:
-                x = torch.nested.nested_tensor([self.bias + ele for ele in x.unbind(0)])
-
+        xf = xf * torch.rsqrt(xf.pow(2).mean(-1, keepdim=True) + self.eps)
+        x = xf.type_as(x)
+        if self.elementwise_scale:
+            x = self.weight * x
+        if self.elementwise_shift:
+            x = x + self.bias
         return x

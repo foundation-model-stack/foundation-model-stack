@@ -288,31 +288,7 @@ class GatedLinearUnit(nn.Module):
         if self.fused:
             out_fused = self.wg1_fused(x)
             wg, w1 = torch.split(out_fused, [self.hidden_dim, self.hidden_dim], dim=2)
-
-            # hpml_ibm
-            if not (wg.is_nested ^ w1.is_nested):
-                if not wg.is_nested:
-                    pass
-                else:
-                    wg = torch.nested.nested_tensor([ele for ele in wg.unbind(0)], layout=torch.jagged)
-                    w1 = torch.nested.nested_tensor([ele for ele in w1.unbind(0)], layout=torch.jagged)
-            else:
-                raise ValueError("Either of the two, wg or w1, is not nested... the other is")
-            
-            # out = self.a(wg) * w1
-
-            # hpml_ibm
-            if not (wg.is_nested ^ w1.is_nested):
-                if not wg.is_nested:
-                    # out = self.a(wg) * w1
-                    temp = self.a(wg)
-                    out = temp * w1
-                else:
-                    temp = self.a(wg)
-                    out = torch.nested.nested_tensor([temp_ * w1_ for (temp_, w1_) in zip(temp.unbind(0), w1.unbind(0))])            
-            else:
-                raise ValueError("Either of the two, wg or w1, is not nested... the other is")
-
+            out = self.a(wg) * w1
         else:
             out = self.a(self.wg(x)) * self.w1(x)
         if self.p_dropout:

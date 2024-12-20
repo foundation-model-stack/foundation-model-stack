@@ -230,31 +230,22 @@ class RotaryEmbedding(PositionEncoder):
             not always be the pre-cached position 0...S. For kv-caching without dynamic batching
             or variable per-row left padding position_ids is shared for all the batch.
         """
-        # assert len(q.size()) == 4
-        # assert len(k.size()) == 4
 
-        # hpml_ibm
         if not q.is_nested:
             assert len(q.size()) == 4
             assert len(k.size()) == 4
         else:
-            assert len(q.unbind(0)[0].size()) + 1 == 4
-            assert len(k.unbind(0)[0].size()) + 1 == 4
-
-        # seq_len = max(k.size(1), q.size(1))
-
-        # hpml_ibm
-        if not (k.is_nested ^ q.is_nested):
-            if not k.is_nested:
-                seq_len = max(k.size(1), q.size(1))
-            else:
-                seq_len = max(
-                    max([ele.size(0) for ele in k.unbind(0)]),
-                    max([ele.size(0) for ele in q.unbind(0)])
-                )
+            assert len(q[0].size()) + 1 == 4
+            assert len(k[0].size()) + 1 == 4
+            
+        if not k.is_nested:
+            seq_len = max(k.size(1), q.size(1))
         else:
-            raise ValueError("Either of the two, K or Q, is not nested... the other is") 
-        
+            seq_len = max(
+                max([ele.size(0) for ele in k]),
+                max([ele.size(0) for ele in q])
+            )
+
         if position_ids is None:
             # Compute position_ids based on cache config
             position_ids = torch.arange(
@@ -263,68 +254,61 @@ class RotaryEmbedding(PositionEncoder):
             if use_cache and past_kv_state is not None and past_kv_state[0].numel() > 0:
                 position_ids += past_kv_state[0].size(2)
 
-        # q_ = q.float().view(*q.size()[:-1], -1, 2)  # B L H D/2 2
-        # k_ = k.float().view(*k.size()[:-1], -1, 2)  # B L H D/2 2
-
-        # hpml_ibm
-        if not (k.is_nested ^ q.is_nested):
-            if not k.is_nested:
-                q_ = q.float().view(*q.size()[:-1], -1, 2)  # B L H D/2 2
-                k_ = k.float().view(*k.size()[:-1], -1, 2)  # B L H D/2 2
-            else:
-                q_ = torch.nested.nested_tensor([ele.view(*ele.size()[:-1], -1, 2) for ele in q.float().unbind(0)])
-                k_ = torch.nested.nested_tensor([ele.view(*ele.size()[:-1], -1, 2) for ele in k.float().unbind(0)])
+        if not k.is_nested:
+            q_ = q.float().view(*q.size()[:-1], -1, 2)  # B L H D/2 2
+            k_ = k.float().view(*k.size()[:-1], -1, 2)  # B L H D/2 2
         else:
-            raise ValueError("Either of the two, K or Q, is not nested... the other is")
-
+            q_ = q.float().view(q.size(0), -1, q.size(2), q.size(3)//2, 2)  # B L H D/2 2
+            k_ = k.float().view(k.size(0), -1, k.size(2), k.size(3)//2, 2)  # B L H D/2 2
+               
         # the max start position should be based on the max first position of each sequence
         max_start_pos = torch.max(position_ids[:, 0])
         alpha = self.compute_freqs_cis(q.device, max_start_pos + seq_len)
         freqs = self.cached_freqs[q.device.index][alpha][position_ids]
 
         freqs = freqs.float()  # 1 L D/2 2 2
-        # q_out = (
-        #     freqs[:, -q.size(1) :, None, :, :, :]
-        #     .mul(q_.unsqueeze(-2))
-        #     .sum(5)
-        #     .flatten(3)
-        # ).type_as(q)
-        # k_out = (
-        #     freqs[:, -k.size(1) :, None, :, :, :]
-        #     .mul(k_.unsqueeze(-2))
-        #     .sum(5)
-        #     .flatten(3)
-        # ).type_as(k)
 
-        # hpml_ibm
-        if not (k.is_nested ^ q.is_nested):
-            if not k.is_nested:
-                q_out = (
-                    freqs[:, -q.size(1) :, None, :, :, :]
-                    .mul(q_.unsqueeze(-2))
-                    .sum(5)
-                    .flatten(3)
-                ).type_as(q)
+        if not k.is_nested:
+            q_out = (
+                freqs[:, -q.size(1) :, None, :, :, :]
+                .mul(q_.unsqueeze(-2))
+                .sum(5)
+                .flatten(3)
+            ).type_as(q)
 
-                k_out = (
-                    freqs[:, -k.size(1) :, None, :, :, :]
-                    .mul(k_.unsqueeze(-2))
-                    .sum(5)
-                    .flatten(3)
-                ).type_as(k)
-            else:
-                q_out = torch.nested.nested_tensor([(freqs[i, : q_ele.size(0), None, :, :, :].mul(q_ele_.unsqueeze(-2)).sum(4).flatten(2)).type_as(q_ele) for i, (q_ele, q_ele_) in enumerate(zip(q.unbind(0), q_.unbind(0)))])
-                k_out = torch.nested.nested_tensor([(freqs[i, : k_ele.size(0), None, :, :, :].mul(k_ele_.unsqueeze(-2)).sum(4).flatten(2)).type_as(k_ele) for i, (k_ele, k_ele_) in enumerate(zip(k.unbind(0), k_.unbind(0)))])
+            k_out = (
+                freqs[:, -k.size(1) :, None, :, :, :]
+                .mul(k_.unsqueeze(-2))
+                .sum(5)
+                .flatten(3)
+            ).type_as(k)
+        
         else:
-            raise ValueError("Either of the two, K or Q, is not nested... the other is")
+            q_out = torch.nested.nested_tensor(
+                [
+                    (
+                        freqs[i, : q_ele.size(0), None, :, :, :]
+                        .mul(q_ele_.unsqueeze(-2))
+                        .sum(4)
+                        .flatten(2)
+                    ).type_as(q_ele) 
+                    for i, (q_ele, q_ele_) in enumerate(zip(q.unbind(0), q_.unbind(0)))
+                ], layout=torch.jagged
+            )
+            
+            k_out = torch.nested.nested_tensor(
+                [
+                    (
+                        freqs[i, : k_ele.size(0), None, :, :, :]
+                        .mul(k_ele_.unsqueeze(-2))
+                        .sum(4)
+                        .flatten(2)
+                    ).type_as(k_ele) 
+                    for i, (k_ele, k_ele_) in enumerate(zip(k.unbind(0), k_.unbind(0)))
+                ], layout=torch.jagged
+            )
 
-        # return q_out.view_as(q), k_out.view_as(k)
-        # hpml_ibm
-        if not (k.is_nested ^ q.is_nested):
-            if not k.is_nested:
-                return q_out.view_as(q), k_out.view_as(k)
-            else:
-                return torch.nested.nested_tensor([q_out_.view_as(q_) for q_, q_out_ in zip(q.unbind(0), q_out.unbind(0))]), torch.nested.nested_tensor([k_out_.view_as(k_) for k_, k_out_ in zip(k.unbind(0), k_out.unbind(0))])
+        if not k.is_nested:
+            return q_out.view_as(q), k_out.view_as(k)
         else:
-            raise ValueError("Either of the two, K or Q, is not nested... the other is")
-
+            return q_out.view(q.size(0), -1, q.size(2), q.size(3)), k_out.view(k.size(0), -1, k.size(2), k.size(3))
