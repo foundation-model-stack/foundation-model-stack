@@ -1,9 +1,9 @@
 import math
 from dataclasses import dataclass
-from typing import Any, Dict, Mapping, Optional
+from typing import Any, Callable, Dict, Mapping, Optional
 
 import torch
-import torch.nn as nn
+from torch import nn
 
 from fms.modules.linear import (
     LinearModuleShardingInfo,
@@ -22,12 +22,12 @@ try:
     )
 
     IS_AUTOGPTQ_AVAILABLE = True
-except:
+except ImportError:
     IS_AUTOGPTQ_AVAILABLE = False
 
 
 # simplified from AutoGPTQ quantization config
-# see: https://github.com/AutoGPTQ/AutoGPTQ/blob/caf343b1826301c15f90e2e119cabd0347acfcdf/auto_gptq/quantization/config.py#L60
+# see: https://github.com/AutoGPTQ/AutoGPTQ/blob/main/auto_gptq/quantization/config.py#L60
 @dataclass
 class GPTQLinearConfig(ModelConfig):
     # quantization parameters
@@ -44,8 +44,10 @@ class GPTQLinearConfig(ModelConfig):
     use_marlin: bool = False
     use_tritonv2: bool = False
 
-    # identifier
+    # linear module identifiers
     linear_type: str = "gptq"
+    module_name: Optional[str] = None
+    filter_fn: Optional[Callable] = None
 
 
 def custom_linear_repr(self):
@@ -70,6 +72,8 @@ def get_gptq_linear(
     bias: bool,
     linear_config: Mapping[str, Any],
 ):
+    """Construct and return autogptq linear module"""
+
     gptq_config = GPTQLinearConfig(**linear_config)
 
     if not IS_AUTOGPTQ_AVAILABLE:
@@ -166,7 +170,7 @@ def shard_gptq_linear(
 
     # If desc_act=False, correct the g_idx
     for module_name, module_info in module_sharding_info.items():
-        if module_info.linear_module.desc_act == False:
+        if not module_info.linear_module.desc_act:
             g_idx_param = module_info.linear_module.g_idx
             module_info.linear_module.g_idx = g_idx_param - g_idx_param.min()
 
@@ -199,9 +203,7 @@ class GPTQLinearCPU(nn.Module):
             )
         if in_features % self.group_size != 0:
             raise ValueError("`in_features` must be divisible by `group_size`.")
-        if (
-            in_features % 32 or out_features % 32
-        ):  # TODO: this requirement may not be needed
+        if in_features % 32 or out_features % 32:
             raise ValueError("`in_features` and `out_features` must be divisible by 32")
         if self.desc_act:
             raise NotImplementedError(
