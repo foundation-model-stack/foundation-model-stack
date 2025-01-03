@@ -351,8 +351,9 @@ class BambaHeadless(nn.Module):
         # this is the output cache for all the decoder layers
         present_key_value_states = []
 
+
         if position_ids is None:
-            cache_position = torch.arange(x_in.shape[1], device=x_in.device)
+            cache_position = torch.arange(x_in.shape[1], device=x_in.device) + klen # TODO: Explore issue with this path
         else:
             cache_position = position_ids.max(dim=0).values
 
@@ -541,7 +542,7 @@ def _hf_to_fms_rope(
 
     rope_params = _get_rope_params(linear_type)
     trans_required_pattern = re.compile(
-        f"layers.[0-9]+.attn.in_proj.(query|key).({'|'.join(rope_params)})"
+        f"base_model.layers.[0-9]+.attn.in_proj.(query|key).({'|'.join(rope_params)})"
     )
     for name, param in input_sd.items():
         # hf -> fms requires a transpose operation for the query and key
@@ -564,12 +565,19 @@ def _hf_to_fms_rope(
             # num_heads is used in the transformation required for hf->fms
             # can't be precomputed because q and k might have different num_heads
             num_heads = temp.size(0) // head_size
+            rope_size = int(head_size * 0.5)
 
             if temp.dim() == 2:  # weight
-                temp_view = temp.view(num_heads, 2, -1, temp.size(1))
+                temp_heads = temp.view(num_heads, -1, temp.size(1))
+                temp_rope = temp_heads[:, :rope_size]
+                temp_rope_view = temp_rope.view(num_heads, 2, -1, temp.size(1))
             else:  # bias
-                temp_view = temp.view(num_heads, 2, -1)
-            temp = temp_view.transpose(1, 2).reshape(*temp.size())
+                temp_heads = temp.view(num_heads, -1)
+                temp_rope = temp_heads[:, :rope_size]
+                temp_rope_view = temp_rope.view(num_heads, 2, -1)
+            temp_rope = temp_rope_view.transpose(1, 2).reshape(*temp_rope.size())
+            temp = torch.cat([temp_rope, temp_heads[:, rope_size:]], dim = -2).reshape(*temp.size())
+
 
             if "gptq" in linear_type and temp.dim() == 2:
                 temp = temp.transpose(0, 1)

@@ -187,7 +187,7 @@ class SSM(nn.Module):
                 == past_key_value_state.ssm_state.shape[0]
                 == batch_size
                 and cache_position is not None
-                and cache_position[0] > 0
+                # removed cache_position 0 check in favor of has_previous_state to fix torch compile
         )
 
         # 2. Convolution sequence transformation
