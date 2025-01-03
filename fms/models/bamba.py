@@ -30,7 +30,7 @@ class BambaConfig(ModelConfig):
     norm_eps: float = 1e-5
     nlayers: int = 64
     activation_fn: str = "swish"
-    attn_layer_indices: set[int] =dataclasses.field(default_factory=lambda: set([]))
+    attn_layer_indices: List[int] = dataclasses.field(default_factory=lambda: [])
     max_expected_seq_len: int = 262144
     ntk_scaling: bool = False
     tie_heads: bool = False
@@ -134,7 +134,6 @@ class BambaBlock(nn.Module):
         is_causal_mask=False,
         attn_algorithm=None,
         cache_position=None,
-        idx=None,
     ):
         seqlen_offset = x.shape[1]
         residual = x
@@ -236,6 +235,7 @@ class BambaHeadless(nn.Module):
         if self.config.p_dropout:
             self.dropout = nn.Dropout(self.config.p_dropout)
 
+        self.attn_layer_indices = set(self.config.attn_layer_indices)
         self.attn_layer_ind = -1 if len(self.config.attn_layer_indices) == 0 else next(iter(self.config.attn_layer_indices))
 
     def reset_parameters(self):
@@ -307,7 +307,7 @@ class BambaHeadless(nn.Module):
             if use_cache:
                 past_key_value_states = []
                 for i in range(len(self.layers)):
-                    if i in self.config.attn_layer_indices:
+                    if i in self.attn_layer_indices:
                         past_key_value_states.append(None)
                     else:
                         past_key_value_states.append(
@@ -367,7 +367,6 @@ class BambaHeadless(nn.Module):
                 is_causal_mask=is_causal_mask,
                 attn_algorithm=attn_algorithm,
                 cache_position=cache_position,
-                idx=i
             )
 
             if use_cache:
@@ -376,10 +375,6 @@ class BambaHeadless(nn.Module):
             else:
                 x_in = output
 
-            # print("is mamba layer: ", layer.is_mamba_layer)
-            # print(x_in)
-            # if i == 10:
-            #     exit()
         dec_out = x_in
         dec_out = self.dec_norm(dec_out)
         if self.config.p_dropout:

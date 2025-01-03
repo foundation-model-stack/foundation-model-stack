@@ -29,6 +29,7 @@ class BambaFixtures(ConfigFixtureMixin, ModelFixtureMixin):
             emb_dim=128,
             tie_heads=False,
             norm_eps=1e-05,
+            kvheads=2,
             nlayers=2,
             nheads=8,
             use_bias=False,
@@ -40,9 +41,8 @@ class BambaFixtures(ConfigFixtureMixin, ModelFixtureMixin):
             conv_kernel=4,
             use_conv_bias=True,
             chunk_size=256,
-            attn_layer_indices={9, 18, 27},
+            attn_layer_indices=[9, 18, 27],
             mamba_n_heads=4,
-            attn_rotary_emb=64,
         )
 
 class TestBamba(
@@ -60,8 +60,8 @@ class TestBamba(
         # check not same reference
         assert model.get_config() is not config
 
-        # modify pad_id to the new value expected and check equivalence
-        config.fused_weights = True
+        # modify fused_weights to the new value expected and check equivalence
+        config.fused_weights = False
         assert model.get_config().as_dict() == config.as_dict()
 
     @pytest.fixture
