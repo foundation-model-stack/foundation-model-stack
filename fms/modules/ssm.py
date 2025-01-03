@@ -108,7 +108,7 @@ def apply_mask_to_padding_states(hidden_states, attention_mask):
     """
     if attention_mask is not None and attention_mask.shape[1] > 1 and attention_mask.shape[0] > 1:
         dtype = hidden_states.dtype
-        hidden_states = (hidden_states * attention_mask[:, :, None]).to(dtype)
+        hidden_states = (hidden_states * (attention_mask[:, -1, :, None] == 0)).to(dtype)
 
     return hidden_states
 
