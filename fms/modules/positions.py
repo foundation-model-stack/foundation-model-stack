@@ -122,8 +122,6 @@ class RotaryEmbedding(PositionEncoder):
             Maximum expected sequence length for the model, if exceeded the cached freqs will be recomputed
         ratio: int
             The ratio for the geometric progression to compute the rotation angles
-        partial_rotary_factor: float
-
         """
         super(RotaryEmbedding, self).__init__()
         self.dim = dim
@@ -237,8 +235,6 @@ class RotaryEmbedding(PositionEncoder):
             not always be the pre-cached position 0...S. For kv-caching without dynamic batching
             or variable per-row left padding position_ids is shared for all the batch.
         """
-        # q = q[:,:,:,:64]
-        # k = k[:,:,:,:64]
         assert len(q.size()) == 4
         assert len(k.size()) == 4
 

@@ -378,9 +378,6 @@ class MultiHeadAttention(nn.Module):
                 queries, keys = self.position_encoder.adjusted_qk(
                     queries, keys, position_ids, past_key_value_state, use_cache
                 )
-                # print(queries)
-                # print(keys)
-                # exit()
 
         queries = queries.transpose(2, 1)  # / (self.emb_kq_per_head**(1/4))
         keys = keys.transpose(2, 1)  # / (self.emb_kq_per_head**(1/4))
