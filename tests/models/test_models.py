@@ -6,6 +6,7 @@ import pytest
 import torch
 
 from fms import models
+from fms.modules import UninitializedModule
 from fms.testing.comparison import (
     HFModelSignatureParams,
     ModelSignatureParams,
@@ -73,6 +74,37 @@ def test_getmodel():
 
     micro = models._get_model_instance("llama", "micro")
     assert micro.config.nlayers == 5
+
+
+def test_uninitialized_module():
+    model = models._get_model_instance(
+        architecture="llama",
+        variant="micro",
+        extra_args={
+            "linear_config": {
+                "linear_type": "gptq",
+                "group_size": 128,
+                "desc_act": False,
+                "filter_fn": lambda name: False,
+            }
+        },
+    )
+    with pytest.raises(RuntimeError):
+        model(torch.tensor([[0, 1, 2]]))
+
+    model = models.get_model(
+        "llama",
+        "micro",
+        linear_config={
+            "linear_type": "gptq",
+            "group_size": 128,
+            "desc_act": False,
+            "filter_fn": lambda name: False,
+        },
+    )
+
+    for module in model.modules():
+        assert not isinstance(module, UninitializedModule)
 
 
 def test_list():
