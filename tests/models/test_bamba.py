@@ -11,6 +11,7 @@ from fms.testing._internal.model_test_suite import (
 )
 from fms.utils.config import ModelConfig
 
+
 class BambaFixtures(ConfigFixtureMixin, ModelFixtureMixin):
     """
     Base Granite Fixtures that can be re-used for other purposes
@@ -44,6 +45,7 @@ class BambaFixtures(ConfigFixtureMixin, ModelFixtureMixin):
             attn_layer_indices=[9, 18, 27],
             mamba_n_heads=4,
         )
+
 
 class TestBamba(
     ModelConfigTestSuite,

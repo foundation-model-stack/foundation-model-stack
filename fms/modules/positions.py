@@ -101,7 +101,11 @@ class Alibi(PositionEncoder):
 
 class RotaryEmbedding(PositionEncoder):
     def __init__(
-        self, dim: int, ratio: float = 10_000.0, max_seq_len=2048, ntk_scaling=False,
+        self,
+        dim: int,
+        ratio: float = 10_000.0,
+        max_seq_len=2048,
+        ntk_scaling=False,
     ):
         """
         This implementation of Rotary Position Embeddings (RoPE) avoids
@@ -246,8 +250,8 @@ class RotaryEmbedding(PositionEncoder):
             ).repeat(k.size(0), 1)
             if use_cache and past_kv_state is not None and past_kv_state[0].numel() > 0:
                 position_ids += past_kv_state[0].size(2)
-        q_rope = q[..., :self.dim].float()
-        k_rope = k[..., :self.dim].float()
+        q_rope = q[..., : self.dim].float()
+        k_rope = k[..., : self.dim].float()
         q_ = q_rope.view(*q.size()[:-1], -1, 2)  # B L H D/2 2
         k_ = k_rope.view(*k.size()[:-1], -1, 2)  # B L H D/2 2
 
@@ -270,4 +274,6 @@ class RotaryEmbedding(PositionEncoder):
             .flatten(3)
         ).type_as(k)
 
-        return torch.cat([q_out.view_as(q_rope), q[..., self.dim:]], dim=-1), torch.cat([k_out.view_as(k_rope), k[..., self.dim:]], dim=-1)
+        return torch.cat(
+            [q_out.view_as(q_rope), q[..., self.dim :]], dim=-1
+        ), torch.cat([k_out.view_as(k_rope), k[..., self.dim :]], dim=-1)

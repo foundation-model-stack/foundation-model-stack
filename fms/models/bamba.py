@@ -1,24 +1,26 @@
 import dataclasses
+import logging
 import math
-from typing import List, Optional, Tuple, Mapping, Any
+import re
+from typing import Any, List, Mapping, Optional, Tuple
 
 import torch
 import torch.nn as nn
 
+from fms import models
 from fms.distributed.strategy import DistributedStrategy, NoOpStrategy
 from fms.modules.attention import MultiHeadAttention
 from fms.modules.feedforward import GatedLinearUnit
 from fms.modules.layernorm import LayerNormParameterized
 from fms.modules.positions import RotaryEmbedding
 from fms.modules.ssm import SSM, SSMCacheUnit
+from fms.utils import serialization
 from fms.utils.activation import str_to_activation
 from fms.utils.config import ModelConfig
-from fms import models
-from fms.utils import serialization
-import re
-import logging
+
 
 logger = logging.getLogger(__name__)
+
 
 @dataclasses.dataclass
 class BambaConfig(ModelConfig):
@@ -48,6 +50,7 @@ class BambaConfig(ModelConfig):
     chunk_size: int = 256
     linear_config: Optional[Mapping[str, Any]] = None
     fused_weights: bool = True
+
 
 class BambaBlock(nn.Module):
     def __init__(self, config: BambaConfig, rotary_emb, layer_index: int):
@@ -122,7 +125,6 @@ class BambaBlock(nn.Module):
         if self.config.p_dropout != 0:
             self.dropout = nn.Dropout(self.config.p_dropout)
 
-
     def forward(
         self,
         x,
@@ -145,7 +147,7 @@ class BambaBlock(nn.Module):
                 past_key_value_state=past_key_value_state,
                 use_cache=use_cache,
                 cache_position=cache_position,
-                mask=mask
+                mask=mask,
             )
         else:
             x = self.attn(
@@ -187,23 +189,20 @@ class BambaBlock(nn.Module):
         else:
             return x
 
-class BambaHeadless(nn.Module):
 
+class BambaHeadless(nn.Module):
     def __init__(self, config: BambaConfig, distributed_strategy: DistributedStrategy):
         super(BambaHeadless, self).__init__()
         self.config = config
         self.distributed_strategy = distributed_strategy
 
-        self.embedding = nn.Embedding(
-            self.config.src_vocab_size,
-            self.config.emb_dim
-        )
+        self.embedding = nn.Embedding(self.config.src_vocab_size, self.config.emb_dim)
 
         self.rot_emb = RotaryEmbedding(
             dim=(self.config.emb_dim // self.config.nheads) // 2,
             ntk_scaling=self.config.ntk_scaling,
             max_seq_len=self.config.max_expected_seq_len,
-            ratio=self.config.rope_theta
+            ratio=self.config.rope_theta,
         )
 
         # RoPE init
@@ -236,7 +235,11 @@ class BambaHeadless(nn.Module):
             self.dropout = nn.Dropout(self.config.p_dropout)
 
         self.attn_layer_indices = set(self.config.attn_layer_indices)
-        self.attn_layer_ind = -1 if len(self.config.attn_layer_indices) == 0 else next(iter(self.config.attn_layer_indices))
+        self.attn_layer_ind = (
+            -1
+            if len(self.config.attn_layer_indices) == 0
+            else next(iter(self.config.attn_layer_indices))
+        )
 
     def reset_parameters(self):
         nn.init.trunc_normal_(
@@ -289,7 +292,6 @@ class BambaHeadless(nn.Module):
         ):
             self.rot_emb.compute_freqs_cis(device, self.config.max_expected_seq_len)
 
-
     def forward(
         self,
         x_in,
@@ -321,7 +323,7 @@ class BambaHeadless(nn.Module):
                                 self.config.state_size,
                                 x_in.size(0),
                                 self.embedding.weight.dtype,
-                                str(self.embedding.weight.device)
+                                str(self.embedding.weight.device),
                             )
                         )
             else:
@@ -351,9 +353,10 @@ class BambaHeadless(nn.Module):
         # this is the output cache for all the decoder layers
         present_key_value_states = []
 
-
         if position_ids is None:
-            cache_position = torch.arange(x_in.shape[1], device=x_in.device) + klen # TODO: Explore issue with this path
+            cache_position = (
+                torch.arange(x_in.shape[1], device=x_in.device) + klen
+            )  # TODO: Explore issue with this path
         else:
             cache_position = position_ids.max(dim=0).values
 
@@ -382,8 +385,14 @@ class BambaHeadless(nn.Module):
 
         return dec_out, present_key_value_states
 
+
 class Bamba(nn.Module):
-    def __init__(self, config: Optional[BambaConfig] = None, distributed_strategy: DistributedStrategy = NoOpStrategy, **kwargs):
+    def __init__(
+        self,
+        config: Optional[BambaConfig] = None,
+        distributed_strategy: DistributedStrategy = NoOpStrategy,
+        **kwargs,
+    ):
         super(Bamba, self).__init__()
         if config is not None:
             self.config = config
@@ -428,7 +437,9 @@ class Bamba(nn.Module):
         x: torch.Tensor,
         mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
-        past_key_value_states: Optional[List[SSMCacheUnit | Tuple[torch.FloatTensor,]]] = None,
+        past_key_value_states: Optional[
+            List[SSMCacheUnit | Tuple[torch.FloatTensor,]]
+        ] = None,
         use_cache: bool = False,
         only_last_token: bool = False,
         attn_algorithm: Optional[str] = None,
@@ -446,6 +457,7 @@ class Bamba(nn.Module):
         else:
             return preds
 
+
 _architecture_name = "bamba"
 
 
@@ -454,6 +466,7 @@ def _bamba_factory_factory(config):
         return Bamba(config, **kwargs)
 
     return factory
+
 
 _bamba_9_8b_config = BambaConfig(
     src_vocab_size=128256,
@@ -472,13 +485,16 @@ _bamba_9_8b_config = BambaConfig(
     conv_kernel=4,
     use_conv_bias=True,
     chunk_size=256,
-    attn_layer_indices={9,18,27},
+    attn_layer_indices=[9, 18, 27],
     mamba_n_heads=128,
     max_expected_seq_len=262144,
-    p_dropout=0.0
+    p_dropout=0.0,
 )
 
-models.register_model(_architecture_name, "9_8b", _bamba_factory_factory(_bamba_9_8b_config))
+models.register_model(
+    _architecture_name, "9_8b", _bamba_factory_factory(_bamba_9_8b_config)
+)
+
 
 def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]:
     replacements = [
@@ -514,11 +530,13 @@ def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]
 
 serialization.register_adapter_step("bamba", "hf_to_fms_names", _hf_to_fms_names)
 
+
 def _get_rope_params(linear_type: str) -> list[str]:
     if "gptq" in linear_type:
         return ["qweight", "scales", "qzeros", "bias"]
     else:  # torch.nn.Linear
         return ["weight", "bias"]
+
 
 def _hf_to_fms_rope(
     input_sd: Mapping[str, Any], model_config: Optional[BambaConfig] = None, **kwargs
@@ -571,8 +589,9 @@ def _hf_to_fms_rope(
                 temp_rope = temp_heads[:, :rope_size]
                 temp_rope_view = temp_rope.view(num_heads, 2, -1)
             temp_rope = temp_rope_view.transpose(1, 2).reshape(*temp_rope.size())
-            temp = torch.cat([temp_rope, temp_heads[:, rope_size:]], dim = -2).reshape(*temp.size())
-
+            temp = torch.cat([temp_rope, temp_heads[:, rope_size:]], dim=-2).reshape(
+                *temp.size()
+            )
 
             if "gptq" in linear_type and temp.dim() == 2:
                 temp = temp.transpose(0, 1)
@@ -583,7 +602,9 @@ def _hf_to_fms_rope(
 
     return new_sd
 
+
 serialization.register_adapter_step("bamba", "hf_to_fms_rope", _hf_to_fms_rope)
+
 
 def _weight_fusion(
     input_sd: Mapping[str, Any], model_config: Optional[BambaConfig] = None, **kwargs
