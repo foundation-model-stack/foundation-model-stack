@@ -1,6 +1,8 @@
 import os
+import shutil
 import tempfile
 from collections import ChainMap
+from glob import glob
 from pathlib import Path
 
 import pytest
@@ -22,33 +24,21 @@ def test_register():
 
 
 def test_get_model_hf_configured():
+    # we want to force download
+    model_path = f"{os.path.expanduser('~')}/.cache/huggingface/hub/models--FacebookAI--roberta-base"
+    if os.path.exists(model_path):
+        shutil.rmtree(model_path)
+
     model_inferred = models.get_model("hf_configured", "FacebookAI/roberta-base")
     model_given = models.get_model("roberta", "base")
     assert model_inferred.config.as_dict() == model_given.config.as_dict()
 
+    found_file = False
+    for filename in glob(f"{model_path}/**/config.json", recursive=True):
+        found_file = True
+        assert os.listdir(filename.replace("/config.json", "")) == ["config.json"]
 
-def test_get_model_hf_configured_download_config():
-    prev_hf_home = os.environ.get("HF_HOME", None)
-    with tempfile.TemporaryDirectory() as workdir:
-        # force download
-        os.environ["HF_HOME"] = workdir
-
-        model_inferred = models.get_model("hf_configured", "FacebookAI/roberta-base")
-        model_given = models.get_model("roberta", "base")
-
-        from glob import glob
-
-        found_file = False
-        for filename in glob(
-            f"{workdir}/models--FacebookAI--roberta-base/**/config.json", recursive=True
-        ):
-            found_file = True
-            assert os.listdir(filename.replace("/config.json", "")) == ["config.json"]
-
-        assert found_file
-
-        if prev_hf_home is not None:
-            os.environ["HF_HOME"] = prev_hf_home
+    assert found_file
 
 
 def test_get_model_hf_pretrained():
