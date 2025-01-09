@@ -2,7 +2,7 @@ import abc
 import os
 import platform
 import tempfile
-from typing import List, Union
+from typing import List, Optional, Union
 
 import numpy as np
 import pytest
@@ -66,11 +66,38 @@ class ModelFixtureMixin(metaclass=abc.ABCMeta):
         params = sorted(sd.keys())
         for key in params:
             parameter = sd[key]
-            values = torch.randn_like(parameter)
-            values -= 0.5
-            values /= 20.0
-            parameter.copy_(values)
+            opt_parameter_initialized = self._maybe_get_initialized_parameter(
+                key, parameter
+            )
+            if opt_parameter_initialized is not None:
+                parameter.copy_(opt_parameter_initialized)
+            else:
+                values = torch.randn_like(parameter)
+                values -= 0.5
+                values /= 20.0
+                parameter.copy_(values)
         return uninitialized_model
+
+    def _maybe_get_initialized_parameter(
+        self, key: str, parameter: torch.Tensor
+    ) -> Optional[torch.Tensor]:
+        """Optionally return an initialized tensor parameter. If None is returned, the default randn_like will be used
+        for the given parameter
+
+        Parameters
+        ----------
+        key: str
+            state dict key for tensor
+        parameter: torch.Tensor
+            the parameter tensor associated with a key in a state dict
+
+        Returns
+        -------
+        Optional[torch.Tensor]
+            torch.Tensor if randomly initialized tensor for this model
+            None if default initialization to be used
+        """
+        return None
 
 
 class SignatureFixtureMixin:

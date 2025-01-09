@@ -1,4 +1,5 @@
 import pytest
+import torch
 
 from fms.models.roberta import RoBERTa, RoBERTaConfig
 from fms.testing._internal.model_test_suite import (
@@ -61,3 +62,43 @@ class TestRoBERTa(
         # modify pad_id to the new value expected and check equivalence
         config.pad_id = config.pad_id + 1
         assert model.get_config().as_dict() == config.as_dict()
+
+
+class RoBERTaGPTQFixtures(ModelFixtureMixin):
+    @pytest.fixture(scope="class", autouse=True)
+    def uninitialized_model(self):
+        return RoBERTa(
+            src_vocab_size=384,
+            emb_dim=32,
+            nheads=8,
+            nlayers=2,
+            max_pos=512,
+            hidden_grow_factor=2.0,
+            tie_heads=True,
+            linear_config={"linear_type": "gptq_cpu"},
+        )
+
+    def _maybe_get_initialized_parameter(self, key, parameter):
+        if "qweight" in key:
+            return torch.randint(
+                low=0,
+                high=torch.iinfo(torch.int32).max,
+                size=parameter.shape,
+                dtype=torch.int32,
+            )
+        elif "qzeros" in key:
+            return torch.ones(parameter.shape, dtype=torch.int32) * 8
+        elif "g_idx" in key:
+            return parameter
+        else:
+            return None
+
+
+class TestRoBERTaGPTQ(
+    ModelConsistencyTestSuite, ModelCompileTestSuite, RoBERTaGPTQFixtures
+):
+    # x is the main parameter for this model which is the input tensor
+    _get_signature_params = ["x"]
+
+    def test_model_unfused(self, model, signature):
+        pytest.skip("weight unfuse is not implemented for GPTQ")
