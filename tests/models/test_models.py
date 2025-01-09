@@ -1,3 +1,4 @@
+import os
 import tempfile
 from collections import ChainMap
 from pathlib import Path
@@ -24,6 +25,30 @@ def test_get_model_hf_configured():
     model_inferred = models.get_model("hf_configured", "FacebookAI/roberta-base")
     model_given = models.get_model("roberta", "base")
     assert model_inferred.config.as_dict() == model_given.config.as_dict()
+
+
+def test_get_model_hf_configured_download_config():
+    prev_hf_home = os.environ.get("HF_HOME", None)
+    with tempfile.TemporaryDirectory() as workdir:
+        # force download
+        os.environ["HF_HOME"] = workdir
+
+        model_inferred = models.get_model("hf_configured", "FacebookAI/roberta-base")
+        model_given = models.get_model("roberta", "base")
+
+        from glob import glob
+
+        found_file = False
+        for filename in glob(
+            f"{workdir}/models--FacebookAI--roberta-base/**/config.json", recursive=True
+        ):
+            found_file = True
+            assert os.listdir(filename.replace("/config.json", "")) == ["config.json"]
+
+        assert found_file
+
+        if prev_hf_home is not None:
+            os.environ["HF_HOME"] = prev_hf_home
 
 
 def test_get_model_hf_pretrained():
