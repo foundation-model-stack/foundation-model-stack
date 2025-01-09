@@ -25,17 +25,17 @@ def test_gptbigcode_equivalence():
     hf_model = AutoModelForCausalLM.from_pretrained("bigcode/gpt_bigcode-santacoder")
     hf_model.config.scale_attention_softmax_in_fp32 = False
 
-    with tempfile.TemporaryDirectory() as workdir:
-        hf_model.save_pretrained(
-            f"{workdir}/gpt_bigcode-santacoder", safe_serialization=True
-        )
+    # with tempfile.TemporaryDirectory() as workdir:
+    hf_model.save_pretrained(
+        f"gpt_bigcode-santacoder", safe_serialization=True
+    )
 
-        fms_model = get_model(
-            "gpt_bigcode",
-            "santacoder",
-            f"{workdir}/gpt_bigcode-santacoder",
-            "hf",
-        )
+    fms_model = get_model(
+        "gpt_bigcode",
+        "santacoder",
+        f"gpt_bigcode-santacoder",
+        "hf",
+    )
 
     hf_model_fms = to_hf_api(
         fms_model,

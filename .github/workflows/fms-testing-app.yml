@@ -47,7 +47,6 @@ jobs:
       run: |
         # Install fms from the PR, all dependencies are already
         # installed in the virtual env
-        huggingface-cli download bigcode/gpt_bigcode-santacoder
         pip install .
         pytest -vv -rP tests/
 
