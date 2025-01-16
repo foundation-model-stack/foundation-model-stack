@@ -158,6 +158,7 @@ def _infer_model_configuration(
             repo_id=model_id_or_path,
             ignore_patterns=ignore_patterns,
             allow_patterns=allow_patterns,
+            cache_dir=os.environ.get("HF_HOME", None),
         )
     else:
         model_path = model_id_or_path
