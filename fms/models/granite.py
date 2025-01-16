@@ -484,6 +484,7 @@ def _get_rope_params(linear_type: str) -> list[str]:
     else:  # torch.nn.Linear
         return ["weight", "bias"]
 
+
 def _hf_to_fms_rope(
     input_sd: Mapping[str, Any], model_config: Optional[GraniteConfig] = None, **kwargs
 ) -> Mapping[str, Any]:
@@ -540,6 +541,7 @@ def _hf_to_fms_rope(
 
     return new_sd
 
+
 def _hf_gptq_granite_check(
     input_sd: Mapping[str, Any], model_config: Optional[GraniteConfig] = None, **kwargs
 ) -> Mapping[str, Any]:
@@ -568,5 +570,7 @@ serialization.register_adapter_step(
 )
 
 serialization.register_adapter(
-    _architecture_name, "hf", ["hf_to_fms_names", "hf_to_fms_rope", "hf_gptq_fusion_check", "weight_fusion"]
+    _architecture_name,
+    "hf",
+    ["hf_to_fms_names", "hf_to_fms_rope", "hf_gptq_fusion_check", "weight_fusion"],
 )
