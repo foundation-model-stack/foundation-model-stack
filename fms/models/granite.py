@@ -542,10 +542,35 @@ def _hf_to_fms_rope(
     return new_sd
 
 
+def _hf_gptq_granite_check(
+    input_sd: Mapping[str, Any], model_config: Optional[GraniteConfig] = None, **kwargs
+) -> Mapping[str, Any]:
+    has_fused_weights = True
+    linear_type = "torch_linear"
+    if model_config:
+        if not model_config.fused_weights:
+            has_fused_weights = False
+        if model_config.linear_config:
+            linear_type = model_config.linear_config["linear_type"]
+
+    if "gptq" in linear_type and has_fused_weights:
+        raise ValueError(
+            "GPTQ HF granite checkpoints cannot be loaded into a model with fused weights"
+        )
+
+    return input_sd
+
+
+serialization.register_adapter_step(
+    "granite", "hf_gptq_fusion_check", _hf_gptq_granite_check
+)
+
 serialization.register_adapter_step(
     _architecture_name, "hf_to_fms_rope", _hf_to_fms_rope
 )
 
 serialization.register_adapter(
-    _architecture_name, "hf", ["hf_to_fms_names", "hf_to_fms_rope", "weight_fusion"]
+    _architecture_name,
+    "hf",
+    ["hf_to_fms_names", "hf_to_fms_rope", "hf_gptq_fusion_check", "weight_fusion"],
 )
