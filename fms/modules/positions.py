@@ -106,6 +106,7 @@ class RotaryEmbedding(PositionEncoder):
         ratio: float = 10_000.0,
         max_seq_len=2048,
         ntk_scaling=False,
+        partial_rope=None,
     ):
         """
         This implementation of Rotary Position Embeddings (RoPE) avoids
@@ -124,7 +125,11 @@ class RotaryEmbedding(PositionEncoder):
             The ratio for the geometric progression to compute the rotation angles
         """
         super(RotaryEmbedding, self).__init__()
-        self.dim = dim
+        self.is_partial_rope = partial_rope is not None and partial_rope != 1.0
+        if self.is_partial_rope:
+            self.dim = int(partial_rope * dim)
+        else:
+            self.dim = dim
         self.ratio = ratio
         self.cached_freqs: MutableMapping[int, MutableMapping[int, torch.Tensor]] = {}
         self.max_seq_len_cached: MutableMapping[int, int] = {}
@@ -247,9 +252,7 @@ class RotaryEmbedding(PositionEncoder):
             if use_cache and past_kv_state is not None and past_kv_state[0].numel() > 0:
                 position_ids += past_kv_state[0].size(2)
 
-        is_partial_rope = q.size(2) != self.dim
-
-        if is_partial_rope:
+        if self.is_partial_rope:
             q_rope = q[..., : self.dim]
             k_rope = k[..., : self.dim]
         else:
@@ -277,7 +280,7 @@ class RotaryEmbedding(PositionEncoder):
             .flatten(3)
         ).type_as(k)
 
-        if is_partial_rope:
+        if self.is_partial_rope:
             q_out = torch.cat([q_out.view_as(q_rope), q[..., self.dim :]], dim=-1)
             k_out = torch.cat([k_out.view_as(k_rope), k[..., self.dim :]], dim=-1)
         else:
