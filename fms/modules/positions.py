@@ -106,7 +106,7 @@ class RotaryEmbedding(PositionEncoder):
         ratio: float = 10_000.0,
         max_seq_len=2048,
         ntk_scaling=False,
-        partial_rope=None,
+        partial_rope=1.0,
     ):
         """
         This implementation of Rotary Position Embeddings (RoPE) avoids
@@ -123,13 +123,12 @@ class RotaryEmbedding(PositionEncoder):
             Maximum expected sequence length for the model, if exceeded the cached freqs will be recomputed
         ratio: int
             The ratio for the geometric progression to compute the rotation angles
+        partial_rope: int
+            fraction of head dimension to apply rope to
         """
         super(RotaryEmbedding, self).__init__()
-        self.is_partial_rope = partial_rope is not None and partial_rope != 1.0
-        if self.is_partial_rope:
-            self.dim = int(partial_rope * dim)
-        else:
-            self.dim = dim
+        self.dim = int(partial_rope * dim)
+        self.is_partial_rope = self.dim != dim
         self.ratio = ratio
         self.cached_freqs: MutableMapping[int, MutableMapping[int, torch.Tensor]] = {}
         self.max_seq_len_cached: MutableMapping[int, int] = {}
