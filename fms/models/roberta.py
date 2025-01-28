@@ -1,3 +1,5 @@
+import copy
+import logging
 import math
 import re
 from dataclasses import dataclass
@@ -14,6 +16,9 @@ from fms.modules.head import MLPClassificationHead
 from fms.utils import serialization
 from fms.utils.activation import str_to_activation
 from fms.utils.config import ModelConfig
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -311,11 +316,16 @@ class RoBERTaForQuestionAnswering(nn.Module):
         else:
             self.config = RoBERTaQuestionAnsweringConfig()
         self.config = self.config.updated(**kwargs)
+        if self.config.tie_heads:
+            logger.warning(
+                "The model configuration set tie heads to True but this parameter will "
+                "be ignored for a QuestionAnswering task."
+            )
         self.distributed_strategy = distributed_strategy
 
         self.base_model = RoBERTaHeadless(self.config, self.distributed_strategy)
 
-        # The head does not get TP-Wrapped and is not quantized
+        # The head does not get TP-wrapped and is not quantized
         # output dimension ("num_classes") for QuestionAnswering is always 2
         self.qa_head = nn.Linear(
             in_features=self.config.emb_dim,
@@ -353,9 +363,9 @@ class RoBERTaForQuestionAnswering(nn.Module):
 
     def reset_parameters(self):
         self.base_model.reset_parameters()
-        self.classification_head.head.weight.data.normal_(
+        self.qa_head.weight.data.normal_(
             0,
-            1 / math.sqrt(math.sqrt(self.config.emb_dim * self.config.src_vocab_size)),
+            1 / math.sqrt(math.sqrt(self.config.emb_dim * 2)),
         )
 
 
@@ -366,8 +376,11 @@ _micro_char_config = RoBERTaConfig(
 
 _base_config = RoBERTaConfig(tie_heads=True, norm_eps=1e-5, p_dropout=0.1)
 
+_base_questionanswering_config_dict = copy.copy(_base_config.__dict__)
+_base_questionanswering_config_dict["tie_heads"] = False
 _base_questionanswering_config = RoBERTaQuestionAnsweringConfig(
-    **_base_config.__dict__,
+    **_base_questionanswering_config_dict,
+    num_classes=2,
 )
 
 _architecture_name = "roberta"
@@ -448,7 +461,7 @@ def _hf_to_fms_names(hf_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]:
         (r"^lm_head\.dense", "classification_head.dense"),
         (r"^lm_head\.layer_norm", "classification_head.ln"),
         (r"^lm_head\.decoder", "classification_head.head"),
-        (r"^qa_outputs", "qa_head"),
+        (r"^qa_outputs", "qa_head"),  # only relevant to QuestionAnswering task
     ]
     new_sd = {}
     for name, param in hf_sd.items():
