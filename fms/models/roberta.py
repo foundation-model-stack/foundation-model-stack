@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Any, Mapping, Optional
 
 import torch
-import torch.nn as nn
+from torch import nn
 
 from fms import models
 from fms.distributed.strategy import DistributedStrategy, NoOpStrategy
@@ -37,6 +37,8 @@ class RoBERTaConfig(ModelConfig):
 
 @dataclass
 class RoBERTaQuestionAnsweringConfig(RoBERTaConfig):
+    """Model configuration of RoBERTa for Question-Answering downstream task"""
+
     num_classes: int = 2
 
 
@@ -127,7 +129,8 @@ class RoBERTaHeadless(nn.Module):
             ]
         )
 
-        # RoBERTa embeddings don't support TP as in many cases, the vocab size is not divisible by the world size
+        # RoBERTa embeddings don't support TP as in many cases the vocab size is
+        # not divisible by the world size
         self.embedding = self.distributed_strategy.distribute_module(
             nn.Embedding(self.config.src_vocab_size, self.config.emb_dim),
             final_layers=True,
@@ -216,7 +219,7 @@ class RoBERTa(nn.Module):
         distributed_strategy: DistributedStrategy = NoOpStrategy,
         **kwargs,
     ):
-        super(RoBERTa, self).__init__()
+        super().__init__()
         if config is not None:
             self.config = config
         else:
@@ -226,7 +229,8 @@ class RoBERTa(nn.Module):
 
         self.base_model = RoBERTaHeadless(self.config, self.distributed_strategy)
 
-        # The head does not get TP-Wrapped as in many cases the vocab_size will not be divisible by the world size
+        # The head does not get TP-Wrapped as in many cases the vocab_size
+        # will not be divisible by the world size
         self.classification_head = self.distributed_strategy.distribute_module(
             MLPClassificationHead(
                 self.config.emb_dim,
@@ -280,7 +284,8 @@ class RoBERTa(nn.Module):
             )
 
     def post_init(self):
-        # This function is called in `get_model` after the model is fully initalized in the correct device
+        # This function is called in `get_model` after the model is fully initalized
+        # on the correct device
 
         # if this model ties weights, so we tie here
         if self.config.tie_heads:
@@ -292,13 +297,15 @@ class RoBERTa(nn.Module):
 
 
 class RoBERTaForQuestionAnswering(nn.Module):
+    """Model architecture of RoBERTa for Question Answering downstream task"""
+
     def __init__(
         self,
         config: Optional[RoBERTaQuestionAnsweringConfig] = None,
         distributed_strategy: DistributedStrategy = NoOpStrategy,
         **kwargs,
     ):
-        super(RoBERTaForQuestionAnswering, self).__init__()
+        super().__init__()
         if config is not None:
             self.config = config
         else:
@@ -378,6 +385,7 @@ def _roberta_question_answering_factory_factory(config):
         return RoBERTaForQuestionAnswering(config, **kwargs)
 
     return factory
+
 
 models.register_model(
     _architecture_name, "micro", _roberta_factory_factory(_micro_char_config)
