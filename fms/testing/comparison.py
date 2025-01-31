@@ -98,8 +98,15 @@ def get_signature(
         if logits_getter_fn:
             p = logits_getter_fn(p)
 
-        # Temporary dummy backward pass to avoid checkpointing problems (see issue #591)
-        p.abs().mean().mul(0).backward()
+        if isinstance(p, tuple):
+            # only applies to QuestionAnswering which returns start/end logits
+            # Convert them to a single tensor to prepare it for signature
+            # NOTE: skip dummy backward pass, not needed for QA task and would require
+            # implementation of loss
+            p = torch.cat([p[0], p[1]], dim=-1)
+        else:
+            # Temporary dummy backward pass to avoid checkpointing problems (see issue #591)
+            p.abs().mean().mul(0).backward()
         return p
 
     # If cuda is available, we want to always create a signature using fp32, so this will ensure that.
@@ -115,7 +122,7 @@ def get_signature(
     else:
         p = run_forward(inp, optional_params)
 
-    s = p.max(2)[0] - p.min(2)[0]
+    s = p.max(2)[0] - p.min(2)[0] if p.dim() >= 3 else p
     return (s.squeeze() - s.min()).tolist()
 
 

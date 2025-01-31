@@ -17,7 +17,7 @@ from fms.utils.fusion import apply_unfuse_weights
 
 
 _FAILED_CONFIG_LOAD_MSG = """
-Failed to load the configuration. This could occur if there was a change in the configuration and the implementation of 
+Failed to load the configuration. This could occur if there was a change in the configuration and the implementation of
 the ModelConfig is not accounting for it.
 """
 
@@ -31,10 +31,10 @@ If (2) then please re-run this test with --capture_expectation
 """
 
 _FAILED_MODEL_WEIGHTS_KEYS_MSG = """
-Failed consistency of model weights. This is most likely due to: 
+Failed consistency of model weights. This is most likely due to:
 
 1. a new weight being introduced in the model
-2. a weight's name changing in the model 
+2. a weight's name changing in the model
 
 If either (1) or (2) was done purposely, please re-run this test with --capture_expectation
 """
@@ -244,7 +244,7 @@ class ModelConsistencyTestSuite(ModelFixtureMixin, SignatureFixtureMixin):
         print(actual, signature)
         assertion_msg = f"""
         difference: {np.mean(np.abs(np.array(actual) - np.array(signature)))}
-        
+
         {_FAILED_MODEL_SIGNATURE_OUTPUT_MSG}
         """
 
