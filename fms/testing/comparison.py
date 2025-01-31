@@ -4,7 +4,7 @@ from typing import Callable, Dict, List, Optional, Union
 
 import numpy as np
 import torch
-import torch.nn as nn
+from torch import nn
 
 
 @dataclasses.dataclass

@@ -92,12 +92,11 @@ class RoBERTaGPTQFixtures(ModelFixtureMixin):
                 size=parameter.shape,
                 dtype=torch.int32,
             )
-        elif "qzeros" in key:
+        if "qzeros" in key:
             return torch.ones(parameter.shape, dtype=torch.int32) * 8
-        elif "g_idx" in key:
+        if "g_idx" in key:
             return parameter
-        else:
-            return None
+        return None
 
 
 class TestRoBERTaGPTQ(
@@ -111,6 +110,8 @@ class TestRoBERTaGPTQ(
 
 
 class RoBERTaQuestionAnsweringFixtures(ConfigFixtureMixin, ModelFixtureMixin):
+    """Define uninitialized model and config used by RoBERTaQuestionAnswering tests"""
+
     @pytest.fixture(scope="class", autouse=True)
     def uninitialized_model(self, config: RoBERTaQuestionAnsweringConfig):
         return RoBERTaForQuestionAnswering(config)
@@ -131,7 +132,10 @@ class RoBERTaQuestionAnsweringFixtures(ConfigFixtureMixin, ModelFixtureMixin):
 class TestRoBERTaQuestionAnswering(
     ModelConsistencyTestSuite, ModelCompileTestSuite, RoBERTaQuestionAnsweringFixtures
 ):
+    """Main test class for RoBERTaQuestionAnswering"""
+
     # x is the main parameter for this model which is the input tensor
+    # a default attention mask is generated when not provided
     _get_signature_params = ["x"]
 
     def test_config_passed_to_model_and_updated(self, model, config):
@@ -144,4 +148,3 @@ class TestRoBERTaQuestionAnswering(
         # modify pad_id to the new value expected and check equivalence
         config.pad_id = config.pad_id + 1
         assert model.get_config().as_dict() == config.as_dict()
-
