@@ -47,7 +47,6 @@ class GPTQLinearConfig(ModelConfig):
     # linear module identifiers
     linear_type: str = "gptq"
     module_name: Optional[str] = None
-    filter_fn: Optional[Callable] = None
 
 
 def custom_linear_repr(self):
