@@ -51,26 +51,24 @@ def get_all_linear_type_to_sharding_maps() -> dict[str, Callable]:
 def get_linear_type(
     linear_config: Optional[Mapping[str, Any]], module_name: Optional[str] = None
 ) -> str:
-    """Parse linear configuration mapping to extract selected linear type.
-    If no mapping is provided, defaults to "torch_linear" type, which maps
-    to torch.nn.Linear.
+    """Parse linear configuration mapping to extract selected linear type from
+    `linear_config['linear_type']`.
+    `linear_type` can be string, callable, or None. Callable is a user-provided function
+    to select linear type based on module name. It should return string or None.
+    When no configuration is provided or linear type is None, we default to
+    "torch_linear" type, which maps to torch.nn.Linear.
     """
     if not linear_config:
         return "torch_linear"
 
     linear_type = linear_config.get("linear_type", None)
 
-    if not linear_type or linear_type == "torch_linear":
+    if not linear_type:
         return "torch_linear"
-    if isinstance(linear_type, str):
-        linear_type = linear_type.lower()
-        if linear_type not in __type_factory_map:
-            raise ValueError(
-                f"Unsupported linear_type `{linear_type}` in linear_config."
-            )
-        return linear_type
+
+    linear_type_str = None
     if callable(linear_type):
-        linear_type_from_callable = linear_type(module_name).lower()
+        linear_type_from_callable = linear_type(module_name)
         if linear_type_from_callable is None:
             return "torch_linear"
         if not isinstance(linear_type_from_callable, str):
@@ -78,13 +76,21 @@ def get_linear_type(
                 "Expect return from linear_type callable is string but got "
                 f"{type(linear_type_from_callable)} instead."
             )
-        if linear_type_from_callable not in __type_factory_map:
+        linear_type_str = linear_type_from_callable.lower()
+        if linear_type_str not in __type_factory_map:
             raise ValueError(
-                f"Unsupported linear_type `{linear_type_from_callable}` returned by "
+                f"Unsupported linear_type `{linear_type_str}` returned by "
                 "the callable set up in linear_config['linear_type']. Function failed "
                 f"receiving module_name={module_name}. Check linear_type function."
             )
-        return linear_type_from_callable
+    if isinstance(linear_type, str):
+        linear_type_str = linear_type.lower()
+        if linear_type_str not in __type_factory_map:
+            raise ValueError(
+                f"Unsupported linear_type `{linear_type_str}` in linear_config."
+            )
+    if linear_type_str:
+        return linear_type_str
     raise ValueError(
         "linear_type must be either a supported string or a module-selection function."
     )
