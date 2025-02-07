@@ -108,7 +108,7 @@ def mask_2d_to_3d_bidirectional(
 
 
 def _infer_model_configuration(
-    model_id_or_path: Union[str, os.PathLike],
+    model_id_or_path: str | os.PathLike,
     download_weights: bool = True,
 ) -> Dict[str, Any]:
     # if the path does not exist, download it from huggingface and get the local path
@@ -134,13 +134,13 @@ def _infer_model_configuration(
             ignore_patterns = None
 
         model_path = snapshot_download(
-            repo_id=model_id_or_path,
+            repo_id=str(model_id_or_path),
             ignore_patterns=ignore_patterns,
             allow_patterns=allow_patterns,
             cache_dir=os.environ.get("HF_HOME", None),
         )
     else:
-        model_path = model_id_or_path
+        model_path = str(model_id_or_path)
 
     config = AutoConfig.from_pretrained(model_path)
 

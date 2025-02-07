@@ -86,14 +86,6 @@ def __maybe_infer_model_variant(
         is_hf_configured = architecture == "hf_configured"
 
         if is_hf_pretrained:
-            if variant is None:
-                model_path_or_variant = model_path  # type: ignore[assignment]
-            else:
-                model_path_or_variant = variant
-        elif is_hf_configured:
-            model_path_or_variant = variant
-
-        if is_hf_pretrained:
             if ((variant is None) == (model_path is None)) or source is not None:
                 raise ValueError(
                     f"""
@@ -108,6 +100,15 @@ def __maybe_infer_model_variant(
             raise ValueError(
                 """architecture="hf_configured" implies model config is loaded from variant, therefore it should be set"""
             )
+
+        model_path_or_variant = ""
+        if is_hf_pretrained:
+            if variant is None:
+                model_path_or_variant = model_path  # type: ignore[assignment]
+            else:
+                model_path_or_variant = variant
+        elif is_hf_configured and variant is not None:
+            model_path_or_variant = variant
 
         logger.info(f"inferring model configuration from {model_path_or_variant}")
 
