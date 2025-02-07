@@ -1,6 +1,6 @@
 import math
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, Mapping, Optional
+from typing import Any, Mapping, Optional
 
 import torch
 from torch import nn
@@ -24,6 +24,15 @@ try:
     IS_AUTOGPTQ_AVAILABLE = True
 except ImportError:
     IS_AUTOGPTQ_AVAILABLE = False
+
+
+def check_if_gptq(extra_args: Mapping) -> bool:
+    linear_config = extra_args.get("linear_config", None)
+    if linear_config:
+        linear_type = linear_config.get("linear_type", None)
+        if linear_type and isinstance(linear_type, str):
+            return "gptq" in linear_type
+    return False
 
 
 # simplified from AutoGPTQ quantization config
@@ -116,9 +125,9 @@ def get_gptq_linear(
 
 
 def shard_gptq_linear(
-    tensor_values: Dict[str, torch.Tensor],
+    tensor_values: dict[str, torch.Tensor],
     tp_module: TPModule,
-    module_sharding_info: Dict[str, LinearModuleShardingInfo],
+    module_sharding_info: dict[str, LinearModuleShardingInfo],
 ) -> Optional[set]:
     """
     Set up GPTQ quantization parameters to be sharded onto linear modules
@@ -138,10 +147,10 @@ def shard_gptq_linear(
               | qzeros   |   Y   |  0  |
               | g_idx    |   Y   |  0  |
     """
-    param_sharding_info: Dict[str, Dict[str, LinearParameterShardingInfo]] = {}
+    param_sharding_info: dict[str, dict[str, LinearParameterShardingInfo]] = {}
     for module_name, module_info in module_sharding_info.items():
         gptq_mod = module_info.linear_module
-        params: Dict[str, LinearParameterShardingInfo] = {
+        params: dict[str, LinearParameterShardingInfo] = {
             "qweight": LinearParameterShardingInfo(
                 1 - module_info.sharding_dim, ShardType.SHARD
             ),
