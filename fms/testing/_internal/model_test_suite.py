@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 import torch
 import torch.nn as nn
+from scipy.special.cython_special import logit
 from torch._dynamo.exc import TorchDynamoException
 from torch._dynamo.testing import CompileCounterWithBackend
 
@@ -168,6 +169,17 @@ class ModelConfigTestSuite(ConfigFixtureMixin, ModelFixtureMixin):
 class ModelCompileTestSuite(ModelFixtureMixin):
     """A set of tests associated with compilation of fms models"""
 
+    @staticmethod
+    def _get_signature_logits_getter_fn(f_out) -> torch.Tensor:
+        """function which given the output of forward, will return the logits as a torch.Tensor
+
+        Returns
+        -------
+        Optional[torch.Tensor]
+            the output logits
+        """
+        return f_out
+
     @property
     @abc.abstractmethod
     def _get_signature_params(self) -> Union[int, List[str]]:
@@ -198,6 +210,7 @@ class ModelCompileTestSuite(ModelFixtureMixin):
                 # default attn_algorithm won't compile on CPU
                 # TODO: add non-mmath attn_algorithm when we have GPUs to run unit tests
                 optional_params={"attn_algorithm": "math"},
+                logits_getter_fn=self._get_signature_logits_getter_fn,
             )
             assert cnt.frame_count == 1
         except TorchDynamoException as e:
@@ -207,17 +220,16 @@ class ModelCompileTestSuite(ModelFixtureMixin):
 class ModelConsistencyTestSuite(ModelFixtureMixin, SignatureFixtureMixin):
     """All tests related to model consistency will be part of this test suite"""
 
-    @property
-    @abc.abstractmethod
-    def _get_signature_logits_getter_fn(self) -> Optional[Callable]:
-        """the value to pass into logits_getter_fn in get_signature function for this model
+    @staticmethod
+    def _get_signature_logits_getter_fn(f_out) -> torch.Tensor:
+        """function which given the output of forward, will return the logits as a torch.Tensor
 
         Returns
         -------
-        Callable
-            function which given the output of forward, will return the logits as a torch.Tensor
+        Optional[torch.Tensor]
+            the output logits
         """
-        return None
+        return f_out
 
     @property
     @abc.abstractmethod
@@ -235,7 +247,11 @@ class ModelConsistencyTestSuite(ModelFixtureMixin, SignatureFixtureMixin):
     def test_model_output(self, model, signature, capture_expectation):
         """test consistency of model output with signature"""
 
-        actual = get_signature(model, params=self._get_signature_params)
+        actual = get_signature(
+            model,
+            params=self._get_signature_params,
+            logits_getter_fn=self._get_signature_logits_getter_fn,
+        )
 
         if capture_expectation:
             import inspect
@@ -299,7 +315,9 @@ class ModelConsistencyTestSuite(ModelFixtureMixin, SignatureFixtureMixin):
 
         unfused_model = apply_unfuse_weights(model)
         unfused_signature = get_signature(
-            unfused_model, params=self._get_signature_params
+            unfused_model,
+            params=self._get_signature_params,
+            logits_getter_fn=self._get_signature_logits_getter_fn,
         )
 
         assertion_msg = f"""
