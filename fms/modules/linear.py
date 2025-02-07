@@ -73,7 +73,7 @@ def get_linear_type(
             return "torch_linear"
         if not isinstance(linear_type_from_callable, str):
             raise TypeError(
-                "Expect return from linear_type callable is string but got "
+                "Expected return from linear_type callable to be string but got "
                 f"{type(linear_type_from_callable)} instead."
             )
         linear_type_str = linear_type_from_callable.lower()

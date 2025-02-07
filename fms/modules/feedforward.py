@@ -76,7 +76,6 @@ class FeedForwardBlock(nn.Module):
         )
         self.use_bias = use_bias
         self.linear_config = linear_config
-        self.linear_type = get_linear_type(linear_config)
 
     def reset_parameters(self):
         for layer in ["w1", "w2"]:
@@ -159,7 +158,9 @@ class TPFeedForwardBlock(FeedForwardBlock, TPModule):
         }
 
         type_sharding_map = get_all_linear_type_to_sharding_maps()
-        unused_keys = type_sharding_map[self.linear_type](
+        # the following requires get_linear_type to handle module_name = None
+        linear_type = get_linear_type(self.linear_config)
+        unused_keys = type_sharding_map[linear_type](
             tensor_values,
             self,
             module_sharding_info,
@@ -263,7 +264,6 @@ class GatedLinearUnit(nn.Module):
         self.width = emb_dim
         self.grow_factor = hidden_grow_factor
         self.linear_config = linear_config
-        self.linear_type = get_linear_type(linear_config)
 
     def reset_parameters(self):
         layers = ["w2"]
@@ -410,7 +410,9 @@ class TPGatedLinearUnit(GatedLinearUnit, TPModule):
         )
 
         type_sharding_map = get_all_linear_type_to_sharding_maps()
-        unused_keys = type_sharding_map[self.linear_type](
+        # the following requires get_linear_type to handle module_name = None
+        linear_type = get_linear_type(self.linear_config)
+        unused_keys = type_sharding_map[linear_type](
             tensor_values,
             self,
             module_sharding_info,
