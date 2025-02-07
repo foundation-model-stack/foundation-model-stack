@@ -1,3 +1,5 @@
+from typing import Tuple
+
 import pytest
 import torch
 
@@ -137,6 +139,9 @@ class TestRoBERTaQuestionAnswering(
     # x is the main parameter for this model which is the input tensor
     # a default attention mask is generated when not provided
     _get_signature_params = ["x"]
+    _get_signature_logits_getter_fn = lambda qa_output: torch.cat(
+        [qa_output[0], qa_output[1]], dim=-1
+    )
 
     def test_config_passed_to_model_and_updated(self, model, config):
         """test model constructor appropriately merges any passed kwargs into the config

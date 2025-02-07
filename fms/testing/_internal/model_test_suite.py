@@ -2,7 +2,7 @@ import abc
 import os
 import platform
 import tempfile
-from typing import List, Optional, Union
+from typing import Callable, List, Optional, Union
 
 import numpy as np
 import pytest
@@ -206,6 +206,18 @@ class ModelCompileTestSuite(ModelFixtureMixin):
 
 class ModelConsistencyTestSuite(ModelFixtureMixin, SignatureFixtureMixin):
     """All tests related to model consistency will be part of this test suite"""
+
+    @property
+    @abc.abstractmethod
+    def _get_signature_logits_getter_fn(self) -> Optional[Callable]:
+        """the value to pass into logits_getter_fn in get_signature function for this model
+
+        Returns
+        -------
+        Callable
+            function which given the output of forward, will return the logits as a torch.Tensor
+        """
+        return None
 
     @property
     @abc.abstractmethod
