@@ -60,22 +60,29 @@ def get_linear_type(
     if not linear_config:
         return "torch_linear"
 
-    if (
-        "filter_fn" in linear_config
-        and module_name is not None
-        and not linear_config["filter_fn"](module_name)
-    ):
-        return "torch_linear"
-
     linear_type = linear_config.get("linear_type", None)
-    if not linear_type:
-        return "torch_linear"
-    if not isinstance(linear_type, str):
-        raise TypeError("linear_type in linear_config must be string")
-    if linear_type.lower() not in __type_factory_map:
-        raise ValueError(f"Unsupported linear_type `{linear_type}` in linear_config")
 
-    return linear_type.lower()
+    if not linear_type or linear_type == "torch_linear":
+        return "torch_linear"
+    if isinstance(linear_type, str):
+        linear_type = linear_type.lower()
+        if linear_type not in __type_factory_map:
+            raise ValueError(f"Unsupported linear_type `{linear_type}` in linear_config.")
+        return linear_type
+    if callable(linear_type):
+        linear_type_from_callable = linear_type(module_name).lower()
+        if linear_type_from_callable is None:
+            return "torch_linear"
+        if linear_type_from_callable not in __type_factory_map:
+            raise ValueError(
+                f"Unsupported linear_type `{linear_type_from_callable}` returned by
+                the callable set up in linear_config['linear_type']. Function failed
+                receiving module_name={module_name}. Check linear_type function."
+            )
+        return linear_type
+    raise ValueError(
+        "linear_type must be either a supported string or a module-selection function."
+    )
 
 
 class UninitializedLinear(UninitializedModule):
@@ -104,11 +111,16 @@ def get_linear(
     associated module is determined from existing mapping (`__type_factory_map`).
     Selected module must have been registered with `register_linear_type_to_module_map`.
 
-    In the cases where a module can be quantized or not depending on its name (given by
-    boolean check in filter_fn as part of linear_config, True meaning quantize), returns
-    UnitializedLinear so a later loop can correctly initialize the model.
+    When the module quantization scheme depends on the module name,
+    linear_config["linear_type"] will be a callable. In this case, `get_linear` first
+    returns UninitializedLinear, such that a post-processing loop with access to all the
+    module names can determine the correct module to instantiate.
     """
-    if linear_config and "filter_fn" in linear_config and module_name is None:
+    if (
+        linear_config
+        and callable(linear_config.get("linear_type", None))
+        and module_name is None
+    ):
         return UninitializedLinear(in_features, out_features, bias, linear_config)
 
     linear_type = get_linear_type(linear_config, module_name)
