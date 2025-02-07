@@ -1,5 +1,3 @@
-import inspect
-from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Optional
 
@@ -73,13 +71,18 @@ def get_linear_type(
         linear_type_from_callable = linear_type(module_name).lower()
         if linear_type_from_callable is None:
             return "torch_linear"
+        if not isinstance(linear_type_from_callable, str):
+            raise TypeError(
+                "Expect return from linear_type callable is string but got "
+                f"{type(linear_type_from_callable)} instead."
+            )
         if linear_type_from_callable not in __type_factory_map:
             raise ValueError(
-                f"Unsupported linear_type `{linear_type_from_callable}` returned by
-                the callable set up in linear_config['linear_type']. Function failed
-                receiving module_name={module_name}. Check linear_type function."
+                f"Unsupported linear_type `{linear_type_from_callable}` returned by "
+                "the callable set up in linear_config['linear_type']. Function failed "
+                f"receiving module_name={module_name}. Check linear_type function."
             )
-        return linear_type
+        return linear_type_from_callable
     raise ValueError(
         "linear_type must be either a supported string or a module-selection function."
     )
