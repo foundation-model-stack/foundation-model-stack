@@ -2,13 +2,12 @@ import abc
 import os
 import platform
 import tempfile
-from typing import Callable, List, Optional, Union
+from typing import List, Optional, Union
 
 import numpy as np
 import pytest
 import torch
 import torch.nn as nn
-from scipy.special.cython_special import logit
 from torch._dynamo.exc import TorchDynamoException
 from torch._dynamo.testing import CompileCounterWithBackend
 
