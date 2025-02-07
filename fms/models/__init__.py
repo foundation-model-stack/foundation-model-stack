@@ -463,7 +463,11 @@ def get_model(
         if initial_device != torch.device("meta"):
             fms_model.to_empty(device=initial_device)
         # randomly initialize the model (non-gptq models only)
-        if hasattr(fms_model, "reset_parameters") and not is_gptq:
+        if (
+            hasattr(fms_model, "reset_parameters")
+            and callable(fms_model.reset_parameters)
+            and not is_gptq
+        ):
             fms_model.reset_parameters()
 
     if pre_load:
@@ -471,7 +475,7 @@ def get_model(
 
     # Call post-init to take care of post-wrapping/device-mapping initialization
     # Examples include tying weights, init Rope embeddings
-    if getattr(fms_model, "post_init", None):
+    if getattr(fms_model, "post_init", None) and callable(fms_model.post_init):
         fms_model.post_init()
 
     # Make sure any uninitialized tensors are at least moved to device

@@ -548,7 +548,7 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
         if self.fused:
             module_sharding_info = {
                 "qkv_fused": LinearModuleShardingInfo(
-                    self.in_proj.qkv_fused,
+                    self.in_proj.get_submodule("qkv_fused"),
                     0,
                     [self.pre_tp_nheads, self.pre_tp_kvheads, self.pre_tp_kvheads],
                 ),
@@ -557,13 +557,13 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
         else:
             module_sharding_info = {
                 "query": LinearModuleShardingInfo(
-                    self.in_proj.query, 0, [self.pre_tp_nheads]
+                    self.in_proj.get_submodule("query"), 0, [self.pre_tp_nheads]
                 ),
                 "key": LinearModuleShardingInfo(
-                    self.in_proj.key, 0, [self.pre_tp_kvheads]
+                    self.in_proj.get_submodule("key"), 0, [self.pre_tp_kvheads]
                 ),
                 "value": LinearModuleShardingInfo(
-                    self.in_proj.value, 0, [self.pre_tp_kvheads]
+                    self.in_proj.get_submodule("value"), 0, [self.pre_tp_kvheads]
                 ),
                 "dense": LinearModuleShardingInfo(self.dense, 1, [self.world_size]),
             }

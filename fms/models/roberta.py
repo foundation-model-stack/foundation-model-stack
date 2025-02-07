@@ -250,7 +250,9 @@ class RoBERTa(nn.Module):
 
         # this model ties weights, so we tie here
         if self.config.tie_heads:
-            self.classification_head.head.weight = self.base_model.embedding.weight
+            self.classification_head.get_submodule(
+                "head"
+            ).weight = self.base_model.embedding.weight
 
     def forward(
         self,

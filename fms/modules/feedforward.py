@@ -171,8 +171,8 @@ class TPFeedForwardBlock(FeedForwardBlock, TPModule):
         ffb: FeedForwardBlock, group: ProcessGroup
     ) -> "TPFeedForwardBlock":
         tp_ffb = TPFeedForwardBlock(
-            emb_dim=ffb.w1.in_features,
-            hidden_grow_factor=ffb.hidden_dim / ffb.w1.in_features,
+            emb_dim=getattr(ffb.w1, "in_features"),
+            hidden_grow_factor=ffb.hidden_dim / getattr(ffb.w1, "in_features"),
             multiple_of=None,
             activation_fn=ffb.a,
             p_dropout=ffb.p_dropout,
