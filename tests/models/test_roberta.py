@@ -1,5 +1,3 @@
-from typing import Callable, Optional, Tuple
-
 import pytest
 import torch
 
