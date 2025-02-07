@@ -1,5 +1,5 @@
 import abc
-from typing import Any, Mapping, Optional, Set, Tuple
+from typing import Any, Mapping, Optional, Tuple
 
 import torch
 import torch.distributed
@@ -501,12 +501,14 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
         assert torch.distributed.is_initialized()
 
         rank, world_size = distributed.rank_and_world(group)
-        assert (
-            nheads % world_size == 0
-        ), "The number of heads must be divisible by world size"
+        assert nheads % world_size == 0, (
+            "The number of heads must be divisible by world size"
+        )
         assert (kvheads >= world_size and kvheads % world_size == 0) or (
             kvheads < world_size and world_size % kvheads == 0
-        ), "the kv heads must be divisible by the world size or the world size must be divisible by kv heads"
+        ), (
+            "the kv heads must be divisible by the world size or the world size must be divisible by kv heads"
+        )
         MultiHeadAttention.__init__(
             self,
             emb_dim,

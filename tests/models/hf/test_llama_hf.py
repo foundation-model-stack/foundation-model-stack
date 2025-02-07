@@ -82,6 +82,7 @@ class LLaMA2HFFixtures(ModelFixtureMixin, HFConfigFixtureMixin, HFModelFixtureMi
 
         with torch.no_grad():
             oss_hf_model.model.embed_tokens.weight.copy_(fms_hf_model.embedding.weight)
+            oss_hf_model.model.rotary_emb.inv_freqs = freqs
             i = 0
             for oss_hf_layer in oss_hf_model.model.layers:
                 fms_hf_layer = fms_hf_model.decoder.model.layers[i]
@@ -98,7 +99,6 @@ class LLaMA2HFFixtures(ModelFixtureMixin, HFConfigFixtureMixin, HFModelFixtureMi
                 oss_hf_layer.self_attn.o_proj.weight.copy_(
                     fms_hf_layer.attn.dense.weight
                 )
-                oss_hf_layer.self_attn.rotary_emb.inv_freqs = freqs
 
                 # mlp
                 wg1_fused = fms_hf_layer.ff_sub_layer.wg1_fused.weight

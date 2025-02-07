@@ -1,10 +1,8 @@
-import math
-from typing import Dict, List, Optional, Set, Tuple, Union
+from typing import Dict, Optional, Set
 
 import torch
 import torch.distributed
 import torch.nn as nn
-from numpy import sign
 from torch.distributed.distributed_c10d import ProcessGroup
 
 from fms import distributed
@@ -65,9 +63,9 @@ class WordEmbedding(nn.Module):
         self.tie_weights = tie_weights
         self.bias = bias
         self.max_pos = max_pos
-        assert (
-            reversible or not tie_weights
-        ), "Error: weights cannot be tied when there is no output head!"
+        assert reversible or not tie_weights, (
+            "Error: weights cannot be tied when there is no output head!"
+        )
         if padding_idx is None:
             self.emb = nn.Embedding(self.vocab_size, self.emb_dim)
         else:
@@ -105,12 +103,12 @@ class WordEmbedding(nn.Module):
         # vocab_idx: b n d if reverse, else b n
         if not reverse:
             if self.debug:
-                assert (
-                    inp.min().item() >= 0
-                ), f"Error: you have requested a negative vocab index: {inp.min().item()}"
-                assert (
-                    inp.max().item() < self.vocab_size
-                ), f"Error: you have requested an out of vocab index: {inp.max().item()}"
+                assert inp.min().item() >= 0, (
+                    f"Error: you have requested a negative vocab index: {inp.min().item()}"
+                )
+                assert inp.max().item() < self.vocab_size, (
+                    f"Error: you have requested an out of vocab index: {inp.max().item()}"
+                )
             out = self.emb(inp)
             if self.abs_pos:
                 pos = self.pos_id[:, : inp.size(1)]
@@ -123,9 +121,9 @@ class WordEmbedding(nn.Module):
             return out
         else:
             if self.debug:
-                assert (
-                    self.reversible
-                ), "Error: cannot make prediction when there is no output head!"
+                assert self.reversible, (
+                    "Error: cannot make prediction when there is no output head!"
+                )
             return self.head(inp)
 
 
@@ -160,12 +158,12 @@ class TPWordEmbedding(WordEmbedding, TPModule):
     ):
         assert torch.distributed.is_initialized()
         rank, world_size = distributed.rank_and_world(group)
-        assert (
-            emb_dim % world_size == 0
-        ), "The embedding dimensions must be divisible by world size"
-        assert (
-            vocab_size % world_size == 0
-        ), "The number of tokens must be divisible by world size"
+        assert emb_dim % world_size == 0, (
+            "The embedding dimensions must be divisible by world size"
+        )
+        assert vocab_size % world_size == 0, (
+            "The number of tokens must be divisible by world size"
+        )
         WordEmbedding.__init__(
             self,
             vocab_size,
@@ -190,9 +188,9 @@ class TPWordEmbedding(WordEmbedding, TPModule):
         if abs_pos:
             self.pos_emb = nn.Embedding(max_pos, self.emb_dim // world_size)
         if reversible:
-            assert (
-                self.vocab_size % world_size == 0
-            ), "The vocab size should be a multiple of the world size!"
+            assert self.vocab_size % world_size == 0, (
+                "The vocab size should be a multiple of the world size!"
+            )
             self.head = nn.Linear(
                 self.emb_dim, self.vocab_size // world_size, bias=bias
             )
@@ -289,9 +287,9 @@ class TPEmbedding(nn.Embedding, TPModule):
     ):
         assert torch.distributed.is_initialized()
         rank, world_size = distributed.rank_and_world(group)
-        assert (
-            embedding_dim % world_size == 0
-        ), "The embedding dimensions must be divisible by world size"
+        assert embedding_dim % world_size == 0, (
+            "The embedding dimensions must be divisible by world size"
+        )
         nn.Embedding.__init__(
             self, num_embeddings, embedding_dim // world_size, **kwargs
         )

@@ -6,13 +6,10 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
-      - uses: psf/black@stable
+      - uses: actions/checkout@v4
+      - uses: astral-sh/ruff-action@v3
         with:
-          options: "--check --diff --color"
           src: "."
-          version: "~= 23.3.0"
-      - uses: isort/isort-action@master
-        with:
-          sort-paths: fms
-
+          version: "~= 0.9.5"
+      - run: ruff check
+      - run: ruff format --check

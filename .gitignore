@@ -7,4 +7,4 @@ fms.egg-info
 */**/*.pyc
 .vscode
 fms.egg-info
-
+.venv

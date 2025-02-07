@@ -1,5 +1,3 @@
-import math
-
 import torch
 
 from fms.modules.embedding import WordEmbedding
@@ -23,9 +21,9 @@ def test_abs_pos_padding():
             x_pad = x[:insert] + [pad_id] + x[insert:]
             y = m(torch.IntTensor(x).unsqueeze(0)).flatten().tolist()
             y_pad = m(torch.IntTensor(x_pad).unsqueeze(0)).flatten().tolist()
-            assert y_pad[insert] == 0, f"Output pad token {y_pad[i]} is non-zero"
+            assert y_pad[insert] == 0, f"Output pad token {y_pad[insert]} is non-zero"
             y_ = y_pad[:insert] + y_pad[insert + 1 :]
             for i in range(len(y)):
-                assert (
-                    y[i] == y_[i]
-                ), f"Index {i} of nonpadded output {y[i]} does not match padded output {y_[i]} with pad token {pad_id}"
+                assert y[i] == y_[i], (
+                    f"Index {i} of nonpadded output {y[i]} does not match padded output {y_[i]} with pad token {pad_id}"
+                )

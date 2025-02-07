@@ -1,4 +1,4 @@
-from typing import Any, Callable, List, Mapping, Optional
+from typing import Callable, Mapping
 
 import torch
 from torch.utils.data import Dataset, IterableDataset
@@ -54,9 +54,17 @@ def get_dataset(name: str, tokenizer: BaseTokenizer, data: str = "", **kwargs):
 
 
 # avoid circular dependency
-from fms.datasets.util import (
+from fms.datasets.util import (  # noqa: E402
     PackedSequenceDataset,
     RestartableFromMapDataset,
     SavableDataset,
     WithSeparatorDataset,
 )
+
+__all__ = [
+    "get_dataset",
+    "PackedSequenceDataset",
+    "RestartableFromMapDataset",
+    "SavableDataset",
+    "WithSeparatorDataset",
+]

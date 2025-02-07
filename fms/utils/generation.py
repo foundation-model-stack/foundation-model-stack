@@ -236,7 +236,7 @@ def generate(
         else:
             logits = output
 
-        if not "only_last_token" in kwargs:
+        if "only_last_token" not in kwargs:
             logits = logits[:, -1, :]
 
         if do_sample:
