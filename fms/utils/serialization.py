@@ -345,7 +345,7 @@ def load_state_dict(
         elif source == "meta":
             glob_pattern_list = ["*.pth", "*.safetensors"]
         elif source == "hf":
-            glob_pattern_list = ["*.bin", "*.safetensors", "*.pt"]
+            glob_pattern_list = ["*.safetensors", "*.bin", "*.pt"]
         else:
             glob_pattern_list = ["*.safetensors", "*.pth", "*.bin"]
         for glob_pattern_possibility in glob_pattern_list:
@@ -387,7 +387,8 @@ def load_state_dict(
     else:
         with torch.no_grad():
             checkpoint_sds = [
-                torch.load(str(ckpt_path), mmap=True) for ckpt_path in checkpoints
+                torch.load(str(ckpt_path), mmap=True, map_location=initial_device)
+                for ckpt_path in checkpoints
             ]
     return ChainMap(*checkpoint_sds)
 
