@@ -21,7 +21,7 @@ from fms.distributed.strategy import (
 )
 from fms.modules import UninitializedModule
 from fms.modules.linear import UninitializedLinear, get_linear
-from fms.utils import fusion, serialization, gptq
+from fms.utils import fusion, gptq, serialization
 
 
 logger = logging.getLogger(__name__)
