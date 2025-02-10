@@ -7,6 +7,18 @@ import torch.distributed
 from torch import nn
 
 from fms.utils import tp_wrapping
+from torch.distributed.device_mesh import init_device_mesh
+
+
+from torch.distributed.tensor import Shard, Replicate
+from torch.distributed.tensor.parallel import (
+   parallelize_module,
+   ColwiseParallel,
+   RowwiseParallel,
+   SequenceParallel,
+   PrepareModuleInput,
+   PrepareModuleOutput
+)
 
 
 if "DISTRIBUTED_STRATEGY_IGNORE_MODULES" in os.environ:
@@ -25,7 +37,7 @@ class DistributedStrategy:
         return module_name not in _distributed_strategy_ignore_modules
 
     def distribute_module(
-        self, module: nn.Module, final_layers: bool = False
+        self, module: nn.Module, final_layers: bool = False, model = None
     ) -> nn.Module:
         """
         Optionally a distributed strategy may distribute modules that are not
@@ -33,25 +45,25 @@ class DistributedStrategy:
         """
         module_name = type(module).__name__
         if self.__should_distribute(module_name):
-            return self._distribute_module(module, final_layers)
+            return self._distribute_module(module, final_layers, model)
         else:
             print(f"ignoring module={module_name} when distributing module")
             return module
 
-    def distribute_layer(self, block: nn.Module, layer: int) -> nn.Module:
+    def distribute_layer(self, block: nn.Module, layer: int, model = None) -> nn.Module:
         """
         Distribute each layer as-appropriate
         """
         block_name = type(block).__name__
         if self.__should_distribute(block_name):
-            return self._distribute_layer(block, layer)
+            return self._distribute_layer(block, layer, model)
         else:
             print(f"ignoring block={block_name} when distributing layer")
             return block
 
     @abstractmethod
     def _distribute_module(
-        self, module: nn.Module, final_layers: bool = False
+        self, module: nn.Module, final_layers: bool = False, model = None
     ) -> nn.Module:
         """
         Distribute modules that are not numbered layers
@@ -59,7 +71,7 @@ class DistributedStrategy:
         pass
 
     @abstractmethod
-    def _distribute_layer(self, block: nn.Module, layer: int) -> nn.Module:
+    def _distribute_layer(self, block: nn.Module, layer: int, model = None) -> nn.Module:
         """
         Distribute each layer
         """
@@ -71,11 +83,11 @@ class NotDistributed(DistributedStrategy):
         super().__init__(from_meta)
 
     def _distribute_module(
-        self, module: nn.Module, final_layers: bool = False
+        self, module: nn.Module, final_layers: bool = False, model = None
     ) -> nn.Module:
         return module
 
-    def _distribute_layer(self, block: nn.Module, layer: int) -> nn.Module:
+    def _distribute_layer(self, block: nn.Module, layer: int, model = None) -> nn.Module:
         return block
 
 
@@ -125,7 +137,7 @@ class UniformModelParallelStrategy(DistributedStrategy):
                 layer_id = layer_id + 1
                 remainder -= 1
 
-    def _distribute_layer(self, block: nn.Module, layer: int) -> nn.Module:
+    def _distribute_layer(self, block: nn.Module, layer: int, model = None) -> nn.Module:
         device = self.layer_to_device[layer]
         if self.from_meta:
             # https://github.com/pytorch/pytorch/pull/113647
@@ -134,7 +146,7 @@ class UniformModelParallelStrategy(DistributedStrategy):
         return wrapped
 
     def _distribute_module(
-        self, module: nn.Module, final_layers: bool = False
+        self, module: nn.Module, final_layers: bool = False, model = None
     ) -> nn.Module:
         if final_layers:
             device = self.layer_to_device[len(self.layer_to_device) - 1]
@@ -151,11 +163,70 @@ class TensorParallelStrategy(DistributedStrategy):
         super().__init__(from_meta)
         assert torch.distributed.is_initialized(), "must initialize a process group"
         self.group = group if group is not None else torch.distributed.GroupMember.WORLD
+        device_type = "cuda" if torch.cuda.is_available() else "cpu"
+        world = torch.distributed.get_world_size()
+        self.device_mesh = init_device_mesh(device_type, (world,))
 
     def _distribute_module(
-        self, module: nn.Module, final_layers: bool = False
+        self, module: nn.Module, final_layers: bool = False, model = None
     ) -> nn.Module:
-        return tp_wrapping.apply_tp(module, self.group)
+        if not model:
+            return tp_wrapping.apply_tp(module, self.group)
+        elif model == 'llama': 
+            if final_layers:
+                tp_plan = {
+                    "shared.head": ColwiseParallel(output_layouts=Replicate(),),
+                }
+                return parallelize_module(module, self.device_mesh, tp_plan)
+            else:
+                tp_plan = {
+                    "shared.emb": RowwiseParallel(input_layouts=Replicate()),
+                }
+                return parallelize_module(module, self.device_mesh, tp_plan)
+        elif model == 'granite':
+            tp_plan = {
+                "head": ColwiseParallel(output_layouts=Replicate(),),
+                "base_model.embedding": RowwiseParallel(input_layouts=Replicate()),
+            }
+            return parallelize_module(module, self.device_mesh, tp_plan)
 
-    def _distribute_layer(self, block: nn.Module, layer: int) -> nn.Module:
-        return tp_wrapping.apply_tp(block, self.group)
+    def _distribute_layer(self, block: nn.Module, layer: int, model = None) -> nn.Module:
+        if not model:
+            return tp_wrapping.apply_tp(block, self.group)
+        elif model == 'llama':
+            layer_tp_plan = {
+                "attn.in_proj.qkv_fused": ColwiseParallel(),
+                "attn.in_proj.query": ColwiseParallel(),
+                "attn.in_proj.key": ColwiseParallel(),
+                "attn.in_proj.value": ColwiseParallel(),
+                "attn.dense": RowwiseParallel(),
+                "ff_sub_layer.wg": ColwiseParallel(),
+                "ff_sub_layer.wg1_fused": ColwiseParallel(),
+                "ff_sub_layer.w2": RowwiseParallel(),
+                "ff_sub_layer.w1": ColwiseParallel(),
+                }
+        elif model == 'granite':
+            layer_tp_plan = {
+                "attn.in_proj.qkv_fused": ColwiseParallel(),
+                "attn.in_proj.query": ColwiseParallel(),
+                "attn.in_proj.key": ColwiseParallel(),
+                "attn.in_proj.value": ColwiseParallel(),
+                "attn.dense": RowwiseParallel(),
+                "ff_sub_layer.wg": ColwiseParallel(),
+                "ff_sub_layer.wg1_fused": ColwiseParallel(),
+                "ff_sub_layer.w2": RowwiseParallel(),
+                "ff_sub_layer.w1": ColwiseParallel(),
+                }
+        else:
+            raise ValueError(f"Unsupported model: {model}")
+        # Adjust attention module to use the local number of heads
+        attn_layer = block.attn
+        attn_layer.nheads = attn_layer.nheads // self.device_mesh.size()
+        attn_layer.kvheads = attn_layer.kvheads // self.device_mesh.size()
+
+        #Custom parallelization plan for the model
+        return parallelize_module(
+            module=block,
+            device_mesh=self.device_mesh,
+            parallelize_plan=layer_tp_plan
+        )
