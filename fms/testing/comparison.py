@@ -4,7 +4,7 @@ from typing import Callable, Dict, List, Optional, Union
 
 import numpy as np
 import torch
-import torch.nn as nn
+from torch import nn
 
 
 @dataclasses.dataclass
@@ -115,7 +115,7 @@ def get_signature(
     else:
         p = run_forward(inp, optional_params)
 
-    s = p.max(2)[0] - p.min(2)[0]
+    s = p.max(2)[0] - p.min(2)[0] if p.dim() >= 3 else p
     return (s.squeeze() - s.min()).tolist()
 
 

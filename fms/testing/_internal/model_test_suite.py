@@ -17,7 +17,7 @@ from fms.utils.fusion import apply_unfuse_weights
 
 
 _FAILED_CONFIG_LOAD_MSG = """
-Failed to load the configuration. This could occur if there was a change in the configuration and the implementation of 
+Failed to load the configuration. This could occur if there was a change in the configuration and the implementation of
 the ModelConfig is not accounting for it.
 """
 
@@ -31,10 +31,10 @@ If (2) then please re-run this test with --capture_expectation
 """
 
 _FAILED_MODEL_WEIGHTS_KEYS_MSG = """
-Failed consistency of model weights. This is most likely due to: 
+Failed consistency of model weights. This is most likely due to:
 
 1. a new weight being introduced in the model
-2. a weight's name changing in the model 
+2. a weight's name changing in the model
 
 If either (1) or (2) was done purposely, please re-run this test with --capture_expectation
 """
@@ -168,6 +168,17 @@ class ModelConfigTestSuite(ConfigFixtureMixin, ModelFixtureMixin):
 class ModelCompileTestSuite(ModelFixtureMixin):
     """A set of tests associated with compilation of fms models"""
 
+    @staticmethod
+    def _get_signature_logits_getter_fn(f_out) -> torch.Tensor:
+        """function which given the output of forward, will return the logits as a torch.Tensor
+
+        Returns
+        -------
+        Optional[torch.Tensor]
+            the output logits
+        """
+        return f_out
+
     @property
     @abc.abstractmethod
     def _get_signature_params(self) -> Union[int, List[str]]:
@@ -198,6 +209,7 @@ class ModelCompileTestSuite(ModelFixtureMixin):
                 # default attn_algorithm won't compile on CPU
                 # TODO: add non-mmath attn_algorithm when we have GPUs to run unit tests
                 optional_params={"attn_algorithm": "math"},
+                logits_getter_fn=self._get_signature_logits_getter_fn,
             )
             assert cnt.frame_count == 1
         except TorchDynamoException as e:
@@ -206,6 +218,17 @@ class ModelCompileTestSuite(ModelFixtureMixin):
 
 class ModelConsistencyTestSuite(ModelFixtureMixin, SignatureFixtureMixin):
     """All tests related to model consistency will be part of this test suite"""
+
+    @staticmethod
+    def _get_signature_logits_getter_fn(f_out) -> torch.Tensor:
+        """function which given the output of forward, will return the logits as a torch.Tensor
+
+        Returns
+        -------
+        Optional[torch.Tensor]
+            the output logits
+        """
+        return f_out
 
     @property
     @abc.abstractmethod
@@ -223,7 +246,11 @@ class ModelConsistencyTestSuite(ModelFixtureMixin, SignatureFixtureMixin):
     def test_model_output(self, model, signature, capture_expectation):
         """test consistency of model output with signature"""
 
-        actual = get_signature(model, params=self._get_signature_params)
+        actual = get_signature(
+            model,
+            params=self._get_signature_params,
+            logits_getter_fn=self._get_signature_logits_getter_fn,
+        )
 
         if capture_expectation:
             import inspect
@@ -244,7 +271,7 @@ class ModelConsistencyTestSuite(ModelFixtureMixin, SignatureFixtureMixin):
         print(actual, signature)
         assertion_msg = f"""
         difference: {np.mean(np.abs(np.array(actual) - np.array(signature)))}
-        
+
         {_FAILED_MODEL_SIGNATURE_OUTPUT_MSG}
         """
 
@@ -287,7 +314,9 @@ class ModelConsistencyTestSuite(ModelFixtureMixin, SignatureFixtureMixin):
 
         unfused_model = apply_unfuse_weights(model)
         unfused_signature = get_signature(
-            unfused_model, params=self._get_signature_params
+            unfused_model,
+            params=self._get_signature_params,
+            logits_getter_fn=self._get_signature_logits_getter_fn,
         )
 
         assertion_msg = f"""

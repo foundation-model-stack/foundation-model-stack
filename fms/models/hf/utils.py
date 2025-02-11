@@ -145,15 +145,23 @@ def _infer_model_configuration(
         from huggingface_hub import snapshot_download  # type: ignore
 
         # in the case we don't want to download the weights, but just create the model from scratch, we will only allow config.json
-        allow_patterns = None if download_weights else ["config.json"]
+        if download_weights:
+            allow_patterns = ["*config.json", "tokenizer*", "special_tokens_map.json"]
 
-        # mixtral saves safetensors expert sharded, so we will need their pt checkpoints
-        # ideally this should be fixed in the adapter in the future
-        ignore_patterns = None
-        if isinstance(model_id_or_path, str) and model_id_or_path.startswith(
-            "mistralai/Mixtral"
-        ):
-            ignore_patterns = ["*.safetensors"]
+            # mixtral saves safetensors expert sharded, so we will need their pt checkpoints
+            # ideally this should be fixed in the adapter in the future
+            ignore_patterns = None
+            if isinstance(model_id_or_path, str) and model_id_or_path.startswith(
+                "mistralai/Mixtral"
+            ):
+                ignore_patterns = ["*.safetensors"]
+                allow_patterns.append("*.pt")
+            else:
+                allow_patterns.append("*.safetensors*")
+        else:
+            allow_patterns = ["config.json"]
+            ignore_patterns = None
+
         model_path = snapshot_download(
             repo_id=model_id_or_path,
             ignore_patterns=ignore_patterns,
