@@ -1,8 +1,5 @@
-import os
-from typing import Union
-
 import torch
-from transformers import GPTBigCodeConfig, GPTBigCodeForCausalLM, PreTrainedModel
+from transformers import GPTBigCodeConfig, GPTBigCodeForCausalLM
 
 from fms.models.hf.gpt_bigcode.modeling_gpt_bigcode_hf import (
     HFAdaptedGPTBigCodeForCausalLM,

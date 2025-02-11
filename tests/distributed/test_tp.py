@@ -3,7 +3,7 @@ import torch
 import torch.distributed
 import torch.nn
 
-from fms.modules.attention import MultiHeadAttention, TPMultiHeadAttention
+from fms.modules.attention import MultiHeadAttention
 from fms.modules.feedforward import FeedForwardBlock
 
 

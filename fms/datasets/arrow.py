@@ -7,7 +7,7 @@ import pyarrow as pa
 import torch
 import urllib3
 from pyarrow.fs import FileSystem, FileType, LocalFileSystem, S3FileSystem
-from torch.utils.data import Dataset, IterableDataset
+from torch.utils.data import IterableDataset
 
 from fms.datasets.util import SavableDataset
 

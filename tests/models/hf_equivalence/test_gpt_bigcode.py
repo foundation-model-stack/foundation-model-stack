@@ -3,14 +3,9 @@ import tempfile
 import pytest
 
 from fms.models import get_model
-from fms.models.gpt_bigcode import GPTBigCode
 from fms.models.hf import to_hf_api
-from fms.models.hf.gpt_bigcode.modeling_gpt_bigcode_hf import (
-    HFAdaptedGPTBigCodeForCausalLM,
-)
 from fms.testing.comparison import (
     HFModelSignatureParams,
-    ModelSignatureParams,
     compare_model_signatures,
 )
 
@@ -43,7 +38,10 @@ def test_gptbigcode_equivalence():
         eos_token_id=hf_model.config.eos_token_id,
         pad_token_id=hf_model.config.pad_token_id,
     )
-    count_parameters = lambda m: sum(p.numel() for p in m.parameters())
+
+    def count_parameters(m):
+        return sum(p.numel() for p in m.parameters())
+
     assert count_parameters(hf_model_fms) == count_parameters(hf_model)
 
     hf_model.eval()

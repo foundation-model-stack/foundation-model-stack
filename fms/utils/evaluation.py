@@ -25,9 +25,12 @@ class FMSEvalHarnessLM(LM):
         self._rank = rank
         self._world_size = world_size
         self.device = device
+
         # workaround for https://github.com/EleutherAI/lm-evaluation-harness/issues/1333
         # until the fix is in a release
-        generic_object = lambda: None
+        def generic_object():
+            return None
+
         self.model = generic_object
         self.model.config = generic_object  # type: ignore
         self.model.config._name_or_path = "FMSEvalHarnessLM"  # type: ignore

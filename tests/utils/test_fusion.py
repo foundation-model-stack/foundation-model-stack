@@ -1,4 +1,3 @@
-import pytest
 import torch.testing
 
 from fms.modules.attention import FusedQKV, MultiHeadAttention, UnfusedQKV

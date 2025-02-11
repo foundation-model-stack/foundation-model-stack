@@ -5,7 +5,6 @@ import time
 import torch
 import transformers
 from torch import nn
-from transformers import pipeline
 
 from fms.models import llama
 from fms.models.hf.llama import modeling_llama_hf
@@ -67,7 +66,7 @@ def timed_generation(model: nn.Module, run: str):
     print(f"{run} took {end - start:,.2f} seconds")
     actual_new = result.shape[0] - input_ids.shape[1]
     print(f"\t- Generated {actual_new} new tokens")
-    print(f"\t- {(end-start) * 1000 / actual_new :,.2f} ms per generated token")
+    print(f"\t- {(end - start) * 1000 / actual_new:,.2f} ms per generated token")
     print(f'\t- Generated text: "{tokenizer.decode(result[-actual_new:])}"')
 
 

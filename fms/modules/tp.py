@@ -1,7 +1,6 @@
-import itertools
 from abc import ABCMeta, abstractmethod
 from enum import Enum
-from typing import Dict, List, Set, Type, Union
+from typing import Dict, List, Set, Union
 
 import torch
 import torch.nn as nn

@@ -23,7 +23,7 @@ from fms.testing.comparison import (
 
 def test_roberta_base_for_masked_lm_equivalency():
     # create models
-    hf_model = AutoModelForMaskedLM.from_pretrained("roberta-base")
+    hf_model = AutoModelForMaskedLM.from_pretrained("roberta-base", device_map="cpu")
 
     with tempfile.TemporaryDirectory() as workdir:
         hf_model.save_pretrained(
@@ -37,6 +37,7 @@ def test_roberta_base_for_masked_lm_equivalency():
             "hf",
             norm_eps=1e-5,
             tie_heads=True,
+            device_type="cpu",
         )
 
     # test the param count is the same before we load hf fms model
@@ -90,7 +91,9 @@ def test_roberta_base_for_masked_lm_equivalency():
         unmasker = pipeline("fill-mask", model=hf_model, tokenizer=tokenizer)
         hf_output = unmasker(prompt)
 
-        unmasker = pipeline("fill-mask", model=hf_model_fms, tokenizer=tokenizer)
+        unmasker = pipeline(
+            "fill-mask", model=hf_model_fms, tokenizer=tokenizer, device="cpu"
+        )
         hf_fms_output = unmasker(prompt)
 
     for res_hf, res_hf_fms in zip(hf_output, hf_fms_output):
@@ -113,7 +116,7 @@ def test_roberta_base_for_masked_lm_equivalency():
 
     torch._assert(
         math.isclose(hf_model_loss.item(), hf_model_fms_loss.item(), abs_tol=1e-3),
-        f"model loss is not equal",
+        "model loss is not equal",
     )
 
 
@@ -132,7 +135,8 @@ sequence_classification_params = [
 def test_roberta_base_for_sequence_classification(task, problem_type):
     # create models
     hf_model = AutoModelForSequenceClassification.from_pretrained(
-        "SamLowe/roberta-base-go_emotions"
+        "SamLowe/roberta-base-go_emotions",
+        device_map="cpu",
     )
     hf_model.config.problem_type = problem_type
     with torch.no_grad():
@@ -150,6 +154,7 @@ def test_roberta_base_for_sequence_classification(task, problem_type):
             "hf",
             norm_eps=1e-5,
             tie_heads=True,
+            device_type="cpu",
         )
 
     # copy weights
@@ -181,7 +186,9 @@ def test_roberta_base_for_sequence_classification(task, problem_type):
         hf_output = classifier(prompt)
         print(hf_output)
 
-        classifier = pipeline(task=task, model=hf_model_fms, tokenizer=tokenizer)
+        classifier = pipeline(
+            task=task, model=hf_model_fms, tokenizer=tokenizer, device="cpu"
+        )
         hf_fms_output = classifier(prompt)
         print(hf_fms_output)
 
@@ -191,7 +198,7 @@ def test_roberta_base_for_sequence_classification(task, problem_type):
 
     # test loss
     inputs = torch.arange(0, 16).unsqueeze(0)
-    if problem_type is "single_label_classification":
+    if problem_type == "single_label_classification":
         labels = torch.randint(high=hf_model.config.num_labels, size=(1,))
     else:
         labels = torch.randn(hf_model.config.num_labels).unsqueeze(0)
@@ -206,5 +213,5 @@ def test_roberta_base_for_sequence_classification(task, problem_type):
     print(hf_model_fms_loss)
     torch._assert(
         math.isclose(hf_model_loss.item(), hf_model_fms_loss.item(), abs_tol=1e-3),
-        f"model loss is not equal",
+        "model loss is not equal",
     )

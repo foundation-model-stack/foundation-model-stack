@@ -3,9 +3,6 @@
 import torch
 import torch._inductor.ir as ir
 import torch._inductor.lowering as lowering
-import torch.distributed as dist
-import torch.distributed._functional_collectives as funcol
-from torch import nn
 
 
 ## Fixes for PT 2.2 collectives until PT 2.3 is released

@@ -122,6 +122,7 @@ class GPTBigCodeGPTQFixtures(ModelFixtureMixin):
             return None
 
 
+@pytest.mark.autogptq
 class TestGPTBigCodeGPTQ(
     ModelConsistencyTestSuite, ModelCompileTestSuite, GPTBigCodeGPTQFixtures
 ):

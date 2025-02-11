@@ -104,6 +104,7 @@ class GraniteGPTQFixtures(ModelFixtureMixin):
             return None
 
 
+@pytest.mark.autogptq
 class TestGraniteGPTQ(
     ModelConsistencyTestSuite, ModelCompileTestSuite, GraniteGPTQFixtures
 ):

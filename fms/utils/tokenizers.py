@@ -2,7 +2,6 @@ import os
 from typing import List, Optional, Union
 
 import torch
-import torch.nn.functional as F
 
 from fms import utils
 
@@ -74,7 +73,7 @@ class CharTokenizer(BaseTokenizer):
             # returning a single integer to be compatible with other tokenizers
             if len(tokens) != 1:
                 raise RuntimeError(
-                    f"Only single character str tokens can be converted using the CharTokenizer."
+                    "Only single character str tokens can be converted using the CharTokenizer."
                 )
             token_id = ord(tokens)
             return token_id if token_id < 256 else 0

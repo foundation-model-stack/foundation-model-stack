@@ -116,7 +116,7 @@ class ChatOps:
 
         # Checking CI Jobs
         resp = self.gh.get(
-            f'https://api.github.com/repos/{self.REPO}/commits/{pr_obj["head"]["sha"]}/check-runs'
+            f"https://api.github.com/repos/{self.REPO}/commits/{pr_obj['head']['sha']}/check-runs"
         )
         self.must(resp.ok, "Error getting check runs status!")
         checkruns = resp.json()

@@ -1,5 +1,4 @@
 import functools
-import math
 from dataclasses import dataclass
 from typing import Any, List, Mapping, Optional, Tuple
 
@@ -31,9 +30,9 @@ class GPTBigCodeConfig(ModelConfig):
     emb_dropout: float = 0.0
     multiquery_attn: bool = True
     ln_eps: float = 1e-5
-    linear_config: Optional[
-        Mapping[str, Any]
-    ] = None  # pass as {"linear_type": str, <other kwargs>}
+    linear_config: Optional[Mapping[str, Any]] = (
+        None  # pass as {"linear_type": str, <other kwargs>}
+    )
     fused_weights: bool = True
 
 

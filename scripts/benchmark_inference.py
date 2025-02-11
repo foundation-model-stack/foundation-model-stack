@@ -252,9 +252,9 @@ def end_to_end(model, use_cache, expected=None):
         ),  # this is needed for reduce-overhead to work correctly for now
     )
     if local_rank == 0:
-        assert (
-            result.size()[-1] == SEQ_LEN + MAX_NEW_TOKENS
-        ), f"{result.size()}, {SEQ_LEN}, {MAX_NEW_TOKENS}"
+        assert result.size()[-1] == SEQ_LEN + MAX_NEW_TOKENS, (
+            f"{result.size()}, {SEQ_LEN}, {MAX_NEW_TOKENS}"
+        )
     if expected is not None and not args.skip_correctness_check:
         torch.testing.assert_close(result, expected)
     else:

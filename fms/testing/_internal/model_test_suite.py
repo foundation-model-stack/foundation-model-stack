@@ -275,9 +275,10 @@ class ModelConsistencyTestSuite(ModelFixtureMixin, SignatureFixtureMixin):
         {_FAILED_MODEL_SIGNATURE_OUTPUT_MSG}
         """
 
-        torch.testing.assert_close(
-            torch.tensor(actual), torch.tensor(signature)
-        ), assertion_msg
+        (
+            torch.testing.assert_close(torch.tensor(actual), torch.tensor(signature)),
+            assertion_msg,
+        )
 
     def test_model_weight_keys(self, model, capture_expectation):
         import inspect
@@ -304,7 +305,7 @@ class ModelConsistencyTestSuite(ModelFixtureMixin, SignatureFixtureMixin):
             weight_keys_file = open(weight_keys_path)
             expected_keys = [k for k in weight_keys_file.readline().split(",")]
             assert actual_keys == expected_keys, _FAILED_MODEL_WEIGHTS_KEYS_MSG
-        except:
+        except OSError:
             pytest.fail(
                 "Weights Key file failed to load, please re-run the tests with --capture_expectation"
             )
@@ -325,6 +326,9 @@ class ModelConsistencyTestSuite(ModelFixtureMixin, SignatureFixtureMixin):
         Output for signature of unfused model is incorrect
         """
 
-        torch.testing.assert_close(
-            torch.tensor(unfused_signature), torch.tensor(signature)
-        ), assertion_msg
+        (
+            torch.testing.assert_close(
+                torch.tensor(unfused_signature), torch.tensor(signature)
+            ),
+            assertion_msg,
+        )

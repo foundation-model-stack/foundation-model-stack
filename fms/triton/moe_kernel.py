@@ -139,7 +139,7 @@ def invoke_fused_moe_kernel(
     EM = padded_token_ids_per_block.shape[0]
     N = B.shape[1]
 
-    grid = lambda META: (
+    grid = lambda META: (  # noqa: E731
         triton.cdiv(EM, META["block_m"]) * triton.cdiv(N, META["block_n"]),
     )
 
@@ -180,7 +180,7 @@ def _autotune(configs, function):
                 stmt="f(*args, **kwargs)",
                 globals={"args": args, "kwargs": kwargs, "f": f},
             )
-        except:
+        except:  # noqa: E722
             return None
         return t0.blocked_autorange().mean * 1e6
 

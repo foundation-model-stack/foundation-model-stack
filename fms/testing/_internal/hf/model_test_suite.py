@@ -9,24 +9,16 @@ from fms.models.hf.modeling_hf_adapter import (
     HFDecoderModelArchitecture,
     HFEncoderDecoderModelArchitecture,
 )
-from fms.models.hf.utils import register_fms_models, to_hf_api
+from fms.models.hf import to_hf_api
+from fms.models.hf.utils import register_fms_models
 from fms.testing._internal.model_test_suite import ConfigFixtureMixin
-
-
-SEED = 42
-torch.manual_seed(SEED)  # pytorch random seed
-np.random.seed(SEED)  # numpy random seed
-torch.backends.cudnn.deterministic = True
-
 
 import abc
 import itertools
 import tempfile
 from typing import List, Optional
 
-import numpy as np
 import pytest
-import torch
 import torch.nn as nn
 from transformers import (
     AutoConfig,
@@ -47,6 +39,12 @@ from ...comparison import (
     compare_model_signatures,
     get_signature,
 )
+
+
+SEED = 42
+torch.manual_seed(SEED)  # pytorch random seed
+np.random.seed(SEED)  # numpy random seed
+torch.backends.cudnn.deterministic = True
 
 
 SEED = 42
@@ -393,9 +391,9 @@ class HFModelGenerationTestSuite(HFConfigFixtureMixin, HFModelFixtureMixin):
             fms_hf_model, tokenizer, text2, use_cache, num_beams
         )[0]
 
-        assert (
-            output_batch[0] == output_text1
-        ), f"text 1 incorrect - \n{output_batch[0]}\n{output_text1}"
-        assert (
-            output_batch[1] == output_text2
-        ), f"text 2 incorrect - \n{output_batch[1]}\n{output_text2}"
+        assert output_batch[0] == output_text1, (
+            f"text 1 incorrect - \n{output_batch[0]}\n{output_text1}"
+        )
+        assert output_batch[1] == output_text2, (
+            f"text 2 incorrect - \n{output_batch[1]}\n{output_text2}"
+        )

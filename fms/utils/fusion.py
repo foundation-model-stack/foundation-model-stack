@@ -3,7 +3,7 @@ import torch.nn as nn
 
 
 def _maybe_unfuse_weights(module: nn.Module):
-    if hasattr(module, "unfuse_weights"):
+    if hasattr(module, "unfuse_weights") and callable(module.unfuse_weights):
         result = module.unfuse_weights()
         del module
     else:

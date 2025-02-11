@@ -11,7 +11,8 @@ from transformers import (
     pipeline,
 )
 
-from fms.models.hf import as_fms_model, to_hf_api
+from fms.models.hf import to_hf_api
+from fms.models.hf.utils import as_fms_model
 from fms.testing.comparison import HFModelSignatureParams, compare_model_signatures
 
 

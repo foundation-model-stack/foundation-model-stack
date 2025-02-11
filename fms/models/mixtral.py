@@ -10,7 +10,6 @@ from fms import models
 from fms.distributed.strategy import (
     DistributedStrategy,
     NoOpStrategy,
-    UniformModelParallelStrategy,
 )
 from fms.modules.attention import MultiHeadAttention
 from fms.modules.feedforward import MOEFeedForward

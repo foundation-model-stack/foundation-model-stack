@@ -1,6 +1,5 @@
 import argparse
 import cmd
-import itertools
 import os
 import random
 import re
@@ -11,7 +10,7 @@ import torch._inductor.config
 from torch import distributed as dist
 
 from fms.models import get_model
-from fms.utils import generation, tokenizers
+from fms.utils import tokenizers
 from fms.utils.generation import generate
 
 

@@ -99,6 +99,7 @@ class RoBERTaGPTQFixtures(ModelFixtureMixin):
         return None
 
 
+@pytest.mark.autogptq
 class TestRoBERTaGPTQ(
     ModelConsistencyTestSuite, ModelCompileTestSuite, RoBERTaGPTQFixtures
 ):

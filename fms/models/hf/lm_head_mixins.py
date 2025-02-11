@@ -1,5 +1,5 @@
 import abc
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Dict, Optional
 
 import torch
 import torch.nn as nn

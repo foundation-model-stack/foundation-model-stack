@@ -107,37 +107,8 @@ def mask_2d_to_3d_bidirectional(
     return mask_encoder.unsqueeze(1) == mask_decoder.unsqueeze(2)
 
 
-def to_hf_api(model: nn.Module, **override_config_kwargs) -> "HFModelArchitecture":  # type: ignore
-    """Wrap an FMS model, converting its API to one of and Huggingface model
-
-    Parameters
-    ----------
-    model: nn.Module
-        The FMS model to wrap (currently one of LLaMA or GPTBigCode)
-    override_config_kwargs
-        configuration parameters to override as a set of keyword arguments
-
-    Returns
-    -------
-    HFModelArchitecture
-        an HF adapted FMS model
-    """
-    from fms.models.hf import _fms_to_hf_adapt_map  # type: ignore
-
-    register_fms_models()
-
-    model_type = type(model)
-    if model_type not in _fms_to_hf_adapt_map:
-        raise ValueError(
-            f"{model.__class__.__name__} is not one of {_fms_to_hf_adapt_map.keys()}"
-        )
-
-    hf_adapted_cls = _fms_to_hf_adapt_map[model_type]
-    return hf_adapted_cls.from_fms_model(model, **override_config_kwargs)
-
-
 def _infer_model_configuration(
-    model_id_or_path: Union[str, os.PathLike],
+    model_id_or_path: str | os.PathLike,
     download_weights: bool = True,
 ) -> Dict[str, Any]:
     # if the path does not exist, download it from huggingface and get the local path
