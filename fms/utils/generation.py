@@ -92,13 +92,21 @@ def __update_padding_kwargs(
     # extend the position_ids
     position_ids = model_specific_kwargs.get("position_ids", None)
     if position_ids is not None:
-        if use_cache:
-            position_ids = position_ids[:, -1:] + 1
+        if position_ids.is_nested:
+            position_ids = torch.stack([t[-1].unsqueeze(0) for t in position_ids.unbind()]) + 1
+            if not use_cache:
+                position_ids = torch.cat(
+                    (position_ids, position_ids[:, -1:] + 1),
+                    dim=1,
+                )
         else:
-            position_ids = torch.cat(
-                (position_ids, position_ids[:, -1:] + 1),
-                dim=1,
-            )
+            if use_cache:
+                position_ids = position_ids[:, -1:] + 1
+            else:
+                position_ids = torch.cat(
+                    (position_ids, position_ids[:, -1:] + 1),
+                    dim=1,
+                )
         model_specific_kwargs["position_ids"] = position_ids
     return model_specific_kwargs
 
@@ -127,7 +135,7 @@ def _make_cache_dynamic(
     # mode='reduce-overhead'
     for layer in past_key_value_states:
         for tensor in layer:
-            torch._dynamo.mark_dynamic(tensor, 2)
+            torch._dynamo.mark_dynamic(tensor, 1)
     return past_key_value_states
 
 
@@ -217,7 +225,8 @@ def generate(
         start_time = time.time()
 
     for i in range(max_new_tokens):
-        input_ids = next_input[:, -max_seq_len:]
+        # input_ids = next_input[:, -max_seq_len:]
+        input_ids = next_input
 
         # prepare any padding keyword arguments
         # iteration 0 is the prefill step (cache has not been filled yet), so no need to extend the mask/position_ids
@@ -237,11 +246,25 @@ def generate(
                 kwargs["past_key_value_states"] = _make_cache_dynamic(
                     kwargs["past_key_value_states"]
                 )
+            # Grow kv cache outside compiled region
+            # if kwargs["past_key_value_states"][0][0].is_nested:
+            #     example_kv_cacbe = kwargs["past_key_value_states"][0][0]
+            #     kv_cache_size = example_kv_cacbe.size()
+            #     dummy_tensor = torch.zeros(kv_cache_size[0], 1, *kv_cache_size[2:], device=example_kv_cacbe.device, dtype=example_kv_cacbe.dtype)
+            #     for i, layer in enumerate(past_key_value_states):
+            #         past_key_value_states[i] = (
+            #             torch.cat([layer[0], dummy_tensor], dim=1),
+            #             torch.cat([layer[1], dummy_tensor], dim=1)
+            #         )
+
         else:
             logits = output
 
         if "only_last_token" not in kwargs:
-            logits = logits[:, -1, :]
+            if logits.is_nested:
+                logits = torch.stack([t[-1] for t in logits.unbind()])
+            else:
+                logits = logits[:, -1, :]
 
         if do_sample:
             # get logits from last value in sequence nad scale
@@ -260,7 +283,7 @@ def generate(
                 i + prompt_length, logits, next_val, kwargs
             )
 
-        result = torch.cat((result, next_val), dim=-1)
+        result = torch.cat((result, next_val), dim=1)
 
         # avoid continuing to generate if all have reached EOS
         if eos_token_id is not None:

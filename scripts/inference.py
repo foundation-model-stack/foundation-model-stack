@@ -201,7 +201,15 @@ max_len = max([len(prompt) for prompt in [prompt1, prompt2]])
 
 if args.batch_input:
     ids = [prompt1, prompt2]
-    ids, padding_kwargs = pad_input_ids(ids, min_pad_length=args.min_pad_length)
+    # Nested tensor path
+    ids = torch.nested.nested_tensor(ids, layout=torch.jagged)
+    position_ids = torch.ones_like(ids)
+    for pids in position_ids:
+        pids.cumsum_(0).sub_(1)
+    padding_kwargs = {
+        "position_ids": position_ids
+    }
+    # ids, padding_kwargs = pad_input_ids(ids, min_pad_length=args.min_pad_length)
 else:
     ids = prompt1
     if args.min_pad_length != 0:
@@ -256,8 +264,8 @@ def infer(use_cache, do_sample):
     if len(result.shape) == 1:
         result = result.unsqueeze(0)
 
-    for i in range(result.shape[0]):
-        print_result(result[i])
+    for sentence in result.unbind():
+        print_result(sentence)
 
 
 print("generating output", local_rank)
@@ -267,3 +275,10 @@ use_cache = [
 ]  # True/False are identical with greedy iff `torch.use_deterministic_algorithms(True)`
 for sample, cache in itertools.product(do_sample, use_cache):
     infer(cache, sample)
+
+# with torch.profiler.profile(activities=[torch.profiler.ProfilerActivity.CPU, torch.profiler.ProfilerActivity.CUDA], with_stack=True, record_shapes=True, profile_memory=True) as prof:
+#     for sample, cache in itertools.product(do_sample, use_cache):
+#         infer(cache, sample)
+
+# prof.export_chrome_trace("njt_compiled_trace.json")
+# prof.export_memory_timeline("njt_compiled_memory.pickle")

@@ -231,20 +231,16 @@ class RotaryEmbedding(PositionEncoder):
             or variable per-row left padding position_ids is shared for all the batch.
         """
 
-        if not q.is_nested:
-            assert len(q.size()) == 4
-            assert len(k.size()) == 4
-        else:
-            assert len(q[0].size()) + 1 == 4
-            assert len(k[0].size()) + 1 == 4
+        assert q.dim() == 4
+        assert k.dim() == 4
+
+        is_nested_path = q.is_nested and k.is_nested and position_ids.is_nested
             
-        if not k.is_nested:
-            seq_len = max(k.size(1), q.size(1))
+        if is_nested_path:
+            seq_len = max(k._maybe_max_seqlen, q._maybe_max_seqlen)
+            # seq_len = q.values().size(0) // q.size(0)  # Approximation for nested
         else:
-            seq_len = max(
-                max([ele.size(0) for ele in k]),
-                max([ele.size(0) for ele in q])
-            )
+            seq_len = max(k.size(1), q.size(1))
 
         if position_ids is None:
             # Compute position_ids based on cache config
@@ -254,21 +250,42 @@ class RotaryEmbedding(PositionEncoder):
             if use_cache and past_kv_state is not None and past_kv_state[0].numel() > 0:
                 position_ids += past_kv_state[0].size(2)
 
-        if not k.is_nested:
+        if is_nested_path:
+            q_ = q.values().float().view(-1, q.size(2), q.size(3)//2, 2)  # sum(L*) H D/2 2
+            k_ = k.values().float().view(-1, k.size(2), k.size(3)//2, 2)  # sum(L*) H D/2 2
+        else:
             q_ = q.float().view(*q.size()[:-1], -1, 2)  # B L H D/2 2
             k_ = k.float().view(*k.size()[:-1], -1, 2)  # B L H D/2 2
-        else:
-            q_ = q.float().view(q.size(0), -1, q.size(2), q.size(3)//2, 2)  # B L H D/2 2
-            k_ = k.float().view(k.size(0), -1, k.size(2), k.size(3)//2, 2)  # B L H D/2 2
                
         # the max start position should be based on the max first position of each sequence
-        max_start_pos = torch.max(position_ids[:, 0])
-        alpha = self.compute_freqs_cis(q.device, max_start_pos + seq_len)
-        freqs = self.cached_freqs[q.device.index][alpha][position_ids]
+        if is_nested_path:
+            max_start_pos = 0  # TODO: Fix for nested
+        else:
+            max_start_pos = torch.max(position_ids[:, 0])
+        alpha = self.compute_freqs_cis(q.device, seq_len + max_start_pos)
+        
+        if is_nested_path:
+            freqs = self.cached_freqs[q.device.index][alpha][position_ids.values()]  # sum(L*) D/2 2 2
+        else:
+            freqs = self.cached_freqs[q.device.index][alpha][position_ids]  # B L D/2 2 2
 
         freqs = freqs.float()  # 1 L D/2 2 2
 
-        if not k.is_nested:
+        if is_nested_path:
+            q_out = (
+                freqs[:, None, :, :, :]
+                .mul(q_.unsqueeze(-2))
+                .sum(4)
+                .flatten(2)
+            ).type_as(q.values())
+            
+            k_out = (
+                freqs[:, None, :, :, :]
+                .mul(k_.unsqueeze(-2))
+                .sum(4)
+                .flatten(2)
+            ).type_as(k.values())
+        else:
             q_out = (
                 freqs[:, -q.size(1) :, None, :, :, :]
                 .mul(q_.unsqueeze(-2))
@@ -282,33 +299,11 @@ class RotaryEmbedding(PositionEncoder):
                 .sum(5)
                 .flatten(3)
             ).type_as(k)
-        
-        else:
-            q_out = torch.nested.nested_tensor(
-                [
-                    (
-                        freqs[i, : q_ele.size(0), None, :, :, :]
-                        .mul(q_ele_.unsqueeze(-2))
-                        .sum(4)
-                        .flatten(2)
-                    ).type_as(q_ele) 
-                    for i, (q_ele, q_ele_) in enumerate(zip(q.unbind(0), q_.unbind(0)))
-                ], layout=torch.jagged
-            )
-            
-            k_out = torch.nested.nested_tensor(
-                [
-                    (
-                        freqs[i, : k_ele.size(0), None, :, :, :]
-                        .mul(k_ele_.unsqueeze(-2))
-                        .sum(4)
-                        .flatten(2)
-                    ).type_as(k_ele) 
-                    for i, (k_ele, k_ele_) in enumerate(zip(k.unbind(0), k_.unbind(0)))
-                ], layout=torch.jagged
-            )
 
-        if not k.is_nested:
-            return q_out.view_as(q), k_out.view_as(k)
+        if is_nested_path:
+            return (
+                torch.nested.nested_tensor_from_jagged(q_out, q.offsets(), q.lengths()),
+                torch.nested.nested_tensor_from_jagged(k_out, k.offsets(), k.lengths()),
+            )
         else:
-            return q_out.view(q.size(0), -1, q.size(2), q.size(3)), k_out.view(k.size(0), -1, k.size(2), k.size(3))
+            return q_out.view_as(q), k_out.view_as(k)

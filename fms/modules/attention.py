@@ -382,48 +382,96 @@ class MultiHeadAttention(nn.Module):
                     queries, keys, position_ids, past_key_value_state, use_cache
                 )
 
-        queries = queries.transpose(2, 1)  # / (self.emb_kq_per_head**(1/4))
-        keys = keys.transpose(2, 1)  # / (self.emb_kq_per_head**(1/4))
-        values = values.transpose(2, 1)  # compatible with QK.T
+        if queries.is_nested or past_key_value_state[0].is_nested:
+            # if you want to use caching and past_key_value_state is not None meaning you have values in your cache
+            if (
+                use_cache
+                and past_key_value_state is not None
+                and past_key_value_state[0].numel() > 0
+            ):
+                if is_self:
+                    # print("Pre-cache update", past_key_value_state[0].unbind(), past_key_value_state[1].unbind())
+                    # print(keys, values)
+                    # indices = [
+                    #     torch.arange(0, past_key_value_state[0].size(0), device=q.device, dtype=torch.int64),
+                    #     -torch.ones(past_key_value_state[0].size(0), device=q.device, dtype=torch.int64)
+                    # ]
+                    # past_key_value_state[0].index_put_(indices, keys.squeeze())
+                    # past_key_value_state[1].index_put_(indices, values.squeeze())
+                    # print("Post-cache update", past_key_value_state[0].unbind(), past_key_value_state[1].unbind())
+                    keys = torch.cat([past_key_value_state[0], keys], dim=1)
+                    values = torch.cat([past_key_value_state[1], values], dim=1)
+                else:
+                    keys = past_key_value_state[0]
+                    values = past_key_value_state[1]
 
-        # if you want to use caching and past_key_value_state is not None meaning you have values in your cache
-        if (
-            use_cache
-            and past_key_value_state is not None
-            and past_key_value_state[0].numel() > 0
-        ):
-            if is_self:
-                keys = torch.cat((past_key_value_state[0], keys), dim=2)
-                values = torch.cat((past_key_value_state[1], values), dim=2)
+            if self.position_encoder is not None:
+                attn_mask: Optional[Tensor] = self.position_encoder.adjusted_mask(
+                    mask, queries, keys, past_key_value_state, use_cache
+                )
             else:
-                keys = past_key_value_state[0]
-                values = past_key_value_state[1]
+                attn_mask = mask
 
-        # Merge rel pos bias and mask into single float mask
-        if mask is not None:
-            # Our expected mask format is bs x q_len x k_len, so to make it broadcastable
-            # we need to create the nheads dimension
-            while len(mask[0].size()) + 1 != 4:  # expects bs (x nheads) x q_len x kv_len
-                mask = mask.unsqueeze(1)
+            # Expand kv so black-box attn will work
+            expansion = self.nheads // self.kvheads
+            # k/v: b h l d
+            if expansion != 1:
+                keys_e = keys.unsqueeze(3).expand(-1, -1, -1, expansion, -1).flatten(2, 3)
+                values_e = (
+                    values.unsqueeze(3).expand(-1, -1, -1, expansion, -1).flatten(2, 3)
+                )
+            else:
+                keys_e = keys
+                values_e = values
 
-        if self.position_encoder is not None:
-            attn_mask: Optional[Tensor] = self.position_encoder.adjusted_mask(
-                mask, queries, keys, past_key_value_state, use_cache
-            )
+            if not queries.is_nested:
+                queries = torch.nested.nested_tensor_from_jagged(queries.view(-1, *queries.shape[2:]), torch.arange(0, queries.size(0)+1, device=q.device)*queries.size(1))
+            queries = queries.transpose(2, 1)  # / (self.emb_kq_per_head**(1/4))
+            keys_e = keys_e.transpose(2, 1)  # / (self.emb_kq_per_head**(1/4))
+            values_e = values_e.transpose(2, 1)  # compatible with QK.T
         else:
-            attn_mask = mask
+            queries = queries.transpose(2, 1)  # / (self.emb_kq_per_head**(1/4))
+            keys = keys.transpose(2, 1)  # / (self.emb_kq_per_head**(1/4))
+            values = values.transpose(2, 1)  # compatible with QK.T
 
-        # Expand kv so black-box attn will work
-        expansion = self.nheads // self.kvheads
-        # k/v: b h l d
-        if expansion != 1:
-            keys_e = keys.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
-            values_e = (
-                values.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
-            )
-        else:
-            keys_e = keys
-            values_e = values
+            # if you want to use caching and past_key_value_state is not None meaning you have values in your cache
+            if (
+                use_cache
+                and past_key_value_state is not None
+                and past_key_value_state[0].numel() > 0
+            ):
+                if is_self:
+                    keys = torch.cat((past_key_value_state[0], keys), dim=2)
+                    values = torch.cat((past_key_value_state[1], values), dim=2)
+                else:
+                    keys = past_key_value_state[0]
+                    values = past_key_value_state[1]
+
+            # Merge rel pos bias and mask into single float mask
+            if mask is not None:
+                # Our expected mask format is bs x q_len x k_len, so to make it broadcastable
+                # we need to create the nheads dimension
+                while len(mask[0].size()) + 1 != 4:  # expects bs (x nheads) x q_len x kv_len
+                    mask = mask.unsqueeze(1)
+
+            if self.position_encoder is not None:
+                attn_mask: Optional[Tensor] = self.position_encoder.adjusted_mask(
+                    mask, queries, keys, past_key_value_state, use_cache
+                )
+            else:
+                attn_mask = mask
+
+            # Expand kv so black-box attn will work
+            expansion = self.nheads // self.kvheads
+            # k/v: b h l d
+            if expansion != 1:
+                keys_e = keys.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
+                values_e = (
+                    values.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
+                )
+            else:
+                keys_e = keys
+                values_e = values
 
         if attn_algorithm:
             # Pick which fused attn kernels will run.
@@ -457,11 +505,16 @@ class MultiHeadAttention(nn.Module):
         # attn: b x h x qlen x ds
         # attn after permute: b x qlen x h x ds
         # b x qlen x (d)
-        attn = (
-            attn.transpose(2, 1)
-            .contiguous()
-            .view(batch_size, q_len, self.nheads * self.emb_v_per_head)
-        )
+        if not attn.is_nested:
+            attn = (
+                attn.transpose(2, 1)
+                .contiguous()
+                .view(batch_size, q_len, self.nheads * self.emb_v_per_head)
+            )
+        else:
+            attn = attn.transpose(1, 2).flatten(2)
+            if attn.values().size(0) == queries.size(0):
+                attn = attn.values().unsqueeze(1)
         out = self.dense(attn)
 
         # if use_cache=True, we return the hidden_state as well as the kv cache

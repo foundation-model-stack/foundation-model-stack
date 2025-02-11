@@ -150,14 +150,14 @@ class LLaMABlock(nn.Module):
             
         # Clone and copy to handle shape mismatch errors
         # while adding nested tensors
-        if x.is_nested:
-            src_clone = x.clone()
-            num_samples = len(residual)
-            for idx in range(num_samples):
-                src_clone[idx].copy_(residual[idx])
-            residual = src_clone
+        # if x.is_nested:
+        #     src_clone = x.clone()
+        #     num_samples = len(residual)
+        #     for idx in range(num_samples):
+        #         src_clone[idx].copy_(residual[idx])
+        #     residual = src_clone
             
-        # residual connection        
+        # residual connection
         x = x + residual
 
         # then we do FF and Add&Norm
