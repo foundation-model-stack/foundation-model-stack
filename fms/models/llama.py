@@ -362,7 +362,7 @@ class LLaMA(nn.Module):
             qlen = x_in.size(1)
             klen = qlen
         else:
-            qlen = max([ele.size(0) for ele in x_in.unbind(0)])
+            qlen = x_in._maybe_max_seqlen
             klen = qlen
 
         # if we are using the cache, the key length needs to be extended with the past keys length

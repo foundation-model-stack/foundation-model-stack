@@ -247,15 +247,15 @@ def generate(
                     kwargs["past_key_value_states"]
                 )
             # Grow kv cache outside compiled region
-            # if kwargs["past_key_value_states"][0][0].is_nested:
-            #     example_kv_cacbe = kwargs["past_key_value_states"][0][0]
-            #     kv_cache_size = example_kv_cacbe.size()
-            #     dummy_tensor = torch.zeros(kv_cache_size[0], 1, *kv_cache_size[2:], device=example_kv_cacbe.device, dtype=example_kv_cacbe.dtype)
-            #     for i, layer in enumerate(past_key_value_states):
-            #         past_key_value_states[i] = (
-            #             torch.cat([layer[0], dummy_tensor], dim=1),
-            #             torch.cat([layer[1], dummy_tensor], dim=1)
-            #         )
+            if kwargs["past_key_value_states"][0][0].is_nested:
+                example_kv_cache = kwargs["past_key_value_states"][0][0]
+                kv_cache_size = example_kv_cache.size()
+                dummy_tensor = torch.zeros(kv_cache_size[0], 1, *kv_cache_size[2:], device=example_kv_cache.device, dtype=example_kv_cache.dtype)
+                for i, layer in enumerate(past_key_value_states):
+                    past_key_value_states[i] = (
+                        torch.cat([layer[0], dummy_tensor], dim=1),
+                        torch.cat([layer[1], dummy_tensor], dim=1)
+                    )
 
         else:
             logits = output

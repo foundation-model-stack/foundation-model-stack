@@ -356,7 +356,7 @@ class MultiHeadAttention(nn.Module):
         # q, k, v: batch_size x seq_len x emb_dim
         # mask: batch_size x seq_len x seq_len
         if not q.is_nested:
-            batch_size, q_len, _ = q.size()
+            batch_size, q_len = q.size(0), -1
         else:
             batch_size, q_len = q.size(0), -1
 
@@ -390,17 +390,17 @@ class MultiHeadAttention(nn.Module):
                 and past_key_value_state[0].numel() > 0
             ):
                 if is_self:
-                    # print("Pre-cache update", past_key_value_state[0].unbind(), past_key_value_state[1].unbind())
-                    # print(keys, values)
-                    # indices = [
-                    #     torch.arange(0, past_key_value_state[0].size(0), device=q.device, dtype=torch.int64),
-                    #     -torch.ones(past_key_value_state[0].size(0), device=q.device, dtype=torch.int64)
-                    # ]
-                    # past_key_value_state[0].index_put_(indices, keys.squeeze())
-                    # past_key_value_state[1].index_put_(indices, values.squeeze())
-                    # print("Post-cache update", past_key_value_state[0].unbind(), past_key_value_state[1].unbind())
-                    keys = torch.cat([past_key_value_state[0], keys], dim=1)
-                    values = torch.cat([past_key_value_state[1], values], dim=1)
+                    indices = [
+                        torch.arange(0, past_key_value_state[0].size(0), device=q.device, dtype=torch.int64),
+                        -torch.ones(past_key_value_state[0].size(0), device=q.device, dtype=torch.int64)
+                    ]
+                    past_key_value_state[0].index_put_(indices, keys.squeeze())
+                    past_key_value_state[1].index_put_(indices, values.squeeze())
+                    # keys = torch.cat([past_key_value_state[0], keys], dim=1)
+                    # values = torch.cat([past_key_value_state[1], values], dim=1)
+
+                    keys = past_key_value_state[0]
+                    values = past_key_value_state[1]
                 else:
                     keys = past_key_value_state[0]
                     values = past_key_value_state[1]
@@ -425,7 +425,7 @@ class MultiHeadAttention(nn.Module):
                 values_e = values
 
             if not queries.is_nested:
-                queries = torch.nested.nested_tensor_from_jagged(queries.view(-1, *queries.shape[2:]), torch.arange(0, queries.size(0)+1, device=q.device)*queries.size(1))
+                queries = torch.nested.nested_tensor_from_jagged(queries.view(-1, *queries.shape[2:]), torch.arange(0, queries.size(0)+1, device=q.device)*queries.size(1), min_seqlen=1, max_seqlen=1)
             queries = queries.transpose(2, 1)  # / (self.emb_kq_per_head**(1/4))
             keys_e = keys_e.transpose(2, 1)  # / (self.emb_kq_per_head**(1/4))
             values_e = values_e.transpose(2, 1)  # compatible with QK.T

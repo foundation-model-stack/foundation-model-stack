@@ -237,8 +237,8 @@ class RotaryEmbedding(PositionEncoder):
         is_nested_path = q.is_nested and k.is_nested and position_ids.is_nested
             
         if is_nested_path:
-            seq_len = max(k._maybe_max_seqlen, q._maybe_max_seqlen)
-            # seq_len = q.values().size(0) // q.size(0)  # Approximation for nested
+            # seq_len = max(k._maybe_max_seqlen, q._maybe_max_seqlen)
+            seq_len = q.values().size(0) // q.size(0)  # Approximation for nested
         else:
             seq_len = max(k.size(1), q.size(1))
 
@@ -302,8 +302,8 @@ class RotaryEmbedding(PositionEncoder):
 
         if is_nested_path:
             return (
-                torch.nested.nested_tensor_from_jagged(q_out, q.offsets(), q.lengths()),
-                torch.nested.nested_tensor_from_jagged(k_out, k.offsets(), k.lengths()),
+                torch.nested.nested_tensor_from_jagged(q_out, q.offsets(), q.lengths(), min_seqlen=q._get_min_seqlen(), max_seqlen=q._get_max_seqlen()),
+                torch.nested.nested_tensor_from_jagged(k_out, k.offsets(), k.lengths(), min_seqlen=k._get_min_seqlen(), max_seqlen=k._get_max_seqlen()),
             )
         else:
             return q_out.view_as(q), k_out.view_as(k)
