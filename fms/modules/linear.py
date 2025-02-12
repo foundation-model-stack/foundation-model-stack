@@ -68,7 +68,13 @@ def get_linear_type(
 
     linear_type_str = None
     if callable(linear_type):
-        linear_type_from_callable = linear_type(module_name)
+        try:
+            linear_type_from_callable = linear_type(module_name)
+        except Exception as error:
+            raise RuntimeError(
+                "Error in user-provided function linear_type, while receiving "
+                f"module_name={module_name if module_name is not None else 'None'}."
+            ) from error
         if linear_type_from_callable is None:
             return "torch_linear"
         if not isinstance(linear_type_from_callable, str):
