@@ -122,8 +122,9 @@ def _make_cache_dynamic(past_key_value_states):
     # kv updates are required for torch.compile with
     # mode='reduce-overhead'
     for layer in past_key_value_states:
-        for tensor in layer:
-            torch._dynamo.mark_dynamic(tensor, 2)
+        if isinstance(layer, tuple):
+            for tensor in layer:
+                torch._dynamo.mark_dynamic(tensor, 2)
     return past_key_value_states
 
 
