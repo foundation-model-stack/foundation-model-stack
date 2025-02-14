@@ -21,7 +21,7 @@ from fms.distributed.strategy import (
 )
 from fms.modules import UninitializedModule
 from fms.modules.linear import UninitializedLinear, get_linear
-from fms.utils import fusion, serialization
+from fms.utils import fusion, gptq, serialization
 
 
 logger = logging.getLogger(__name__)
@@ -361,9 +361,7 @@ def get_model(
     else:
         data_type_parsed = data_type
 
-    is_gptq = extra_args.get("linear_config", None) and "gptq" in extra_args[
-        "linear_config"
-    ].get("linear_type", None)
+    is_gptq = gptq.check_if_gptq(extra_args)
 
     hsdp = distributed_strategy == "hsdp"
     fsdp = distributed_strategy == "fsdp"

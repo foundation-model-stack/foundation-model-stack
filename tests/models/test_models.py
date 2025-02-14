@@ -91,6 +91,7 @@ def test_getmodel():
     assert micro.config.nlayers == 5
 
 
+@pytest.mark.autogptq
 def test_uninitialized_module():
     model = models._get_model_instance(
         architecture="llama",
@@ -100,7 +101,6 @@ def test_uninitialized_module():
                 "linear_type": "gptq",
                 "group_size": 128,
                 "desc_act": False,
-                "filter_fn": lambda name: False,
             }
         },
     )
@@ -114,7 +114,6 @@ def test_uninitialized_module():
             "linear_type": "gptq",
             "group_size": 128,
             "desc_act": False,
-            "filter_fn": lambda name: False,
         },
     )
 
