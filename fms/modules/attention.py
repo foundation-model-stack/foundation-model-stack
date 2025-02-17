@@ -356,7 +356,10 @@ class MultiHeadAttention(nn.Module):
         """
         # q, k, v: batch_size x seq_len x emb_dim
         # mask: batch_size x seq_len x seq_len
-        batch_size, q_len, _ = q.size()
+        if not q.is_nested:
+            batch_size, q_len, _ = q.size()
+        else:
+            batch_size, q_len = q.size(0), -1
 
         # if this is self attention, we always recompute
         # cross attention only gets computed when a cache does not exist
@@ -401,7 +404,7 @@ class MultiHeadAttention(nn.Module):
         if mask is not None:
             # Our expected mask format is bs x q_len x k_len, so to make it broadcastable
             # we need to create the nheads dimension
-            while len(mask.size()) != 4:  # expects bs (x nheads) x q_len x kv_len
+            while len(mask[0].size()) + 1 != 4:  # expects bs (x nheads) x q_len x kv_len
                 mask = mask.unsqueeze(1)
 
         if self.position_encoder is not None:
