@@ -4,7 +4,7 @@ from typing import Any, Callable, List, MutableMapping, Optional, Tuple, Union
 
 import torch
 import torch.nn.functional as F
-
+from torch.nn.attention.flex_attention import create_block_mask
 
 logger = logging.getLogger(__name__)
 
@@ -203,8 +203,8 @@ def generate(
 
     result = input_ids
     next_input = input_ids
-    kwargs["past_key_value_states"] = None
     kwargs["use_cache"] = use_cache
+    mask_mod = kwargs.pop("mask_mod", None)
 
     prompt_length = input_ids.shape[1]
 
@@ -218,7 +218,14 @@ def generate(
         # prepare any padding keyword arguments
         # iteration 0 is the prefill step (cache has not been filled yet), so no need to extend the mask/position_ids
         if i > 0:
+            mask_mod = None
+            kwargs.pop("block_mask", None)
             kwargs = __update_padding_kwargs(use_cache, kwargs)
+        if mask_mod is not None:
+            kv_cache_len = kwargs["past_key_value_states"][0][0].size(2) if kwargs["past_key_value_states"] is not None else 0
+            kwargs["block_mask"] = create_block_mask(mask_mod, B=None, H=None, 
+                                                     Q_LEN=input_ids.size(1), 
+                                                     KV_LEN=kv_cache_len + input_ids.size(1))
         output = model(input_ids, **kwargs)
         if use_cache:
             logits, past_key_value_states = output
@@ -287,7 +294,7 @@ def generate(
 
     if timing != "":
         return result, times
-    return result
+    return result, kwargs["past_key_value_states"]
 
 
 def truncate_after_eos(

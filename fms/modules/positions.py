@@ -29,6 +29,7 @@ class PositionEncoder:
         position_ids: Optional[torch.LongTensor],
         past_kv_state: Optional[Tuple[torch.Tensor, torch.Tensor]],
         use_cache=False,
+        reverse=False,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         return q, k
 
@@ -217,6 +218,7 @@ class RotaryEmbedding(PositionEncoder):
         position_ids: Optional[torch.Tensor] = None,
         past_kv_state: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
         use_cache=False,
+        reverse=False,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Args
@@ -251,6 +253,9 @@ class RotaryEmbedding(PositionEncoder):
         alpha = self.compute_freqs_cis(q.device, max_start_pos + seq_len)
         freqs = self.cached_freqs[q.device.index][alpha][position_ids]
 
+        if reverse: # inverse of a rotation matrix is its transpose
+            freqs.transpose_(3, 4)
+
         freqs = freqs.float()  # 1 L D/2 2 2
         q_out = (
             freqs[:, -q.size(1) :, None, :, :, :]
@@ -266,3 +271,45 @@ class RotaryEmbedding(PositionEncoder):
         ).type_as(k)
 
         return q_out.view_as(q), k_out.view_as(k)
+
+
+    def adjusted_tensor(
+        self,
+        input_tensor: torch.Tensor,
+        position_ids: torch.Tensor,
+        reverse=False,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Args
+        ----
+        input_tensor : torch.Tensor
+            Embedded query tensor, expected size is B x S x H x Eh
+        position_ids : Optional[torch.LongTensor]
+            The position of each of the tokens encoded in q and k. This is important in
+            kv-caching and left-padding situations, for which the rotation to be applied might
+            not always be the pre-cached position 0...S. For kv-caching without dynamic batching
+            or variable per-row left padding position_ids is shared for all the batch.
+        """
+        assert input_tensor.dim() == 4
+
+        seq_len = input_tensor.size(1)
+
+        input_ = input_tensor.float().view(*input_tensor.size()[:-1], -1, 2)  # B L H D/2 2
+
+        # the max start position should be based on the max first position of each sequence
+        max_start_pos = torch.max(position_ids[:, 0])
+        alpha = self.compute_freqs_cis(input_tensor.device, max_start_pos + seq_len)
+        freqs = self.cached_freqs[input_tensor.device.index][alpha][position_ids]
+
+        if reverse: # inverse of a rotation matrix is its transpose
+            freqs.transpose_(3, 4)
+
+        freqs = freqs.float()  # 1 L D/2 2 2
+        input_out = (
+            freqs[:, :, None, :, :, :]
+            .mul(input_.unsqueeze(-2))
+            .sum(5)
+            .flatten(3)
+        ).type_as(input_tensor)
+
+        return input_out.view_as(input_tensor)

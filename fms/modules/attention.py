@@ -328,6 +328,7 @@ class MultiHeadAttention(nn.Module):
         k: Optional[torch.Tensor] = None,
         v: Optional[torch.Tensor] = None,
         mask: Optional[Tensor] = None,
+        block_mask=None,
         position_ids=None,
         attn_algorithm=None,
         past_key_value_state: Optional[Tuple[Tensor, Tensor]] = None,
@@ -422,33 +423,38 @@ class MultiHeadAttention(nn.Module):
             keys_e = keys
             values_e = values
 
-        if attn_algorithm:
-            # Pick which fused attn kernels will run.
-            use_flash = attn_algorithm == "flash"
-            use_mem_efficient = attn_algorithm == "mem"
-            use_math = attn_algorithm == "math"
+        if block_mask is not None:
+            # Flex Attention path
+            from torch.nn.attention.flex_attention import flex_attention
+            attn = flex_attention(queries, keys_e, values_e, block_mask=block_mask, scale=self.scale_factor)
+        else:
+            if attn_algorithm:
+                # Pick which fused attn kernels will run.
+                use_flash = attn_algorithm == "flash"
+                use_mem_efficient = attn_algorithm == "mem"
+                use_math = attn_algorithm == "math"
 
-            torch.backends.cuda.enable_flash_sdp(use_flash)
-            torch.backends.cuda.enable_mem_efficient_sdp(use_mem_efficient)
-            torch.backends.cuda.enable_math_sdp(use_math)
+                torch.backends.cuda.enable_flash_sdp(use_flash)
+                torch.backends.cuda.enable_mem_efficient_sdp(use_mem_efficient)
+                torch.backends.cuda.enable_math_sdp(use_math)
+            
+            if attn_mask is not None and attn_mask.dtype != torch.bool:
+                attn_mask = attn_mask.to(dtype=queries.dtype)
 
-        if attn_mask is not None and attn_mask.dtype != torch.bool:
-            attn_mask = attn_mask.to(dtype=queries.dtype)
+            attn = F.scaled_dot_product_attention(
+                queries,
+                keys_e,
+                values_e,
+                attn_mask=attn_mask,
+                dropout_p=self.p_dropout if self.training else 0.0,
+                is_causal=is_causal_mask,
+                scale=self.scale_factor,
+            )
 
-        attn = F.scaled_dot_product_attention(
-            queries,
-            keys_e,
-            values_e,
-            attn_mask=attn_mask,
-            dropout_p=self.p_dropout if self.training else 0.0,
-            is_causal=is_causal_mask,
-            scale=self.scale_factor,
-        )
-
-        if attn_algorithm:
-            torch.backends.cuda.enable_flash_sdp(self.previous_flash)
-            torch.backends.cuda.enable_mem_efficient_sdp(self.previous_mem_efficient)
-            torch.backends.cuda.enable_math_sdp(self.previous_math)
+            if attn_algorithm:
+                torch.backends.cuda.enable_flash_sdp(self.previous_flash)
+                torch.backends.cuda.enable_mem_efficient_sdp(self.previous_mem_efficient)
+                torch.backends.cuda.enable_math_sdp(self.previous_math)
 
         # attn: bs x seq_len x nheads*emb_v_per_head
         # attn: b x h x qlen x ds
