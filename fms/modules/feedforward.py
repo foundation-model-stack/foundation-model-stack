@@ -76,7 +76,6 @@ class FeedForwardBlock(nn.Module):
         )
         self.use_bias = use_bias
         self.linear_config = linear_config
-        self.linear_type = get_linear_type(linear_config)
 
     def reset_parameters(self):
         for layer in ["w1", "w2"]:
@@ -143,6 +142,9 @@ class TPFeedForwardBlock(FeedForwardBlock, TPModule):
             linear_config,
         )
         self.setup_tp(rank, world_size)
+
+        # linear_type must handle module_name = None to support TP of FNN
+        self.linear_type = get_linear_type(self.linear_config)
 
     def load_weights(
         self,
@@ -263,7 +265,6 @@ class GatedLinearUnit(nn.Module):
         self.width = emb_dim
         self.grow_factor = hidden_grow_factor
         self.linear_config = linear_config
-        self.linear_type = get_linear_type(linear_config)
 
     def reset_parameters(self):
         layers = ["w2"]
@@ -374,6 +375,9 @@ class TPGatedLinearUnit(GatedLinearUnit, TPModule):
             linear_config,
         )
         self.setup_tp(rank, world_size)
+
+        # linear_type must handle module_name = None to support TP of GLU
+        self.linear_type = get_linear_type(self.linear_config)
 
     def load_weights(
         self,

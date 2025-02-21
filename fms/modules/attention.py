@@ -251,9 +251,11 @@ class MultiHeadAttention(nn.Module):
         If True, qkv weights will be fused, otherwise qkv weights will be unfused.
     linear_config : Mapping[str, Any] | None
         Configuration for selection of linear modules (QKV, dense).
-        Pass as {"linear_type": str, <other kwargs>}. "linear_type" should provide the string
-        identifier of a registered type (e.g., "torch_linear", "gptq", ...). Additional config
-        options should be provided as kwargs.
+        Pass as {"linear_type": [str | callable], <other kwargs>}.
+        "linear_type" should provide the string identifier of a registered type
+        (e.g., "torch_linear", "gptq", ...) or a callable for module selection depending
+        on module name. Additional config options should be provided as kwargs in
+        linear_config.
     """
 
     def __init__(
@@ -280,7 +282,6 @@ class MultiHeadAttention(nn.Module):
         self.use_bias = use_bias
         self.fused = fused
         self.linear_config = linear_config
-        self.linear_type = get_linear_type(linear_config)
         self.scale_factor = scale_factor
 
         self.in_proj: QKV = (FusedQKV if self.fused else UnfusedQKV)(
@@ -526,6 +527,9 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
         self.pre_tp_nheads = nheads
         self.pre_tp_kvheads = kvheads
         self.setup_tp(rank, world_size)
+
+        # linear_type must handle module_name = None to support TP of MHA
+        self.linear_type = get_linear_type(self.linear_config)
 
     def load_weights(
         self,
