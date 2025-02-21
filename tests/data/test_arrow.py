@@ -3,7 +3,6 @@ import random
 import tempfile
 
 import pyarrow as pa
-import pytest
 import torch
 
 from fms.datasets.arrow import ArrowFilesDataset

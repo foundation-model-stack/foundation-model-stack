@@ -20,8 +20,7 @@ from fms.distributed.strategy import (
     UniformModelParallelStrategy,
 )
 from fms.modules import UninitializedModule
-from fms.modules.linear import UninitializedLinear, get_linear
-from fms.utils import fusion, gptq, serialization
+from fms.utils import gptq, serialization
 
 
 logger = logging.getLogger(__name__)
@@ -87,14 +86,6 @@ def __maybe_infer_model_variant(
         is_hf_configured = architecture == "hf_configured"
 
         if is_hf_pretrained:
-            if variant is None:
-                model_path_or_variant = model_path  # type: ignore[assignment]
-            else:
-                model_path_or_variant = variant
-        elif is_hf_configured:
-            model_path_or_variant = variant
-
-        if is_hf_pretrained:
             if ((variant is None) == (model_path is None)) or source is not None:
                 raise ValueError(
                     f"""
@@ -110,10 +101,20 @@ def __maybe_infer_model_variant(
                 """architecture="hf_configured" implies model config is loaded from variant, therefore it should be set"""
             )
 
+        model_path_or_variant = ""
+        if is_hf_pretrained:
+            if variant is None:
+                model_path_or_variant = model_path  # type: ignore[assignment]
+            else:
+                model_path_or_variant = variant
+        elif is_hf_configured and variant is not None:
+            model_path_or_variant = variant
+
         logger.info(f"inferring model configuration from {model_path_or_variant}")
 
         extra_kwargs = _infer_model_configuration(
-            model_path_or_variant, download_weights=is_hf_pretrained and variant is not None  # type: ignore[arg-type]
+            model_path_or_variant,
+            download_weights=is_hf_pretrained and variant is not None,  # type: ignore[arg-type]
         )
         architecture = extra_kwargs.pop("architecture")
         variant = extra_kwargs.pop("variant")
@@ -206,7 +207,7 @@ def _guess_num_layers(state_dict):
 
 
 def _class_hierarchy(clz):
-    if clz == object:
+    if clz is object:
         return {clz}
     bases = clz.__bases__
     all = [_class_hierarchy(c) for c in bases]
@@ -347,7 +348,7 @@ def get_model(
     if isinstance(data_type, str):  # convert str to torch.dtype
         try:
             data_type_parsed = getattr(torch, data_type)
-        except:
+        except AttributeError:
             raise ValueError(f"Data type `{data_type}` is not a supported torch dtype")
         if extra_args.get("linear_config", None) and "gptq" in extra_args[
             "linear_config"
@@ -460,7 +461,11 @@ def get_model(
         if initial_device != torch.device("meta"):
             fms_model.to_empty(device=initial_device)
         # randomly initialize the model (non-gptq models only)
-        if hasattr(fms_model, "reset_parameters") and not is_gptq:
+        if (
+            hasattr(fms_model, "reset_parameters")
+            and callable(fms_model.reset_parameters)
+            and not is_gptq
+        ):
             fms_model.reset_parameters()
 
     if pre_load:
@@ -468,7 +473,7 @@ def get_model(
 
     # Call post-init to take care of post-wrapping/device-mapping initialization
     # Examples include tying weights, init Rope embeddings
-    if getattr(fms_model, "post_init", None):
+    if getattr(fms_model, "post_init", None) and callable(fms_model.post_init):
         fms_model.post_init()
 
     # Make sure any uninitialized tensors are at least moved to device
@@ -483,4 +488,7 @@ def get_model(
     return fms_model
 
 
-from fms.models import gpt_bigcode, granite, llama, mixtral, roberta
+from fms.models import gpt_bigcode, granite, llama, mixtral, roberta  # noqa: E402
+
+
+__all__ = ["gpt_bigcode", "granite", "llama", "mixtral", "roberta"]

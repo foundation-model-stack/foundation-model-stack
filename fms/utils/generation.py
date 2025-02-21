@@ -103,7 +103,9 @@ def __update_padding_kwargs(
     return model_specific_kwargs
 
 
-def _make_cache_contiguous(past_key_value_states):
+def _make_cache_contiguous(
+    past_key_value_states: List[List[torch.Tensor]],
+) -> List[List[torch.Tensor]]:
     # kv updates are required for torch.compile with
     # mode='reduce-overhead'
     n_kv_s: List[List[torch.Tensor]] = []
@@ -118,7 +120,9 @@ def _make_cache_contiguous(past_key_value_states):
     return n_kv_s
 
 
-def _make_cache_dynamic(past_key_value_states):
+def _make_cache_dynamic(
+    past_key_value_states: List[List[torch.Tensor]],
+) -> List[List[torch.Tensor]]:
     # kv updates are required for torch.compile with
     # mode='reduce-overhead'
     for layer in past_key_value_states:
@@ -236,7 +240,7 @@ def generate(
         else:
             logits = output
 
-        if not "only_last_token" in kwargs:
+        if "only_last_token" not in kwargs:
             logits = logits[:, -1, :]
 
         if do_sample:

@@ -303,7 +303,7 @@ class Checkpointer(TrainerPlugin):
             optim_dict = self.optimizer.state_dict()
 
         if step is not None:
-            file = f"{model_name}_{epoch:03d}_{step+1:05d}"
+            file = f"{model_name}_{epoch:03d}_{step + 1:05d}"
         else:
             file = f"{model_name}_{epoch:03d}_final"
         save_dir = self.save_dir

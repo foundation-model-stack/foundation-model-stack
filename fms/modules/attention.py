@@ -1,5 +1,5 @@
 import abc
-from typing import Any, Mapping, Optional, Set, Tuple
+from typing import Any, Mapping, Optional, Tuple
 
 import torch
 import torch.distributed
@@ -502,12 +502,14 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
         assert torch.distributed.is_initialized()
 
         rank, world_size = distributed.rank_and_world(group)
-        assert (
-            nheads % world_size == 0
-        ), "The number of heads must be divisible by world size"
+        assert nheads % world_size == 0, (
+            "The number of heads must be divisible by world size"
+        )
         assert (kvheads >= world_size and kvheads % world_size == 0) or (
             kvheads < world_size and world_size % kvheads == 0
-        ), "the kv heads must be divisible by the world size or the world size must be divisible by kv heads"
+        ), (
+            "the kv heads must be divisible by the world size or the world size must be divisible by kv heads"
+        )
         MultiHeadAttention.__init__(
             self,
             emb_dim,
@@ -550,7 +552,7 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
         if self.fused:
             module_sharding_info = {
                 "qkv_fused": LinearModuleShardingInfo(
-                    self.in_proj.qkv_fused,
+                    self.in_proj.get_submodule("qkv_fused"),
                     0,
                     [self.pre_tp_nheads, self.pre_tp_kvheads, self.pre_tp_kvheads],
                 ),
@@ -559,13 +561,13 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
         else:
             module_sharding_info = {
                 "query": LinearModuleShardingInfo(
-                    self.in_proj.query, 0, [self.pre_tp_nheads]
+                    self.in_proj.get_submodule("query"), 0, [self.pre_tp_nheads]
                 ),
                 "key": LinearModuleShardingInfo(
-                    self.in_proj.key, 0, [self.pre_tp_kvheads]
+                    self.in_proj.get_submodule("key"), 0, [self.pre_tp_kvheads]
                 ),
                 "value": LinearModuleShardingInfo(
-                    self.in_proj.value, 0, [self.pre_tp_kvheads]
+                    self.in_proj.get_submodule("value"), 0, [self.pre_tp_kvheads]
                 ),
                 "dense": LinearModuleShardingInfo(self.dense, 1, [self.world_size]),
             }
