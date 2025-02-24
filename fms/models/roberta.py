@@ -1,10 +1,12 @@
+import copy
+import logging
 import math
 import re
 from dataclasses import dataclass
 from typing import Any, Mapping, Optional
 
 import torch
-import torch.nn as nn
+from torch import nn
 
 from fms import models
 from fms.distributed.strategy import DistributedStrategy, NoOpStrategy
@@ -14,6 +16,9 @@ from fms.modules.head import MLPClassificationHead
 from fms.utils import serialization
 from fms.utils.activation import str_to_activation
 from fms.utils.config import ModelConfig
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -33,6 +38,13 @@ class RoBERTaConfig(ModelConfig):
     tie_heads: bool = False
     linear_config: Optional[Mapping[str, Any]] = None
     fused_weights: bool = True
+
+
+@dataclass
+class RoBERTaQuestionAnsweringConfig(RoBERTaConfig):
+    """Model configuration of RoBERTa for Question-Answering downstream task"""
+
+    num_classes: int = 2
 
 
 class RoBERTaBlock(nn.Module):
@@ -122,7 +134,8 @@ class RoBERTaHeadless(nn.Module):
             ]
         )
 
-        # RoBERTa embeddings don't support TP as in many cases, the vocab size is not divisible by the world size
+        # RoBERTa embeddings don't support TP as in many cases the vocab size is
+        # not divisible by the world size
         self.embedding = self.distributed_strategy.distribute_module(
             nn.Embedding(self.config.src_vocab_size, self.config.emb_dim),
             final_layers=True,
@@ -211,7 +224,7 @@ class RoBERTa(nn.Module):
         distributed_strategy: DistributedStrategy = NoOpStrategy,
         **kwargs,
     ):
-        super(RoBERTa, self).__init__()
+        super().__init__()
         if config is not None:
             self.config = config
         else:
@@ -221,7 +234,8 @@ class RoBERTa(nn.Module):
 
         self.base_model = RoBERTaHeadless(self.config, self.distributed_strategy)
 
-        # The head does not get TP-Wrapped as in many cases the vocab_size will not be divisible by the world size
+        # The head does not get TP-Wrapped as in many cases the vocab_size
+        # will not be divisible by the world size
         self.classification_head = self.distributed_strategy.distribute_module(
             MLPClassificationHead(
                 self.config.emb_dim,
@@ -236,7 +250,9 @@ class RoBERTa(nn.Module):
 
         # this model ties weights, so we tie here
         if self.config.tie_heads:
-            self.classification_head.head.weight = self.base_model.embedding.weight
+            self.classification_head.get_submodule(
+                "head"
+            ).weight = self.base_model.embedding.weight
 
     def forward(
         self,
@@ -275,7 +291,8 @@ class RoBERTa(nn.Module):
             )
 
     def post_init(self):
-        # This function is called in `get_model` after the model is fully initalized in the correct device
+        # This function is called in `get_model` after the model is fully initalized
+        # on the correct device
 
         # if this model ties weights, so we tie here
         if self.config.tie_heads:
@@ -286,12 +303,87 @@ class RoBERTa(nn.Module):
                 self.base_model.embedding.weight = self.classification_head.head.weight
 
 
+class RoBERTaForQuestionAnswering(nn.Module):
+    """Model architecture of RoBERTa for Question Answering downstream task"""
+
+    def __init__(
+        self,
+        config: Optional[RoBERTaQuestionAnsweringConfig] = None,
+        distributed_strategy: DistributedStrategy = NoOpStrategy,
+        **kwargs,
+    ):
+        super().__init__()
+        if config is not None:
+            self.config = config
+        else:
+            self.config = RoBERTaQuestionAnsweringConfig()
+        self.config = self.config.updated(**kwargs)
+        if self.config.tie_heads:
+            logger.warning(
+                "The model configuration set tie heads to True but this parameter will "
+                "be ignored for a QuestionAnswering task."
+            )
+        self.distributed_strategy = distributed_strategy
+
+        self.base_model = RoBERTaHeadless(self.config, self.distributed_strategy)
+
+        # The head does not get TP-wrapped and is not quantized
+        # output dimension ("num_classes") for QuestionAnswering is always 2
+        self.qa_head = nn.Linear(
+            in_features=self.config.emb_dim,
+            out_features=2,
+            bias=True,
+        )
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        mask: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.Tensor] = None,
+        attn_algorithm: Optional[str] = None,
+    ):
+        # run through the encoder layers
+        x = self.base_model(
+            x, mask=mask, position_ids=position_ids, attn_algorithm=attn_algorithm
+        )
+
+        # run head and process outputs
+        logits = self.qa_head(x)
+        start_logits, end_logits = logits.split(1, dim=-1)
+        start_logits = start_logits.squeeze(-1).contiguous()
+        end_logits = end_logits.squeeze(-1).contiguous()
+        return (start_logits, end_logits)
+
+    @classmethod
+    def from_config(
+        cls, config: RoBERTaQuestionAnsweringConfig
+    ) -> "RoBERTaForQuestionAnswering":
+        return cls(config)
+
+    def get_config(self) -> RoBERTaQuestionAnsweringConfig:
+        return self.config
+
+    def reset_parameters(self):
+        self.base_model.reset_parameters()
+        self.qa_head.weight.data.normal_(
+            0,
+            1 / math.sqrt(math.sqrt(self.config.emb_dim * 2)),
+        )
+
+
 # a micro llama model to use with a char-level tokenizer
 _micro_char_config = RoBERTaConfig(
     emb_dim=192, nheads=4, nlayers=5, max_pos=1024, src_vocab_size=256
 )
 
 _base_config = RoBERTaConfig(tie_heads=True, norm_eps=1e-5, p_dropout=0.1)
+
+_base_questionanswering_config_dict = copy.copy(_base_config.__dict__)
+_base_questionanswering_config_dict["tie_heads"] = False
+_base_questionanswering_config = RoBERTaQuestionAnsweringConfig(
+    **_base_questionanswering_config_dict,
+    num_classes=2,
+)
 
 _architecture_name = "roberta"
 
@@ -303,11 +395,23 @@ def _roberta_factory_factory(config):
     return factory
 
 
+def _roberta_question_answering_factory_factory(config):
+    def factory(**kwargs):
+        return RoBERTaForQuestionAnswering(config, **kwargs)
+
+    return factory
+
+
 models.register_model(
     _architecture_name, "micro", _roberta_factory_factory(_micro_char_config)
 )
 models.register_model(
     _architecture_name, "base", _roberta_factory_factory(_base_config)
+)
+models.register_model(
+    "roberta_question_answering",
+    "base",
+    _roberta_question_answering_factory_factory(_base_questionanswering_config),
 )
 
 serialization.register_adapter_step(
@@ -332,6 +436,11 @@ def _weight_fusion(
 
 
 serialization.register_adapter_step(_architecture_name, "weight_fusion", _weight_fusion)
+serialization.register_adapter_step(
+    "roberta_question_answering",
+    "weight_fusion",
+    _weight_fusion,
+)
 
 
 def _hf_to_fms_names(hf_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]:
@@ -354,6 +463,7 @@ def _hf_to_fms_names(hf_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]:
         (r"^lm_head\.dense", "classification_head.dense"),
         (r"^lm_head\.layer_norm", "classification_head.ln"),
         (r"^lm_head\.decoder", "classification_head.head"),
+        (r"^qa_outputs", "qa_head"),  # only relevant to QuestionAnswering task
     ]
     new_sd = {}
     for name, param in hf_sd.items():
@@ -372,8 +482,14 @@ def _hf_to_fms_names(hf_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]:
 serialization.register_adapter_step(
     _architecture_name, "hf_to_fms_names", _hf_to_fms_names
 )
+serialization.register_adapter_step(
+    "roberta_question_answering", "hf_to_fms_names", _hf_to_fms_names
+)
 
 serialization.register_adapter("roberta", "hf", ["hf_to_fms_names", "weight_fusion"])
 serialization.register_adapter(
     "roberta", "fms.pre0.0.6", ["pre0.0.6_attn_unfused_to_fused", "weight_fusion"]
+)
+serialization.register_adapter(
+    "roberta_question_answering", "hf", ["hf_to_fms_names", "weight_fusion"]
 )

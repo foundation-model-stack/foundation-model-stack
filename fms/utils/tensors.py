@@ -111,7 +111,7 @@ class ExpandableTensor(torch.Tensor):
     def cat(tensors, dim=0, *, out=None):
         if (
             len(tensors)
-            and type(tensors[0]) == ExpandableTensor
+            and type(tensors[0]) is ExpandableTensor
             and tensors[0]._dim == dim
         ):
             result = tensors[0]
@@ -120,7 +120,7 @@ class ExpandableTensor(torch.Tensor):
             return result
         else:
             tensors = [
-                tensor._tensor() if type(tensor) == ExpandableTensor else tensor
+                tensor._tensor() if type(tensor) is ExpandableTensor else tensor
                 for tensor in tensors
             ]
             return torch.cat(tensors, dim, out=out)
@@ -132,6 +132,6 @@ class ExpandableTensor(torch.Tensor):
         if func not in _HANDLED_FUNCTIONS or not all(
             issubclass(t, (torch.Tensor, ExpandableTensor)) for t in types
         ):
-            args = [a._tensor() if type(a) == ExpandableTensor else a for a in args]
+            args = [a._tensor() if type(a) is ExpandableTensor else a for a in args]
             return func(*args, **kwargs)
         return _HANDLED_FUNCTIONS[func](*args, **kwargs)

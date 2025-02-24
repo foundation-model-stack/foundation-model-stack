@@ -91,6 +91,7 @@ def test_getmodel():
     assert micro.config.nlayers == 5
 
 
+@pytest.mark.autogptq
 def test_uninitialized_module():
     model = models._get_model_instance(
         architecture="llama",
@@ -100,7 +101,6 @@ def test_uninitialized_module():
                 "linear_type": "gptq",
                 "group_size": 128,
                 "desc_act": False,
-                "filter_fn": lambda name: False,
             }
         },
     )
@@ -114,7 +114,6 @@ def test_uninitialized_module():
             "linear_type": "gptq",
             "group_size": 128,
             "desc_act": False,
-            "filter_fn": lambda name: False,
         },
     )
 
@@ -158,7 +157,7 @@ def test_load():
         newsd = serialization.load_state_dict(d)
         as_loaded = models.get_model("llama", "micro", d).state_dict()
         # this style load, layer-sharded, has to stitch together the state dicts.
-        assert type(newsd) == ChainMap
+        assert type(newsd) is ChainMap
         for key in keys:
             assert key in newsd
             torch.testing.assert_close(sd[key], as_loaded[key])

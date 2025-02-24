@@ -3,6 +3,7 @@ import torch
 import torch.distributed
 import torch.nn
 
+import fms.utils.gptq  # noqa: F401
 from fms.modules.attention import MultiHeadAttention
 from fms.modules.feedforward import FeedForwardBlock, GatedLinearUnit
 from fms.utils.config import ModelConfig

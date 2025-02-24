@@ -4,15 +4,15 @@
 -r hf-requirements.txt
 
 # Test tools
-mypy==1.8.0
+mypy==1.15.0
 mypy-extensions==1.0.0
-pytest==8.0.0
+pytest==8.3.4
 sentencepiece==0.2.0
 
 # Types packages
-pyarrow-stubs==10.0.1.7
-types-requests==2.31.0.20240125
+pyarrow-stubs==17.16
+types-requests==2.32.0.20241016
 
 # Model testing
-lm_eval==0.4.2
-peft==0.13.2
+lm_eval==0.4.7
+peft==0.14.0

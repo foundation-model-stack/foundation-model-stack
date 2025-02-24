@@ -145,6 +145,7 @@ class LLaMA2GPTQFixtures(ModelFixtureMixin):
             return None
 
 
+@pytest.mark.autogptq
 class TestLlama2GPTQ(
     ModelConsistencyTestSuite, ModelCompileTestSuite, LLaMA2GPTQFixtures
 ):

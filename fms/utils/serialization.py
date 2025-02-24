@@ -263,16 +263,13 @@ def get_adapted(
 
 # `models` imports each model class, causing models and adapters to be registered.
 # down here to avoid circular dependencies.
-from fms import models
 
 
 def _get_safetensors_item(key, file: Path, device: torch.device) -> torch.Tensor:
     from safetensors import safe_open  # type: ignore[import-untyped]
 
     with torch.no_grad():
-        with safe_open(
-            file, framework="pt", device=str(device)
-        ) as model_weights:  # type: ignore[attr-defined]
+        with safe_open(file, framework="pt", device=str(device)) as model_weights:  # type: ignore[attr-defined]
             return model_weights.get_tensor(key)
 
 
@@ -323,7 +320,7 @@ def load_state_dict(
     if model_path is None or initial_device.type == "meta":
         return {}
     if checkpoint_sharding == "fsdp" and distributed_strategy not in ["fsdp", "hsdp"]:
-        raise ValueError(f"FSDP checkpoints can only be loaded into an FSDP model")
+        raise ValueError("FSDP checkpoints can only be loaded into an FSDP model")
     if checkpoint_sharding == "tp" and distributed_strategy != "tp":
         raise ValueError("TP checkpoints can only be loaded into a TP model")
 
@@ -358,14 +355,14 @@ def load_state_dict(
         checkpoints = [model_path]
 
     # Check if we found some files
-    assert (
-        len(checkpoints) > 0
-    ), f"Can't find the requested checkpoint data at {model_path}"
+    assert len(checkpoints) > 0, (
+        f"Can't find the requested checkpoint data at {model_path}"
+    )
 
     if checkpoint_sharding is not None and checkpoint_sharding != "layer":
-        assert world_size == len(
-            checkpoints
-        ), f"Loading a {checkpoint_sharding}-sharded checkpoint with len={len(checkpoints)} but world size is {world_size}"
+        assert world_size == len(checkpoints), (
+            f"Loading a {checkpoint_sharding}-sharded checkpoint with len={len(checkpoints)} but world size is {world_size}"
+        )
 
         checkpoints = [checkpoints[rank]]
 
@@ -632,7 +629,7 @@ def _load_partial_state_dict(
                     )
                 )
                 unused_keys_tp = tp_module.load_weights(tensor_values)
-        except:
+        except:  # noqa: E722
             if unused_keys_tp:
                 unused_keys.update(unused_keys_tp)
             else:

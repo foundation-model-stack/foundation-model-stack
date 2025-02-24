@@ -35,7 +35,7 @@ def test_expandable_tensor_ops():
     t.add_(7)
     torch.testing.assert_close(expandable, t)
     # in place op preserves type, no copy
-    assert type(expandable) == ExpandableTensor
+    assert type(expandable) is ExpandableTensor
 
 
 def test_cat():
@@ -52,8 +52,8 @@ def test_cat():
         expandable = torch.cat((expandable, to_append), dim=2)
 
     torch.testing.assert_close(expandable, expected)
-    assert type(expected) != ExpandableTensor
-    assert type(expandable) == ExpandableTensor
+    assert type(expected) is not ExpandableTensor
+    assert type(expandable) is ExpandableTensor
     assert expandable._underlying_tensor.shape[2] == 20
 
     # original should not have changed
@@ -92,4 +92,4 @@ def test_contiguous():
 
     torch.testing.assert_close(expandable, t)
     assert expandable.is_contiguous()
-    assert type(expandable) != ExpandableTensor
+    assert type(expandable) is not ExpandableTensor

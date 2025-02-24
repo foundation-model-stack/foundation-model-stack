@@ -1,12 +1,10 @@
 import argparse
 import os
 from contextlib import nullcontext
-from datetime import timedelta
 from pathlib import Path
 
 import torch
 from torch import distributed as dist
-from torch import nn
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.distributed.fsdp import ShardingStrategy
 from torch.utils.data import DataLoader
@@ -218,7 +216,7 @@ def peft_model(model):
     requires some care. The state_dict will also contain all paramters, not
     just the adapter, though we plan to use merged tuned models for now.
     """
-    from peft import LoraConfig, get_peft_config, get_peft_model
+    from peft import LoraConfig
     from peft.mapping import PeftModelForCausalLM
 
     from fms.models.hf.utils import to_hf_api

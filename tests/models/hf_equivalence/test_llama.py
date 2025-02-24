@@ -2,8 +2,7 @@ import pytest
 import torch
 
 from fms.models import get_model
-from fms.models.hf.utils import to_hf_api
-from fms.models.llama import convert_hf_llama
+from fms.models.hf import to_hf_api
 from fms.testing.comparison import (
     HFModelSignatureParams,
     ModelSignatureParams,
@@ -38,7 +37,9 @@ def test_llama_7b_equivalence():
 
     # Test Parameter Count
 
-    count_parameters = lambda m: sum(p.numel() for p in m.parameters())
+    def count_parameters(m):
+        return sum(p.numel() for p in m.parameters())
+
     assert count_parameters(hf_model_fms) == count_parameters(hf_model)
 
     # Test Model Signatures
@@ -98,5 +99,5 @@ def test_llama_7b_equivalence():
 
     torch._assert(
         math.isclose(hf_model_loss.item(), hf_model_fms_loss.item(), abs_tol=1e-3),
-        f"model loss is not equal",
+        "model loss is not equal",
     )
