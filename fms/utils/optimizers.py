@@ -74,6 +74,8 @@ class SteppingAdamW(Optimizer):
             group.setdefault("amsgrad", False)
             group.setdefault("maximize", False)
             group.setdefault("decoupled_weight_decay", True)
+            group.setdefault("bias_correction1_rec", torch.tensor(1.0, dtype=_get_scalar_dtype()))
+            group.setdefault("bias_correction2_rec", torch.tensor(1.0, dtype=_get_scalar_dtype()))
             for p in group["params"]:
                 p_state = self.state.get(p, [])
                 if len(p_state) != 0 and not torch.is_tensor(p_state["step"]):
@@ -167,6 +169,8 @@ class SteppingAdamW(Optimizer):
                 has_complex=has_complex,
                 beta1=beta1,
                 beta2=beta2,
+                bias_correction1_rec=group["bias_correction1_rec"],
+                bias_correction2_rec=group["bias_correction2_rec"],
                 lr=group["lr"],
                 weight_decay=group["weight_decay"],
                 eps=group["eps"],
@@ -186,8 +190,8 @@ def stepping_adamw(
     exp_avg_sqs: list[Tensor],
     max_exp_avg_sqs: list[Tensor],
     state_steps: list[Tensor],
-    bias_correction1,
-    bias_correction2,
+    bias_correction1_rec: Tensor,
+    bias_correction2_rec: Tensor,
     grad_scale: Optional[Tensor] = None,
     found_inf: Optional[Tensor] = None,
     has_complex: bool = False,
@@ -266,8 +270,10 @@ def stepping_adamw(
 
         step = _get_value(step_t)
 
-        bias_correction1 = 1 - beta1**step
-        bias_correction2 = 1 - beta2**step
+        bias_correction1_rec *= beta1
+        bias_correction1_rec *= beta2
+        bias_correction1 = 1 - bias_correction1_rec
+        bias_correction2 = 1 - bias_correction2_rec
 
         step_size = lr / bias_correction1
 
