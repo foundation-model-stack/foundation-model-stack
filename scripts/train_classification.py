@@ -17,7 +17,7 @@ from torch.utils.data.distributed import DistributedSampler
 from fms import datasets, models
 from fms.training import plugins as trainplugins
 from fms.training import trainer
-from fms.utils import fusion, print0, tokenizers
+from fms.utils import fusion, print0, tokenizers, optimizers
 
 #
 # This is a fairly minimal training/tuning script for causal language models.
@@ -228,7 +228,7 @@ def get_loss_fn():
 
 
 def training_state(model_path, model, rank):
-    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4)
+    optimizer = optimizers.SteppingAdamW(model.parameters(), lr=1e-5)
     is_fsdp = isinstance(model, FSDP)
     dataset_sd = {}
     epoch = 0
