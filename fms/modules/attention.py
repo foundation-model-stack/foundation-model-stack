@@ -466,6 +466,7 @@ class MultiHeadAttention(nn.Module):
             .contiguous()
             .view(batch_size, q_len, self.nheads * self.emb_v_per_head)
         )
+        # print(attn)
         out = self.dense(attn)
 
         # if use_cache=True, we return the hidden_state as well as the kv cache

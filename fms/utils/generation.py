@@ -212,6 +212,8 @@ def generate(
 
     prompt_length = input_ids.shape[1]
 
+    final_logits = None
+
     if timing != "":
         times: List[float] = []
         start_time = time.time()
@@ -249,6 +251,11 @@ def generate(
 
         if "only_last_token" not in kwargs:
             logits = logits[:, -1, :]
+
+        if final_logits is None:
+            final_logits = logits.unsqueeze(1)
+        else:
+            final_logits = torch.cat([final_logits, logits.unsqueeze(1)], dim=1)
 
         if do_sample:
             # get logits from last value in sequence nad scale
@@ -298,7 +305,7 @@ def generate(
 
     if timing != "":
         return result, times
-    return result, kwargs["past_key_value_states"]
+    return result, final_logits, kwargs["past_key_value_states"]
 
 
 def truncate_after_eos(

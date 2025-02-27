@@ -215,7 +215,7 @@ def generate_context_info(model, context_tokens):
     extra_kwargs = {
         "position_ids": torch.arange(0, context_tokens.size(1), device=context_tokens.device, dtype=torch.int64).unsqueeze(0).repeat(context_tokens.size(0), 1)
     }
-    result, context_cache = generate(
+    result, logits, context_cache = generate(
         model,
         context_tokens,
         max_new_tokens=1,
@@ -249,7 +249,7 @@ def print_result(result, padding_kwargs=None):
     print()
 
 
-def generate_with_prefix_context(model, context_list, prompt_tokens):
+def generate_with_prefix_context(model, context_list, prompt_tokens, max_new_tokens, derope_at_end=False, do_print_result=True):
     # Mix and rerope all context caches, create attention mask for Flex Attention and position_ids
 
     # context_list is a list[KVCache | tuple[KVCache]]
@@ -257,8 +257,11 @@ def generate_with_prefix_context(model, context_list, prompt_tokens):
     # context_type can be sequential for A -> B -> P generation
     # or it can be parallel for (A + B) -> P generation
     consumed_context_length = 0
+    tkv = 0
     
     final_context = [None for _ in range(model.config.nlayers)] if len(context_list) > 0 else None
+
+    used_pids = []
 
     for context_step in context_list:
         if isinstance(context_step, tuple):
@@ -268,6 +271,7 @@ def generate_with_prefix_context(model, context_list, prompt_tokens):
 
         if context_type == "parallel":
             max_context_step_length = 0
+            used_step_pids = []
             for context in context_step:
                 max_context_step_length = max(max_context_step_length, context[0][0].size(2))
             
@@ -283,8 +287,11 @@ def generate_with_prefix_context(model, context_list, prompt_tokens):
                             torch.cat([final_context[i][0], context[i][0]], dim=2),
                             torch.cat([final_context[i][1], context[i][1]], dim=2),
                         )
+                used_step_pids.append(position_ids)
+                tkv += position_ids.size(1)
 
             consumed_context_length += max_context_step_length
+            used_pids.append(used_step_pids)
         else:
             context_step_length = context_step[0][0].size(2)
             position_ids = torch.arange(consumed_context_length, consumed_context_length + context_step_length, dtype=torch.int64, device=context_step[0][0].device).unsqueeze(0).repeat(context_step[0][0].size(0), 1)
@@ -298,34 +305,36 @@ def generate_with_prefix_context(model, context_list, prompt_tokens):
                         torch.cat([final_context[i][0], context_step[i][0]], dim=2),
                         torch.cat([final_context[i][1], context_step[i][1]], dim=2),
                     )
+
+            used_pids.append(position_ids)
             
             consumed_context_length += context_step_length
+            tkv += context_step_length
 
     def causal_mask(b, h, q_idx, kv_idx):
-        return q_idx + consumed_context_length >= kv_idx
+        return q_idx + tkv >= kv_idx
     
     def context_mask(b, h, q_idx, kv_idx):
-        return kv_idx <= consumed_context_length
+        return kv_idx <= tkv
     
     prefix_lm_causal = or_masks(context_mask, causal_mask)
 
     final_position_ids = torch.arange(consumed_context_length, consumed_context_length + prompt_tokens.size(1), dtype=torch.int64, device="cuda").unsqueeze(0).repeat(prompt_tokens.size(0), 1)
-
     if final_context is not None:
         extra_kwargs = {
             "past_key_value_states": final_context,
             "position_ids": final_position_ids,
-            "mask_mod": prefix_lm_causal
+            "mask_mod": prefix_lm_causal,
         }
     else:
         extra_kwargs = {
             "position_ids": final_position_ids,
         }
 
-    result, final_context = generate(
+    result, final_logits, final_context = generate(
         model,
         prompt_tokens,
-        max_new_tokens=128,
+        max_new_tokens=max_new_tokens,
         use_cache=True,
         do_sample=False,
         max_seq_len=131072,
@@ -336,8 +345,27 @@ def generate_with_prefix_context(model, context_list, prompt_tokens):
     if len(result.shape) == 1:
         result = result.unsqueeze(0)
 
-    for i in range(result.shape[0]):
-        print_result(result[i])
+    if do_print_result:
+        for i in range(result.shape[0]):
+            print_result(result[i])
+
+    final_context_len = result.size(1)
+    for i, layer in enumerate(final_context):
+        final_context[i] = (layer[0][:, :, -final_context_len:], layer[1][:, :, -final_context_len:])
+
+    # Derope all used contexts
+    for i, context_step in enumerate(context_list):
+        if isinstance(context_step, tuple):
+            for j, context in enumerate(context_step):
+                derope(model, context, used_pids[i][j])
+        else:
+            derope(model, context_step, used_pids[i])
+
+    if derope_at_end:
+        # De-RoPE the k cache
+        derope(model, final_context, final_position_ids)
+    
+    return result, final_logits, final_context
 
 
 s_cache = generate_context_info(model, system_tokens)
@@ -347,21 +375,21 @@ sb_cache = generate_context_info(model, sb_tokens)
 sab_cache = generate_context_info(model, sab_tokens)
 sba_cache = generate_context_info(model, sba_tokens)
 
-print("======== No context, Prompt: S + A + P")
-generate_with_prefix_context(model, [], sap_tokens)
-print("======== Context: S -> A, Prompt: P")
-generate_with_prefix_context(model, [s_cache, a_cache], assistant_tokens)
-print("======== No context, Prompt: S + B + P")
-generate_with_prefix_context(model, [], sbp_tokens)
-print("======== Context: S -> B, Prompt: P")
-generate_with_prefix_context(model, [s_cache, b_cache], assistant_tokens)
-print("======== Context: S + B, Prompt: P")
-generate_with_prefix_context(model, [sb_cache], assistant_tokens)
+# print("======== No context, Prompt: S + A + P")
+# generate_with_prefix_context(model, [], sap_tokens, 128)
+# print("======== Context: S -> A, Prompt: P")
+# generate_with_prefix_context(model, [s_cache, a_cache], assistant_tokens, 128)
+# print("======== No context, Prompt: S + B + P")
+# generate_with_prefix_context(model, [], sbp_tokens, 128)
+# print("======== Context: S -> B, Prompt: P")
+# generate_with_prefix_context(model, [s_cache, b_cache], assistant_tokens, 128)
+# print("======== Context: S + B, Prompt: P")
+# generate_with_prefix_context(model, [sb_cache], assistant_tokens, 128)
 
 print("======== Context: S -> Par(A, B), Prompt: P")
-generate_with_prefix_context(model, [s_cache, (a_cache, b_cache)], assistant_tokens)
+generate_with_prefix_context(model, [s_cache, (a_cache, b_cache)], assistant_tokens, 1)
 print("======== Context: S -> Par(B, A), Prompt: P")
-generate_with_prefix_context(model, [s_cache, (b_cache, a_cache)], assistant_tokens)
+generate_with_prefix_context(model, [s_cache, (b_cache, a_cache)], assistant_tokens, 1)
 
 print("======== Context: S -> A -> B, Prompt: P")
 generate_with_prefix_context(model, [s_cache, a_cache, b_cache], assistant_tokens)
