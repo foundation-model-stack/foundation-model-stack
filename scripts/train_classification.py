@@ -296,13 +296,18 @@ def main():
     if args.unfuse_weights:
         model = fusion.apply_unfuse_weights(model)
     # model.base_model.rot_emb.compute_freqs_cis(device, 512)
+    # Initialize the classification head so we don't get NaNs
+    model.classification_head.pooler_linear.weight.data.normal_(
+        0,
+        1
+        / math.sqrt(math.sqrt(model.config.emb_dim * model.config.src_vocab_size)),
+    )
+    model.classification_head.head.weight.data.normal_(
+        0,
+        1
+        / math.sqrt(math.sqrt(model.config.emb_dim * model.config.src_vocab_size)),
+    )
     if args.head_only:
-        # Initialize the classification head so we don't get NaNs
-        model.classification_head.head.weight.data.normal_(
-            0,
-            1
-            / math.sqrt(math.sqrt(model.config.emb_dim * model.config.src_vocab_size)),
-        )
         for param in model.parameters():
             param.requires_grad = False
         model.classification_head.head.weight.requires_grad = True
