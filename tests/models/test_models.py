@@ -101,7 +101,6 @@ def test_uninitialized_module():
                 "linear_type": "gptq",
                 "group_size": 128,
                 "desc_act": False,
-                "filter_fn": lambda name: False,
             }
         },
     )
@@ -115,7 +114,6 @@ def test_uninitialized_module():
             "linear_type": "gptq",
             "group_size": 128,
             "desc_act": False,
-            "filter_fn": lambda name: False,
         },
     )
 
