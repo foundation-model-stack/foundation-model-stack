@@ -4,6 +4,7 @@ from typing import Any, Callable, List, MutableMapping, Optional, Tuple, Union
 
 import torch
 import torch.nn.functional as F
+from torch.nn.attention.flex_attention import create_nested_block_mask
 
 
 logger = logging.getLogger(__name__)
@@ -69,25 +70,20 @@ def pad_input_ids(
 
     return input_ids, padding_kwargs
 
+def causal_mask(b, h, q_idx, kv_idx):
+    return q_idx >= kv_idx
 
 def __update_padding_kwargs(
     use_cache: bool, model_specific_kwargs: MutableMapping[str, Any]
 ) -> MutableMapping[str, Any]:
     """Generic function to prepare any model specific keyword arguments"""
-    # extend the attention mask
-    mask = model_specific_kwargs.get("mask", None)
-    if mask is not None:
-        # get the last row of the 3d mask
-        mask = mask[:, -1:, :]
-        # extend the mask one slot
-        mask = torch.cat(
-            (
-                mask,
-                torch.zeros(mask.size(0), 1, 1, device=mask.device),
-            ),
-            dim=2,
-        )
-        model_specific_kwargs["mask"] = mask
+    # Extend the narrow view of the kv-cache
+    kv_cache = model_specific_kwargs.get("past_key_value_states", None)
+    for layer_i, layer in enumerate(kv_cache):
+        model_specific_kwargs["past_key_value_states"][layer_i] = [
+            torch.nested.narrow(layer[0].values(), 1, 0, layer[0].lengths() + 1),
+            torch.nested.narrow(layer[1].values(), 1, 0, layer[0].lengths() + 1),
+        ]
 
     # extend the position_ids
     position_ids = model_specific_kwargs.get("position_ids", None)
@@ -108,6 +104,24 @@ def __update_padding_kwargs(
                     dim=1,
                 )
         model_specific_kwargs["position_ids"] = position_ids
+
+    # extend the attention mask
+    mask = model_specific_kwargs.get("mask", None)
+    # if mask is not None:
+    #     # get the last row of the 3d mask
+    #     mask = mask[:, -1:, :]
+    #     # extend the mask one slot
+    #     mask = torch.cat(
+    #         (
+    #             mask,
+    #             torch.zeros(mask.size(0), 1, 1, device=mask.device),
+    #         ),
+    #         dim=2,
+    #     )
+    #     model_specific_kwargs["mask"] = mask
+    if mask is not None:
+        mask = create_nested_block_mask(causal_mask, kv_cache[0][0].size(0), 32, position_ids, kv_nt=kv_cache[0][0], _compile=True)
+        model_specific_kwargs["mask"] = mask
     return model_specific_kwargs
 
 
@@ -215,7 +229,23 @@ def generate(
 
     result = input_ids
     next_input = input_ids
-    kwargs["past_key_value_states"] = None
+
+    # Pre-allocate kv cache and use nested narrow
+    past_key_value_states = []
+    kwargs["past_key_value_states"] = []
+    head_dim = model.config.emb_dim // model.config.nheads
+    kv_heads = model.config.nheads if model.config.kvheads == 0 else model.config.kvheads
+    for layer_i in range(model.config.nlayers):
+        past_key_value_states.append([
+            torch.zeros((input_ids.size(0), max_seq_len, kv_heads, head_dim), device=input_ids.device, dtype=torch.bfloat16),
+            torch.zeros((input_ids.size(0), max_seq_len, kv_heads, head_dim), device=input_ids.device, dtype=torch.bfloat16)
+        ])
+        kwargs["past_key_value_states"].append([
+            torch.nested.narrow(past_key_value_states[-1][0], 1, 0, input_ids.offsets().diff(), layout=torch.jagged),
+            torch.nested.narrow(past_key_value_states[-1][1], 1, 0, input_ids.offsets().diff(), layout=torch.jagged)
+        ])
+
+    kwargs["mask"] = create_nested_block_mask(causal_mask, input_ids.size(0), model.config.nheads, q_nt=input_ids, kv_nt=kwargs["past_key_value_states"][0][0], _compile=True)
     kwargs["use_cache"] = use_cache
 
     prompt_length = input_ids.shape[1]
@@ -237,25 +267,25 @@ def generate(
             logits, past_key_value_states = output
             # TODO: this should go away when reduce-overhead issues are fixed, or
             # maybe could be moved into model code to be more portable.
-            kwargs["past_key_value_states"] = past_key_value_states
-            if contiguous_cache:
-                kwargs["past_key_value_states"] = _make_cache_contiguous(
-                    kwargs["past_key_value_states"]
-                )
-            if torch._dynamo.config.dynamic_shapes:
-                kwargs["past_key_value_states"] = _make_cache_dynamic(
-                    kwargs["past_key_value_states"]
-                )
-            # Grow kv cache outside compiled region
-            if kwargs["past_key_value_states"][0][0].is_nested:
-                example_kv_cache = kwargs["past_key_value_states"][0][0]
-                kv_cache_size = example_kv_cache.size()
-                dummy_tensor = torch.zeros(kv_cache_size[0], 1, *kv_cache_size[2:], device=example_kv_cache.device, dtype=example_kv_cache.dtype)
-                for i, layer in enumerate(past_key_value_states):
-                    past_key_value_states[i] = (
-                        torch.cat([layer[0], dummy_tensor], dim=1),
-                        torch.cat([layer[1], dummy_tensor], dim=1)
-                    )
+            # kwargs["past_key_value_states"] = past_key_value_states
+            # if contiguous_cache:
+            #     kwargs["past_key_value_states"] = _make_cache_contiguous(
+            #         kwargs["past_key_value_states"]
+            #     )
+            # if torch._dynamo.config.dynamic_shapes:
+            #     kwargs["past_key_value_states"] = _make_cache_dynamic(
+            #         kwargs["past_key_value_states"]
+            #     )
+            # # Grow kv cache outside compiled region
+            # if kwargs["past_key_value_states"][0][0].is_nested:
+            #     example_kv_cache = kwargs["past_key_value_states"][0][0]
+            #     kv_cache_size = example_kv_cache.size()
+            #     dummy_tensor = torch.zeros(kv_cache_size[0], 1, *kv_cache_size[2:], device=example_kv_cache.device, dtype=example_kv_cache.dtype)
+            #     for i, layer in enumerate(past_key_value_states):
+            #         past_key_value_states[i] = (
+            #             torch.cat([layer[0], dummy_tensor], dim=1),
+            #             torch.cat([layer[1], dummy_tensor], dim=1)
+            #         )
 
         else:
             logits = output

@@ -6,6 +6,7 @@ import torch.distributed
 from torch import Tensor, nn
 from torch.distributed.distributed_c10d import ProcessGroup
 from torch.nn import functional as F
+from torch.nn.attention.flex_attention import flex_attention
 
 from fms import distributed
 from fms.distributed.tensorparallel import (
@@ -391,12 +392,24 @@ class MultiHeadAttention(nn.Module):
                 and past_key_value_state[0].numel() > 0
             ):
                 if is_self:
-                    indices = [
-                        torch.arange(0, past_key_value_state[0].size(0), device=q.device, dtype=torch.int64),
-                        -torch.ones(past_key_value_state[0].size(0), device=q.device, dtype=torch.int64)
-                    ]
-                    past_key_value_state[0].index_put_(indices, keys.squeeze())
-                    past_key_value_state[1].index_put_(indices, values.squeeze())
+                    if keys.is_nested and values.is_nested:
+                        batch_indices = torch.cat([torch.ones((1,), dtype=torch.int64, device=position_ids.device), position_ids.values().diff()], dim=0)
+                        batch_indices.sub_(1).ne_(0).cumsum_(0)
+                        print(batch_indices, batch_indices.shape, position_ids.values(), position_ids.values().shape)
+                        indices = [
+                            batch_indices,
+                            position_ids.values()
+                        ]
+                        print(keys.values().shape)
+                        past_key_value_state[0].index_put_(indices, keys.values())
+                        past_key_value_state[1].index_put_(indices, values.values())
+                    else:
+                        indices = [
+                            torch.arange(0, past_key_value_state[0].size(0), device=q.device, dtype=torch.int64),
+                            -torch.ones(past_key_value_state[0].size(0), device=q.device, dtype=torch.int64)
+                        ]
+                        past_key_value_state[0].index_put_(indices, keys.squeeze())
+                        past_key_value_state[1].index_put_(indices, values.squeeze())
                     # keys = torch.cat([past_key_value_state[0], keys], dim=1)
                     # values = torch.cat([past_key_value_state[1], values], dim=1)
 
@@ -413,23 +426,23 @@ class MultiHeadAttention(nn.Module):
             else:
                 attn_mask = mask
 
-            # Expand kv so black-box attn will work
-            expansion = self.nheads // self.kvheads
-            # k/v: b h l d
-            if expansion != 1:
-                keys_e = keys.unsqueeze(3).expand(-1, -1, -1, expansion, -1).flatten(2, 3)
-                values_e = (
-                    values.unsqueeze(3).expand(-1, -1, -1, expansion, -1).flatten(2, 3)
-                )
-            else:
-                keys_e = keys
-                values_e = values
+            # # Expand kv so black-box attn will work
+            # expansion = self.nheads // self.kvheads
+            # # k/v: b h l d
+            # if expansion != 1:
+            #     keys_e = keys.unsqueeze(3).expand(-1, -1, -1, expansion, -1).flatten(2, 3)
+            #     values_e = (
+            #         values.unsqueeze(3).expand(-1, -1, -1, expansion, -1).flatten(2, 3)
+            #     )
+            # else:
+            #     keys_e = keys
+            #     values_e = values
 
             if not queries.is_nested:
                 queries = torch.nested.nested_tensor_from_jagged(queries.view(-1, *queries.shape[2:]), torch.arange(0, queries.size(0)+1, device=q.device)*queries.size(1), min_seqlen=1, max_seqlen=1)
             queries = queries.transpose(2, 1)  # / (self.emb_kq_per_head**(1/4))
-            keys_e = keys_e.transpose(2, 1)  # / (self.emb_kq_per_head**(1/4))
-            values_e = values_e.transpose(2, 1)  # compatible with QK.T
+            keys = keys.transpose(2, 1)  # / (self.emb_kq_per_head**(1/4))
+            values = values.transpose(2, 1)  # compatible with QK.T
         else:
             queries = queries.transpose(2, 1)  # / (self.emb_kq_per_head**(1/4))
             keys = keys.transpose(2, 1)  # / (self.emb_kq_per_head**(1/4))
@@ -462,17 +475,17 @@ class MultiHeadAttention(nn.Module):
             else:
                 attn_mask = mask
 
-            # Expand kv so black-box attn will work
-            expansion = self.nheads // self.kvheads
-            # k/v: b h l d
-            if expansion != 1:
-                keys_e = keys.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
-                values_e = (
-                    values.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
-                )
-            else:
-                keys_e = keys
-                values_e = values
+            # # Expand kv so black-box attn will work
+            # expansion = self.nheads // self.kvheads
+            # # k/v: b h l d
+            # if expansion != 1:
+            #     keys_e = keys.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
+            #     values_e = (
+            #         values.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
+            #     )
+            # else:
+            #     keys_e = keys
+            #     values_e = values
 
         if attn_algorithm:
             # Pick which fused attn kernels will run.
@@ -484,17 +497,16 @@ class MultiHeadAttention(nn.Module):
             torch.backends.cuda.enable_mem_efficient_sdp(use_mem_efficient)
             torch.backends.cuda.enable_math_sdp(use_math)
 
-        if attn_mask is not None and attn_mask.dtype != torch.bool:
-            attn_mask = attn_mask.to(dtype=queries.dtype)
+        # if attn_mask is not None and attn_mask.dtype != torch.bool:
+        #     attn_mask = attn_mask.to(dtype=queries.dtype)
 
-        attn = F.scaled_dot_product_attention(
+        attn = flex_attention(
             queries,
-            keys_e,
-            values_e,
-            attn_mask=attn_mask,
-            dropout_p=self.p_dropout if self.training else 0.0,
-            is_causal=is_causal_mask,
+            keys,
+            values,
+            block_mask=mask,
             scale=self.scale_factor,
+            enable_gqa=True,
         )
 
         if attn_algorithm:
