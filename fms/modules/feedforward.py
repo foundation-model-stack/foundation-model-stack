@@ -141,7 +141,7 @@ class TPFeedForwardBlock(FeedForwardBlock, TPModule):
             use_bias,
             linear_config,
         )
-        self.setup_tp(rank, world_size, group)
+        self.setup_tp(rank, group)
 
         # linear_type must handle module_name = None to support TP of FNN
         self.linear_type = get_linear_type(self.linear_config)
@@ -374,7 +374,7 @@ class TPGatedLinearUnit(GatedLinearUnit, TPModule):
             fused,
             linear_config,
         )
-        self.setup_tp(rank, world_size, group)
+        self.setup_tp(rank, group)
 
         # linear_type must handle module_name = None to support TP of GLU
         self.linear_type = get_linear_type(self.linear_config)
@@ -574,7 +574,7 @@ class TPConditionalFeedForward(ConditionalFeedForward, TPModule):
             dim,
             intermediate_size // world_size,
         )
-        self.setup_tp(rank, world_size, group)
+        self.setup_tp(rank, group)
 
     def load_weights(
         self,

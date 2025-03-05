@@ -105,62 +105,11 @@ def moe_mm(
     topk: int,
     padding_size: int,
 ) -> torch.Tensor:
-    from fms.triton.moe_kernel import (
-        BEST_MOE_CONFIGS,
-        _autotune,
-        _create_best_configs_key,
-        _load_best_configs,
-        _save_best_configs,
-        invoke_fused_moe_kernel,
-    )
+    from fms.triton.moe_kernel import invoke_fused_moe_kernel
 
     M, A = token_expert_mapping.shape
     E, N, _ = moe_matrix.shape
     output = torch.zeros((M, A, N), device=input.device, dtype=input.dtype)
-
-    if BEST_MOE_CONFIGS is None:
-        BEST_MOE_CONFIGS = _load_best_configs()
-    # Loading must have not been successful. Let's create a new dictionary.
-    if BEST_MOE_CONFIGS is None:
-        BEST_MOE_CONFIGS = {}
-    key = _create_best_configs_key(input, moe_matrix, token_expert_mapping)
-    if key not in BEST_MOE_CONFIGS:
-        import functools
-
-        # TODO: Add more configs?
-        configs = [
-            {
-                "block_m": 64,
-                "block_n": 64,
-                "block_k": 32,
-            },
-            {
-                "block_m": 16,
-                "block_n": 32,
-                "block_k": 64,
-            },
-        ]
-
-        configs = [config for config in configs if config["block_m"] == padding_size]
-        best, best_config = _autotune(
-            configs,
-            functools.partial(
-                invoke_fused_moe_kernel,
-                input,
-                moe_matrix,
-                output,
-                token_expert_mapping,
-                padded_token_ids_per_block,
-                expert_block_mapping,
-                total_padded_tokens,
-                topk,
-            ),
-        )
-        BEST_MOE_CONFIGS[key] = best_config
-        _save_best_configs(BEST_MOE_CONFIGS)
-    best_config = BEST_MOE_CONFIGS[key]
-    if best_config is None:
-        return torch.tensor([])
 
     invoke_fused_moe_kernel(
         input,
@@ -171,10 +120,44 @@ def moe_mm(
         expert_block_mapping,
         total_padded_tokens,
         topk,
-        best_config,
+        padding_size,
     )
 
     return output
+
+
+# TODO: Implement for real
+def moe_mm_backward(ctx, grad_output):
+    (input_,) = ctx.saved_tensors
+    # input, moe_matrix, token_expert_mapping, padded_token_ids_per_block, expert_block_mapping, total_padded_tokens
+    return (
+        input_,  # input
+        None,  # moe_matrix
+        None,  # token_expert_mapping
+        None,  # padded_token_ids_per_block
+        None,  # expert_block_mapping
+        None,  # total_padded_tokens
+        None,  # topk
+        None,  # padding_size
+    )
+
+
+def moe_mm_setup_context(ctx, inputs, output):
+    (
+        input_,
+        moe_matrix,
+        token_expert_mapping,
+        padded_token_ids_per_block,
+        expert_block_mapping,
+        total_padded_tokens,
+        topk,
+        padding_size,
+    ) = inputs
+    ctx.save_for_backward(input_)
+    pass
+
+
+moe_mm.register_autograd(moe_mm_backward, setup_context=moe_mm_setup_context)
 
 
 @moe_mm.register_kernel("cpu")

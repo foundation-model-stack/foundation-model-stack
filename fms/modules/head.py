@@ -131,7 +131,7 @@ class TPLinearClassificationHead(LinearClassificationHead, TPModule):
             device=device,
             dtype=dtype,
         )
-        self.setup_tp(rank, world_size, group)
+        self.setup_tp(rank, group)
 
     @staticmethod
     def import_module(

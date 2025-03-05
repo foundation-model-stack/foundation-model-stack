@@ -34,17 +34,15 @@ class TPModule(nn.Module, metaclass=ABCMeta):
     world_size: int
     group: dist.ProcessGroup
 
-    def setup_tp(
-        self, rank: int, world_size: int, group: Optional[dist.ProcessGroup]
-    ) -> None:
+    def setup_tp(self, rank: int, group: Optional[dist.ProcessGroup]) -> None:
         self.rank = rank
-        self.world_size = world_size
         if group is not None:
             self.group = group
         elif dist.group.WORLD is not None:
             self.group = dist.group.WORLD
         else:
             raise ValueError("No process group defined!")
+        self.world_size = self.group.size()
 
     def __get_tp_slices(
         self,

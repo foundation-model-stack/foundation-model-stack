@@ -2,7 +2,10 @@ import sys
 
 
 def test_triton_import():
+    import fms.modules.feedforward  # noqa: F401
+
     fms_triton_modules = [k for k in sys.modules.keys() if "fms.triton." in k]
+    print([k for k in sys.modules.keys()])
 
     # The only fms.triton module allowed to be loaded in general should be pytorch ops
     assert "fms.triton.pytorch_ops" in fms_triton_modules

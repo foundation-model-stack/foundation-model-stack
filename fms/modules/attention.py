@@ -526,7 +526,7 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
         )
         self.pre_tp_nheads = nheads
         self.pre_tp_kvheads = kvheads
-        self.setup_tp(rank, world_size, group)
+        self.setup_tp(rank, group)
 
         # linear_type must handle module_name = None to support TP of MHA
         self.linear_type = get_linear_type(self.linear_config)

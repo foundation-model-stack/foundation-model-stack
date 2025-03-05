@@ -196,7 +196,7 @@ class TPWordEmbedding(WordEmbedding, TPModule):
             )
             if tie_weights:
                 self.head.weight = self.emb.weight
-        self.setup_tp(rank, world_size, group)
+        self.setup_tp(rank, group)
 
     @staticmethod
     def import_module(we: WordEmbedding, group: ProcessGroup) -> "TPWordEmbedding":
@@ -293,7 +293,7 @@ class TPEmbedding(nn.Embedding, TPModule):
         nn.Embedding.__init__(
             self, num_embeddings, embedding_dim // world_size, **kwargs
         )
-        self.setup_tp(rank, world_size, group)
+        self.setup_tp(rank, group)
 
     @staticmethod
     def import_module(e: nn.Embedding, group: ProcessGroup) -> "TPEmbedding":
