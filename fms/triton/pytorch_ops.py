@@ -160,7 +160,7 @@ def moe_mm_setup_context(ctx, inputs, output):
 moe_mm.register_autograd(moe_mm_backward, setup_context=moe_mm_setup_context)
 
 
-@moe_mm.register_kernel("cpu")
+@moe_mm.register_kernel(["cpu", "mps"])
 def moe_mm_cpu(
     input: torch.Tensor,
     moe_matrix: torch.Tensor,
