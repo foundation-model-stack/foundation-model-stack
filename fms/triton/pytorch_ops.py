@@ -1,7 +1,7 @@
 from typing import Tuple
 
 import torch
-from torch.library import triton_op
+from torch.library import custom_op
 
 
 def moe_align_block_size(
@@ -94,7 +94,7 @@ def moe_align_block_size(
     return padded_token_ids_per_block, expert_block_mapping, total_padded_tokens
 
 
-@triton_op("moe::moe_mm", mutates_args={})
+@custom_op("moe::moe_mm", mutates_args={}, device_types="cuda")
 def moe_mm(
     input: torch.Tensor,
     moe_matrix: torch.Tensor,
@@ -124,6 +124,22 @@ def moe_mm(
     )
 
     return output
+
+
+@moe_mm.register_fake
+def moe_mm_meta(
+    input: torch.Tensor,
+    moe_matrix: torch.Tensor,
+    token_expert_mapping: torch.Tensor,
+    padded_token_ids_per_block: torch.Tensor,
+    expert_block_mapping: torch.Tensor,
+    total_padded_tokens: torch.Tensor,
+    topk: int,
+    padding_size,
+):
+    M, A = token_expert_mapping.shape
+    _, N, _ = moe_matrix.shape
+    return torch.empty((M, A, N), device=input.device, dtype=input.dtype)
 
 
 # TODO: Implement for real
