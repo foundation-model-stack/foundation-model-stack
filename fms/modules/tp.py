@@ -41,8 +41,10 @@ class TPModule(nn.Module, metaclass=ABCMeta):
         self.world_size = world_size
         if group is not None:
             self.group = group
-        else:
+        elif dist.group.WORLD is not None:
             self.group = dist.group.WORLD
+        else:
+            raise ValueError("No process group defined!")
 
     def __get_tp_slices(
         self,
