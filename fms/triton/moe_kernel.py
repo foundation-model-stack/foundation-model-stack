@@ -2,6 +2,7 @@ import pathlib
 from typing import Any, Optional
 
 import torch
+from torch.library import wrap_triton
 import triton  # type: ignore[import-untyped]
 import triton.language as tl  # type: ignore[import-untyped]
 
@@ -146,7 +147,7 @@ def invoke_fused_moe_kernel(
     compute_type = tl.float16 if A.dtype == torch.float16 else tl.bfloat16
     if A.device.type == "cpu":
         compute_type = tl.float32
-    fused_moe_kernel_v3[grid](
+    wrap_triton(fused_moe_kernel_v3)[grid](
         A,
         B,
         C,

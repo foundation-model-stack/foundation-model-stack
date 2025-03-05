@@ -196,7 +196,7 @@ class TPWordEmbedding(WordEmbedding, TPModule):
             )
             if tie_weights:
                 self.head.weight = self.emb.weight
-        self.setup_tp(rank, world_size)
+        self.setup_tp(rank, world_size, group)
 
     @staticmethod
     def import_module(we: WordEmbedding, group: ProcessGroup) -> "TPWordEmbedding":
@@ -253,11 +253,11 @@ class TPWordEmbedding(WordEmbedding, TPModule):
     def forward(self, inp, reverse=False):
         # If reverse is False, compute input embeddings. If reverse is True, compute output logits.
         # vocab_idx: b n d if reverse, else b n
-        inp_par = copy_to_tensor_model_parallel_region(inp)
+        inp_par = copy_to_tensor_model_parallel_region(inp, self.group)
         out_par = WordEmbedding.forward(self, inp_par, reverse=reverse)
         # with ints this wasn't `torch.compile`ing
         return all_gather_from_tensor_model_parallel_region(
-            out_par, self.rank, self.world_size
+            out_par, self.rank, self.group
         )
 
 
@@ -293,7 +293,7 @@ class TPEmbedding(nn.Embedding, TPModule):
         nn.Embedding.__init__(
             self, num_embeddings, embedding_dim // world_size, **kwargs
         )
-        self.setup_tp(rank, world_size)
+        self.setup_tp(rank, world_size, group)
 
     @staticmethod
     def import_module(e: nn.Embedding, group: ProcessGroup) -> "TPEmbedding":
@@ -330,9 +330,9 @@ class TPEmbedding(nn.Embedding, TPModule):
 
     def forward(self, inp: torch.Tensor):
         # vocab_idx: b n d if reverse, else b n
-        inp_par = copy_to_tensor_model_parallel_region(inp)
+        inp_par = copy_to_tensor_model_parallel_region(inp, self.group)
         out_par = nn.Embedding.forward(self, inp_par)
         # with ints this wasn't `torch.compile`ing
         return all_gather_from_tensor_model_parallel_region(
-            out_par, self.rank, self.world_size
+            out_par, self.rank, self.group
         )

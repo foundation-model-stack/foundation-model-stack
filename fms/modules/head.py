@@ -131,7 +131,7 @@ class TPLinearClassificationHead(LinearClassificationHead, TPModule):
             device=device,
             dtype=dtype,
         )
-        self.setup_tp(rank, world_size)
+        self.setup_tp(rank, world_size, group)
 
     @staticmethod
     def import_module(
@@ -169,9 +169,8 @@ class TPLinearClassificationHead(LinearClassificationHead, TPModule):
 
     def forward(self, inp):
         # vocab_idx: b n d if reverse, else b n
-        inp_par = copy_to_tensor_model_parallel_region(inp)
+        inp_par = copy_to_tensor_model_parallel_region(inp, self.group)
         out_par = LinearClassificationHead.forward(self, inp_par)
-        # with ints this wasn't `torch.compile`ing
-        rank = torch.tensor(self.rank)
-        world_size = torch.tensor(self.world_size)
-        return all_gather_from_tensor_model_parallel_region(out_par, rank, world_size)
+        return all_gather_from_tensor_model_parallel_region(
+            out_par, self.rank, self.group
+        )

@@ -1,6 +1,7 @@
 from typing import Tuple
 
 import torch
+from torch.library import triton_op
 
 
 def moe_align_block_size(
@@ -93,30 +94,7 @@ def moe_align_block_size(
     return padded_token_ids_per_block, expert_block_mapping, total_padded_tokens
 
 
-torch.library.define(
-    "moe::moe_mm",
-    "(Tensor input, Tensor moe_matrix, Tensor token_expert_mapping, Tensor padded_token_ids_per_block, Tensor expert_block_mapping, Tensor total_padded_tokens, int topk, int padding_size) -> Tensor",
-)
-
-
-# All that's needed for torch.compile support
-@torch.library.impl_abstract("moe::moe_mm")
-def moe_mm_meta(
-    input: torch.Tensor,
-    moe_matrix: torch.Tensor,
-    token_expert_mapping: torch.Tensor,
-    padded_token_ids_per_block: torch.Tensor,
-    expert_block_mapping: torch.Tensor,
-    total_padded_tokens: torch.Tensor,
-    topk: int,
-    padding_size,
-):
-    M, A = token_expert_mapping.shape
-    _, N, _ = moe_matrix.shape
-    return torch.empty((M, A, N), device=input.device, dtype=input.dtype)
-
-
-@torch.library.impl("moe::moe_mm", "CUDA")
+@triton_op("moe::moe_mm", mutates_args={})
 def moe_mm(
     input: torch.Tensor,
     moe_matrix: torch.Tensor,
@@ -125,8 +103,8 @@ def moe_mm(
     expert_block_mapping: torch.Tensor,
     total_padded_tokens: torch.Tensor,
     topk: int,
-    padding_size,
-):
+    padding_size: int,
+) -> torch.Tensor:
     from fms.triton.moe_kernel import (
         BEST_MOE_CONFIGS,
         _autotune,
@@ -199,7 +177,7 @@ def moe_mm(
     return output
 
 
-@torch.library.impl("moe::moe_mm", ["CPU", "MPS"])
+@moe_mm.register_kernel("cpu")
 def moe_mm_cpu(
     input: torch.Tensor,
     moe_matrix: torch.Tensor,

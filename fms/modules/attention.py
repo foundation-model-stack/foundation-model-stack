@@ -526,7 +526,7 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
         )
         self.pre_tp_nheads = nheads
         self.pre_tp_kvheads = kvheads
-        self.setup_tp(rank, world_size)
+        self.setup_tp(rank, world_size, group)
 
         # linear_type must handle module_name = None to support TP of MHA
         self.linear_type = get_linear_type(self.linear_config)
@@ -607,13 +607,13 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
         v: Optional[torch.Tensor] = None,
     ):
         if (k is None and v is None) or (k is q and v is q):
-            q_par = copy_to_tensor_model_parallel_region(q)
+            q_par = copy_to_tensor_model_parallel_region(q, self.group)
             if self.fused:
                 k_par = None
                 v_par = None
             else:
-                k_par = copy_to_tensor_model_parallel_region(k)
-                v_par = copy_to_tensor_model_parallel_region(v)
+                k_par = copy_to_tensor_model_parallel_region(k, self.group)
+                v_par = copy_to_tensor_model_parallel_region(v, self.group)
         else:
             raise ValueError(
                 "both k and v must either be given as tensors or both None"
@@ -657,8 +657,8 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
         # if use_cache=True, we return the hidden_state as well as the kv cache.
         # We only reduce the output, and keep the cache thread-local
         if use_cache:
-            out = reduce_from_tensor_model_parallel_region(out_par[0], self.world_size)
+            out = reduce_from_tensor_model_parallel_region(out_par[0], self.group)
             return out, out_par[1]
         else:
-            out = reduce_from_tensor_model_parallel_region(out_par, self.world_size)
+            out = reduce_from_tensor_model_parallel_region(out_par, self.group)
             return out

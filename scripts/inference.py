@@ -133,8 +133,6 @@ if args.deterministic:
 
 if args.distributed:
     dist.init_process_group()
-    # Fix until PT 2.3
-    torch._C._distributed_c10d._register_process_group("default", dist.group.WORLD)
 
 print("loading model")
 if args.distributed:
