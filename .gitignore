@@ -7,4 +7,6 @@ fms.egg-info
 */**/*.pyc
 .vscode
 fms.egg-info
-
+.venv
+.ruff_cache
+.mypy_cache

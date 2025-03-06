@@ -2,7 +2,6 @@ import math
 from typing import MutableMapping, Optional, Tuple
 
 import torch
-from torch import nn
 
 
 class PositionEncoder:

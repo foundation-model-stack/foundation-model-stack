@@ -157,7 +157,7 @@ def test_load():
         newsd = serialization.load_state_dict(d)
         as_loaded = models.get_model("llama", "micro", d).state_dict()
         # this style load, layer-sharded, has to stitch together the state dicts.
-        assert type(newsd) == ChainMap
+        assert type(newsd) is ChainMap
         for key in keys:
             assert key in newsd
             torch.testing.assert_close(sd[key], as_loaded[key])

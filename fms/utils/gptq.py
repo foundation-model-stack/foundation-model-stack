@@ -178,8 +178,8 @@ def shard_gptq_linear(
     # If desc_act=False, correct the g_idx
     for module_name, module_info in module_sharding_info.items():
         if not module_info.linear_module.desc_act:
-            g_idx_param = module_info.linear_module.g_idx
-            module_info.linear_module.g_idx = g_idx_param - g_idx_param.min()
+            g_idx_param = getattr(module_info.linear_module, "g_idx")
+            setattr(module_info.linear_module, "g_idx", g_idx_param - g_idx_param.min())
 
     return unused_keys
 
