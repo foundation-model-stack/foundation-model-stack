@@ -1,5 +1,4 @@
 import pytest
-import torch
 
 from fms.models.bamba import Bamba, BambaConfig, BambaHeadless
 from fms.testing._internal.model_test_suite import (

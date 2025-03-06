@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import Optional
 
 import torch
 import torch.nn as nn
@@ -229,7 +229,7 @@ class SSM(nn.Module):
         mask,
         past_key_value_state: Optional[SSMCacheUnit] = None,
         cache_position: Optional[torch.Tensor] = None,
-        **kwargs
+        **kwargs,
     ):
         batch_size, seq_len, _ = input_states.shape
         dtype = input_states.dtype
