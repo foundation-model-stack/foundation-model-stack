@@ -208,7 +208,7 @@ def stepping_adamw(
     bias_correction1 = 1 - bias_correction1_rec
     bias_correction2 = 1 - bias_correction2_rec
     step_size = lr / bias_correction1
-    bias_correction2_sqrt = bias_correction2**0.5
+    bias_correction2_sqrt = bias_correction2.sqrt()
 
     for i, param in enumerate(params):
         grad = grads[i] if not maximize else -grads[i]
