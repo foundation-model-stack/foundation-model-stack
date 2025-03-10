@@ -1,22 +1,15 @@
 # mypy: allow-untyped-defs
-from typing import cast, Optional, Union
+from typing import Optional, Union
 
 import torch
 from torch import Tensor
 
 from torch.optim.optimizer import (
-    _device_dtype_check_for_fused,
-    _get_capturable_supported_devices,
     _get_scalar_dtype,
-    _get_value,
     _use_grad_for_differentiable,
-    DeviceDtypeDict,
     Optimizer,
     ParamsT,
 )
-
-
-__all__ = ["Adam", "adam"]
 
 
 class SteppingAdamW(Optimizer):
@@ -82,6 +75,7 @@ class SteppingAdamW(Optimizer):
                     step_val = float(p_state["step"])
                     p_state["step"] = torch.tensor(step_val, dtype=_get_scalar_dtype())
 
+    @torch._dynamo.disable
     def _init_group(
         self,
         group,
@@ -205,7 +199,7 @@ def stepping_adamw(
     # Note: ensure type declaration is under conditional check for isinstance
     # or else torchscript will get cranky about the DeviceDict type.
     if isinstance(beta1, Tensor):
-        beta1_dict: Optional[DeviceDtypeDict] = {(beta1.device, beta1.dtype): beta1}
+        beta1_dict = {(beta1.device, beta1.dtype): beta1}
     else:
         beta1_dict = None
 
