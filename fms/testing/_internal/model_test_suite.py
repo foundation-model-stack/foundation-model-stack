@@ -112,13 +112,17 @@ class SignatureFixtureMixin:
         import inspect
 
         try:
+            extra_model_output_name = os.environ.get('FMS_MODEL_CONSISTENCY_MODEL_NAME', None)
+            file_name = f"{self.__class__.__module__}.{self.__class__.__name__}"
+            if extra_model_output_name:
+                file_name = f"{file_name}.{extra_model_output_name}"
             config_file = open(
                 os.path.join(
                     os.path.dirname(inspect.getfile(self.__class__)),
                     "..",
                     "resources",
                     "expectations",
-                    f"{self.__class__.__module__}.{self.__class__.__name__}.test_model_output",
+                    f"{file_name}.test_model_output",
                 )
             )
             line = config_file.readline()
@@ -254,13 +258,18 @@ class ModelConsistencyTestSuite(ModelFixtureMixin, SignatureFixtureMixin):
 
         if capture_expectation:
             import inspect
+            extra_model_output_name = os.environ.get('FMS_MODEL_CONSISTENCY_MODEL_NAME', None)
+
+            file_name = f"{self.__class__.__module__}.{self.__class__.__name__}"
+            if extra_model_output_name:
+                file_name = f"{file_name}.{extra_model_output_name}"
 
             to_write = os.path.join(
                 os.path.dirname(inspect.getfile(self.__class__)),
                 "..",
                 "resources",
                 "expectations",
-                f"{self.__class__.__module__}.{self.__class__.__name__}.test_model_output",
+                f"{file_name}.test_model_output",
             )
             with open(to_write, "w") as signature_file:
                 signature_file.write(",".join(map(str, actual)))
@@ -285,12 +294,17 @@ class ModelConsistencyTestSuite(ModelFixtureMixin, SignatureFixtureMixin):
 
         actual_keys = list(sorted(model.state_dict().keys()))
 
+        file_name = f"{self.__class__.__module__}.{self.__class__.__name__}"
+        extra_model_output_name = os.environ.get('FMS_MODEL_CONSISTENCY_MODEL_NAME', None)
+        if extra_model_output_name:
+            file_name = f"{file_name}.{extra_model_output_name}"
+
         weight_keys_path = os.path.join(
             os.path.dirname(inspect.getfile(self.__class__)),
             "..",
             "resources",
             "expectations",
-            f"{self.__class__.__module__}.{self.__class__.__name__}.test_model_weight_keys",
+            f"{file_name}.test_model_weight_keys",
         )
 
         if capture_expectation:
