@@ -126,8 +126,8 @@ class RotaryEmbedding(PositionEncoder):
             fraction of head dimension to apply rope to
         """
         super(RotaryEmbedding, self).__init__()
+        self.partial_rope = partial_rope
         self.dim = int(partial_rope * dim)
-        self.is_partial_rope = self.dim != dim
         self.ratio = ratio
         self.cached_freqs: MutableMapping[int, MutableMapping[int, torch.Tensor]] = {}
         self.max_seq_len_cached: MutableMapping[int, int] = {}
@@ -250,7 +250,7 @@ class RotaryEmbedding(PositionEncoder):
             if use_cache and past_kv_state is not None and past_kv_state[0].numel() > 0:
                 position_ids += past_kv_state[0].size(2)
 
-        if self.is_partial_rope:
+        if self.partial_rope != 1.0:
             q_rope = q[..., : self.dim]
             k_rope = k[..., : self.dim]
         else:
@@ -278,7 +278,7 @@ class RotaryEmbedding(PositionEncoder):
             .flatten(3)
         ).type_as(k)
 
-        if self.is_partial_rope:
+        if self.partial_rope != 1.0:
             q_out = torch.cat([q_out.view_as(q_rope), q[..., self.dim :]], dim=-1)
             k_out = torch.cat([k_out.view_as(k_rope), k[..., self.dim :]], dim=-1)
         else:

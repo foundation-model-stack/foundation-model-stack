@@ -273,9 +273,10 @@ class SSM(nn.Module):
                 hidden_states_B_C = hidden_states_B_C + self.conv1d.bias
             hidden_states_B_C = self.act(hidden_states_B_C)
         else:
+            hidden_states_B_C_transposed = hidden_states_B_C.transpose(1, 2)
+
             # Init cache
             if past_key_value_state is not None:
-                hidden_states_B_C_transposed = hidden_states_B_C.transpose(1, 2)
                 conv_states = nn.functional.pad(
                     hidden_states_B_C_transposed,
                     (self.conv_kernel_size - hidden_states_B_C_transposed.shape[-1], 0),
@@ -283,9 +284,7 @@ class SSM(nn.Module):
                 past_key_value_state.conv_state.copy_(conv_states)
 
             hidden_states_B_C = self.act(
-                self.conv1d(hidden_states_B_C.transpose(1, 2))[..., :seq_len].transpose(
-                    1, 2
-                )
+                self.conv1d(hidden_states_B_C_transposed)[..., :seq_len].transpose(1, 2)
             )
 
         hidden_states_B_C = apply_mask_to_padding_states(hidden_states_B_C, mask)
