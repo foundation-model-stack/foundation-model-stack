@@ -288,7 +288,8 @@ class GatedLinearUnit(nn.Module):
     def forward(self, x):
         if self.fused:
             out_fused = self.wg1_fused(x)
-            wg, w1 = torch.split(out_fused, [self.hidden_dim, self.hidden_dim], dim=2)
+            world_size = torch.distributed.get_world_size()
+            wg, w1 = torch.split(out_fused, [self.hidden_dim//world_size, self.hidden_dim//world_size], dim=2)
             out = self.a(wg) * w1
         else:
             out = self.a(self.wg(x)) * self.w1(x)
