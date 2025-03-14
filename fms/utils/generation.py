@@ -10,7 +10,9 @@ logger = logging.getLogger(__name__)
 
 
 def pad_input_ids(
-    input_ids_list: List[torch.Tensor], min_pad_length: int = 0
+    input_ids_list: List[torch.Tensor],
+    min_pad_length: int = 0,
+    mask_dtype: Optional[Union[torch.dtype | str]] = None,
 ) -> Tuple[torch.Tensor, MutableMapping[str, Any]]:
     """
     Convert a list of Tensors to a rectangular tensor. Return extra padding kwargs for the position_ids and mask, since
@@ -23,6 +25,8 @@ def pad_input_ids(
     min_pad_length: int
         pad to a min length provided. If the min_pad_length is less than the largest input_ids in the input_ids_list,
         padding will be determined based on the largest length input_ids.
+    mask_dtype: Optional[Union[torch.dtype | str]]
+        optionally set a mask dtype. By default, the mask will be set to the default tensor type
 
     Returns
     -------
@@ -61,7 +65,18 @@ def pad_input_ids(
     mask = torch.stack(mask_list)
     # this is a causal mask for generation
     mask = (mask.unsqueeze(-1) == mask.unsqueeze(-2)).tril()
-    mask = torch.where(mask.logical_not(), -torch.inf, 0.0)
+
+    if mask_dtype is None:
+        mask_dtype = torch.get_default_dtype()
+    else:
+        mask_dtype = (
+            mask_dtype
+            if isinstance(mask_dtype, torch.dtype)
+            else getattr(torch, mask_dtype)
+        )
+
+    if mask_dtype != torch.bool:
+        mask = torch.where(mask.logical_not(), -torch.inf, 0.0)
     padding_kwargs["mask"] = mask
 
     position_ids = torch.stack(position_ids_list)
@@ -79,11 +94,14 @@ def __update_padding_kwargs(
     if mask is not None:
         # get the last row of the 3d mask
         mask = mask[:, -1:, :]
+
+        mask_pad_fn = torch.ones if mask.dtype == torch.bool else torch.zeros
+
         # extend the mask one slot
         mask = torch.cat(
             (
                 mask,
-                torch.zeros(mask.size(0), 1, 1, device=mask.device),
+                mask_pad_fn(mask.size(0), 1, 1, dtype=mask.dtype, device=mask.device),
             ),
             dim=2,
         )
