@@ -112,23 +112,33 @@ class SignatureFixtureMixin:
         """include this fixture to get a models signature (defaults to what is in tests/resources/expectations)"""
         return self._signature(model_id)
 
-    def _signature(self, model_id: Optional[str]) -> List[float]:
+    def _get_expectation_path(self, test_name, model_id):
+        """
+        get the path to the expectation file for a given test case
+        """
         import inspect
 
+        file_name = f"{self.__class__.__module__}.{self.__class__.__name__}"
+
+        # adding model_id to the file name if a class using this mixin includes it
+        if model_id is not None:
+            file_name = f"{file_name}.{os.path.basename(model_id)}"
+
+        expectation_file_path = os.path.join(
+            os.path.dirname(inspect.getfile(self.__class__)),
+            "..",
+            "resources",
+            "expectations",
+            f"{file_name}.{test_name}",
+        )
+        return expectation_file_path
+
+    def _signature(self, model_id: Optional[str]) -> List[float]:
         try:
-            file_name = f"{self.__class__.__module__}.{self.__class__.__name__}"
-            if model_id is not None:
-                file_name = f"{file_name}.{os.path.basename(model_id)}"
-            config_file = open(
-                os.path.join(
-                    os.path.dirname(inspect.getfile(self.__class__)),
-                    "..",
-                    "resources",
-                    "expectations",
-                    f"{file_name}.test_model_output",
-                )
+            expectation_file = open(
+                self._get_expectation_path("test_model_output", model_id)
             )
-            line = config_file.readline()
+            line = expectation_file.readline()
             return [float(v) for v in line.split(",")]
         except FileNotFoundError:
             print(
@@ -260,20 +270,10 @@ class ModelConsistencyTestSuite(ModelFixtureMixin, SignatureFixtureMixin):
         )
 
         if capture_expectation:
-            import inspect
-
-            file_name = f"{self.__class__.__module__}.{self.__class__.__name__}"
-            if model_id is not None:
-                file_name = f"{file_name}.{os.path.basename(model_id)}"
-
-            to_write = os.path.join(
-                os.path.dirname(inspect.getfile(self.__class__)),
-                "..",
-                "resources",
-                "expectations",
-                f"{file_name}.test_model_output",
+            expectation_file_path = self._get_expectation_path(
+                "test_model_output", model_id
             )
-            with open(to_write, "w") as signature_file:
+            with open(expectation_file_path, "w") as signature_file:
                 signature_file.write(",".join(map(str, actual)))
             signature_file.close()
             pytest.fail(
@@ -292,25 +292,14 @@ class ModelConsistencyTestSuite(ModelFixtureMixin, SignatureFixtureMixin):
         )
 
     def test_model_weight_keys(self, model, model_id, capture_expectation):
-        import inspect
-
         actual_keys = list(sorted(model.state_dict().keys()))
 
-        file_name = f"{self.__class__.__module__}.{self.__class__.__name__}"
-
-        if model_id is not None:
-            file_name = f"{file_name}.{os.path.basename(model_id)}"
-
-        weight_keys_path = os.path.join(
-            os.path.dirname(inspect.getfile(self.__class__)),
-            "..",
-            "resources",
-            "expectations",
-            f"{file_name}.test_model_weight_keys",
+        expectation_file_path = self._get_expectation_path(
+            "test_model_weight_keys", model_id
         )
 
         if capture_expectation:
-            with open(weight_keys_path, "w") as weight_keys_file:
+            with open(expectation_file_path, "w") as weight_keys_file:
                 weight_keys_file.write(",".join(map(str, actual_keys)))
             weight_keys_file.close()
             pytest.fail(
@@ -318,7 +307,7 @@ class ModelConsistencyTestSuite(ModelFixtureMixin, SignatureFixtureMixin):
             )
 
         try:
-            weight_keys_file = open(weight_keys_path)
+            weight_keys_file = open(expectation_file_path)
             expected_keys = [k for k in weight_keys_file.readline().split(",")]
             assert actual_keys == expected_keys, _FAILED_MODEL_WEIGHTS_KEYS_MSG
         except OSError:
