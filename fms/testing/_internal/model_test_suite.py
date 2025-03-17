@@ -104,18 +104,21 @@ class SignatureFixtureMixin:
     """Include this mixin if you would like to get the signature fixture for a given model test"""
 
     @pytest.fixture(scope="class", autouse=True)
-    def signature(self, **kwargs) -> List[float]:
-        """include this fixture to get a models signature (defaults to what is in tests/resources/expectations)"""
-        return self._signature()
+    def model_id(self) -> Optional[str]:
+        return None
 
-    def _signature(self) -> List[float]:
+    @pytest.fixture(scope="class", autouse=True)
+    def signature(self, model_id: Optional[str], **kwargs) -> List[float]:
+        """include this fixture to get a models signature (defaults to what is in tests/resources/expectations)"""
+        return self._signature(model_id)
+
+    def _signature(self, model_id: Optional[str]) -> List[float]:
         import inspect
 
         try:
-            extra_model_output_name = os.environ.get('FMS_MODEL_CONSISTENCY_MODEL_NAME', None)
             file_name = f"{self.__class__.__module__}.{self.__class__.__name__}"
-            if extra_model_output_name:
-                file_name = f"{file_name}.{extra_model_output_name}"
+            if model_id is not None:
+                file_name = f"{file_name}.{os.path.basename(model_id)}"
             config_file = open(
                 os.path.join(
                     os.path.dirname(inspect.getfile(self.__class__)),
@@ -247,7 +250,7 @@ class ModelConsistencyTestSuite(ModelFixtureMixin, SignatureFixtureMixin):
         """
         pass
 
-    def test_model_output(self, model, signature, capture_expectation):
+    def test_model_output(self, model, signature, model_id, capture_expectation):
         """test consistency of model output with signature"""
 
         actual = get_signature(
@@ -258,11 +261,10 @@ class ModelConsistencyTestSuite(ModelFixtureMixin, SignatureFixtureMixin):
 
         if capture_expectation:
             import inspect
-            extra_model_output_name = os.environ.get('FMS_MODEL_CONSISTENCY_MODEL_NAME', None)
 
             file_name = f"{self.__class__.__module__}.{self.__class__.__name__}"
-            if extra_model_output_name:
-                file_name = f"{file_name}.{extra_model_output_name}"
+            if model_id is not None:
+                file_name = f"{file_name}.{os.path.basename(model_id)}"
 
             to_write = os.path.join(
                 os.path.dirname(inspect.getfile(self.__class__)),
@@ -289,15 +291,15 @@ class ModelConsistencyTestSuite(ModelFixtureMixin, SignatureFixtureMixin):
             assertion_msg,
         )
 
-    def test_model_weight_keys(self, model, capture_expectation):
+    def test_model_weight_keys(self, model, model_id, capture_expectation):
         import inspect
 
         actual_keys = list(sorted(model.state_dict().keys()))
 
         file_name = f"{self.__class__.__module__}.{self.__class__.__name__}"
-        extra_model_output_name = os.environ.get('FMS_MODEL_CONSISTENCY_MODEL_NAME', None)
-        if extra_model_output_name:
-            file_name = f"{file_name}.{extra_model_output_name}"
+
+        if model_id is not None:
+            file_name = f"{file_name}.{os.path.basename(model_id)}"
 
         weight_keys_path = os.path.join(
             os.path.dirname(inspect.getfile(self.__class__)),
