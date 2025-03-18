@@ -1,6 +1,6 @@
 import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, List, Mapping, Optional, Tuple
 
 import torch
@@ -50,7 +50,7 @@ class LLaMAConfig(ModelConfig):
     mlp_bias: bool = False
     tie_heads: bool = False
     rope_theta: float = 10_000.0
-    rope_scaling: dict = {}
+    rope_scaling: dict = field(default_factory=lambda: {})
     linear_config: Optional[Mapping[str, Any]] = None
     fused_weights: bool = True
 
