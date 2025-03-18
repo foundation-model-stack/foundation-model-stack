@@ -217,7 +217,7 @@ class LLaMA31Fixtures(ModelFixtureMixin):
             multiple_of=2,
             activation_fn="swish",
             p_dropout=0.0,
-            max_expected_seq_len=8192,
+            max_expected_seq_len=131072,
             rope_theta=500000.0,
             rope_scaling={
                 "factor": 8.0,
