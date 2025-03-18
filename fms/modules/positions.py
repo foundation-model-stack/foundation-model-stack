@@ -1,3 +1,4 @@
+import copy
 import math
 from typing import MutableMapping, Optional, Tuple
 
@@ -131,7 +132,7 @@ class RotaryEmbedding(PositionEncoder):
         self.partial_rope = partial_rope
         self.dim = int(partial_rope * dim)
         self.ratio = ratio
-        self.scaling = scaling
+        self.scaling = copy.deepcopy(scaling)
         if "rope_type" not in self.scaling:
             self.scaling["rope_type"] = "regular"
         self.cached_freqs: MutableMapping[int, MutableMapping[int, torch.Tensor]] = {}
