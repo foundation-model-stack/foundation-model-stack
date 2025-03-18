@@ -76,7 +76,7 @@ class LLaMA2HFFixtures(ModelFixtureMixin, HFConfigFixtureMixin, HFModelFixtureMi
         alpha = rot_emb._alpha(max_seq_len)
         ratio = rot_emb.ratio
         dim = rot_emb.dim
-        if rot_emb.ntk_scaling:
+        if rot_emb.scaling["rope_type"] == "ntk":
             ratio = ratio * alpha ** (dim / (dim - 2))
         freqs = 1.0 / (ratio ** (torch.arange(0, dim, 2)[: (dim // 2)].float() / dim))
 
