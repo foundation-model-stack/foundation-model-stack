@@ -114,7 +114,13 @@ class SignatureFixtureMixin:
 
     def _get_expectation_path(self, test_name, model_id):
         """
-        get the path to the expectation file for a given test case
+        get the path to the expectation file for a given test case. The path will be formatted as follows:
+
+        <current_dir>/../resources/expectations/<ModuleName>.<TestClass>.<model_id_if_exists>.<test_name>
+
+        Example: module=models.test_model, test_class=MyTest, test_name=test_model_output, model_id=llama-7b
+
+        models.test_model.MyTest.llama-7b.test_model_output
         """
         import inspect
 
