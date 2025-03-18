@@ -104,8 +104,8 @@ class RotaryEmbedding(PositionEncoder):
         dim: int,
         ratio: float = 10_000.0,
         max_seq_len=2048,
-        ntk_scaling=False,
         partial_rope=1.0,
+        scaling={},
     ):
         """
         This implementation of Rotary Position Embeddings (RoPE) avoids
@@ -124,18 +124,22 @@ class RotaryEmbedding(PositionEncoder):
             The ratio for the geometric progression to compute the rotation angles
         partial_rope: int
             fraction of head dimension to apply rope to
+        scaling: dict
+            dictionary of information on how to scale RoPE to higher seq lens
         """
         super(RotaryEmbedding, self).__init__()
         self.partial_rope = partial_rope
         self.dim = int(partial_rope * dim)
         self.ratio = ratio
+        self.scaling = scaling
+        if "rope_type" not in self.scaling:
+            self.scaling["rope_type"] = "regular"
         self.cached_freqs: MutableMapping[int, MutableMapping[int, torch.Tensor]] = {}
         self.max_seq_len_cached: MutableMapping[int, int] = {}
-        self.ntk_scaling = ntk_scaling
         self.max_seq_len = max_seq_len
 
     def _alpha(self, seq_len) -> int:
-        if not self.ntk_scaling:
+        if self.scaling["rope_type"] != "ntk":
             return 1
         else:
             alpha = seq_len / self.max_seq_len
@@ -168,7 +172,7 @@ class RotaryEmbedding(PositionEncoder):
 
         # This condition can be combined with the model using Rotary calling this method
         # on model init when device is known to avoid a graph break (see llama.py)
-        if self.ntk_scaling:
+        if self.scaling["rope_type"] == "ntk":
             max_seq_len = max(max_seq_len, self.max_seq_len * alpha)
         else:
             if self.max_seq_len_cached[dev_idx] > 0:
@@ -184,13 +188,38 @@ class RotaryEmbedding(PositionEncoder):
         ratio = self.ratio
         dim = self.dim
 
-        if self.ntk_scaling:
+        if self.scaling["rope_type"] == "ntk":
             ratio = ratio * alpha ** (dim / (dim - 2))
 
         freqs = 1.0 / (
             ratio
             ** (torch.arange(0, dim, 2, device=device)[: (dim // 2)].float() / dim)
         )
+
+        if self.scaling["rope_type"] == "llama3":
+            factor = self.scaling["factor"]
+            low_freq_factor = self.scaling["low_freq_factor"]
+            high_freq_factor = self.scaling["high_freq_factor"]
+            old_context_len = self.scaling["original_max_position_embeddings"]
+
+            low_freq_wavelen = old_context_len / low_freq_factor
+            high_freq_wavelen = old_context_len / high_freq_factor
+
+            wavelen = 2 * math.pi / freqs
+            # wavelen < high_freq_wavelen: do nothing
+            # wavelen > low_freq_wavelen: divide by factor
+            freqs_llama = torch.where(wavelen > low_freq_wavelen, freqs / factor, freqs)
+            # otherwise: interpolate between the two, using a smooth factor
+            smooth_factor = (old_context_len / wavelen - low_freq_factor) / (
+                high_freq_factor - low_freq_factor
+            )
+            smoothed_freqs = (
+                1 - smooth_factor
+            ) * freqs_llama / factor + smooth_factor * freqs_llama
+            is_medium_freq = ~(wavelen < high_freq_wavelen) * ~(
+                wavelen > low_freq_wavelen
+            )
+            freqs = torch.where(is_medium_freq, smoothed_freqs, freqs_llama)
 
         t = torch.arange(max_seq_len, device=device, dtype=freqs.dtype)
         freqs = torch.outer(t, freqs).float()

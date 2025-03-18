@@ -38,7 +38,7 @@ class LLaMA2Fixtures(ConfigFixtureMixin, ModelFixtureMixin):
             activation_fn="swish",
             p_dropout=0.0,
             max_expected_seq_len=4096,
-            ntk_scaling=False,
+            rope_scaling={},
             linear_config={"linear_type": "torch_linear"},
         )
 
@@ -94,7 +94,7 @@ class LLaMA2GQAFixtures(ModelFixtureMixin):
             activation_fn="swish",
             p_dropout=0.0,
             max_expected_seq_len=4096,
-            ntk_scaling=False,
+            rope_scaling={},
         )
 
 
@@ -125,7 +125,7 @@ class LLaMA2GPTQFixtures(ModelFixtureMixin):
             activation_fn="swish",
             p_dropout=0.0,
             max_expected_seq_len=4096,
-            ntk_scaling=False,
+            rope_scaling={},
             linear_config={"linear_type": "gptq_cpu"},
         )
 
