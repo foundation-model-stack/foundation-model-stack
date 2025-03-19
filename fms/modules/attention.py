@@ -24,7 +24,17 @@ from fms.modules.tp import TPModule
 
 from torch.library import custom_op
 
-@custom_op("aiu:paged_attn_store", mutates_args=("key_cache", "value_cache"), device_types="cpu")
+@custom_op("aiu::paged_attn_store", mutates_args=("key_cache", "value_cache"), device_types="cpu")
+def paged_attn_store(
+    key: torch.Tensor,
+    value: torch.Tensor,
+    key_cache: torch.Tensor,
+    value_cache: torch.Tensor,
+    slot_mapping: torch.Tensor
+) -> None:
+    return None
+
+@paged_attn_store.register_fake
 def paged_attn_store(
     key: torch.Tensor,
     value: torch.Tensor,
@@ -44,7 +54,19 @@ def paged_attn_compute(
     left_padded_prompt_mask: torch.Tensor,
     block_table: torch.Tensor,
 ) -> torch.Tensor:
-    return query.new_empty()
+    return torch.zeros_like(query)
+
+@paged_attn_compute.register_fake
+def paged_attn_compute(
+    query: torch.Tensor,
+    key_cache: torch.Tensor,
+    value_cache: torch.Tensor,
+    scale: float,
+    partial_page_tkv_mask: torch.Tensor,
+    left_padded_prompt_mask: torch.Tensor,
+    block_table: torch.Tensor,
+) -> torch.Tensor:
+    return torch.zeros_like(query)
 
 
 class QKV(nn.Module, metaclass=abc.ABCMeta):

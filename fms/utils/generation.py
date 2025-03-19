@@ -208,12 +208,11 @@ def generate(
 
     result = input_ids
     next_input = input_ids
-    kwargs["past_key_value_states"] = (
-        # num blocks x 
+    kwargs["past_key_value_states"] = [(
         torch.zeros(4, 4096, model.config.kvheads, model.config.emb_dim // model.config.nheads, dtype=torch.float16),
         torch.zeros(4, 4096, model.config.kvheads, model.config.emb_dim // model.config.nheads, dtype=torch.float16),
-    )
-    kwargs["block_mapping"] = None
+    ) for _ in range(model.config.nlayers)]
+    kwargs["block_table"] = None
     kwargs["slot_mapping"] = torch.zeros(input_ids.size(0), input_ids.size(1), dtype=torch.int64)
     kwargs["partial_page_tkv_mask"] = None
     kwargs["left_padded_prompt_mask"] = None
@@ -232,7 +231,7 @@ def generate(
         # iteration 0 is the prefill step (cache has not been filled yet), so no need to extend the mask/position_ids
         if i > 0:
             kwargs = __update_padding_kwargs(use_cache, kwargs)
-            kwargs["block_mapping"] = torch.zeros(input_ids.size(0), 1)
+            kwargs["block_table"] = torch.zeros(input_ids.size(0), 1)
             kwargs["slot_mapping"] = torch.zeros_like(kwargs["position_ids"], dtype=torch.int64)
             kwargs["partial_page_tkv_mask"] = torch.zeros(input_ids.size(0))
             kwargs["left_padded_prompt_mask"] = torch.zeros(input_ids.size(0))
