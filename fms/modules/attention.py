@@ -24,25 +24,25 @@ from fms.modules.tp import TPModule
 
 from torch.library import custom_op
 
-@custom_op("aiu::paged_attn_store", mutates_args=("key_cache", "value_cache"), device_types="cpu")
+@custom_op("aiu::paged_attn_store", mutates_args=(), device_types="cpu")
 def paged_attn_store(
     key: torch.Tensor,
     value: torch.Tensor,
     key_cache: torch.Tensor,
     value_cache: torch.Tensor,
     slot_mapping: torch.Tensor
-) -> None:
-    return None
+) -> tuple[torch.Tensor, torch.Tensor]:
+    return key_cache, value_cache
 
 @paged_attn_store.register_fake
-def paged_attn_store(
+def paged_attn_store_meta(
     key: torch.Tensor,
     value: torch.Tensor,
     key_cache: torch.Tensor,
     value_cache: torch.Tensor,
     slot_mapping: torch.Tensor
-) -> None:
-    return None
+) -> tuple[torch.Tensor, torch.Tensor]:
+    return key_cache, value_cache
 
 @custom_op("aiu::paged_attn_compute", mutates_args={}, device_types="cpu")
 def paged_attn_compute(
@@ -57,7 +57,7 @@ def paged_attn_compute(
     return torch.zeros_like(query)
 
 @paged_attn_compute.register_fake
-def paged_attn_compute(
+def paged_attn_compute_meta(
     query: torch.Tensor,
     key_cache: torch.Tensor,
     value_cache: torch.Tensor,
