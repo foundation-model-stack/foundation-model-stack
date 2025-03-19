@@ -115,6 +115,10 @@ class GraniteBlock(nn.Module):
         use_cache=False,
         is_causal_mask=False,
         attn_algorithm=None,
+        partial_page_tkv_mask=None,
+        left_padded_prompt_mask=None,
+        block_table=None,
+        slot_mapping=None,
     ):
         # if the cache is not empty, we need to get the kv cache for self and cross attention
         self_attn_past_key_value = past_key_value_state
@@ -131,6 +135,10 @@ class GraniteBlock(nn.Module):
             use_cache=use_cache,
             is_self=True,
             is_causal_mask=is_causal_mask,
+            partial_page_tkv_mask=partial_page_tkv_mask,
+            left_padded_prompt_mask=left_padded_prompt_mask,
+            block_table=block_table,
+            slot_mapping=slot_mapping,
         )
         cache = None
         if use_cache:
@@ -269,6 +277,10 @@ class GraniteHeadless(nn.Module):
         past_key_value_states=None,
         use_cache=False,
         attn_algorithm=None,
+        partial_page_tkv_mask=None,
+        left_padded_prompt_mask=None,
+        block_table=None,
+        slot_mapping=None,
     ):
         # Embed the given vocabulary indices using the given attention mask, with pre-/post-norm and dropout as specified
         # x_in: batch_size x seq_len
@@ -310,6 +322,10 @@ class GraniteHeadless(nn.Module):
                 use_cache=use_cache,
                 is_causal_mask=is_causal_mask,
                 attn_algorithm=attn_algorithm,
+                partial_page_tkv_mask=partial_page_tkv_mask,
+                left_padded_prompt_mask=left_padded_prompt_mask,
+                block_table=block_table,
+                slot_mapping=slot_mapping,
             )
 
             if use_cache:
@@ -381,9 +397,22 @@ class Granite(nn.Module):
         use_cache: bool = False,
         only_last_token: bool = False,
         attn_algorithm: Optional[str] = None,
+        partial_page_tkv_mask=None,
+        left_padded_prompt_mask=None,
+        block_table=None,
+        slot_mapping=None,
     ):
         output, cache = self.base_model(
-            x, mask, position_ids, past_key_value_states, use_cache, attn_algorithm
+            x, 
+            mask, 
+            position_ids, 
+            past_key_value_states, 
+            use_cache, 
+            attn_algorithm, 
+            partial_page_tkv_mask=partial_page_tkv_mask,
+            left_padded_prompt_mask=left_padded_prompt_mask,
+            block_table=block_table,
+            slot_mapping=slot_mapping
         )
 
         if only_last_token:
