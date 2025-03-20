@@ -436,7 +436,7 @@ class MultiHeadAttention(nn.Module):
         # key_cache: torch.Tensor,
         # value_cache: torch.Tensor,
         # slot_mapping: torch.Tensor
-        torch.ops.aiu.paged_attn_store(
+        past_key_value_state = torch.ops.aiu.paged_attn_store(
             keys, values, past_key_value_state[0], past_key_value_state[1], slot_mapping
         )
 
