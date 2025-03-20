@@ -226,7 +226,10 @@ class FusedQKV(QKV):
             qkv = q
         else:
             raise ValueError("q, k, and v must be the same or k and v must be None")
-        return self.qkv_fused(qkv).split(self.splits, dim=-1)
+        
+        world_size = torch.distributed.get_world_size()
+        dim_split = [s//world_size for s in self.splits]
+        return self.qkv_fused(qkv).split(dim_split, dim=-1)
 
 
 class MultiHeadAttention(nn.Module):
