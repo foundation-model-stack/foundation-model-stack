@@ -100,7 +100,12 @@ class Alibi(PositionEncoder):
 
 class RotaryEmbedding(PositionEncoder):
     def __init__(
-        self, dim: int, ratio: float = 10_000.0, max_seq_len=2048, ntk_scaling=False
+        self,
+        dim: int,
+        ratio: float = 10_000.0,
+        max_seq_len=2048,
+        ntk_scaling=False,
+        partial_rope=1.0,
     ):
         """
         This implementation of Rotary Position Embeddings (RoPE) avoids
@@ -117,9 +122,12 @@ class RotaryEmbedding(PositionEncoder):
             Maximum expected sequence length for the model, if exceeded the cached freqs will be recomputed
         ratio: int
             The ratio for the geometric progression to compute the rotation angles
+        partial_rope: int
+            fraction of head dimension to apply rope to
         """
         super(RotaryEmbedding, self).__init__()
-        self.dim = dim
+        self.partial_rope = partial_rope
+        self.dim = int(partial_rope * dim)
         self.ratio = ratio
         self.cached_freqs: MutableMapping[int, MutableMapping[int, torch.Tensor]] = {}
         self.max_seq_len_cached: MutableMapping[int, int] = {}
@@ -250,13 +258,20 @@ class RotaryEmbedding(PositionEncoder):
             if use_cache and past_kv_state is not None and past_kv_state[0].numel() > 0:
                 position_ids += past_kv_state[0].size(2)
 
-        if is_nested_path:
-            q_ = q.values().float().view(-1, q.size(2), q.size(3)//2, 2)  # sum(L*) H D/2 2
-            k_ = k.values().float().view(-1, k.size(2), k.size(3)//2, 2)  # sum(L*) H D/2 2
+        if self.partial_rope != 1.0:
+            q_rope = q[..., : self.dim]
+            k_rope = k[..., : self.dim]
         else:
-            q_ = q.float().view(*q.size()[:-1], -1, 2)  # B L H D/2 2
-            k_ = k.float().view(*k.size()[:-1], -1, 2)  # B L H D/2 2
-               
+            q_rope = q
+            k_rope = k
+
+        if is_nested_path:
+            q_ = q_rope.values().float().view(-1, q.size(2), q.size(3)//2, 2)  # sum(L*) H D/2 2
+            k_ = k_rope.values().float().view(-1, k.size(2), k.size(3)//2, 2)  # sum(L*) H D/2 2
+        else:
+            q_ = q_rope.float().view(*q.size()[:-1], -1, 2)  # B L H D/2 2
+            k_ = k_rope.float().view(*k.size()[:-1], -1, 2)  # B L H D/2 2
+
         # the max start position should be based on the max first position of each sequence
         if is_nested_path:
             max_start_pos = 0  # TODO: Fix for nested
@@ -300,10 +315,17 @@ class RotaryEmbedding(PositionEncoder):
                 .flatten(3)
             ).type_as(k)
 
+        if self.partial_rope != 1.0:
+            q_out = torch.cat([q_out.view_as(q_rope), q[..., self.dim :]], dim=-1)
+            k_out = torch.cat([k_out.view_as(k_rope), k[..., self.dim :]], dim=-1)
+        else:
+            q_out = q_out.view_as(q_rope)
+            k_out = k_out.view_as(k_rope)
+
         if is_nested_path:
             return (
                 torch.nested.nested_tensor_from_jagged(q_out, q.offsets(), q.lengths(), min_seqlen=q._get_min_seqlen(), max_seqlen=q._get_max_seqlen()),
                 torch.nested.nested_tensor_from_jagged(k_out, k.offsets(), k.lengths(), min_seqlen=k._get_min_seqlen(), max_seqlen=k._get_max_seqlen()),
             )
         else:
-            return q_out.view_as(q), k_out.view_as(k)
+            return q_out, k_out
