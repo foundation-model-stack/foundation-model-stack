@@ -23,6 +23,7 @@ def filter_padding_size(configs, named_args, **kwargs):
         ]
 
 
+# These are the configs we found to work best for Mixtral 8x7b and A100 GPUs
 @triton.autotune(
     configs=[
         triton.Config(
