@@ -198,6 +198,23 @@ def _infer_model_configuration(
         config_params["attention_multiplier"] = config.attention_multiplier
         config_params["logits_scaling"] = config.logits_scaling
         config_params["embedding_multiplier"] = config.embedding_multiplier
+    elif architecture == "BambaForCausalLM":
+        inner_dim = config.intermediate_size
+        architecture = "bamba"
+        config_params["kvheads"] = config.num_key_value_heads
+        config_params["p_dropout"] = config.attention_dropout
+        config_params["activation_fn"] = config.hidden_act
+        config_params["emb_dim"] = config.hidden_size
+        config_params["chunk_size"] = config.mamba_chunk_size
+        config_params["use_conv_bias"] = config.mamba_conv_bias
+        config_params["conv_kernel"] = config.mamba_d_conv
+        config_params["head_dim"] = config.mamba_d_head
+        config_params["state_size"] = config.mamba_d_state
+        config_params["mamba_expand"] = config.mamba_expand
+        config_params["n_groups"] = config.mamba_n_groups
+        config_params["mamba_n_heads"] = config.mamba_n_heads
+        config_params["use_bias"] = config.mamba_proj_bias
+        config_params["norm_eps"] = config.rms_norm_eps
     else:
         raise ValueError(
             "FMS model implementations currently only support LlamaForCausalLM, GPTBigCodeForCausalLM, MixtralForCausalLM, RobertaForMaskedLM and GraniteForCausalLM"
