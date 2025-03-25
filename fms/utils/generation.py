@@ -10,7 +10,9 @@ logger = logging.getLogger(__name__)
 
 
 def pad_input_ids(
-    input_ids_list: List[torch.Tensor], min_pad_length: int = 0
+    input_ids_list: List[torch.Tensor],
+    min_pad_length: int = 0,
+    is_causal_mask=True,
 ) -> Tuple[torch.Tensor, MutableMapping[str, Any]]:
     """
     Convert a list of Tensors to a rectangular tensor. Return extra padding kwargs for the position_ids and mask, since
@@ -59,8 +61,10 @@ def pad_input_ids(
     input_ids = torch.stack(padded_input_ids_list)
     padding_kwargs = {}
     mask = torch.stack(mask_list)
+    mask = mask.unsqueeze(-1) == mask.unsqueeze(-2)
     # this is a causal mask for generation
-    mask = (mask.unsqueeze(-1) == mask.unsqueeze(-2)).tril()
+    if is_causal_mask:
+        mask = mask.tril()
     mask = torch.where(mask.logical_not(), -torch.inf, 0.0)
     padding_kwargs["mask"] = mask
 
