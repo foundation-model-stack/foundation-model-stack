@@ -266,8 +266,8 @@ class RotaryEmbedding(PositionEncoder):
             k_rope = k
 
         if is_nested_path:
-            q_ = q_rope.values().float().view(-1, q.size(2), q.size(3)//2, 2)  # sum(L*) H D/2 2
-            k_ = k_rope.values().float().view(-1, k.size(2), k.size(3)//2, 2)  # sum(L*) H D/2 2
+            q_ = q_rope.values().float().view(-1, q_rope.size(2), q_rope.size(3)//2, 2)  # sum(L*) H D/2 2
+            k_ = k_rope.values().float().view(-1, k_rope.size(2), k_rope.size(3)//2, 2)  # sum(L*) H D/2 2
         else:
             q_ = q_rope.float().view(*q.size()[:-1], -1, 2)  # B L H D/2 2
             k_ = k_rope.float().view(*k.size()[:-1], -1, 2)  # B L H D/2 2
@@ -292,35 +292,32 @@ class RotaryEmbedding(PositionEncoder):
                 .mul(q_.unsqueeze(-2))
                 .sum(4)
                 .flatten(2)
-            ).type_as(q.values())
+            ).type_as(q.values()).view(-1, q_rope.size(2), q_rope.size(3))
             
             k_out = (
                 freqs[:, None, :, :, :]
                 .mul(k_.unsqueeze(-2))
                 .sum(4)
                 .flatten(2)
-            ).type_as(k.values())
+            ).type_as(k.values()).view(-1, k_rope.size(2), k_rope.size(3))
         else:
             q_out = (
                 freqs[:, -q.size(1) :, None, :, :, :]
                 .mul(q_.unsqueeze(-2))
                 .sum(5)
                 .flatten(3)
-            ).type_as(q)
+            ).type_as(q).view_as(q_rope)
 
             k_out = (
                 freqs[:, -k.size(1) :, None, :, :, :]
                 .mul(k_.unsqueeze(-2))
                 .sum(5)
                 .flatten(3)
-            ).type_as(k)
+            ).type_as(k).view_as(k_rope)
 
         if self.partial_rope != 1.0:
-            q_out = torch.cat([q_out.view_as(q_rope), q[..., self.dim :]], dim=-1)
-            k_out = torch.cat([k_out.view_as(k_rope), k[..., self.dim :]], dim=-1)
-        else:
-            q_out = q_out.view_as(q_rope)
-            k_out = k_out.view_as(k_rope)
+            q_out = torch.cat([q_out, q[..., self.dim :]], dim=-1)
+            k_out = torch.cat([k_out, k[..., self.dim :]], dim=-1)
 
         if is_nested_path:
             return (

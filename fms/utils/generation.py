@@ -74,15 +74,18 @@ def causal_mask(b, h, q_idx, kv_idx):
     return q_idx >= kv_idx
 
 def __update_padding_kwargs(
-    use_cache: bool, model_specific_kwargs: MutableMapping[str, Any]
+    use_cache: bool, input_ids, model_specific_kwargs: MutableMapping[str, Any]
 ) -> MutableMapping[str, Any]:
     """Generic function to prepare any model specific keyword arguments"""
     # Extend the narrow view of the kv-cache
     kv_cache = model_specific_kwargs.get("past_key_value_states", None)
     for layer_i, layer in enumerate(kv_cache):
+        batch_size = layer[0].lengths().size(0)
+        k_cache = layer[0].values()
+        v_cache = layer[1].values()
         model_specific_kwargs["past_key_value_states"][layer_i] = [
-            torch.nested.narrow(layer[0].values(), 1, 0, layer[0].lengths() + 1),
-            torch.nested.narrow(layer[1].values(), 1, 0, layer[0].lengths() + 1),
+            torch.nested.narrow(k_cache.view(batch_size, -1, *k_cache.size()[-2:]), 1, 0, layer[0].lengths() + 1, layout=torch.jagged),
+            torch.nested.narrow(v_cache.view(batch_size, -1, *v_cache.size()[-2:]), 1, 0, layer[1].lengths() + 1, layout=torch.jagged),
         ]
 
     # extend the position_ids
@@ -95,6 +98,12 @@ def __update_padding_kwargs(
                     (position_ids, position_ids[:, -1:] + 1),
                     dim=1,
                 )
+            position_ids = torch.nested.nested_tensor_from_jagged(
+                values=position_ids.clone().detach().view(-1),
+                offsets=torch.arange(0, position_ids.size(0)+1, device=position_ids.device, dtype=torch.int64),
+                min_seqlen=1,
+                max_seqlen=1,
+            )
         else:
             if use_cache:
                 position_ids = position_ids[:, -1:] + 1
@@ -120,7 +129,9 @@ def __update_padding_kwargs(
     #     )
     #     model_specific_kwargs["mask"] = mask
     if mask is not None:
-        mask = create_nested_block_mask(causal_mask, kv_cache[0][0].size(0), 32, position_ids, kv_nt=kv_cache[0][0], _compile=True)
+        example_cache = kv_cache[0][0]
+        batch_size = example_cache.lengths().size(0)
+        mask = create_nested_block_mask(causal_mask, batch_size, 32, input_ids, kv_nt=example_cache, _compile=True)
         model_specific_kwargs["mask"] = mask
     return model_specific_kwargs
 
@@ -262,7 +273,13 @@ def generate(
         # prepare any padding keyword arguments
         # iteration 0 is the prefill step (cache has not been filled yet), so no need to extend the mask/position_ids
         if i > 0:
-            kwargs = __update_padding_kwargs(use_cache, kwargs)
+            input_ids = torch.nested.nested_tensor_from_jagged(
+                values=input_ids.clone().detach().view(-1),
+                offsets=torch.arange(0, input_ids.size(0)+1, device=input_ids.device, dtype=torch.int64),
+                min_seqlen=1,
+                max_seqlen=1,
+            )
+            kwargs = __update_padding_kwargs(use_cache, input_ids, kwargs)
         output = model(input_ids, **kwargs)
         if use_cache:
             logits, past_key_value_states = output

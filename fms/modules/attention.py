@@ -357,10 +357,7 @@ class MultiHeadAttention(nn.Module):
         """
         # q, k, v: batch_size x seq_len x emb_dim
         # mask: batch_size x seq_len x seq_len
-        if not q.is_nested:
-            batch_size, q_len = q.size(0), -1
-        else:
-            batch_size, q_len = q.size(0), -1
+        batch_size, q_len = q.size(0), -1
 
         # if this is self attention, we always recompute
         # cross attention only gets computed when a cache does not exist
@@ -395,12 +392,12 @@ class MultiHeadAttention(nn.Module):
                     if keys.is_nested and values.is_nested:
                         batch_indices = torch.cat([torch.ones((1,), dtype=torch.int64, device=position_ids.device), position_ids.values().diff()], dim=0)
                         batch_indices.sub_(1).ne_(0).cumsum_(0)
-                        print(batch_indices, batch_indices.shape, position_ids.values(), position_ids.values().shape)
+                        # print(batch_indices, batch_indices.shape, position_ids.values(), position_ids.values().shape)
                         indices = [
                             batch_indices,
                             position_ids.values()
                         ]
-                        print(keys.values().shape)
+                        # print(keys.values().shape)
                         past_key_value_state[0].index_put_(indices, keys.values())
                         past_key_value_state[1].index_put_(indices, values.values())
                     else:
