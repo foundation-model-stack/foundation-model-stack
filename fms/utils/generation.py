@@ -99,7 +99,7 @@ def __update_padding_kwargs(
                     dim=1,
                 )
             position_ids = torch.nested.nested_tensor_from_jagged(
-                values=position_ids.clone().detach().view(-1),
+                values=position_ids.flatten(),
                 offsets=torch.arange(0, position_ids.size(0)+1, device=position_ids.device, dtype=torch.int64),
                 min_seqlen=1,
                 max_seqlen=1,
@@ -274,7 +274,7 @@ def generate(
         # iteration 0 is the prefill step (cache has not been filled yet), so no need to extend the mask/position_ids
         if i > 0:
             input_ids = torch.nested.nested_tensor_from_jagged(
-                values=input_ids.clone().detach().view(-1),
+                values=input_ids.flatten(),
                 offsets=torch.arange(0, input_ids.size(0)+1, device=input_ids.device, dtype=torch.int64),
                 min_seqlen=1,
                 max_seqlen=1,
