@@ -1,7 +1,5 @@
-import pathlib
-from typing import Any, Optional
-
 import torch
+from torch.library import wrap_triton
 import triton  # type: ignore[import-untyped]
 import triton.language as tl  # type: ignore[import-untyped]
 
@@ -17,6 +15,35 @@ def col_major(pid, m, n, block_m: tl.constexpr, block_n: tl.constexpr):
     return pid_m, pid_n
 
 
+def filter_padding_size(configs, named_args, **kwargs):
+    if "padding_size" in named_args or "padding_size" in kwargs:
+        padding_size = named_args.get("padding_size", kwargs.get("padding_size", None))
+        return [
+            config for config in configs if config.kwargs["block_m"] == padding_size
+        ]
+
+
+# These are the configs we found to work best for Mixtral 8x7b and A100 GPUs
+@triton.autotune(
+    configs=[
+        triton.Config(
+            kwargs={
+                "block_m": 64,
+                "block_n": 64,
+                "block_k": 32,
+            }
+        ),
+        triton.Config(
+            kwargs={
+                "block_m": 16,
+                "block_n": 32,
+                "block_k": 64,
+            }
+        ),
+    ],
+    key=["N", "K", "EM", "num_valid_tokens"],
+    prune_configs_by={"early_config_prune": filter_padding_size},
+)
 @triton.jit()
 def fused_moe_kernel_v3(
     # Pointers to matrices
@@ -47,6 +74,7 @@ def fused_moe_kernel_v3(
     block_k: tl.constexpr,
     compute_type: tl.constexpr,
     top_k: tl.constexpr,
+    padding_size: tl.constexpr,
 ):
     """
     Implements the fused computation for a Mixture of Experts (MOE) using token and expert matrices.
@@ -130,7 +158,7 @@ def invoke_fused_moe_kernel(
     expert_block_mapping: torch.Tensor,
     total_padded_tokens: torch.Tensor,
     top_k: int,
-    config: dict,
+    padding_size: int,
 ):
     assert A.is_contiguous()
     assert B.is_contiguous()
@@ -146,7 +174,7 @@ def invoke_fused_moe_kernel(
     compute_type = tl.float16 if A.dtype == torch.float16 else tl.bfloat16
     if A.device.type == "cpu":
         compute_type = tl.float32
-    fused_moe_kernel_v3[grid](
+    wrap_triton(fused_moe_kernel_v3)[grid](
         A,
         B,
         C,
@@ -166,61 +194,8 @@ def invoke_fused_moe_kernel(
         C.stride(2),
         top_k=top_k,
         compute_type=compute_type,
-        **config,
+        padding_size=padding_size,
     )
 
-
-def _autotune(configs, function):
-    import torch.utils.benchmark as benchmark
-
-    def benchmark_torch_function_in_microseconds(f, *args, **kwargs):
-        try:
-            f(*args, **kwargs)
-            t0 = benchmark.Timer(
-                stmt="f(*args, **kwargs)",
-                globals={"args": args, "kwargs": kwargs, "f": f},
-            )
-        except:  # noqa: E722
-            return None
-        return t0.blocked_autorange().mean * 1e6
-
-    best = None
-    best_config = None
-    for config in configs:
-        t_config = benchmark_torch_function_in_microseconds(function, config)
-        if t_config is not None:
-            if best is not None:
-                if t_config < best:
-                    best = t_config
-                    best_config = config
-            else:
-                best = t_config
-                best_config = config
-    return best, best_config
-
-
-def _load_best_configs():
-    saved_configs = pathlib.Path.cwd() / "moe_mm_configs.p"
-    if saved_configs.is_file():
-        import pickle
-
-        with open(saved_configs, "rb") as f:
-            return pickle.load(f)
-
-
-def _save_best_configs(best_configs):
-    saved_configs = pathlib.Path.cwd() / "moe_mm_configs.p"
-    with open(saved_configs, "wb") as f:
-        import pickle
-
-        pickle.dump(best_configs, f)
-
-
-def _create_best_configs_key(input, moe_matrix, token_expert_mapping):
-    key = (input.size(), token_expert_mapping.size(), moe_matrix.size())
-    return key
-
-
-BEST_MOE_CONFIGS: Optional[dict[Any, Any]] = None
 
 # TODO: Add a Backward kernel for Mixtral training in the future
