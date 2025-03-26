@@ -217,9 +217,9 @@ class RotaryEmbeddingTests(unittest.TestCase):
         q = torch.randn((B, S, H, DIM))
         k = torch.randn((B, S, H, DIM))
 
-        e = RotaryEmbedding(DIM, max_seq_len=S, ntk_scaling=False)
+        e = RotaryEmbedding(DIM, max_seq_len=S, scaling={})
         adj_q, adj_k = e.adjusted_qk(q, k)
-        ntk = RotaryEmbedding(DIM, max_seq_len=S, ntk_scaling=True)
+        ntk = RotaryEmbedding(DIM, max_seq_len=S, scaling={"rope_type": "ntk"})
         ntk_q, ntk_k = ntk.adjusted_qk(q, k)
 
         # <= max_seq_len, results should be the same with ntk_scaling.
@@ -228,7 +228,7 @@ class RotaryEmbeddingTests(unittest.TestCase):
 
         scaled_ratio = 10_000 / 2 ** (DIM / (DIM - 2))
         ntk = RotaryEmbedding(
-            DIM, max_seq_len=S / 2, ratio=scaled_ratio, ntk_scaling=True
+            DIM, max_seq_len=S / 2, ratio=scaled_ratio, scaling={"rope_type": "ntk"}
         )
         ntk_q, ntk_k = ntk.adjusted_qk(q, k)
         # being double the length is equivalent to being (approximately) half the base
