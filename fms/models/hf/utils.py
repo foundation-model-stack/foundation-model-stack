@@ -184,6 +184,15 @@ def _infer_model_configuration(
         config_params["p_dropout"] = config.hidden_dropout_prob
         config_params["norm_eps"] = config.layer_norm_eps
         config_params["activation_fn"] = config.hidden_act
+    elif architecture == "RobertaForQuestionAnswering":
+        inner_dim = config.intermediate_size
+        architecture = "roberta_question_answering"
+        config_params["emb_dim"] = config.hidden_size
+        config_params["pad_id"] = config.pad_token_id
+        config_params["max_pos"] = config.max_position_embeddings - 2
+        config_params["p_dropout"] = config.hidden_dropout_prob
+        config_params["norm_eps"] = config.layer_norm_eps
+        config_params["activation_fn"] = config.hidden_act
     elif architecture == "GraniteForCausalLM":
         inner_dim = config.intermediate_size
         architecture = "granite"
