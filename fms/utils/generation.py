@@ -92,6 +92,8 @@ def __update_padding_kwargs(
             dim=2,
         )
         model_specific_kwargs["mask"] = mask
+        if torch._dynamo.config.dynamic_shapes:
+            torch._dynamo.mark_dynamic(mask, 2)
 
     # extend the position_ids
     position_ids = model_specific_kwargs.get("position_ids", None)
@@ -130,7 +132,7 @@ def _make_cache_dynamic(
     # kv updates are required for torch.compile with
     # mode='reduce-overhead'
     for layer in past_key_value_states:
-        if isinstance(layer, tuple):
+        if isinstance(layer, (tuple, list)):
             for tensor in layer:
                 torch._dynamo.mark_dynamic(tensor, 2)
     return past_key_value_states
