@@ -133,7 +133,7 @@ class LLaMABlock(nn.Module):
         residual = x
         x = self.ln(x)
         x = self.attn(
-            q=x,
+            x,
             mask=mask,
             position_ids=position_ids,
             attn_algorithm=attn_algorithm,
@@ -223,7 +223,7 @@ class LLaMA(nn.Module):
         layers = []
         for i in range(self.config.nlayers):
             block: nn.Module = LLaMABlock(self.config, self.rot_emb)
-            block = self.distributed_strategy.distribute_layer(block, i)
+            block = self.distributed_strategy.distribute_layer(block, i, model='llama')
             layers.append(block)
         self.layers = nn.ModuleList(layers)
 
@@ -236,7 +236,7 @@ class LLaMA(nn.Module):
             use_high_precision_pow=True,
         )
         self.dec_norm = self.distributed_strategy.distribute_module(
-            dec_norm, final_layers=True
+            dec_norm, final_layers=True, model='llama'
         )
 
         if self.config.p_dropout:
@@ -373,7 +373,7 @@ class LLaMA(nn.Module):
 
         for i, layer in enumerate(self.layers):
             output = layer(
-                x=x_in,
+                x_in,
                 mask=mask,
                 position_ids=position_ids,
                 past_key_value_state=past_key_value_states[i],
