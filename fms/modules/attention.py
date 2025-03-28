@@ -511,7 +511,7 @@ class MultiHeadAttention(nn.Module):
                 queries, 
                 past_key_value_state[0], 
                 past_key_value_state[1],
-                1 / math.sqrt(queries.size(3)),
+                self.scale_factor,
                 partial_page_tkv_mask,
                 left_padded_prompt_mask,
                 block_table,
