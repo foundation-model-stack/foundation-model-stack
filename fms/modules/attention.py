@@ -32,7 +32,17 @@ def paged_attn_store(
     value_cache: torch.Tensor,
     slot_mapping: torch.Tensor
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    return key_cache, value_cache
+    result_key_cache = key_cache.clone()
+    result_value_cache = value_cache.clone()
+    for seq_i, slot_mapping_seq in enumerate(slot_mapping):
+        for tok_i, slot in enumerate(slot_mapping_seq):
+            block_number = slot.item() // 64
+            position = slot.item() % 64
+
+            result_key_cache[block_number, position, :, :] = key[seq_i, tok_i, :, :]
+            result_value_cache[block_number, position, :, :] = value[seq_i, tok_i, :, :]
+
+    return result_key_cache, result_value_cache
 
 @paged_attn_store.register_fake
 def paged_attn_store_meta(
@@ -44,6 +54,17 @@ def paged_attn_store_meta(
 ) -> tuple[torch.Tensor, torch.Tensor]:
     return key_cache, value_cache
 
+def ref_masked_attention(
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    scale: float,
+) -> torch.Tensor:
+    attn_weights = scale * torch.einsum("qhd,khd->hqk", query, key).float()
+    attn_weights = torch.softmax(attn_weights, dim=-1).to(value.dtype)
+    out = torch.einsum("hqk,khd->qhd", attn_weights, value)
+    return out
+
 @custom_op("aiu::paged_attn_compute", mutates_args={}, device_types="cpu")
 def paged_attn_compute(
     query: torch.Tensor,
@@ -54,7 +75,45 @@ def paged_attn_compute(
     left_padded_prompt_mask: torch.Tensor,
     block_table: torch.Tensor,
 ) -> torch.Tensor:
-    return torch.zeros_like(query)
+    output = torch.zeros_like(query)
+    num_query_heads = query.shape[2]
+    num_kv_heads = value_cache.shape[2]
+    head_size = value_cache.shape[3]
+    block_size = value_cache.shape[1]
+    num_seqs = query.shape[0]
+
+    block_tables_lst = block_table.cpu().tolist()
+    # adding as all sizes will be same
+    seq_lens_lst = (left_padded_prompt_mask + partial_page_tkv_mask).cpu().tolist()
+    for i in range(num_seqs):
+        q = query[i]
+        block_table = block_tables_lst[i]
+        start_pos = left_padded_prompt_mask[i].item()
+        seq_len = int(seq_lens_lst[i])
+
+        keys_lst: list[torch.Tensor] = []
+        values_lst: list[torch.Tensor] = []
+        for j in range(start_pos, seq_len):
+            block_number = int(block_table[j // block_size])
+            block_offset = j % block_size
+
+            k = key_cache[block_number, block_offset, :, :]
+            k = k.reshape(num_kv_heads, head_size)
+            keys_lst.append(k)
+
+            v = value_cache[block_number, block_offset, :, :]
+            values_lst.append(v)
+        keys = torch.stack(keys_lst, dim=0)
+        values = torch.stack(values_lst, dim=0)
+        if num_kv_heads > 1:
+            # Handle MQA and GQA
+            keys = torch.repeat_interleave(keys, num_query_heads // num_kv_heads, dim=1)
+            values = torch.repeat_interleave(values, num_query_heads // num_kv_heads, dim=1)
+
+        out = ref_masked_attention(q, keys, values, scale)
+        out = out.view(num_query_heads, head_size)
+        output[i].copy_(out, non_blocking=True)
+    return output
 
 @paged_attn_compute.register_fake
 def paged_attn_compute_meta(

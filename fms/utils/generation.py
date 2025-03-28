@@ -131,7 +131,6 @@ def _make_cache_dynamic(
                 torch._dynamo.mark_dynamic(tensor, 2)
     return past_key_value_states
 
-
 def generate(
     model: Union[Callable, torch.nn.Module],
     input_ids: torch.Tensor,
@@ -208,12 +207,26 @@ def generate(
 
     result = input_ids
     next_input = input_ids
+    NUM_BLOCKS = 100
+    BLOCK_SIZE = 64
     kwargs["past_key_value_states"] = [(
-        torch.zeros(4, 4096, model.config.kvheads, model.config.emb_dim // model.config.nheads, dtype=torch.float16),
-        torch.zeros(4, 4096, model.config.kvheads, model.config.emb_dim // model.config.nheads, dtype=torch.float16),
+        torch.zeros(NUM_BLOCKS, BLOCK_SIZE, model.config.kvheads, model.config.emb_dim // model.config.nheads, dtype=torch.float32),
+        torch.zeros(NUM_BLOCKS, BLOCK_SIZE, model.config.kvheads, model.config.emb_dim // model.config.nheads, dtype=torch.float32),
     ) for _ in range(model.config.nlayers)]
     kwargs["block_table"] = None
-    kwargs["slot_mapping"] = torch.zeros(input_ids.size(0), input_ids.size(1), dtype=torch.int64)
+    block_numbers = [i for i in range(NUM_BLOCKS)]
+    left_padded_prompt_mask = (kwargs["position_ids"] == 0).sum(dim=1) - 1
+    partial_page_tkv_mask = (kwargs["position_ids"] != 0).sum(dim=1) + 1
+    slot_mapping = [[]]
+    block_table = [[]]
+    for pos_i in range(input_ids.size(1)):
+        if pos_i % BLOCK_SIZE == 0:
+            block_number = block_numbers.pop(0)
+            block_table[0].append(block_number)
+        block_offset = pos_i % BLOCK_SIZE
+        slot = block_number * BLOCK_SIZE + block_offset
+        slot_mapping[0].append(slot)
+    kwargs["slot_mapping"] = torch.tensor(slot_mapping, dtype=torch.int64)
     kwargs["partial_page_tkv_mask"] = None
     kwargs["left_padded_prompt_mask"] = None
     kwargs["use_cache"] = use_cache
@@ -231,11 +244,23 @@ def generate(
         # iteration 0 is the prefill step (cache has not been filled yet), so no need to extend the mask/position_ids
         if i > 0:
             kwargs = __update_padding_kwargs(use_cache, kwargs)
-            kwargs["block_table"] = torch.zeros(input_ids.size(0), 1)
-            kwargs["slot_mapping"] = torch.zeros_like(kwargs["position_ids"], dtype=torch.int64)
-            kwargs["partial_page_tkv_mask"] = torch.zeros(input_ids.size(0))
-            kwargs["left_padded_prompt_mask"] = torch.zeros(input_ids.size(0))
-
+            pos_i = result.size(1) - 1
+            if pos_i % BLOCK_SIZE == 0:
+                block_number = block_numbers.pop(0)
+                block_table[0].append(block_number)
+            block_offset = pos_i % BLOCK_SIZE
+            slot = block_number * BLOCK_SIZE + block_offset
+            slot_mapping = [[slot]]
+            kwargs["block_table"] = torch.tensor(block_table, dtype=torch.int64)
+            kwargs["slot_mapping"] = torch.tensor(slot_mapping, dtype=torch.int64)
+            partial_page_tkv_mask = partial_page_tkv_mask + 1
+            kwargs["partial_page_tkv_mask"] = partial_page_tkv_mask
+            kwargs["left_padded_prompt_mask"] = left_padded_prompt_mask
+            print("block_table:", kwargs["block_table"])
+            print("partial_page_tkv_mask:", kwargs["partial_page_tkv_mask"])
+            print("left_padded_prompt_mask", kwargs["left_padded_prompt_mask"])
+        print("slot_mapping:", kwargs["slot_mapping"])
+        print("position_ids:", kwargs["position_ids"])
         output = model(input_ids, **kwargs)
         if use_cache:
             logits, past_key_value_states = output
