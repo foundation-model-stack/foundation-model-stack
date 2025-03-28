@@ -210,8 +210,8 @@ def generate(
     NUM_BLOCKS = 100
     BLOCK_SIZE = 64
     kwargs["past_key_value_states"] = [(
-        torch.zeros(NUM_BLOCKS, BLOCK_SIZE, model.config.kvheads, model.config.emb_dim // model.config.nheads, dtype=torch.float32),
-        torch.zeros(NUM_BLOCKS, BLOCK_SIZE, model.config.kvheads, model.config.emb_dim // model.config.nheads, dtype=torch.float32),
+        torch.zeros(NUM_BLOCKS, BLOCK_SIZE, model.config.kvheads, model.config.emb_dim // model.config.nheads, dtype=model.head.weight.dtype),
+        torch.zeros(NUM_BLOCKS, BLOCK_SIZE, model.config.kvheads, model.config.emb_dim // model.config.nheads, dtype=model.head.weight.dtype),
     ) for _ in range(model.config.nlayers)]
     kwargs["block_table"] = None
     block_numbers = [i for i in range(NUM_BLOCKS)]
