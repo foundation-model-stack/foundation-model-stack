@@ -1,6 +1,6 @@
 import logging
 import time
-from typing import Any, Callable, List, MutableMapping, Optional, Tuple, Union
+from typing import Any, Callable, Iterable, List, MutableMapping, Optional, Tuple, Union
 
 import torch
 import torch.nn.functional as F
@@ -132,7 +132,7 @@ def _make_cache_dynamic(
     # kv updates are required for torch.compile with
     # mode='reduce-overhead'
     for layer in past_key_value_states:
-        if isinstance(layer, (tuple, list)):
+        if isinstance(layer, Iterable):
             for tensor in layer:
                 torch._dynamo.mark_dynamic(tensor, 2)
     return past_key_value_states
