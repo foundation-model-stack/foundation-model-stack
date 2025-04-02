@@ -265,6 +265,38 @@ def generate(
             partial_page_tkv_mask = partial_page_tkv_mask + 1
             kwargs["partial_page_tkv_mask"] = partial_page_tkv_mask
             kwargs["left_padded_prompt_mask"] = left_padded_prompt_mask
+        
+        # prefill
+        if i == 0:
+            # batch dynamic
+            torch._dynamo.mark_dynamic(input_ids, 0)
+            torch._dynamo.mark_dynamic(kwargs["slot_mapping"], 0)
+            torch._dynamo.mark_dynamic(kwargs["position_ids"], 0)
+            torch._dynamo.mark_dynamic(kwargs["mask"], 0)
+
+            # seq dynamic
+            torch._dynamo.mark_dynamic(input_ids, 1)
+            torch._dynamo.mark_dynamic(kwargs["slot_mapping"], 1)
+            torch._dynamo.mark_dynamic(kwargs["position_ids"], 1)
+            torch._dynamo.mark_dynamic(kwargs["mask"], 1)
+            torch._dynamo.mark_dynamic(kwargs["mask"], 2)
+        
+        # decode
+        else:
+            # mask is no longer used here
+            
+            # batch
+            torch._dynamo.mark_dynamic(input_ids, 0)
+            torch._dynamo.mark_dynamic(kwargs["block_table"], 0)
+            torch._dynamo.mark_dynamic(kwargs["slot_mapping"], 0)
+            torch._dynamo.mark_dynamic(kwargs["position_ids"], 0)
+
+            # seq
+            torch._dynamo.mark_static(input_ids, 1) # always 1
+            torch._dynamo.mark_dynamic(kwargs["block_table"], 1)
+            torch._dynamo.mark_static(kwargs["slot_mapping"], 1) # always 1
+            torch._dynamo.mark_static(kwargs["position_ids"], 1) # always 1
+            
         output = model(input_ids, **kwargs)
         if use_cache:
             logits, past_key_value_states = output
