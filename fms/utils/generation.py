@@ -292,6 +292,8 @@ def generate(
             torch._dynamo.mark_dynamic(kwargs["block_table"], 0)
             torch._dynamo.mark_dynamic(kwargs["slot_mapping"], 0)
             torch._dynamo.mark_dynamic(kwargs["position_ids"], 0)
+            torch._dynamo.mark_dynamic(kwargs["partial_page_tkv_mask"], 0)
+            torch._dynamo.mark_dynamic(kwargs["left_padded_prompt_mask"], 0)
 
             # seq
             torch._dynamo.mark_static(input_ids, 1) # always 1
