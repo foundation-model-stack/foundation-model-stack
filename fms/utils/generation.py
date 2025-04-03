@@ -248,6 +248,7 @@ def generate(
         # prepare any padding keyword arguments
         # iteration 0 is the prefill step (cache has not been filled yet), so no need to extend the mask/position_ids
         if i > 0:
+            kwargs["mask"] = None
             kwargs = __update_padding_kwargs(use_cache, kwargs)
             pos_i = result.size(1) - 1
             if pos_i % BLOCK_SIZE == 0:
