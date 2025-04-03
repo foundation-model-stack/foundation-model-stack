@@ -402,6 +402,10 @@ class Granite(nn.Module):
         block_table=None,
         slot_mapping=None,
     ):
+        if position_ids is not None:
+            assert x.shape[1] == position_ids.shape[1]
+        if slot_mapping is not None:
+            assert x.shape[1] == slot_mapping.shape[1]
         output, cache = self.base_model(
             x, 
             mask, 

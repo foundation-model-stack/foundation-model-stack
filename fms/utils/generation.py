@@ -268,18 +268,20 @@ def generate(
         
         # prefill
         if i == 0:
+            kwargs["mask"] = kwargs["mask"].unsqueeze(1)
+
             # batch dynamic
-            torch._dynamo.mark_dynamic(input_ids, 0)
-            torch._dynamo.mark_dynamic(kwargs["slot_mapping"], 0)
-            torch._dynamo.mark_dynamic(kwargs["position_ids"], 0)
-            torch._dynamo.mark_dynamic(kwargs["mask"], 0)
+            torch._dynamo.mark_static(input_ids, 0)
+            torch._dynamo.mark_static(kwargs["slot_mapping"], 0)
+            torch._dynamo.mark_static(kwargs["position_ids"], 0)
+            torch._dynamo.mark_static(kwargs["mask"], 0)
 
             # seq dynamic
             torch._dynamo.mark_dynamic(input_ids, 1)
             torch._dynamo.mark_dynamic(kwargs["slot_mapping"], 1)
             torch._dynamo.mark_dynamic(kwargs["position_ids"], 1)
-            torch._dynamo.mark_dynamic(kwargs["mask"], 1)
             torch._dynamo.mark_dynamic(kwargs["mask"], 2)
+            torch._dynamo.mark_dynamic(kwargs["mask"], 3)
         
         # decode
         else:
