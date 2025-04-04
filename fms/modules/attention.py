@@ -435,8 +435,6 @@ class MultiHeadAttention(nn.Module):
             #     keys_e = keys
             #     values_e = values
 
-            if not queries.is_nested:
-                queries = torch.nested.nested_tensor_from_jagged(queries.view(-1, *queries.shape[2:]), torch.arange(0, queries.size(0)+1, device=q.device)*queries.size(1), min_seqlen=1, max_seqlen=1)
             queries = queries.transpose(2, 1)  # / (self.emb_kq_per_head**(1/4))
             keys = keys.transpose(2, 1)  # / (self.emb_kq_per_head**(1/4))
             values = values.transpose(2, 1)  # compatible with QK.T

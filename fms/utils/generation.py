@@ -73,19 +73,24 @@ def pad_input_ids(
 def causal_mask(b, h, q_idx, kv_idx):
     return q_idx >= kv_idx
 
+def true_mask(b, h, q_idx, kv_idx):
+    return True
+
 def __update_padding_kwargs(
-    use_cache: bool, input_ids, model_specific_kwargs: MutableMapping[str, Any]
+    use_cache: bool, input_ids, past_key_value_states_orig, model_specific_kwargs: MutableMapping[str, Any]
 ) -> MutableMapping[str, Any]:
     """Generic function to prepare any model specific keyword arguments"""
     # Extend the narrow view of the kv-cache
     kv_cache = model_specific_kwargs.get("past_key_value_states", None)
     for layer_i, layer in enumerate(kv_cache):
         batch_size = layer[0].lengths().size(0)
-        k_cache = layer[0].values()
-        v_cache = layer[1].values()
-        model_specific_kwargs["past_key_value_states"][layer_i] = [
-            torch.nested.narrow(k_cache.view(batch_size, -1, *k_cache.size()[-2:]), 1, 0, layer[0].lengths() + 1, layout=torch.jagged),
-            torch.nested.narrow(v_cache.view(batch_size, -1, *v_cache.size()[-2:]), 1, 0, layer[1].lengths() + 1, layout=torch.jagged),
+        # model_specific_kwargs["past_key_value_states"][layer_i] = [
+        #     torch.nested.narrow(k_cache.view(batch_size, -1, *k_cache.size()[-2:]), 1, 0, layer[0].lengths() + 1, layout=torch.jagged),
+        #     torch.nested.narrow(v_cache.view(batch_size, -1, *v_cache.size()[-2:]), 1, 0, layer[1].lengths() + 1, layout=torch.jagged),
+        # ]
+        kv_cache[layer_i] = [
+            torch.nested.narrow(past_key_value_states_orig[layer_i][0], 1, 0, layer[0].lengths() + 1, layout=torch.jagged),
+            torch.nested.narrow(past_key_value_states_orig[layer_i][1], 1, 0, layer[1].lengths() + 1, layout=torch.jagged),
         ]
 
     # extend the position_ids
@@ -130,9 +135,11 @@ def __update_padding_kwargs(
     #     model_specific_kwargs["mask"] = mask
     if mask is not None:
         example_cache = kv_cache[0][0]
-        batch_size = example_cache.lengths().size(0)
-        mask = create_nested_block_mask(causal_mask, batch_size, 32, input_ids, kv_nt=example_cache, _compile=True)
+        # print(input_ids.device, example_cache.device)
+        batch_size = past_key_value_states_orig[0][0].size(0)
+        mask = create_nested_block_mask(true_mask, batch_size, 32, input_ids, kv_nt=example_cache, _compile=True)
         model_specific_kwargs["mask"] = mask
+        # print(f"Mask: {mask[0][0].to_string(grid_size=(-1, -1), limit=1000)} {mask[1][0].to_string(grid_size=(-1, -1), limit=1000)}")
     return model_specific_kwargs
 
 
@@ -243,18 +250,18 @@ def generate(
     next_input = input_ids
 
     # Pre-allocate kv cache and use nested narrow
-    past_key_value_states = []
+    past_key_value_states_orig = []
     kwargs["past_key_value_states"] = []
     head_dim = model.config.emb_dim // model.config.nheads
     kv_heads = model.config.nheads if model.config.kvheads == 0 else model.config.kvheads
     for layer_i in range(model.config.nlayers):
-        past_key_value_states.append([
+        past_key_value_states_orig.append([
             torch.zeros((input_ids.size(0), max_seq_len, kv_heads, head_dim), device=input_ids.device, dtype=torch.bfloat16),
             torch.zeros((input_ids.size(0), max_seq_len, kv_heads, head_dim), device=input_ids.device, dtype=torch.bfloat16)
         ])
         kwargs["past_key_value_states"].append([
-            torch.nested.narrow(past_key_value_states[-1][0], 1, 0, input_ids.offsets().diff(), layout=torch.jagged),
-            torch.nested.narrow(past_key_value_states[-1][1], 1, 0, input_ids.offsets().diff(), layout=torch.jagged)
+            torch.nested.narrow(past_key_value_states_orig[-1][0], 1, 0, input_ids.offsets().diff(), layout=torch.jagged),
+            torch.nested.narrow(past_key_value_states_orig[-1][1], 1, 0, input_ids.offsets().diff(), layout=torch.jagged)
         ])
 
     kwargs["mask"] = create_nested_block_mask(causal_mask, input_ids.size(0), model.config.nheads, q_nt=input_ids, kv_nt=kwargs["past_key_value_states"][0][0], _compile=True)
@@ -267,6 +274,7 @@ def generate(
         start_time = time.time()
 
     for i in range(max_new_tokens):
+        print(f"Iteration {i}")
         # input_ids = next_input[:, -max_seq_len:]
         input_ids = next_input
 
@@ -279,7 +287,7 @@ def generate(
                 min_seqlen=1,
                 max_seqlen=1,
             )
-            kwargs = __update_padding_kwargs(use_cache, input_ids, kwargs)
+            kwargs = __update_padding_kwargs(use_cache, input_ids, past_key_value_states_orig, kwargs)
         output = model(input_ids, **kwargs)
         if use_cache:
             logits, past_key_value_states = output
@@ -350,6 +358,8 @@ def generate(
             current_token_time = time.time() - start_time
             times.append(current_token_time)
             start_time = time.time()
+
+        torch.cuda.memory._dump_snapshot(f"memory_dump_{i}.pickle")
 
     if timing == "e2e":
         if input_ids.device.type == "cuda":

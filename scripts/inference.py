@@ -255,7 +255,7 @@ def infer(use_cache, do_sample):
     result = generate(
         model,
         ids,
-        max_new_tokens=100,
+        max_new_tokens=10,
         use_cache=use_cache,
         do_sample=do_sample,
         max_seq_len=max_seq_len,
@@ -273,12 +273,16 @@ do_sample = [False]
 use_cache = [
     args.no_use_cache
 ]  # True/False are identical with greedy iff `torch.use_deterministic_algorithms(True)`
+torch.cuda.memory._record_memory_history(
+    max_entries=10000000
+)
 for sample, cache in itertools.product(do_sample, use_cache):
     infer(cache, sample)
+
 
 # with torch.profiler.profile(activities=[torch.profiler.ProfilerActivity.CPU, torch.profiler.ProfilerActivity.CUDA], with_stack=True, record_shapes=True, profile_memory=True) as prof:
 #     for sample, cache in itertools.product(do_sample, use_cache):
 #         infer(cache, sample)
 
 # prof.export_chrome_trace("njt_compiled_trace.json")
-# prof.export_memory_timeline("njt_compiled_memory.pickle")
+torch.cuda.memory._record_memory_history(enabled=None)
