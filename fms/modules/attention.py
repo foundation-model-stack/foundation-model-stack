@@ -662,3 +662,104 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
         else:
             out = reduce_from_tensor_model_parallel_region(out_par, self.group)
             return out
+
+
+class PagedAttention(MultiHeadAttention):
+    """
+    Implements Paged Attention mechanism for memory-efficient attention computation.
+    Uses KV-cache paging techniques to handle large context models efficiently.
+    """
+    
+    def __init__(
+        self,
+        emb_dim,
+        emb_kq,
+        emb_v,
+        nheads,
+        kvheads,
+        page_size: int = 16,  # Size of each memory page
+        max_pages: int = 256,  # Maximum number of pages in memory
+        p_dropout=None,
+        use_bias=False,
+        position_encoder=None,
+        fused: bool = True,
+        linear_config=None,
+        scale_factor=None,
+    ):
+        super().__init__(
+            emb_dim=emb_dim,
+            emb_kq=emb_kq,
+            emb_v=emb_v,
+            nheads=nheads,
+            kvheads=kvheads,
+            p_dropout=p_dropout,
+            use_bias=use_bias,
+            position_encoder=position_encoder,
+            fused=fused,
+            linear_config=linear_config,
+            scale_factor=scale_factor,
+        )
+        self.page_size = page_size
+        self.max_pages = max_pages
+        
+    def _init_paged_cache(self, batch_size: int, device: torch.device):
+        """Initialize paged KV cache"""
+        return {
+            'keys': torch.zeros(
+                batch_size, 
+                self.max_pages,
+                self.page_size,
+                self.kvheads,
+                self.emb_kq_per_head,
+                device=device
+            ),
+            'values': torch.zeros(
+                batch_size,
+                self.max_pages,
+                self.page_size,
+                self.kvheads,
+                self.emb_v_per_head,
+                device=device
+            ),
+            'page_table': torch.zeros(
+                batch_size,
+                self.max_pages,
+                dtype=torch.long,
+                device=device
+            )
+        }
+
+    def forward(
+        self,
+        q: torch.Tensor,
+        k: Optional[torch.Tensor] = None,
+        v: Optional[torch.Tensor] = None,
+        mask: Optional[Tensor] = None,
+        position_ids=None,
+        attn_algorithm=None,
+        past_key_value_state: Optional[Tuple[Tensor, Tensor]] = None,
+        use_cache=False,
+        is_self=True,
+        is_causal_mask=False,
+    ):
+        # Initialize or get paged cache
+        if past_key_value_state is None and use_cache:
+            paged_cache = self._init_paged_cache(q.size(0), q.device)
+        else:
+            paged_cache = past_key_value_state
+
+        # Call parent's forward for basic attention computation
+        output = super().forward(
+            q=q,
+            k=k,
+            v=v,
+            mask=mask,
+            position_ids=position_ids,
+            attn_algorithm=attn_algorithm,
+            past_key_value_state=paged_cache,
+            use_cache=use_cache,
+            is_self=is_self,
+            is_causal_mask=is_causal_mask,
+        )
+        
+        return output
