@@ -12,6 +12,7 @@ from fms.modules.feedforward import FeedForwardBlock
 from fms.utils import serialization
 from fms.utils.activation import str_to_activation
 from fms.utils.config import ModelConfig
+import math
 
 
 @dataclass
@@ -54,6 +55,7 @@ class GPTBigCodeBlock(nn.Module):
             use_bias=True,
             fused=self.config.fused_weights,
             linear_config=self.config.linear_config,
+            scale_factor=1 / math.sqrt(self.config.emb_dim // self.config.nheads)
         )
 
         self.ff_sub_layer = FeedForwardBlock(
@@ -78,6 +80,10 @@ class GPTBigCodeBlock(nn.Module):
         use_cache: bool = False,
         is_causal_mask: bool = False,
         attn_algorithm: Optional[str] = None,
+        partial_page_tkv_mask=None,
+        left_padded_prompt_mask=None,
+        block_table=None,
+        slot_mapping=None,
     ):
         self_attn_past_key_value = past_key_value_state
 
@@ -94,6 +100,10 @@ class GPTBigCodeBlock(nn.Module):
             use_cache=use_cache,
             is_self=True,
             is_causal_mask=is_causal_mask,
+            partial_page_tkv_mask=partial_page_tkv_mask,
+            left_padded_prompt_mask=left_padded_prompt_mask,
+            block_table=block_table,
+            slot_mapping=slot_mapping,
         )
 
         cache = None
@@ -180,6 +190,10 @@ class GPTBigCodeHeadless(nn.Module):
         ] = None,
         use_cache: bool = False,
         attn_algorithm: Optional[str] = None,
+        partial_page_tkv_mask=None,
+        left_padded_prompt_mask=None,
+        block_table=None,
+        slot_mapping=None,
     ):
         # Embed the given vocabulary indices using the given attention mask, with pre-/post-norm and dropout as specified
         # x_in: batch_size x seq_len
@@ -255,6 +269,10 @@ class GPTBigCodeHeadless(nn.Module):
                 past_key_value_state=past_key_value_states[i],
                 use_cache=use_cache,
                 attn_algorithm=attn_algorithm,
+                partial_page_tkv_mask=partial_page_tkv_mask,
+                left_padded_prompt_mask=left_padded_prompt_mask,
+                block_table=block_table,
+                slot_mapping=slot_mapping,
             )
 
             if use_cache:
@@ -337,7 +355,24 @@ class GPTBigCode(nn.Module):
         use_cache: bool = False,
         only_last_token: bool = False,
         attn_algorithm: Optional[str] = None,
+        partial_page_tkv_mask=None,
+        left_padded_prompt_mask=None,
+        block_table=None,
+        slot_mapping=None,
     ):
+        if position_ids is not None:
+            assert x.shape[0] == position_ids.shape[0]
+            assert x.shape[1] == position_ids.shape[1]
+        if slot_mapping is not None:
+            assert x.shape[0] == slot_mapping.shape[0]
+            assert x.shape[1] == slot_mapping.shape[1]
+        if block_table is not None:
+            assert x.shape[0] == block_table.shape[0]
+        if partial_page_tkv_mask is not None:
+            assert x.shape[0] == partial_page_tkv_mask.shape[0]
+        if left_padded_prompt_mask is not None:
+            assert x.shape[0] == left_padded_prompt_mask.shape[0]
+
         output, cache = self.base_model(
             x,
             mask,
@@ -345,6 +380,10 @@ class GPTBigCode(nn.Module):
             past_key_value_states=past_key_value_states,
             use_cache=use_cache,
             attn_algorithm=attn_algorithm,
+            partial_page_tkv_mask=partial_page_tkv_mask,
+            left_padded_prompt_mask=left_padded_prompt_mask,
+            block_table=block_table,
+            slot_mapping=slot_mapping
         )
 
         if only_last_token:

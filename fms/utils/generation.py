@@ -209,9 +209,23 @@ def generate(
     next_input = input_ids
     NUM_BLOCKS = 100
     BLOCK_SIZE = 64
+    if hasattr(model, "head"):
+        model_dtype = model.head.weight.dtype
+    elif hasattr(model, "shared"):
+        model_dtype = model.shared.head.weight.dtype
+    else:
+        model_dtype = torch.float32
+
+    if hasattr(model.config, "kvheads"):
+        kvheads = model.config.kvheads
+    elif hasattr(model.config, "multiquery_attn"):
+        kvheads = 1 if model.config.multiquery_attn else model.config.nheads
+    else:
+        kvheads = model.config.nheads
+
     kwargs["past_key_value_states"] = [(
-        torch.zeros(NUM_BLOCKS, BLOCK_SIZE, model.config.kvheads, model.config.emb_dim // model.config.nheads, dtype=model.head.weight.dtype),
-        torch.zeros(NUM_BLOCKS, BLOCK_SIZE, model.config.kvheads, model.config.emb_dim // model.config.nheads, dtype=model.head.weight.dtype),
+        torch.zeros(NUM_BLOCKS, BLOCK_SIZE, kvheads, model.config.emb_dim // model.config.nheads, dtype=model_dtype),
+        torch.zeros(NUM_BLOCKS, BLOCK_SIZE, kvheads, model.config.emb_dim // model.config.nheads, dtype=model_dtype),
     ) for _ in range(model.config.nlayers)]
     kwargs["block_table"] = None
     block_numbers = [i for i in range(NUM_BLOCKS)]
