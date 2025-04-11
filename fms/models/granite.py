@@ -12,7 +12,7 @@ from fms.distributed.strategy import DistributedStrategy, NoOpStrategy
 from fms.modules.attention import MultiHeadAttention
 from fms.modules.feedforward import GatedLinearUnit
 from fms.modules.layernorm import LayerNormParameterized
-from fms.modules.linear import get_linear_type_str
+from fms.modules.linear import get_linear_type
 from fms.modules.positions import RotaryEmbedding
 from fms.utils import serialization
 from fms.utils.activation import str_to_activation
@@ -482,7 +482,7 @@ serialization.register_adapter_step(
 def _get_rope_params(linear_type: str) -> list[str]:
     if "gptq" in linear_type:
         return ["qweight", "scales", "qzeros", "bias"]
-    elif "int8" in linear_type:
+    if "int8" in linear_type:
         # quantize_weight is fms-model-optimizer identifier of weight clip values
         return ["weight", "bias", "quantize_weight"]
     else:  # torch.nn.Linear
@@ -498,9 +498,8 @@ def _hf_to_fms_rope(
         head_size = model_config.emb_dim // model_config.nheads
         linear_type_str = "torch_linear"
         if model_config.linear_config:
-            linear_type = model_config.linear_config["linear_type"]
-            linear_type_str = get_linear_type_str(
-                linear_type,
+            linear_type_str = get_linear_type(
+                model_config.linear_config,
                 module_name=None,  # if callable, linear_type should return default str
             )
     else:

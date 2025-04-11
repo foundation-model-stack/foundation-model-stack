@@ -48,12 +48,22 @@ def get_all_linear_type_to_sharding_maps() -> dict[str, Callable]:
     return __type_sharding_map
 
 
-def get_linear_type_str(
-    linear_type: str | Callable | None, module_name: str | None = None
+def get_linear_type(
+    linear_config: Optional[Mapping[str, Any]], module_name: Optional[str] = None
 ) -> str:
-    """Parse linear_type and return its string version."""
+    """Parse linear configuration mapping to extract selected linear type from
+    `linear_config['linear_type']`.
+    `linear_type` can be string, callable, or None. Callable is a user-provided function
+    to select linear type based on module name. It should return string or None.
+    When no configuration is provided or linear type is None, we default to
+    "torch_linear" type, which maps to torch.nn.Linear.
+    """
+    if not linear_config:
+        return "torch_linear"
 
-    if linear_type is None:
+    linear_type = linear_config.get("linear_type", None)
+
+    if not linear_type:
         return "torch_linear"
 
     linear_type_str = None
@@ -90,22 +100,6 @@ def get_linear_type_str(
     raise ValueError(
         "linear_type must be either a supported string or a module-selection function."
     )
-
-
-def get_linear_type(
-    linear_config: Optional[Mapping[str, Any]], module_name: Optional[str] = None
-) -> str:
-    """Parse linear configuration mapping to extract selected linear type from
-    `linear_config['linear_type']`.
-    `linear_type` can be string, callable, or None. Callable is a user-provided function
-    to select linear type based on module name. It should return string or None.
-    When no configuration is provided or linear type is None, we default to
-    "torch_linear" type, which maps to torch.nn.Linear.
-    """
-    if linear_config is None:
-        return "torch_linear"
-    linear_type = linear_config.get("linear_type", None)
-    return get_linear_type_str(linear_type, module_name)
 
 
 class UninitializedLinear(UninitializedModule):
