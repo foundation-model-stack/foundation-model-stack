@@ -5,8 +5,6 @@ from typing import Any, Callable, Iterable, List, MutableMapping, Optional, Tupl
 import torch
 import torch.nn.functional as F
 
-from fms.modules.ssm import SSMCacheUnit
-
 
 logger = logging.getLogger(__name__)
 
