@@ -5,6 +5,8 @@ from typing import Any, Callable, Iterable, List, MutableMapping, Optional, Tupl
 import torch
 import torch.nn.functional as F
 
+from fms.modules.ssm import SSMCacheUnit
+
 
 logger = logging.getLogger(__name__)
 
@@ -117,7 +119,7 @@ def _make_cache_contiguous(
     n_kv_s: List[List[torch.Tensor]] = []
     for layer_idx in range(len(past_key_value_states)):
         n_kv_s.append([])
-        if (
+        if not isinstance(past_key_value_states[layer_idx], SSMCacheUnit) and (
             not past_key_value_states[layer_idx][0].is_contiguous()
             or not past_key_value_states[layer_idx][1].is_contiguous()
         ):
