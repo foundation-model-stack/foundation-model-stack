@@ -38,7 +38,7 @@ class LLaMA2Fixtures(ConfigFixtureMixin, ModelFixtureMixin):
             activation_fn="swish",
             p_dropout=0.0,
             max_expected_seq_len=4096,
-            ntk_scaling=False,
+            rope_scaling={},
             linear_config={"linear_type": "torch_linear"},
         )
 
@@ -94,7 +94,7 @@ class LLaMA2GQAFixtures(ModelFixtureMixin):
             activation_fn="swish",
             p_dropout=0.0,
             max_expected_seq_len=4096,
-            ntk_scaling=False,
+            rope_scaling={},
         )
 
 
@@ -125,7 +125,7 @@ class LLaMA2GPTQFixtures(ModelFixtureMixin):
             activation_fn="swish",
             p_dropout=0.0,
             max_expected_seq_len=4096,
-            ntk_scaling=False,
+            rope_scaling={},
             linear_config={"linear_type": "gptq_cpu"},
         )
 
@@ -158,3 +158,81 @@ class TestLlama2GPTQ(
 
     def test_model_unfused(self, model, signature):
         pytest.skip("weight unfuse is not implemented for GPTQ")
+
+
+class LLaMA3Fixtures(ModelFixtureMixin):
+    """
+    Base LLaMA 3 Fixtures that can be re-used for other purposes
+
+    This will include the config and model signatures
+    """
+
+    @pytest.fixture(scope="class", autouse=True)
+    def uninitialized_model(self):
+        return LLaMA(
+            src_vocab_size=381,
+            emb_dim=16,
+            norm_eps=1e-05,
+            nheads=4,
+            kvheads=2,
+            nlayers=2,
+            pad_id=0,
+            hidden_grow_factor=3.5,
+            multiple_of=2,
+            activation_fn="swish",
+            p_dropout=0.0,
+            max_expected_seq_len=8192,
+            rope_theta=500000.0,
+            rope_scaling={},
+        )
+
+
+class TestLlama3(ModelConsistencyTestSuite, ModelCompileTestSuite, LLaMA3Fixtures):
+    """
+    Test LLaMA 3 model consistency
+    """
+
+    # x is the main parameter for this model which is the input tensor
+    _get_signature_params = ["x"]
+
+
+class LLaMA31Fixtures(ModelFixtureMixin):
+    """
+    Base LLaMA 3.1-3.3 Fixtures that can be re-used for other purposes
+
+    This will include the config and model signatures
+    """
+
+    @pytest.fixture(scope="class", autouse=True)
+    def uninitialized_model(self):
+        return LLaMA(
+            src_vocab_size=381,
+            emb_dim=16,
+            norm_eps=1e-05,
+            nheads=4,
+            kvheads=2,
+            nlayers=2,
+            pad_id=0,
+            hidden_grow_factor=3.5,
+            multiple_of=2,
+            activation_fn="swish",
+            p_dropout=0.0,
+            max_expected_seq_len=131072,
+            rope_theta=500000.0,
+            rope_scaling={
+                "factor": 8.0,
+                "low_freq_factor": 1.0,
+                "high_freq_factor": 4.0,
+                "original_max_position_embeddings": 8192,
+                "rope_type": "llama3",
+            },
+        )
+
+
+class TestLlama31(ModelConsistencyTestSuite, ModelCompileTestSuite, LLaMA31Fixtures):
+    """
+    Test LLaMA 3.1 model consistency
+    """
+
+    # x is the main parameter for this model which is the input tensor
+    _get_signature_params = ["x"]
