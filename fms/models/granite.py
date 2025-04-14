@@ -415,16 +415,16 @@ class Granite(nn.Module):
         if left_padded_prompt_mask is not None:
             assert x.shape[0] == left_padded_prompt_mask.shape[0]
         output, cache = self.base_model(
-            x, 
-            mask, 
-            position_ids, 
-            past_key_value_states, 
-            use_cache, 
-            attn_algorithm, 
+            x,
+            mask,
+            position_ids,
+            past_key_value_states,
+            use_cache,
+            attn_algorithm,
             partial_page_tkv_mask=partial_page_tkv_mask,
             left_padded_prompt_mask=left_padded_prompt_mask,
             block_table=block_table,
-            slot_mapping=slot_mapping
+            slot_mapping=slot_mapping,
         )
 
         if only_last_token:

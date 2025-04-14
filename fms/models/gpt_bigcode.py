@@ -55,7 +55,7 @@ class GPTBigCodeBlock(nn.Module):
             use_bias=True,
             fused=self.config.fused_weights,
             linear_config=self.config.linear_config,
-            scale_factor=1 / math.sqrt(self.config.emb_dim // self.config.nheads)
+            scale_factor=1 / math.sqrt(self.config.emb_dim // self.config.nheads),
         )
 
         self.ff_sub_layer = FeedForwardBlock(
@@ -383,7 +383,7 @@ class GPTBigCode(nn.Module):
             partial_page_tkv_mask=partial_page_tkv_mask,
             left_padded_prompt_mask=left_padded_prompt_mask,
             block_table=block_table,
-            slot_mapping=slot_mapping
+            slot_mapping=slot_mapping,
         )
 
         if only_last_token:

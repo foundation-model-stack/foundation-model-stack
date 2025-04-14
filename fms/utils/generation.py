@@ -131,6 +131,7 @@ def _make_cache_dynamic(
                 torch._dynamo.mark_dynamic(tensor, 2)
     return past_key_value_states
 
+
 def generate(
     model: Union[Callable, torch.nn.Module],
     input_ids: torch.Tensor,
@@ -216,17 +217,29 @@ def generate(
     else:
         model_dtype = torch.float32
 
+    nheads = model.config.nheads
     if hasattr(model.config, "kvheads"):
         kvheads = model.config.kvheads
     elif hasattr(model.config, "multiquery_attn"):
         kvheads = 1 if model.config.multiquery_attn else model.config.nheads
     else:
-        kvheads = model.config.nheads
+        kvheads = nheads
 
-    kwargs["past_key_value_states"] = [(
-        torch.zeros(NUM_BLOCKS, BLOCK_SIZE, kvheads, model.config.emb_dim // model.config.nheads, dtype=model_dtype),
-        torch.zeros(NUM_BLOCKS, BLOCK_SIZE, kvheads, model.config.emb_dim // model.config.nheads, dtype=model_dtype),
-    ) for _ in range(model.config.nlayers)]
+    tensor_parallel_size = (
+        model.distributed_strategy.group.size()
+        if hasattr(model, "distributed_strategy")
+        else 1
+    )
+    kvheads = kvheads // tensor_parallel_size if kvheads > 1 else kvheads
+    head_size = model.config.emb_dim // nheads
+
+    kwargs["past_key_value_states"] = [
+        (
+            torch.zeros(NUM_BLOCKS, BLOCK_SIZE, kvheads, head_size, dtype=model_dtype),
+            torch.zeros(NUM_BLOCKS, BLOCK_SIZE, kvheads, head_size, dtype=model_dtype),
+        )
+        for _ in range(model.config.nlayers)
+    ]
     kwargs["block_table"] = None
     block_numbers = [i for i in range(NUM_BLOCKS)]
     left_padded_prompt_mask = (kwargs["position_ids"] == 0).sum(dim=1) - 1
@@ -272,7 +285,7 @@ def generate(
             block_offset = pos_i % BLOCK_SIZE
 
             slot_mapping = []
-            for block_table_i in block_table:   
+            for block_table_i in block_table:
                 slot = block_table_i[-1] * BLOCK_SIZE + block_offset
                 slot_mapping.append([slot])
             kwargs["block_table"] = torch.tensor(block_table, dtype=torch.int64)
@@ -280,7 +293,7 @@ def generate(
             partial_page_tkv_mask = partial_page_tkv_mask + 1
             kwargs["partial_page_tkv_mask"] = partial_page_tkv_mask
             kwargs["left_padded_prompt_mask"] = left_padded_prompt_mask
-        
+
         # prefill
         if i == 0:
             kwargs["mask"] = kwargs["mask"].unsqueeze(1)
@@ -297,11 +310,11 @@ def generate(
             torch._dynamo.mark_dynamic(kwargs["position_ids"], 1)
             torch._dynamo.mark_dynamic(kwargs["mask"], 2)
             torch._dynamo.mark_dynamic(kwargs["mask"], 3)
-        
+
         # decode
         else:
             # mask is no longer used here
-            
+
             # batch
             torch._dynamo.mark_dynamic(input_ids, 0)
             torch._dynamo.mark_dynamic(kwargs["block_table"], 0)
@@ -311,11 +324,11 @@ def generate(
             torch._dynamo.mark_dynamic(kwargs["left_padded_prompt_mask"], 0)
 
             # seq
-            torch._dynamo.mark_static(input_ids, 1) # always 1
+            torch._dynamo.mark_static(input_ids, 1)  # always 1
             torch._dynamo.mark_dynamic(kwargs["block_table"], 1)
-            torch._dynamo.mark_static(kwargs["slot_mapping"], 1) # always 1
-            torch._dynamo.mark_static(kwargs["position_ids"], 1) # always 1
-            
+            torch._dynamo.mark_static(kwargs["slot_mapping"], 1)  # always 1
+            torch._dynamo.mark_static(kwargs["position_ids"], 1)  # always 1
+
         output = model(input_ids, **kwargs)
         if use_cache:
             logits, past_key_value_states = output

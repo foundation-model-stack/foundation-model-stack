@@ -24,13 +24,14 @@ from fms.modules.tp import TPModule
 
 from torch.library import custom_op
 
+
 @custom_op("aiu::paged_attn_store", mutates_args=(), device_types="cpu")
 def paged_attn_store(
     key: torch.Tensor,
     value: torch.Tensor,
     key_cache: torch.Tensor,
     value_cache: torch.Tensor,
-    slot_mapping: torch.Tensor
+    slot_mapping: torch.Tensor,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     result_key_cache = key_cache.clone()
     result_value_cache = value_cache.clone()
@@ -44,15 +45,17 @@ def paged_attn_store(
 
     return result_key_cache, result_value_cache
 
+
 @paged_attn_store.register_fake
 def paged_attn_store_meta(
     key: torch.Tensor,
     value: torch.Tensor,
     key_cache: torch.Tensor,
     value_cache: torch.Tensor,
-    slot_mapping: torch.Tensor
+    slot_mapping: torch.Tensor,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     return key_cache, value_cache
+
 
 def ref_masked_attention(
     query: torch.Tensor,
@@ -64,6 +67,7 @@ def ref_masked_attention(
     attn_weights = torch.softmax(attn_weights, dim=-1).to(value.dtype)
     out = torch.einsum("hqk,khd->qhd", attn_weights, value)
     return out
+
 
 @custom_op("aiu::paged_attn_compute", mutates_args={}, device_types="cpu")
 def paged_attn_compute(
@@ -108,12 +112,15 @@ def paged_attn_compute(
         if num_kv_heads > 1:
             # Handle MQA and GQA
             keys = torch.repeat_interleave(keys, num_query_heads // num_kv_heads, dim=1)
-            values = torch.repeat_interleave(values, num_query_heads // num_kv_heads, dim=1)
+            values = torch.repeat_interleave(
+                values, num_query_heads // num_kv_heads, dim=1
+            )
 
         out = ref_masked_attention(q, keys, values, scale)
         out = out.view(num_query_heads, head_size)
         output[i].copy_(out, non_blocking=True)
     return output
+
 
 @paged_attn_compute.register_fake
 def paged_attn_compute_meta(
@@ -508,8 +515,8 @@ class MultiHeadAttention(nn.Module):
             # left_padded_prompt_mask: torch.Tensor,
             # block_table: torch.Tensor,
             attn = torch.ops.aiu.paged_attn_compute(
-                queries, 
-                past_key_value_state[0], 
+                queries,
+                past_key_value_state[0],
                 past_key_value_state[1],
                 self.scale_factor,
                 partial_page_tkv_mask,
@@ -517,7 +524,6 @@ class MultiHeadAttention(nn.Module):
                 block_table,
             )
         else:
-
             queries = queries.transpose(2, 1)  # / (self.emb_kq_per_head**(1/4))
             keys = keys.transpose(2, 1)  # / (self.emb_kq_per_head**(1/4))
             values = values.transpose(2, 1)  # compatible with QK.T
@@ -553,7 +559,9 @@ class MultiHeadAttention(nn.Module):
             expansion = self.nheads // self.kvheads
             # k/v: b h l d
             if expansion != 1:
-                keys_e = keys.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
+                keys_e = (
+                    keys.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
+                )
                 values_e = (
                     values.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
                 )
@@ -586,17 +594,16 @@ class MultiHeadAttention(nn.Module):
 
             if attn_algorithm:
                 torch.backends.cuda.enable_flash_sdp(self.previous_flash)
-                torch.backends.cuda.enable_mem_efficient_sdp(self.previous_mem_efficient)
+                torch.backends.cuda.enable_mem_efficient_sdp(
+                    self.previous_mem_efficient
+                )
                 torch.backends.cuda.enable_math_sdp(self.previous_math)
 
             # attn: bs x seq_len x nheads*emb_v_per_head
             # attn: b x h x qlen x ds
             # attn after permute: b x qlen x h x ds
             # b x qlen x (d)
-            attn = (
-                attn.transpose(2, 1)
-                .contiguous()
-            )
+            attn = attn.transpose(2, 1).contiguous()
         attn = attn.view(batch_size, q_len, self.nheads * self.emb_v_per_head)
         out = self.dense(attn)
 
@@ -771,6 +778,10 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
         use_cache=False,
         is_self=True,
         is_causal_mask=False,
+        partial_page_tkv_mask=None,
+        left_padded_prompt_mask=None,
+        block_table=None,
+        slot_mapping=None,
     ):
         """
         Check MultiHeadAttention for up-to-date arguments and docs
@@ -790,6 +801,10 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
             use_cache,
             is_self,
             is_causal_mask,
+            partial_page_tkv_mask,
+            left_padded_prompt_mask,
+            block_table,
+            slot_mapping,
         )
 
         # if use_cache=True, we return the hidden_state as well as the kv cache.
