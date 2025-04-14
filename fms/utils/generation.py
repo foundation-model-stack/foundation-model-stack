@@ -117,12 +117,18 @@ def _make_cache_contiguous(
     n_kv_s: List[List[torch.Tensor]] = []
     for layer_idx in range(len(past_key_value_states)):
         n_kv_s.append([])
-        for tensor_idx in range(len(past_key_value_states[layer_idx])):
-            n_kv_s[layer_idx].append(
-                past_key_value_states[layer_idx][tensor_idx]
-                .clone(memory_format=torch.contiguous_format)
-                .detach()
-            )
+        if (
+            not past_key_value_states[layer_idx][0].is_contiguous()
+            or not past_key_value_states[layer_idx][1].is_contiguous()
+        ):
+            for tensor_idx in range(len(past_key_value_states[layer_idx])):
+                n_kv_s[layer_idx].append(
+                    past_key_value_states[layer_idx][tensor_idx]
+                    .clone(memory_format=torch.contiguous_format)
+                    .detach()
+                )
+        else:
+            n_kv_s[layer_idx] = past_key_value_states[layer_idx]
     return n_kv_s
 
 
