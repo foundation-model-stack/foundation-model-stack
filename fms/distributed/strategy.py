@@ -163,6 +163,11 @@ class TensorParallelStrategy(DistributedStrategy):
         super().__init__(from_meta)
         assert torch.distributed.is_initialized(), "must initialize a process group"
         self.group = group if group is not None else torch.distributed.GroupMember.WORLD
+        self.use_sequence_parallelism = os.getenv("USE_SEQUENCE_PARALLELISM", False)
+        if self.use_sequence_parallelism:
+            print("Using TP strategy with sequence parallelism")
+        else:
+            print("Using TP strategy without sequence parallelism")
         device_type = "cuda" if torch.cuda.is_available() else "cpu"
         world = torch.distributed.get_world_size()
         self.device_mesh = init_device_mesh(device_type, (world,))
