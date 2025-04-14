@@ -227,7 +227,7 @@ def generate(
 
     tensor_parallel_size = (
         model.distributed_strategy.group.size()
-        if hasattr(model, "distributed_strategy")
+        if hasattr(model.distributed_strategy, "group")
         else 1
     )
     kvheads = kvheads // tensor_parallel_size if kvheads > 1 else kvheads
