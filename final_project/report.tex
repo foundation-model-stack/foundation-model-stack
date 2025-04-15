@@ -1,0 +1,105 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{amsmath}
+\usepackage{booktabs}
+\usepackage{caption}
+\usepackage{subcaption}
+
+\title{IBM Project 3 --- Implementing Paged Attention in FMS Using Flex Attention}
+\author{
+  Thomas Joshi (ttj2108) \and
+  Neil Dhillon (nsd2147) \and
+  Herman Saini (hss2173)
+}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+\begin{abstract}
+% TODO: Summarize the goal of integrating Paged Attention into IBM's Foundation Model Stack (FMS) using Flex Attention, highlight expected memory and speed benefits, and mention benchmarks to be run.
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+\section{Introduction}
+  \subsection{Background and Motivation}
+  % TODO: High‑level context on large‑context LLMs, attention bottlenecks, and FMS.
+  
+  \subsection{Problem Statement}
+  % TODO: Explain limitations of current KV‑cache strategies and fused kernels.
+  
+  \subsection{Objectives and Scope}
+  % TODO: Bullet the project goals listed in the proposal.
+
+\section{Literature Review}
+  \subsection{Paged Attention and vLLM}
+  % TODO: Summarize Paged Attention and prior art (e.g.\ vLLM paper).
+
+  \subsection{Flex Attention and FlashAttention}
+  % TODO: Discuss Flex Attention library and related fused‑kernel work.
+
+  \subsection{Memory‑Efficient Attention Strategies}
+  % TODO: Briefly cover other approaches (Longformer, MQA/GQA, etc.).
+
+\section{Methodology}
+  \subsection{Hardware and Software Environment}
+  % TODO: List H100/A100 specs, CUDA, PyTorch 2.1, FMS version.
+
+  \subsection{Implementation Details}
+  \subsubsection{Custom KV‑Page Allocator}
+  % TODO
+  \subsubsection{Index Mapping \& Mask Modulation}
+  % TODO
+  \subsubsection{Kernel Fusion with \texttt{torch.compile}}
+  % TODO
+
+  \subsection{Datasets}
+  % TODO: Synthetic vs real‑world long‑context corpora.
+
+  \subsection{Benchmark Metrics}
+  % TODO: Throughput (tokens/s), latency, GPU‑mem, accuracy.
+
+\section{Experimental Results}
+  \subsection{Experimental Setup}
+  % TODO: Describe testbed configuration and run parameters.
+
+  \subsection{Performance Comparison}
+  \subsubsection{Throughput and Latency}
+  % TODO: Insert tables/figures.
+  \subsubsection{Memory Utilization}
+  % TODO
+  \subsubsection{Accuracy Impact}
+  % TODO
+
+  \subsection{Ablation Studies}
+  % TODO: Page size sensitivity, paging heuristic variants, etc.
+
+\section{Discussion}
+  \subsection{Interpretation of Results}
+  % TODO
+  \subsection{Challenges and Limitations}
+  % TODO
+  \subsection{Future Work}
+  % TODO
+
+\section{Conclusion}
+% TODO: Recap contributions and findings.
+
+\section*{Acknowledgements}
+% TODO: Acknowledge mentors, course staff, IBM, etc.
+
+\appendix
+\section{Project Proposal}
+% Optional: Include the full proposal text.
+
+\section{Additional Figures}
+% TODO: Place extra plots as needed.
+
+\bibliographystyle{plain}
+\bibliography{references} % TODO: Create a references.bib file or inline \begin{thebibliography} if preferred.
+
+\end{document}
