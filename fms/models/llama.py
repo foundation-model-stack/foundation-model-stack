@@ -53,6 +53,10 @@ class LLaMAConfig(ModelConfig):
     rope_theta: float = 10_000.0
     linear_config: Optional[Mapping[str, Any]] = None
     fused_weights: bool = True
+    # Paged attention configuration
+    paged_attention: bool = False  # Whether to use paged attention
+    paged_attention_block_size: int = 128  # Block size for paged attention
+    max_blocks_per_sequence: int = 256  # Maximum number of blocks per sequence
 
 
 class LLaMABlock(nn.Module):
@@ -85,6 +89,14 @@ class LLaMABlock(nn.Module):
             kvheads = self.config.kvheads
             assert self.config.nheads % self.config.kvheads == 0
 
+        # Create paged attention config if enabled
+        paged_attention_config = None
+        if self.config.paged_attention:
+            paged_attention_config = {
+                "block_size": self.config.paged_attention_block_size,
+                "max_blocks": self.config.max_blocks_per_sequence,
+            }
+
         self.attn = MultiHeadAttention(
             self.config.emb_dim,
             emb_kq,
@@ -96,6 +108,7 @@ class LLaMABlock(nn.Module):
             position_encoder=rotary_emb,
             fused=self.config.fused_weights,
             linear_config=self.config.linear_config,
+            paged_attention_config=paged_attention_config,
         )
         self.ff_sub_layer = GatedLinearUnit(
             self.config.emb_dim,
@@ -122,6 +135,10 @@ class LLaMABlock(nn.Module):
         is_causal_mask=False,
         attn_algorithm=None,
     ):
+        # Use paged attention if configured
+        if self.config.paged_attention and attn_algorithm is None:
+            attn_algorithm = "paged"
+
         # if the cache is not empty, we need to get the kv cache for self and cross attention
         self_attn_past_key_value = past_key_value_state
         # if past_key_value_state is not None:
@@ -141,6 +158,7 @@ class LLaMABlock(nn.Module):
             use_cache=use_cache,
             is_self=True,
             is_causal_mask=is_causal_mask,
+            block_size=self.config.paged_attention_block_size if self.config.paged_attention else None,
         )
         cache = None
         if use_cache:

@@ -6,6 +6,7 @@ import torch.distributed
 from torch import Tensor, nn
 from torch.distributed.distributed_c10d import ProcessGroup
 from torch.nn import functional as F
+from torch.nn.attention import FlexAttention
 
 from fms import distributed
 from fms.distributed.tensorparallel import (
@@ -20,6 +21,9 @@ from fms.modules.linear import (
 )
 from fms.modules.positions import PositionEncoder
 from fms.modules.tp import TPModule
+
+# Use PyTorch's built-in FlexAttention
+_DEFAULT_SPARSE_BLOCK_SIZE = 128
 
 
 class QKV(nn.Module, metaclass=abc.ABCMeta):
@@ -271,6 +275,7 @@ class MultiHeadAttention(nn.Module):
         fused: bool = True,
         linear_config: Optional[Mapping[str, Any]] = None,
         scale_factor: Optional[float] = None,
+        paged_attention_config: Optional[dict] = None,
     ):
         super(MultiHeadAttention, self).__init__()
         self.nheads = nheads
@@ -283,6 +288,7 @@ class MultiHeadAttention(nn.Module):
         self.fused = fused
         self.linear_config = linear_config
         self.scale_factor = scale_factor
+        self.paged_attention_config = paged_attention_config or {}
 
         self.in_proj: QKV = (FusedQKV if self.fused else UnfusedQKV)(
             self.emb_dim,
@@ -323,6 +329,44 @@ class MultiHeadAttention(nn.Module):
     def to_tp(self, group: ProcessGroup) -> "TPMultiHeadAttention":
         return TPMultiHeadAttention.import_module(self, group)
 
+    @staticmethod
+    def create_paged_block_mask(
+        seq_len: int, 
+        kv_len: int, 
+        block_size: int = _DEFAULT_SPARSE_BLOCK_SIZE,
+        device="cuda"
+    ) -> torch.Tensor:
+        """
+        This method is deprecated as we now use PyTorch's FlexAttention.
+        """
+        raise DeprecationWarning(
+            "create_paged_block_mask is deprecated. "
+            "PyTorch's FlexAttention now handles block masks internally."
+        )
+
+    def _validate_paged_attention(
+        self,
+        seq_len: int,
+        block_size: int,
+        max_blocks: Optional[int] = None
+    ) -> None:
+        """Validates paged attention parameters.
+        
+        Args:
+            seq_len: Sequence length
+            block_size: Block size
+            max_blocks: Maximum allowed blocks (from config)
+        """
+        if not block_size & (block_size - 1) == 0:
+            raise ValueError(f"Block size {block_size} must be a power of 2")
+            
+        num_blocks = (seq_len + block_size - 1) // block_size
+        if max_blocks and num_blocks > max_blocks:
+            raise ValueError(
+                f"Sequence length {seq_len} with block size {block_size} "
+                f"exceeds maximum allowed blocks {max_blocks}"
+            )
+
     def forward(
         self,
         q: torch.Tensor,
@@ -335,6 +379,7 @@ class MultiHeadAttention(nn.Module):
         use_cache=False,
         is_self=True,
         is_causal_mask=False,
+        block_size: Optional[int] = None,
     ):
         """
         past_key_value_state: tuple
@@ -416,9 +461,7 @@ class MultiHeadAttention(nn.Module):
         # k/v: b h l d
         if expansion != 1:
             keys_e = keys.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
-            values_e = (
-                values.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
-            )
+            values_e = values.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
         else:
             keys_e = keys
             values_e = values
@@ -428,25 +471,53 @@ class MultiHeadAttention(nn.Module):
             use_flash = attn_algorithm == "flash"
             use_mem_efficient = attn_algorithm == "mem"
             use_math = attn_algorithm == "math"
+            use_paged = attn_algorithm == "paged"
 
-            torch.backends.cuda.enable_flash_sdp(use_flash)
-            torch.backends.cuda.enable_mem_efficient_sdp(use_mem_efficient)
-            torch.backends.cuda.enable_math_sdp(use_math)
+            if not use_paged:
+                torch.backends.cuda.enable_flash_sdp(use_flash)
+                torch.backends.cuda.enable_mem_efficient_sdp(use_mem_efficient)
+                torch.backends.cuda.enable_math_sdp(use_math)
 
         if attn_mask is not None and attn_mask.dtype != torch.bool:
             attn_mask = attn_mask.to(dtype=queries.dtype)
 
-        attn = F.scaled_dot_product_attention(
-            queries,
-            keys_e,
-            values_e,
-            attn_mask=attn_mask,
-            dropout_p=self.p_dropout if self.training else 0.0,
-            is_causal=is_causal_mask,
-            scale=self.scale_factor,
-        )
+        if attn_algorithm == "paged":
+            # Get block size from config or parameter
+            config_block_size = getattr(self, "paged_attention_config", {}).get("block_size")
+            block_size = block_size or config_block_size or _DEFAULT_SPARSE_BLOCK_SIZE
+            
+            # Get max blocks from config
+            max_blocks = getattr(self, "paged_attention_config", {}).get("max_blocks")
+            
+            # Validate parameters
+            self._validate_paged_attention(q_len, block_size, max_blocks)
+            
+            # Use PyTorch's FlexAttention
+            flex_attn = FlexAttention(
+                block_size=block_size,
+                dropout_p=self.p_dropout if self.training else 0.0,
+                scale=self.scale_factor,
+            )
+            
+            attn = flex_attn(
+                queries,
+                keys_e,
+                values_e,
+                attn_mask=attn_mask,
+                is_causal=is_causal_mask,
+            )
+        else:
+            attn = F.scaled_dot_product_attention(
+                queries,
+                keys_e,
+                values_e,
+                attn_mask=attn_mask,
+                dropout_p=self.p_dropout if self.training else 0.0,
+                is_causal=is_causal_mask,
+                scale=self.scale_factor,
+            )
 
-        if attn_algorithm:
+        if attn_algorithm and not use_paged:
             torch.backends.cuda.enable_flash_sdp(self.previous_flash)
             torch.backends.cuda.enable_mem_efficient_sdp(self.previous_mem_efficient)
             torch.backends.cuda.enable_math_sdp(self.previous_math)
@@ -633,6 +704,7 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
         use_cache=False,
         is_self=True,
         is_causal_mask=False,
+        block_size: Optional[int] = None,
     ):
         """
         Check MultiHeadAttention for up-to-date arguments and docs
@@ -652,6 +724,7 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
             use_cache,
             is_self,
             is_causal_mask,
+            block_size,
         )
 
         # if use_cache=True, we return the hidden_state as well as the kv cache.
@@ -662,104 +735,3 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
         else:
             out = reduce_from_tensor_model_parallel_region(out_par, self.group)
             return out
-
-
-class PagedAttention(MultiHeadAttention):
-    """
-    Implements Paged Attention mechanism for memory-efficient attention computation.
-    Uses KV-cache paging techniques to handle large context models efficiently.
-    """
-    
-    def __init__(
-        self,
-        emb_dim,
-        emb_kq,
-        emb_v,
-        nheads,
-        kvheads,
-        page_size: int = 16,  # Size of each memory page
-        max_pages: int = 256,  # Maximum number of pages in memory
-        p_dropout=None,
-        use_bias=False,
-        position_encoder=None,
-        fused: bool = True,
-        linear_config=None,
-        scale_factor=None,
-    ):
-        super().__init__(
-            emb_dim=emb_dim,
-            emb_kq=emb_kq,
-            emb_v=emb_v,
-            nheads=nheads,
-            kvheads=kvheads,
-            p_dropout=p_dropout,
-            use_bias=use_bias,
-            position_encoder=position_encoder,
-            fused=fused,
-            linear_config=linear_config,
-            scale_factor=scale_factor,
-        )
-        self.page_size = page_size
-        self.max_pages = max_pages
-        
-    def _init_paged_cache(self, batch_size: int, device: torch.device):
-        """Initialize paged KV cache"""
-        return {
-            'keys': torch.zeros(
-                batch_size, 
-                self.max_pages,
-                self.page_size,
-                self.kvheads,
-                self.emb_kq_per_head,
-                device=device
-            ),
-            'values': torch.zeros(
-                batch_size,
-                self.max_pages,
-                self.page_size,
-                self.kvheads,
-                self.emb_v_per_head,
-                device=device
-            ),
-            'page_table': torch.zeros(
-                batch_size,
-                self.max_pages,
-                dtype=torch.long,
-                device=device
-            )
-        }
-
-    def forward(
-        self,
-        q: torch.Tensor,
-        k: Optional[torch.Tensor] = None,
-        v: Optional[torch.Tensor] = None,
-        mask: Optional[Tensor] = None,
-        position_ids=None,
-        attn_algorithm=None,
-        past_key_value_state: Optional[Tuple[Tensor, Tensor]] = None,
-        use_cache=False,
-        is_self=True,
-        is_causal_mask=False,
-    ):
-        # Initialize or get paged cache
-        if past_key_value_state is None and use_cache:
-            paged_cache = self._init_paged_cache(q.size(0), q.device)
-        else:
-            paged_cache = past_key_value_state
-
-        # Call parent's forward for basic attention computation
-        output = super().forward(
-            q=q,
-            k=k,
-            v=v,
-            mask=mask,
-            position_ids=position_ids,
-            attn_algorithm=attn_algorithm,
-            past_key_value_state=paged_cache,
-            use_cache=use_cache,
-            is_self=is_self,
-            is_causal_mask=is_causal_mask,
-        )
-        
-        return output
