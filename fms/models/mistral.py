@@ -2,7 +2,7 @@ import logging
 import math
 import re
 from dataclasses import dataclass
-from typing import Any, List, Mapping, Optional, Tuple
+from typing import Any, Mapping, Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -11,20 +11,18 @@ from fms import models
 from fms.distributed.strategy import (
     DistributedStrategy,
     NoOpStrategy,
-    TensorParallelStrategy,
 )
 
 from fms.modules.attention import MultiHeadAttention
 from fms.modules.feedforward import GatedLinearUnit
 from fms.modules.layernorm import LayerNormParameterized
-from fms.modules.linear import get_linear_type
-from fms.modules.embedding import WordEmbedding
 from fms.modules.positions import RotaryEmbedding
 from fms.utils import serialization
 from fms.utils.activation import str_to_activation
 from fms.utils.config import ModelConfig
 
 
+logger = logging.getLogger(__name__)
 
 
 """
