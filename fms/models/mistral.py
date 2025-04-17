@@ -65,34 +65,34 @@ logger = logging.getLogger(__name__)
   "vocab_size": 32768
 """
 
+
 @dataclass
 class MistralConfig(ModelConfig):
     src_vocab_size: int = 32768
     nheads: int = 32
     nlayers: int = 32
     hidden_grow_factor: float = 14336 / 4096  # intermediate_size / hidden_size:emb_dim
-    multiple_of: int = 256                             # borrowed from llama 
+    multiple_of: int = 256  # borrowed from llama
     tie_heads: bool = False
     p_dropout: float = 0.0
     activation_fn: str = "swish"
-    emb_dim: int = 4096 
+    emb_dim: int = 4096
     max_expected_seq_len: int = 32768
     kvheads: int = 8
     norm_eps: float = 1e-5
-    sliding_window: int = 4000 
-    rope_base: float = 100_0000.0                      # Same as rope_theta 
-    fused_weights: bool = True                         # FMS Specific -- For CPU/GPU = T, AIU = F 
-    pad_id: int = -1                                   # borrowed from granite, we do need it
-    linear_config: Optional[Mapping[str, Any]] = None  # To suppor quantization 
-
+    sliding_window: int = 4000
+    rope_base: float = 100_0000.0  # Same as rope_theta
+    fused_weights: bool = True  # FMS Specific -- For CPU/GPU = T, AIU = F
+    pad_id: int = -1  # borrowed from granite, we do need it
+    linear_config: Optional[Mapping[str, Any]] = None  # To suppor quantization
 
 
 _7b_config = MistralConfig()
 
 
-class  MistralBlock(nn.Module):
-    def __init__(self, config:  MistralConfig, rotary_emb: RotaryEmbedding):
-        super( MistralBlock, self).__init__()
+class MistralBlock(nn.Module):
+    def __init__(self, config: MistralConfig, rotary_emb: RotaryEmbedding):
+        super(MistralBlock, self).__init__()
         self.config = config
         emb_kq = self.config.emb_dim // self.config.nheads
         emb_v = self.config.emb_dim // self.config.nheads
@@ -436,13 +436,13 @@ class Mistral(nn.Module):
             return preds
 
 
-
 _architecture_name = "mistral"
 
 
 def _mistral_factory_factory(config):
     def factory(**kwargs):
         return Mistral(config, **kwargs)
+
     return factory
 
 
@@ -496,9 +496,11 @@ def _hf_gptq_mistral_check(
 
     return input_sd
 
+
 serialization.register_adapter_step(
     _architecture_name, "hf_gptq_fusion_check", _hf_gptq_mistral_check
 )
+
 
 def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]:
     replacements = [
@@ -526,9 +528,7 @@ def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]
 
 
 serialization.register_adapter_step(
-    _architecture_name, 
-    "hf_to_fms_names", 
-    _hf_to_fms_names
+    _architecture_name, "hf_to_fms_names", _hf_to_fms_names
 )
 
 
@@ -596,7 +596,9 @@ def _hf_to_fms_rope(
     return new_sd
 
 
-serialization.register_adapter_step(_architecture_name, "hf_to_fms_rope", _hf_to_fms_rope)
+serialization.register_adapter_step(
+    _architecture_name, "hf_to_fms_rope", _hf_to_fms_rope
+)
 
 serialization.register_adapter(
     _architecture_name,

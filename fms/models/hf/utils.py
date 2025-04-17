@@ -13,6 +13,7 @@ from transformers import (  # type: ignore
 
 from fms.models import get_model, list_variants
 
+
 def register_fms_models():
     """Register all FMS models with huggingface AutoModels"""
     from fms.models.hf import _causal_lm_models, _headless_models, _masked_lm_models
