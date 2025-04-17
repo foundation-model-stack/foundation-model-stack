@@ -10,3 +10,4 @@ fms.egg-info
 .venv
 .ruff_cache
 .mypy_cache
+ibm_fms.egg-info
