@@ -13,7 +13,6 @@ from transformers import (  # type: ignore
 
 from fms.models import get_model, list_variants
 
-
 def register_fms_models():
     """Register all FMS models with huggingface AutoModels"""
     from fms.models.hf import _causal_lm_models, _headless_models, _masked_lm_models
@@ -207,6 +206,17 @@ def _infer_model_configuration(
         config_params["attention_multiplier"] = config.attention_multiplier
         config_params["logits_scaling"] = config.logits_scaling
         config_params["embedding_multiplier"] = config.embedding_multiplier
+    elif architecture == "MistralForCausalLM":
+        inner_dim = config.intermediate_size
+        architecture = "mistral"
+        config_params["activation_fn"] = config.hidden_act
+        config_params["emb_dim"] = config.hidden_size
+        config_params["max_expected_seq_len"] = config.max_position_embeddings
+        config_params["kvheads"] = config.num_key_value_heads
+        config_params["p_dropout"] = config.attention_dropout
+        config_params["norm_eps"] = config.rms_norm_eps
+        config_params["rope_base"] = config.rope_theta
+        config_params["sliding_window"] = config.sliding_window
     elif architecture == "BambaForCausalLM":
         inner_dim = config.intermediate_size
         architecture = "bamba"
