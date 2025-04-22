@@ -24,6 +24,63 @@ from fms.modules.tp import TPModule
 
 from torch.library import custom_op
 
+class AttentionOp:
+
+    def store(self, keys: torch.Tensor, values: torch.Tensor, key_cache: torch.Tensor, value_cache: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Store keys/values into the key_cache and value_cache and return the (key_cache, value_cache)"""
+        pass
+
+    def compute(self, query: torch.Tensor, key_cache: torch.Tensor, value_cache: torch.Tensor):
+        """Compute the decode step for attention given the query, key_cache, and value_cache"""
+        pass
+
+class PagedAttentionOp(AttentionOp):
+
+    def __init__(
+        self, 
+        slot_mapping: torch.Tensor, 
+        block_table: Optional[torch.Tensor] = None, 
+        partial_page_tkv_mask: Optional[torch.Tensor] = None, 
+        left_padded_prompt_mask: Optional[torch.Tensor] = None,
+        scale: Optional[float] = None,
+    ):
+        super().__init__()
+        self._slot_mapping = slot_mapping
+        self._scale = scale
+        self._block_table = block_table
+        self._partial_page_tkv_mask = partial_page_tkv_mask
+        self._left_padded_prompt_mask = left_padded_prompt_mask
+
+    @classmethod
+    def from_decode_meta(
+        cls, 
+        slot_mapping: torch.Tensor,  
+        block_table: torch.Tensor, 
+        partial_page_tkv_mask: torch.Tensor, 
+        left_padded_prompt_mask: torch.Tensor,
+        scale: float,
+    ):
+        return cls(slot_mapping, block_table, partial_page_tkv_mask, left_padded_prompt_mask, scale)
+
+    @classmethod
+    def from_prefill_meta(cls, slot_mapping: torch.Tensor):
+        return cls(slot_mapping)
+    
+    def store(self, keys, values, key_cache, value_cache):
+        return torch.ops.aiu.paged_attn_store(
+            keys, values, key_cache, value_cache, self._slot_mapping
+        )
+    
+    def compute(self, query, key_cache, value_cache):
+        return torch.ops.aiu.paged_attn_compute(
+            query,
+            key_cache,
+            value_cache,
+            self._scale,
+            self._partial_page_tkv_mask,
+            self._left_padded_prompt_mask,
+            self._block_table,
+        )
 
 @custom_op("aiu::paged_attn_store", mutates_args=(), device_types="cpu")
 def paged_attn_store(
@@ -448,10 +505,7 @@ class MultiHeadAttention(nn.Module):
         use_cache=False,
         is_self=True,
         is_causal_mask=False,
-        partial_page_tkv_mask=None,
-        left_padded_prompt_mask=None,
-        block_table=None,
-        slot_mapping=None,
+        custom_attention_op=None,
     ):
         """
         past_key_value_state: tuple
@@ -497,32 +551,10 @@ class MultiHeadAttention(nn.Module):
                     queries, keys, position_ids, past_key_value_state, use_cache
                 )
 
-        # key: torch.Tensor,
-        # value: torch.Tensor,
-        # key_cache: torch.Tensor,
-        # value_cache: torch.Tensor,
-        # slot_mapping: torch.Tensor
-        past_key_value_state = torch.ops.aiu.paged_attn_store(
-            keys, values, past_key_value_state[0], past_key_value_state[1], slot_mapping
-        )
+        past_key_value_state = custom_attention_op.store(keys, values, past_key_value_state[0], past_key_value_state[1])
 
         if queries.size(1) == 1:
-            # query: torch.Tensor,
-            # key_cache: torch.Tensor,
-            # value_cache: torch.Tensor,
-            # scale: float,
-            # partial_page_tkv_mask: torch.Tensor,
-            # left_padded_prompt_mask: torch.Tensor,
-            # block_table: torch.Tensor,
-            attn = torch.ops.aiu.paged_attn_compute(
-                queries,
-                past_key_value_state[0],
-                past_key_value_state[1],
-                self.scale_factor,
-                partial_page_tkv_mask,
-                left_padded_prompt_mask,
-                block_table,
-            )
+            attn = custom_attention_op.compute(queries, past_key_value_state[0], past_key_value_state[1])
         else:
             queries = queries.transpose(2, 1)  # / (self.emb_kq_per_head**(1/4))
             keys = keys.transpose(2, 1)  # / (self.emb_kq_per_head**(1/4))

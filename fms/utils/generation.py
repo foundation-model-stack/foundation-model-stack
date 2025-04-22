@@ -2,6 +2,7 @@ import logging
 import time
 from typing import Any, Callable, List, MutableMapping, Optional, Tuple, Union
 
+from fms.modules.attention import PagedAttentionOp
 import torch
 import torch.nn.functional as F
 
@@ -240,7 +241,6 @@ def generate(
         )
         for _ in range(model.config.nlayers)
     ]
-    kwargs["block_table"] = None
     block_numbers = [i for i in range(NUM_BLOCKS)]
     left_padded_prompt_mask = (kwargs["position_ids"] == 0).sum(dim=1) - 1
     partial_page_tkv_mask = (kwargs["position_ids"] != 0).sum(dim=1) + 1
@@ -258,9 +258,7 @@ def generate(
             slot_mapping_i.append(slot)
         slot_mapping.append(slot_mapping_i)
         block_table.append(block_table_i)
-    kwargs["slot_mapping"] = torch.tensor(slot_mapping, dtype=torch.int64)
-    kwargs["partial_page_tkv_mask"] = None
-    kwargs["left_padded_prompt_mask"] = None
+    slot_mapping = torch.tensor(slot_mapping, dtype=torch.int64)
     kwargs["use_cache"] = use_cache
 
     prompt_length = input_ids.shape[1]
@@ -288,28 +286,29 @@ def generate(
             for block_table_i in block_table:
                 slot = block_table_i[-1] * BLOCK_SIZE + block_offset
                 slot_mapping.append([slot])
-            kwargs["block_table"] = torch.tensor(block_table, dtype=torch.int64)
-            kwargs["slot_mapping"] = torch.tensor(slot_mapping, dtype=torch.int64)
+            block_table_tensor = torch.tensor(block_table, dtype=torch.int64)
             partial_page_tkv_mask = partial_page_tkv_mask + 1
-            kwargs["partial_page_tkv_mask"] = partial_page_tkv_mask
-            kwargs["left_padded_prompt_mask"] = left_padded_prompt_mask
-
+        
+        slot_mapping_tensor = torch.tensor(slot_mapping, dtype=torch.int64)
         # prefill
         if i == 0:
             kwargs["mask"] = kwargs["mask"].unsqueeze(1)
 
             # batch dynamic
             torch._dynamo.mark_static(input_ids, 0)
-            torch._dynamo.mark_static(kwargs["slot_mapping"], 0)
+            torch._dynamo.mark_static(slot_mapping_tensor, 0)
             torch._dynamo.mark_static(kwargs["position_ids"], 0)
             torch._dynamo.mark_static(kwargs["mask"], 0)
 
             # seq dynamic
-            torch._dynamo.mark_dynamic(input_ids, 1)
-            torch._dynamo.mark_dynamic(kwargs["slot_mapping"], 1)
+            torch._dynamo.mark_dynamic(slot_mapping_tensor, 1)
+            torch._dynamo.mark_dynamic(slot_mapping, 1)
             torch._dynamo.mark_dynamic(kwargs["position_ids"], 1)
             torch._dynamo.mark_dynamic(kwargs["mask"], 2)
             torch._dynamo.mark_dynamic(kwargs["mask"], 3)
+            attention_op = PagedAttentionOp.from_prefill_meta(
+                slot_mapping_tensor
+            )
 
         # decode
         else:
@@ -317,19 +316,22 @@ def generate(
 
             # batch
             torch._dynamo.mark_dynamic(input_ids, 0)
-            torch._dynamo.mark_dynamic(kwargs["block_table"], 0)
-            torch._dynamo.mark_dynamic(kwargs["slot_mapping"], 0)
+            torch._dynamo.mark_dynamic(block_table_tensor, 0)
+            torch._dynamo.mark_dynamic(slot_mapping_tensor, 0)
             torch._dynamo.mark_dynamic(kwargs["position_ids"], 0)
-            torch._dynamo.mark_dynamic(kwargs["partial_page_tkv_mask"], 0)
-            torch._dynamo.mark_dynamic(kwargs["left_padded_prompt_mask"], 0)
+            torch._dynamo.mark_dynamic(partial_page_tkv_mask, 0)
+            torch._dynamo.mark_dynamic(left_padded_prompt_mask, 0)
 
             # seq
             torch._dynamo.mark_static(input_ids, 1)  # always 1
-            torch._dynamo.mark_dynamic(kwargs["block_table"], 1)
-            torch._dynamo.mark_static(kwargs["slot_mapping"], 1)  # always 1
+            torch._dynamo.mark_dynamic(block_table_tensor, 1)
+            torch._dynamo.mark_static(slot_mapping_tensor, 1)  # always 1
             torch._dynamo.mark_static(kwargs["position_ids"], 1)  # always 1
+            attention_op = PagedAttentionOp.from_decode_meta(
+                slot_mapping_tensor, block_table_tensor, partial_page_tkv_mask, left_padded_prompt_mask, model.config.attention_multiplier
+            )
 
-        output = model(input_ids, **kwargs)
+        output = model(input_ids, custom_attention_op=attention_op, **kwargs)
         if use_cache:
             logits, past_key_value_states = output
             # TODO: this should go away when reduce-overhead issues are fixed, or
