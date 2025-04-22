@@ -260,6 +260,8 @@ class MultiHeadAttention(nn.Module):
         (e.g., "torch_linear", "gptq", ...) or a callable for module selection depending
         on module name. Additional config options should be provided as kwargs in
         linear_config.
+    paged_attention_config : dict | None
+        Optional settings for paged attention (e.g. {"block_size": 128, "max_blocks": 2048}).
     """
 
     def __init__(
@@ -289,6 +291,7 @@ class MultiHeadAttention(nn.Module):
         self.linear_config = linear_config
         self.scale_factor = scale_factor
         self.paged_attention_config = paged_attention_config or {}
+        self._flex_attn: Optional[FlexAttention] = None
 
         self.in_proj: QKV = (FusedQKV if self.fused else UnfusedQKV)(
             self.emb_dim,
@@ -357,6 +360,8 @@ class MultiHeadAttention(nn.Module):
             block_size: Block size
             max_blocks: Maximum allowed blocks (from config)
         """
+        if seq_len <= 0:
+            raise ValueError("Sequence length must be positive.")
         if not block_size & (block_size - 1) == 0:
             raise ValueError(f"Block size {block_size} must be a power of 2")
             
@@ -482,24 +487,25 @@ class MultiHeadAttention(nn.Module):
             attn_mask = attn_mask.to(dtype=queries.dtype)
 
         if attn_algorithm == "paged":
-            # Get block size from config or parameter
-            config_block_size = getattr(self, "paged_attention_config", {}).get("block_size")
-            block_size = block_size or config_block_size or _DEFAULT_SPARSE_BLOCK_SIZE
-            
-            # Get max blocks from config
-            max_blocks = getattr(self, "paged_attention_config", {}).get("max_blocks")
-            
+            # Get block size & max blocks from config or parameter
+            paged_block_size = self.paged_attention_config.get("block_size", _DEFAULT_SPARSE_BLOCK_SIZE)
+            paged_max_blocks = self.paged_attention_config.get("max_blocks", None)
+
+            block_size = block_size or self.paged_block_size
+            max_blocks = self.paged_max_blocks
+
             # Validate parameters
             self._validate_paged_attention(q_len, block_size, max_blocks)
-            
-            # Use PyTorch's FlexAttention
-            flex_attn = FlexAttention(
-                block_size=block_size,
-                dropout_p=self.p_dropout if self.training else 0.0,
-                scale=self.scale_factor,
-            )
-            
-            attn = flex_attn(
+
+            if self._flex_attn is None or self._flex_attn.block_size != block_size:
+                # Use PyTorch's FlexAttention
+                self._flex_attn = FlexAttention(
+                    block_size=block_size,
+                    dropout_p=self.p_dropout if self.training else 0.0,
+                    scale=self.scale_factor,
+                )
+
+            attn = self._flex_attn(
                 queries,
                 keys_e,
                 values_e,
