@@ -26,6 +26,10 @@ from torch.library import custom_op
 
 class AttentionOp:
 
+    def is_prefill(self) -> bool:
+        """True if op is prefill, otherwise decode"""
+        pass
+
     def store(self, keys: torch.Tensor, values: torch.Tensor, key_cache: torch.Tensor, value_cache: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """Store keys/values into the key_cache and value_cache and return the (key_cache, value_cache)"""
         pass
@@ -33,164 +37,6 @@ class AttentionOp:
     def compute(self, query: torch.Tensor, key_cache: torch.Tensor, value_cache: torch.Tensor):
         """Compute the decode step for attention given the query, key_cache, and value_cache"""
         pass
-
-class PagedAttentionOp(AttentionOp):
-
-    def __init__(
-        self, 
-        slot_mapping: torch.Tensor, 
-        block_table: Optional[torch.Tensor] = None, 
-        partial_page_tkv_mask: Optional[torch.Tensor] = None, 
-        left_padded_prompt_mask: Optional[torch.Tensor] = None,
-        scale: Optional[float] = None,
-    ):
-        super().__init__()
-        self._slot_mapping = slot_mapping
-        self._scale = scale
-        self._block_table = block_table
-        self._partial_page_tkv_mask = partial_page_tkv_mask
-        self._left_padded_prompt_mask = left_padded_prompt_mask
-
-    @classmethod
-    def from_decode_meta(
-        cls, 
-        slot_mapping: torch.Tensor,  
-        block_table: torch.Tensor, 
-        partial_page_tkv_mask: torch.Tensor, 
-        left_padded_prompt_mask: torch.Tensor,
-        scale: float,
-    ):
-        return cls(slot_mapping, block_table, partial_page_tkv_mask, left_padded_prompt_mask, scale)
-
-    @classmethod
-    def from_prefill_meta(cls, slot_mapping: torch.Tensor):
-        return cls(slot_mapping)
-    
-    def store(self, keys, values, key_cache, value_cache):
-        return torch.ops.aiu.paged_attn_store(
-            keys, values, key_cache, value_cache, self._slot_mapping
-        )
-    
-    def compute(self, query, key_cache, value_cache):
-        return torch.ops.aiu.paged_attn_compute(
-            query,
-            key_cache,
-            value_cache,
-            self._scale,
-            self._partial_page_tkv_mask,
-            self._left_padded_prompt_mask,
-            self._block_table,
-        )
-
-@custom_op("aiu::paged_attn_store", mutates_args=(), device_types="cpu")
-def paged_attn_store(
-    key: torch.Tensor,
-    value: torch.Tensor,
-    key_cache: torch.Tensor,
-    value_cache: torch.Tensor,
-    slot_mapping: torch.Tensor,
-) -> tuple[torch.Tensor, torch.Tensor]:
-    result_key_cache = key_cache.clone()
-    result_value_cache = value_cache.clone()
-    for seq_i, slot_mapping_seq in enumerate(slot_mapping):
-        for tok_i, slot in enumerate(slot_mapping_seq):
-            block_number = slot.item() // 64
-            position = slot.item() % 64
-
-            result_key_cache[block_number, position, :, :] = key[seq_i, tok_i, :, :]
-            result_value_cache[block_number, position, :, :] = value[seq_i, tok_i, :, :]
-
-    return result_key_cache, result_value_cache
-
-
-@paged_attn_store.register_fake
-def paged_attn_store_meta(
-    key: torch.Tensor,
-    value: torch.Tensor,
-    key_cache: torch.Tensor,
-    value_cache: torch.Tensor,
-    slot_mapping: torch.Tensor,
-) -> tuple[torch.Tensor, torch.Tensor]:
-    return key_cache, value_cache
-
-
-def ref_masked_attention(
-    query: torch.Tensor,
-    key: torch.Tensor,
-    value: torch.Tensor,
-    scale: float,
-) -> torch.Tensor:
-    attn_weights = scale * torch.einsum("qhd,khd->hqk", query, key).float()
-    attn_weights = torch.softmax(attn_weights, dim=-1).to(value.dtype)
-    out = torch.einsum("hqk,khd->qhd", attn_weights, value)
-    return out
-
-
-@custom_op("aiu::paged_attn_compute", mutates_args={}, device_types="cpu")
-def paged_attn_compute(
-    query: torch.Tensor,
-    key_cache: torch.Tensor,
-    value_cache: torch.Tensor,
-    scale: float,
-    partial_page_tkv_mask: torch.Tensor,
-    left_padded_prompt_mask: torch.Tensor,
-    block_table: torch.Tensor,
-) -> torch.Tensor:
-    output = torch.zeros_like(query)
-    num_query_heads = query.shape[2]
-    num_kv_heads = value_cache.shape[2]
-    head_size = value_cache.shape[3]
-    block_size = value_cache.shape[1]
-    num_seqs = query.shape[0]
-
-    block_tables_lst = block_table.cpu().tolist()
-    # adding as all sizes will be same
-    seq_lens_lst = (left_padded_prompt_mask + partial_page_tkv_mask).cpu().tolist()
-    for i in range(num_seqs):
-        q = query[i]
-        block_table = block_tables_lst[i]
-        start_pos = left_padded_prompt_mask[i].item()
-        seq_len = int(seq_lens_lst[i])
-
-        keys_lst: list[torch.Tensor] = []
-        values_lst: list[torch.Tensor] = []
-        for j in range(start_pos, seq_len):
-            block_number = int(block_table[j // block_size])
-            block_offset = j % block_size
-
-            k = key_cache[block_number, block_offset, :, :]
-            k = k.reshape(num_kv_heads, head_size)
-            keys_lst.append(k)
-
-            v = value_cache[block_number, block_offset, :, :]
-            values_lst.append(v)
-        keys = torch.stack(keys_lst, dim=0)
-        values = torch.stack(values_lst, dim=0)
-        if num_kv_heads > 1:
-            # Handle MQA and GQA
-            keys = torch.repeat_interleave(keys, num_query_heads // num_kv_heads, dim=1)
-            values = torch.repeat_interleave(
-                values, num_query_heads // num_kv_heads, dim=1
-            )
-
-        out = ref_masked_attention(q, keys, values, scale)
-        out = out.view(num_query_heads, head_size)
-        output[i].copy_(out, non_blocking=True)
-    return output
-
-
-@paged_attn_compute.register_fake
-def paged_attn_compute_meta(
-    query: torch.Tensor,
-    key_cache: torch.Tensor,
-    value_cache: torch.Tensor,
-    scale: float,
-    partial_page_tkv_mask: torch.Tensor,
-    left_padded_prompt_mask: torch.Tensor,
-    block_table: torch.Tensor,
-) -> torch.Tensor:
-    return torch.zeros_like(query)
-
 
 class QKV(nn.Module, metaclass=abc.ABCMeta):
     """Simple module for applying qkv in attention"""
@@ -551,9 +397,10 @@ class MultiHeadAttention(nn.Module):
                     queries, keys, position_ids, past_key_value_state, use_cache
                 )
 
-        past_key_value_state = custom_attention_op.store(keys, values, past_key_value_state[0], past_key_value_state[1])
+        if use_cache and custom_attention_op:
+            past_key_value_state = custom_attention_op.store(keys, values, past_key_value_state[0], past_key_value_state[1])
 
-        if queries.size(1) == 1:
+        if use_cache and custom_attention_op and not custom_attention_op.is_prefill():
             attn = custom_attention_op.compute(queries, past_key_value_state[0], past_key_value_state[1])
         else:
             queries = queries.transpose(2, 1)  # / (self.emb_kq_per_head**(1/4))
@@ -561,17 +408,18 @@ class MultiHeadAttention(nn.Module):
             values = values.transpose(2, 1)  # compatible with QK.T
 
             # if you want to use caching and past_key_value_state is not None meaning you have values in your cache
-            # if (
-            #     use_cache
-            #     and past_key_value_state is not None
-            #     and past_key_value_state[0].numel() > 0
-            # ):
-            #     if is_self:
-            #         keys = torch.cat((past_key_value_state[0], keys), dim=2)
-            #         values = torch.cat((past_key_value_state[1], values), dim=2)
-            #     else:
-            #         keys = past_key_value_state[0]
-            #         values = past_key_value_state[1]
+            if (
+                use_cache
+                and not custom_attention_op
+                and past_key_value_state is not None
+                and past_key_value_state[0].numel() > 0
+            ):
+                if is_self:
+                    keys = torch.cat((past_key_value_state[0], keys), dim=2)
+                    values = torch.cat((past_key_value_state[1], values), dim=2)
+                else:
+                    keys = past_key_value_state[0]
+                    values = past_key_value_state[1]
 
             # Merge rel pos bias and mask into single float mask
             if mask is not None:
@@ -641,7 +489,10 @@ class MultiHeadAttention(nn.Module):
 
         # if use_cache=True, we return the hidden_state as well as the kv cache
         if use_cache:
-            return out, past_key_value_state
+            if custom_attention_op:
+                return out, past_key_value_state
+            else:
+                return out, (keys, values)
         else:
             return out
 
@@ -703,7 +554,7 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
         )
         self.pre_tp_nheads = nheads
         self.pre_tp_kvheads = kvheads
-        self.setup_tp(rank, world_size)
+        self.setup_tp(rank, group)
 
         # linear_type must handle module_name = None to support TP of MHA
         self.linear_type = get_linear_type(self.linear_config)
@@ -784,13 +635,13 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
         v: Optional[torch.Tensor] = None,
     ):
         if (k is None and v is None) or (k is q and v is q):
-            q_par = copy_to_tensor_model_parallel_region(q)
+            q_par = copy_to_tensor_model_parallel_region(q, self.group)
             if self.fused:
                 k_par = None
                 v_par = None
             else:
-                k_par = copy_to_tensor_model_parallel_region(k)
-                v_par = copy_to_tensor_model_parallel_region(v)
+                k_par = copy_to_tensor_model_parallel_region(k, self.group)
+                v_par = copy_to_tensor_model_parallel_region(v, self.group)
         else:
             raise ValueError(
                 "both k and v must either be given as tensors or both None"
@@ -842,8 +693,8 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
         # if use_cache=True, we return the hidden_state as well as the kv cache.
         # We only reduce the output, and keep the cache thread-local
         if use_cache:
-            out = reduce_from_tensor_model_parallel_region(out_par[0], self.world_size)
+            out = reduce_from_tensor_model_parallel_region(out_par[0], self.group)
             return out, out_par[1]
         else:
-            out = reduce_from_tensor_model_parallel_region(out_par, self.world_size)
+            out = reduce_from_tensor_model_parallel_region(out_par, self.group)
             return out

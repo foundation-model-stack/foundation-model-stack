@@ -264,13 +264,14 @@ class Checkpointer(TrainerPlugin):
 
         # other metrics are per-rank so we need to aggregate cumulative tokens
         # manually
-        tokens = metrics["batch_size"] * metrics["input_length"] * steps_since_last
-        tokens = torch.tensor(tokens, device=self.device)
-        global_world = 1 if not dist.is_initialized() else dist.get_world_size()
-        if global_world > 1 and tokens.device.type == "cuda":
-            # these use the default process group (all nodes even if HSDP)
-            dist.all_reduce(tokens, op=dist.ReduceOp.SUM)
-        self.cumulative_tokens += tokens
+        if "batch_size" in metrics and "input_length" in metrics:
+            tokens = metrics["batch_size"] * metrics["input_length"] * steps_since_last
+            tokens = torch.tensor(tokens, device=self.device)
+            global_world = 1 if not dist.is_initialized() else dist.get_world_size()
+            if global_world > 1 and tokens.device.type == "cuda":
+                # these use the default process group (all nodes even if HSDP)
+                dist.all_reduce(tokens, op=dist.ReduceOp.SUM)
+            self.cumulative_tokens += tokens
 
         model_name = (
             self.model.__class__.__name__.lower() if self.name is None else self.name
@@ -334,7 +335,7 @@ class Checkpointer(TrainerPlugin):
         if step:
             train_dict |= {"step": step}
 
-        if self.dataset is not None:
+        if self.dataset is not None and hasattr(self.dataset, "state_dict"):
             dataset_sd = self.dataset.state_dict()
             train_dict |= {"dataset": dataset_sd}
 

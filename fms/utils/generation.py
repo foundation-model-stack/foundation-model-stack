@@ -1,8 +1,7 @@
 import logging
 import time
-from typing import Any, Callable, List, MutableMapping, Optional, Tuple, Union
+from typing import Any, Callable, Iterable, List, MutableMapping, Optional, Tuple, Union
 
-from fms.modules.attention import PagedAttentionOp
 import torch
 import torch.nn.functional as F
 
@@ -11,7 +10,9 @@ logger = logging.getLogger(__name__)
 
 
 def pad_input_ids(
-    input_ids_list: List[torch.Tensor], min_pad_length: int = 0
+    input_ids_list: List[torch.Tensor],
+    min_pad_length: int = 0,
+    is_causal_mask=True,
 ) -> Tuple[torch.Tensor, MutableMapping[str, Any]]:
     """
     Convert a list of Tensors to a rectangular tensor. Return extra padding kwargs for the position_ids and mask, since
@@ -60,8 +61,10 @@ def pad_input_ids(
     input_ids = torch.stack(padded_input_ids_list)
     padding_kwargs = {}
     mask = torch.stack(mask_list)
+    mask = mask.unsqueeze(-1) == mask.unsqueeze(-2)
     # this is a causal mask for generation
-    mask = (mask.unsqueeze(-1) == mask.unsqueeze(-2)).tril()
+    if is_causal_mask:
+        mask = mask.tril()
     mask = torch.where(mask.logical_not(), -torch.inf, 0.0)
     padding_kwargs["mask"] = mask
 
@@ -89,6 +92,8 @@ def __update_padding_kwargs(
             dim=2,
         )
         model_specific_kwargs["mask"] = mask
+        if torch._dynamo.config.dynamic_shapes:
+            torch._dynamo.mark_dynamic(mask, 2)
 
     # extend the position_ids
     position_ids = model_specific_kwargs.get("position_ids", None)
@@ -112,12 +117,25 @@ def _make_cache_contiguous(
     n_kv_s: List[List[torch.Tensor]] = []
     for layer_idx in range(len(past_key_value_states)):
         n_kv_s.append([])
-        for tensor_idx in range(len(past_key_value_states[layer_idx])):
-            n_kv_s[layer_idx].append(
-                past_key_value_states[layer_idx][tensor_idx]
-                .clone(memory_format=torch.contiguous_format)
-                .detach()
+        if (
+            isinstance(past_key_value_states[layer_idx], Iterable)
+            and (
+                isinstance(past_key_value_states[layer_idx][0], torch.Tensor)
+                and isinstance(past_key_value_states[layer_idx][1], torch.Tensor)
             )
+            and (
+                not past_key_value_states[layer_idx][0].is_contiguous()
+                or not past_key_value_states[layer_idx][1].is_contiguous()
+            )
+        ):
+            for tensor_idx in range(len(past_key_value_states[layer_idx])):
+                n_kv_s[layer_idx].append(
+                    past_key_value_states[layer_idx][tensor_idx]
+                    .clone(memory_format=torch.contiguous_format)
+                    .detach()
+                )
+        else:
+            n_kv_s[layer_idx] = past_key_value_states[layer_idx]
     return n_kv_s
 
 
@@ -127,7 +145,7 @@ def _make_cache_dynamic(
     # kv updates are required for torch.compile with
     # mode='reduce-overhead'
     for layer in past_key_value_states:
-        if isinstance(layer, tuple):
+        if isinstance(layer, Iterable):
             for tensor in layer:
                 torch._dynamo.mark_dynamic(tensor, 2)
     return past_key_value_states
@@ -146,6 +164,12 @@ def generate(
     contiguous_cache: bool = False,
     eos_token_id: Optional[int] = None,
     timing: str = "",
+    prepare_model_inputs_hook: Optional[
+        Callable[
+            [int, torch.Tensor, MutableMapping[str, Any]],
+            Tuple[torch.Tensor, MutableMapping[str, Any]],
+        ]
+    ] = None,
     post_iteration_hook: Optional[
         Callable[
             [int, torch.Tensor, torch.Tensor, MutableMapping[str, Any]],
@@ -180,6 +204,10 @@ def generate(
             with the following information:
             - "per-token": Array with `max_new_tokens` time measurements (in s)
             - "e2e": Array with a single e2e generation loop time measurement (in s)
+        prepare_model_inputs_hook: a function that will get called immediately before model forward.
+            It must have the following signature: f(int generate_iteration, Tensor input_ids, Dict kwargs) ->
+            Tuple[Tensor input_ids, Dict kwargs]. If it is defined, will replace input_ids
+            and kwargs to next model forward based on the contents of the function.
         post_iteration_hook: a function that will get called after each iteration.
             It must have the following signature: f(int token_position, Tensor logits, Tensor next_val, Dict kwargs) ->
             Tuple[Tensor next_val, Dict kwargs]. If it is defined, will replace next_val
@@ -209,56 +237,7 @@ def generate(
 
     result = input_ids
     next_input = input_ids
-    NUM_BLOCKS = 100
-    BLOCK_SIZE = 64
-    if hasattr(model, "head"):
-        model_dtype = model.head.weight.dtype
-    elif hasattr(model, "shared"):
-        model_dtype = model.shared.head.weight.dtype
-    else:
-        model_dtype = torch.float32
-
-    nheads = model.config.nheads
-    if hasattr(model.config, "kvheads"):
-        kvheads = model.config.kvheads
-    elif hasattr(model.config, "multiquery_attn"):
-        kvheads = 1 if model.config.multiquery_attn else model.config.nheads
-    else:
-        kvheads = nheads
-
-    tensor_parallel_size = (
-        model.distributed_strategy.group.size()
-        if hasattr(model.distributed_strategy, "group")
-        else 1
-    )
-    kvheads = kvheads // tensor_parallel_size if kvheads > 1 else kvheads
-    head_size = model.config.emb_dim // nheads
-
-    kwargs["past_key_value_states"] = [
-        (
-            torch.zeros(NUM_BLOCKS, BLOCK_SIZE, kvheads, head_size, dtype=model_dtype),
-            torch.zeros(NUM_BLOCKS, BLOCK_SIZE, kvheads, head_size, dtype=model_dtype),
-        )
-        for _ in range(model.config.nlayers)
-    ]
-    block_numbers = [i for i in range(NUM_BLOCKS)]
-    left_padded_prompt_mask = (kwargs["position_ids"] == 0).sum(dim=1) - 1
-    partial_page_tkv_mask = (kwargs["position_ids"] != 0).sum(dim=1) + 1
-    slot_mapping = []
-    block_table = []
-    for seq_i in input_ids:
-        block_table_i = []
-        slot_mapping_i = []
-        for pos_i in range(seq_i.size(0)):
-            if pos_i % BLOCK_SIZE == 0:
-                block_number = block_numbers.pop(0)
-                block_table_i.append(block_number)
-            block_offset = pos_i % BLOCK_SIZE
-            slot = block_number * BLOCK_SIZE + block_offset
-            slot_mapping_i.append(slot)
-        slot_mapping.append(slot_mapping_i)
-        block_table.append(block_table_i)
-    slot_mapping = torch.tensor(slot_mapping, dtype=torch.int64)
+    kwargs["past_key_value_states"] = None
     kwargs["use_cache"] = use_cache
 
     prompt_length = input_ids.shape[1]
@@ -273,65 +252,12 @@ def generate(
         # prepare any padding keyword arguments
         # iteration 0 is the prefill step (cache has not been filled yet), so no need to extend the mask/position_ids
         if i > 0:
-            kwargs["mask"] = None
             kwargs = __update_padding_kwargs(use_cache, kwargs)
-            pos_i = result.size(1) - 1
-            if pos_i % BLOCK_SIZE == 0:
-                for block_table_i in block_table:
-                    block_number = block_numbers.pop(0)
-                    block_table_i.append(block_number)
-            block_offset = pos_i % BLOCK_SIZE
 
-            slot_mapping = []
-            for block_table_i in block_table:
-                slot = block_table_i[-1] * BLOCK_SIZE + block_offset
-                slot_mapping.append([slot])
-            block_table_tensor = torch.tensor(block_table, dtype=torch.int64)
-            partial_page_tkv_mask = partial_page_tkv_mask + 1
-        
-        slot_mapping_tensor = torch.tensor(slot_mapping, dtype=torch.int64)
-        # prefill
-        if i == 0:
-            kwargs["mask"] = kwargs["mask"].unsqueeze(1)
+        if prepare_model_inputs_hook is not None:
+            input_ids, kwargs = prepare_model_inputs_hook(i, input_ids, kwargs)
 
-            # batch dynamic
-            torch._dynamo.mark_static(input_ids, 0)
-            torch._dynamo.mark_static(slot_mapping_tensor, 0)
-            torch._dynamo.mark_static(kwargs["position_ids"], 0)
-            torch._dynamo.mark_static(kwargs["mask"], 0)
-
-            # seq dynamic
-            torch._dynamo.mark_dynamic(slot_mapping_tensor, 1)
-            torch._dynamo.mark_dynamic(slot_mapping, 1)
-            torch._dynamo.mark_dynamic(kwargs["position_ids"], 1)
-            torch._dynamo.mark_dynamic(kwargs["mask"], 2)
-            torch._dynamo.mark_dynamic(kwargs["mask"], 3)
-            attention_op = PagedAttentionOp.from_prefill_meta(
-                slot_mapping_tensor
-            )
-
-        # decode
-        else:
-            # mask is no longer used here
-
-            # batch
-            torch._dynamo.mark_dynamic(input_ids, 0)
-            torch._dynamo.mark_dynamic(block_table_tensor, 0)
-            torch._dynamo.mark_dynamic(slot_mapping_tensor, 0)
-            torch._dynamo.mark_dynamic(kwargs["position_ids"], 0)
-            torch._dynamo.mark_dynamic(partial_page_tkv_mask, 0)
-            torch._dynamo.mark_dynamic(left_padded_prompt_mask, 0)
-
-            # seq
-            torch._dynamo.mark_static(input_ids, 1)  # always 1
-            torch._dynamo.mark_dynamic(block_table_tensor, 1)
-            torch._dynamo.mark_static(slot_mapping_tensor, 1)  # always 1
-            torch._dynamo.mark_static(kwargs["position_ids"], 1)  # always 1
-            attention_op = PagedAttentionOp.from_decode_meta(
-                slot_mapping_tensor, block_table_tensor, partial_page_tkv_mask, left_padded_prompt_mask, model.config.attention_multiplier
-            )
-
-        output = model(input_ids, custom_attention_op=attention_op, **kwargs)
+        output = model(input_ids, **kwargs)
         if use_cache:
             logits, past_key_value_states = output
             # TODO: this should go away when reduce-overhead issues are fixed, or

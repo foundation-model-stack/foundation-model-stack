@@ -141,7 +141,7 @@ class TPFeedForwardBlock(FeedForwardBlock, TPModule):
             use_bias,
             linear_config,
         )
-        self.setup_tp(rank, world_size)
+        self.setup_tp(rank, group)
 
         # linear_type must handle module_name = None to support TP of FNN
         self.linear_type = get_linear_type(self.linear_config)
@@ -185,9 +185,9 @@ class TPFeedForwardBlock(FeedForwardBlock, TPModule):
         return tp_ffb
 
     def forward(self, x):
-        x_par = copy_to_tensor_model_parallel_region(x)
+        x_par = copy_to_tensor_model_parallel_region(x, self.group)
         out_par = FeedForwardBlock.forward(self, x_par)
-        return reduce_from_tensor_model_parallel_region(out_par, self.world_size)
+        return reduce_from_tensor_model_parallel_region(out_par, self.group)
 
 
 class GatedLinearUnit(nn.Module):
@@ -374,7 +374,7 @@ class TPGatedLinearUnit(GatedLinearUnit, TPModule):
             fused,
             linear_config,
         )
-        self.setup_tp(rank, world_size)
+        self.setup_tp(rank, group)
 
         # linear_type must handle module_name = None to support TP of GLU
         self.linear_type = get_linear_type(self.linear_config)
@@ -438,9 +438,9 @@ class TPGatedLinearUnit(GatedLinearUnit, TPModule):
         return tp_glu
 
     def forward(self, x):
-        x_par = copy_to_tensor_model_parallel_region(x)
+        x_par = copy_to_tensor_model_parallel_region(x, self.group)
         out_par = GatedLinearUnit.forward(self, x_par)
-        return reduce_from_tensor_model_parallel_region(out_par, self.world_size)
+        return reduce_from_tensor_model_parallel_region(out_par, self.group)
 
     def _initialize_empty_module(self):
         return TPGatedLinearUnit(
@@ -574,7 +574,7 @@ class TPConditionalFeedForward(ConditionalFeedForward, TPModule):
             dim,
             intermediate_size // world_size,
         )
-        self.setup_tp(rank, world_size)
+        self.setup_tp(rank, group)
 
     def load_weights(
         self,
@@ -608,9 +608,9 @@ class TPConditionalFeedForward(ConditionalFeedForward, TPModule):
         return tp_cff
 
     def forward(self, x, expert_indices):
-        x_par = copy_to_tensor_model_parallel_region(x)
+        x_par = copy_to_tensor_model_parallel_region(x, self.group)
         out_par = ConditionalFeedForward.forward(self, x_par, expert_indices)
-        return reduce_from_tensor_model_parallel_region(out_par, self.world_size)
+        return reduce_from_tensor_model_parallel_region(out_par, self.group)
 
 
 class MOEFeedForward(nn.Module):

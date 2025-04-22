@@ -12,6 +12,7 @@ from fms.distributed.strategy import DistributedStrategy, NoOpStrategy
 from fms.modules.attention import MultiHeadAttention
 from fms.modules.feedforward import GatedLinearUnit
 from fms.modules.layernorm import LayerNormParameterized
+from fms.modules.linear import get_linear_type
 from fms.modules.positions import RotaryEmbedding
 from fms.utils import serialization
 from fms.utils.activation import str_to_activation
@@ -387,18 +388,10 @@ class Granite(nn.Module):
         attn_algorithm: Optional[str] = None,
         custom_attention_op=None,
     ):
-        # if position_ids is not None:
-        #     assert x.shape[0] == position_ids.shape[0]
-        #     assert x.shape[1] == position_ids.shape[1]
-        # if slot_mapping is not None:
-        #     assert x.shape[0] == slot_mapping.shape[0]
-        #     assert x.shape[1] == slot_mapping.shape[1]
-        # if block_table is not None:
-        #     assert x.shape[0] == block_table.shape[0]
-        # if partial_page_tkv_mask is not None:
-        #     assert x.shape[0] == partial_page_tkv_mask.shape[0]
-        # if left_padded_prompt_mask is not None:
-        #     assert x.shape[0] == left_padded_prompt_mask.shape[0]
+        if position_ids is not None:
+            assert x.shape[0] == position_ids.shape[0]
+            assert x.shape[1] == position_ids.shape[1]
+
         output, cache = self.base_model(
             x,
             mask,
@@ -504,6 +497,9 @@ serialization.register_adapter_step(
 def _get_rope_params(linear_type: str) -> list[str]:
     if "gptq" in linear_type:
         return ["qweight", "scales", "qzeros", "bias"]
+    if "int8" in linear_type:
+        # quantize_weight is fms-model-optimizer identifier of weight clip values
+        return ["weight", "bias", "quantize_weight"]
     else:  # torch.nn.Linear
         return ["weight", "bias"]
 
@@ -515,15 +511,18 @@ def _hf_to_fms_rope(
 
     if model_config:
         head_size = model_config.emb_dim // model_config.nheads
-        linear_type = "torch_linear"
+        linear_type_str = "torch_linear"
         if model_config.linear_config:
-            linear_type = model_config.linear_config["linear_type"]
+            linear_type_str = get_linear_type(
+                model_config.linear_config,
+                module_name=None,  # if callable, linear_type should return default str
+            )
     else:
         logger.warning("Missing model_config, assuming defaults for head_size")
         head_size = 128  # Good default for most models
-        linear_type = "torch_linear"
+        linear_type_str = "torch_linear"
 
-    rope_params = _get_rope_params(linear_type)
+    rope_params = _get_rope_params(linear_type_str)
     trans_required_pattern = re.compile(
         f"base_model.layers.[0-9]+.attn.in_proj.(query|key).({'|'.join(rope_params)})"
     )
@@ -538,12 +537,14 @@ def _hf_to_fms_rope(
         # combination projection + RoPE ends up producing the same outputs.
         # Therefore, to make FMS produce the correct order of outputs when
         # loading from an HF checkpoint, we need to undo the transformation
-        # that HF does from the original Meta weights:
-        if bool(trans_required_pattern.match(name)):
+        # that HF does from the original Meta weights
+        is_gptq_2d_qparam = "gptq" in linear_type_str and param.dim() == 2
+        if bool(trans_required_pattern.match(name)) and param.numel() > 1:
             temp = param
-            if "gptq" in linear_type and temp.dim() == 2:
+            if is_gptq_2d_qparam:
                 # GPTQ qweights are [in_feat, out_feat] (unlike usual [out_feat, in_feat])
-                # and are fully transposed before & after process
+                # and are fully transposed before & after process.
+                # GPTQ scales and qzeros are also transposed accordingly
                 temp = temp.transpose(0, 1)
             # num_heads is used in the transformation required for hf->fms
             # can't be precomputed because q and k might have different num_heads
@@ -551,11 +552,11 @@ def _hf_to_fms_rope(
 
             if temp.dim() == 2:  # weight
                 temp_view = temp.view(num_heads, 2, -1, temp.size(1))
-            else:  # bias
+            else:  # 1-dim parameters
                 temp_view = temp.view(num_heads, 2, -1)
             temp = temp_view.transpose(1, 2).reshape(*temp.size())
 
-            if "gptq" in linear_type and temp.dim() == 2:
+            if is_gptq_2d_qparam:
                 temp = temp.transpose(0, 1)
 
             new_sd[name] = temp
@@ -597,3 +598,13 @@ serialization.register_adapter(
     "hf",
     ["hf_to_fms_names", "hf_to_fms_rope", "hf_gptq_fusion_check", "weight_fusion"],
 )
+
+# if slot_mapping is not None:
+#     assert x.shape[0] == slot_mapping.shape[0]
+#     assert x.shape[1] == slot_mapping.shape[1]
+# if block_table is not None:
+#     assert x.shape[0] == block_table.shape[0]
+# if partial_page_tkv_mask is not None:
+#     assert x.shape[0] == partial_page_tkv_mask.shape[0]
+# if left_padded_prompt_mask is not None:
+#     assert x.shape[0] == left_padded_prompt_mask.shape[0]

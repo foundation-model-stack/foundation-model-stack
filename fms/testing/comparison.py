@@ -98,8 +98,6 @@ def get_signature(
         if logits_getter_fn:
             p = logits_getter_fn(p)
 
-        # Temporary dummy backward pass to avoid checkpointing problems (see issue #591)
-        p.abs().mean().mul(0).backward()
         return p
 
     # If cuda is available, we want to always create a signature using fp32, so this will ensure that.
@@ -123,6 +121,7 @@ def compare_model_signatures(
     model_params_1: ModelSignatureParams,
     model_params_2: ModelSignatureParams,
     atol: float = 1e-3,
+    rtol: float = 1e-5,
 ):
     """This utility function will compare the signature between 2 models using np.allclose
 
@@ -157,6 +156,5 @@ def compare_model_signatures(
 
     signature = np.array(signature)
     signature2 = np.array(signature2)
-    assert np.allclose(signature, signature2, atol=atol), np.mean(
-        np.abs(signature2 - signature)
-    )
+    result_text = f"\nabs mean: {np.mean(np.abs(signature2 - signature))}\nsignature 1: {signature}\nsignature 2: {signature2}"
+    assert np.allclose(signature, signature2, atol=atol, rtol=rtol), result_text
