@@ -164,6 +164,12 @@ def generate(
     contiguous_cache: bool = False,
     eos_token_id: Optional[int] = None,
     timing: str = "",
+    prepare_model_inputs_hook: Optional[
+        Callable[
+            [int, torch.Tensor, MutableMapping[str, Any]],
+            Tuple[torch.Tensor, MutableMapping[str, Any]],
+        ]
+    ] = None,
     post_iteration_hook: Optional[
         Callable[
             [int, torch.Tensor, torch.Tensor, MutableMapping[str, Any]],
@@ -198,6 +204,10 @@ def generate(
             with the following information:
             - "per-token": Array with `max_new_tokens` time measurements (in s)
             - "e2e": Array with a single e2e generation loop time measurement (in s)
+        prepare_model_inputs_hook: a function that will get called immediately before model forward.
+            It must have the following signature: f(int generate_iteration, Tensor input_ids, Dict kwargs) ->
+            Tuple[Tensor input_ids, Dict kwargs]. If it is defined, will replace input_ids
+            and kwargs to next model forward based on the contents of the function.
         post_iteration_hook: a function that will get called after each iteration.
             It must have the following signature: f(int token_position, Tensor logits, Tensor next_val, Dict kwargs) ->
             Tuple[Tensor next_val, Dict kwargs]. If it is defined, will replace next_val
@@ -243,6 +253,10 @@ def generate(
         # iteration 0 is the prefill step (cache has not been filled yet), so no need to extend the mask/position_ids
         if i > 0:
             kwargs = __update_padding_kwargs(use_cache, kwargs)
+
+        if prepare_model_inputs_hook is not None:
+            input_ids, kwargs = prepare_model_inputs_hook(i, input_ids, kwargs)
+
         output = model(input_ids, **kwargs)
         if use_cache:
             logits, past_key_value_states = output
