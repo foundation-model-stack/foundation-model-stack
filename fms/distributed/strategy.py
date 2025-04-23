@@ -1,4 +1,5 @@
 import os
+import re
 from abc import abstractmethod
 from typing import List, Any
 
@@ -163,18 +164,32 @@ class UniformModelParallelStrategy(DistributedStrategy):
 def generate_layer_plan(block: nn.Module, use_sequence_parallelism: bool = False) -> dict[str, Any]:
     tp_plan = {}
 
-    for name, module in block.named_modules():
-        lowered = name.lower()
+    colwise_patterns = [
+        r"attn\.in_proj\.qkv_fused",
+        r"attn\.in_proj\.(query|key|value)",
+        r"ff_sub_layer\.wg1_fused",
+        r"ff_sub_layer\.w1",
+        r"ff_sub_layer\.wg",
+    ]
+    rowwise_patterns = [
+        r"attn\.dense",
+        r"ff_sub_layer\.w2",
+    ]
 
-        if use_sequence_parallelism and isinstance(module, (nn.LayerNorm, nn.Dropout, LayerNormParameterized)):
+    for name, module in block.named_modules():
+        if use_sequence_parallelism and isinstance(module, (nn.LayerNorm, nn.Dropout)):
             tp_plan[name] = SequenceParallel()
         elif isinstance(module, nn.Linear):
-            if any(k in lowered for k in ["query", "key", "value", "w1", "wg", "in_proj", "qkv"]):
-                tp_plan[name] = ColwiseParallel()
-            elif any(k in lowered for k in ["dense", "w2", "output"]):
-                tp_plan[name] = RowwiseParallel()
-            else:
-                print(f"[TP PLAN] Unmatched Linear: {name}")
+            for pattern in colwise_patterns:
+                if re.fullmatch(pattern, name):
+                    tp_plan[name] = ColwiseParallel()
+                    break
+            for pattern in rowwise_patterns:
+                if re.fullmatch(pattern, name):
+                    tp_plan[name] = RowwiseParallel()
+                    break
+        else:
+            print(f"[TP PLAN] Unmatched Linear: {name}")
 
     return tp_plan
 
