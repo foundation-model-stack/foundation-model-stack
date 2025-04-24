@@ -1,12 +1,13 @@
 import os
 from abc import abstractmethod
-from typing import List
+from typing import List, Any
 
 import torch
 import torch.distributed
 from torch import nn
 
 from fms.utils import tp_wrapping
+from fms.modules.layernorm import LayerNormParameterized
 from torch.distributed.device_mesh import init_device_mesh
 
 
@@ -17,7 +18,8 @@ from torch.distributed.tensor.parallel import (
    RowwiseParallel,
    SequenceParallel,
    PrepareModuleInput,
-   PrepareModuleOutput
+   PrepareModuleOutput,
+   SequenceParallel
 )
 
 
@@ -158,12 +160,30 @@ class UniformModelParallelStrategy(DistributedStrategy):
         return wrapped
 
 
+def generate_layer_plan(block: nn.Module, use_sequence_parallelism: bool = False) -> dict[str, Any]:
+    tp_plan = {}
+
+    for name, module in block.named_modules():
+        lowered = name.lower()
+
+        if use_sequence_parallelism and isinstance(module, (nn.LayerNorm, nn.Dropout, LayerNormParameterized)):
+            tp_plan[name] = SequenceParallel()
+        elif isinstance(module, nn.Linear):
+            if any(k in lowered for k in ["query", "key", "value", "w1", "wg", "in_proj", "qkv"]):
+                tp_plan[name] = ColwiseParallel()
+            elif any(k in lowered for k in ["dense", "w2", "output"]):
+                tp_plan[name] = RowwiseParallel()
+            else:
+                print(f"[TP PLAN] Unmatched Linear: {name}")
+
+    return tp_plan
+
 class TensorParallelStrategy(DistributedStrategy):
     def __init__(self, group=None, from_meta=False):
         super().__init__(from_meta)
         assert torch.distributed.is_initialized(), "must initialize a process group"
         self.group = group if group is not None else torch.distributed.GroupMember.WORLD
-        self.use_sequence_parallelism = os.getenv("USE_SEQUENCE_PARALLELISM", False)
+        self.use_sequence_parallelism = os.getenv("USE_SEQUENCE_PARALLELISM", "False").lower() == "true"
         if self.use_sequence_parallelism:
             print("Using TP strategy with sequence parallelism")
         else:
@@ -198,32 +218,11 @@ class TensorParallelStrategy(DistributedStrategy):
     def _distribute_layer(self, block: nn.Module, layer: int, model = None) -> nn.Module:
         if not model:
             return tp_wrapping.apply_tp(block, self.group)
-        elif model == 'llama':
-            layer_tp_plan = {
-                "attn.in_proj.qkv_fused": ColwiseParallel(),
-                "attn.in_proj.query": ColwiseParallel(),
-                "attn.in_proj.key": ColwiseParallel(),
-                "attn.in_proj.value": ColwiseParallel(),
-                "attn.dense": RowwiseParallel(),
-                "ff_sub_layer.wg": ColwiseParallel(),
-                "ff_sub_layer.wg1_fused": ColwiseParallel(),
-                "ff_sub_layer.w2": RowwiseParallel(),
-                "ff_sub_layer.w1": ColwiseParallel(),
-                }
-        elif model == 'granite':
-            layer_tp_plan = {
-                "attn.in_proj.qkv_fused": ColwiseParallel(),
-                "attn.in_proj.query": ColwiseParallel(),
-                "attn.in_proj.key": ColwiseParallel(),
-                "attn.in_proj.value": ColwiseParallel(),
-                "attn.dense": RowwiseParallel(),
-                "ff_sub_layer.wg": ColwiseParallel(),
-                "ff_sub_layer.wg1_fused": ColwiseParallel(),
-                "ff_sub_layer.w2": RowwiseParallel(),
-                "ff_sub_layer.w1": ColwiseParallel(),
-                }
+        elif model == 'llama' or model == 'granite':
+            layer_tp_plan = generate_layer_plan(block, use_sequence_parallelism=self.use_sequence_parallelism)
         else:
             raise ValueError(f"Unsupported model: {model}")
+
         # Adjust attention module to use the local number of heads
         attn_layer = block.attn
         attn_layer.nheads = attn_layer.nheads // self.device_mesh.size()
