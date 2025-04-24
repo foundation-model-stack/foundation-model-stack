@@ -123,7 +123,7 @@ class LLaMABlock(nn.Module):
         use_cache=False,
         is_causal_mask=False,
         attn_algorithm=None,
-        partial_page_tkv_mask=None,
+        current_tkv_mask=None,
         left_padded_prompt_mask=None,
         block_table=None,
         slot_mapping=None,
@@ -147,7 +147,7 @@ class LLaMABlock(nn.Module):
             use_cache=use_cache,
             is_self=True,
             is_causal_mask=is_causal_mask,
-            partial_page_tkv_mask=partial_page_tkv_mask,
+            current_tkv_mask=current_tkv_mask,
             left_padded_prompt_mask=left_padded_prompt_mask,
             block_table=block_table,
             slot_mapping=slot_mapping,
@@ -350,7 +350,7 @@ class LLaMA(nn.Module):
         past_key_value_states=None,
         use_cache=False,
         attn_algorithm=None,
-        partial_page_tkv_mask=None,
+        current_tkv_mask=None,
         left_padded_prompt_mask=None,
         block_table=None,
         slot_mapping=None,
@@ -394,7 +394,7 @@ class LLaMA(nn.Module):
                 use_cache=use_cache,
                 is_causal_mask=is_causal_mask,
                 attn_algorithm=attn_algorithm,
-                partial_page_tkv_mask=partial_page_tkv_mask,
+                current_tkv_mask=current_tkv_mask,
                 left_padded_prompt_mask=left_padded_prompt_mask,
                 block_table=block_table,
                 slot_mapping=slot_mapping,
@@ -423,7 +423,7 @@ class LLaMA(nn.Module):
         use_cache: bool = False,
         only_last_token: bool = False,
         attn_algorithm: Optional[str] = None,
-        partial_page_tkv_mask=None,
+        current_tkv_mask=None,
         left_padded_prompt_mask=None,
         block_table=None,
         slot_mapping=None,
@@ -436,8 +436,8 @@ class LLaMA(nn.Module):
             assert x.shape[1] == slot_mapping.shape[1]
         if block_table is not None:
             assert x.shape[0] == block_table.shape[0]
-        if partial_page_tkv_mask is not None:
-            assert x.shape[0] == partial_page_tkv_mask.shape[0]
+        if current_tkv_mask is not None:
+            assert x.shape[0] == current_tkv_mask.shape[0]
         if left_padded_prompt_mask is not None:
             assert x.shape[0] == left_padded_prompt_mask.shape[0]
 
@@ -448,7 +448,7 @@ class LLaMA(nn.Module):
             past_key_value_states,
             use_cache,
             attn_algorithm,
-            partial_page_tkv_mask=partial_page_tkv_mask,
+            current_tkv_mask=current_tkv_mask,
             left_padded_prompt_mask=left_padded_prompt_mask,
             block_table=block_table,
             slot_mapping=slot_mapping,

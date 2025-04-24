@@ -243,7 +243,8 @@ def generate(
     kwargs["block_table"] = None
     block_numbers = [i for i in range(NUM_BLOCKS)]
     left_padded_prompt_mask = (kwargs["position_ids"] == 0).sum(dim=1) - 1
-    partial_page_tkv_mask = (kwargs["position_ids"] != 0).sum(dim=1) + 1
+    current_context_lengths = (kwargs["position_ids"] != 0).sum(dim=1) + 1
+    current_tkv_mask = left_padded_prompt_mask + current_context_lengths
     slot_mapping = []
     block_table = []
     for seq_i in input_ids:
@@ -259,7 +260,7 @@ def generate(
         slot_mapping.append(slot_mapping_i)
         block_table.append(block_table_i)
     kwargs["slot_mapping"] = torch.tensor(slot_mapping, dtype=torch.int64)
-    kwargs["partial_page_tkv_mask"] = None
+    kwargs["current_tkv_mask"] = None
     kwargs["left_padded_prompt_mask"] = None
     kwargs["use_cache"] = use_cache
 
@@ -290,8 +291,8 @@ def generate(
                 slot_mapping.append([slot])
             kwargs["block_table"] = torch.tensor(block_table, dtype=torch.int64)
             kwargs["slot_mapping"] = torch.tensor(slot_mapping, dtype=torch.int64)
-            partial_page_tkv_mask = partial_page_tkv_mask + 1
-            kwargs["partial_page_tkv_mask"] = partial_page_tkv_mask
+            current_tkv_mask = current_tkv_mask + 1
+            kwargs["current_tkv_mask"] = current_tkv_mask
             kwargs["left_padded_prompt_mask"] = left_padded_prompt_mask
 
         # prefill
@@ -320,7 +321,7 @@ def generate(
             torch._dynamo.mark_dynamic(kwargs["block_table"], 0)
             torch._dynamo.mark_dynamic(kwargs["slot_mapping"], 0)
             torch._dynamo.mark_dynamic(kwargs["position_ids"], 0)
-            torch._dynamo.mark_dynamic(kwargs["partial_page_tkv_mask"], 0)
+            torch._dynamo.mark_dynamic(kwargs["current_tkv_mask"], 0)
             torch._dynamo.mark_dynamic(kwargs["left_padded_prompt_mask"], 0)
 
             # seq

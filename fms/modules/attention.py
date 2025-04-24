@@ -75,7 +75,7 @@ def paged_attn_compute(
     key_cache: torch.Tensor,
     value_cache: torch.Tensor,
     scale: float,
-    partial_page_tkv_mask: torch.Tensor,
+    current_tkv_mask: torch.Tensor,
     left_padded_prompt_mask: torch.Tensor,
     block_table: torch.Tensor,
 ) -> torch.Tensor:
@@ -87,8 +87,8 @@ def paged_attn_compute(
     num_seqs = query.shape[0]
 
     block_tables_lst = block_table.cpu().tolist()
-    # adding as all sizes will be same
-    seq_lens_lst = (left_padded_prompt_mask + partial_page_tkv_mask).cpu().tolist()
+
+    seq_lens_lst = current_tkv_mask.cpu().tolist()
     for i in range(num_seqs):
         q = query[i]
         block_table = block_tables_lst[i]
@@ -128,7 +128,7 @@ def paged_attn_compute_meta(
     key_cache: torch.Tensor,
     value_cache: torch.Tensor,
     scale: float,
-    partial_page_tkv_mask: torch.Tensor,
+    current_tkv_mask: torch.Tensor,
     left_padded_prompt_mask: torch.Tensor,
     block_table: torch.Tensor,
 ) -> torch.Tensor:
@@ -448,7 +448,7 @@ class MultiHeadAttention(nn.Module):
         use_cache=False,
         is_self=True,
         is_causal_mask=False,
-        partial_page_tkv_mask=None,
+        current_tkv_mask=None,
         left_padded_prompt_mask=None,
         block_table=None,
         slot_mapping=None,
@@ -511,7 +511,7 @@ class MultiHeadAttention(nn.Module):
             # key_cache: torch.Tensor,
             # value_cache: torch.Tensor,
             # scale: float,
-            # partial_page_tkv_mask: torch.Tensor,
+            # current_tkv_mask: torch.Tensor,
             # left_padded_prompt_mask: torch.Tensor,
             # block_table: torch.Tensor,
             attn = torch.ops.aiu.paged_attn_compute(
@@ -519,7 +519,7 @@ class MultiHeadAttention(nn.Module):
                 past_key_value_state[0],
                 past_key_value_state[1],
                 self.scale_factor,
-                partial_page_tkv_mask,
+                current_tkv_mask,
                 left_padded_prompt_mask,
                 block_table,
             )
@@ -778,7 +778,7 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
         use_cache=False,
         is_self=True,
         is_causal_mask=False,
-        partial_page_tkv_mask=None,
+        current_tkv_mask=None,
         left_padded_prompt_mask=None,
         block_table=None,
         slot_mapping=None,
@@ -801,7 +801,7 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
             use_cache,
             is_self,
             is_causal_mask,
-            partial_page_tkv_mask,
+            current_tkv_mask,
             left_padded_prompt_mask,
             block_table,
             slot_mapping,
