@@ -2,7 +2,7 @@ import abc
 import os
 import platform
 import tempfile
-from typing import List, Optional, Union
+from typing import Dict, List, Optional, Union
 
 import numpy as np
 import pytest
@@ -242,6 +242,18 @@ class ModelCompileTestSuite(ModelFixtureMixin):
 class ModelConsistencyTestSuite(ModelFixtureMixin, SignatureFixtureMixin):
     """All tests related to model consistency will be part of this test suite"""
 
+    @property
+    @abc.abstractmethod
+    def _get_signature_input_ids(self) -> Optional[torch.Tensor]:
+        """the value to pass into inp in get_signature function for this model
+
+        Returns
+        -------
+        Optional[torch.Tensor]
+            the input ids
+        """
+        return None
+
     @staticmethod
     def _get_signature_logits_getter_fn(f_out) -> torch.Tensor:
         """function which given the output of forward, will return the logits as a torch.Tensor
@@ -266,12 +278,26 @@ class ModelConsistencyTestSuite(ModelFixtureMixin, SignatureFixtureMixin):
         """
         pass
 
+    @property
+    @abc.abstractmethod
+    def _get_signature_optional_params(self) -> Optional[Dict[str, torch.Tensor]]:
+        """the value to pass into optional_params in get_signature function for this model
+
+        Returns
+        -------
+        Optional[Dict[str, torch.Tensor]]
+            the dictionary of optional params to pass to the model
+        """
+        return None
+
     def test_model_output(self, model, signature, model_id, capture_expectation):
         """test consistency of model output with signature"""
 
         actual = get_signature(
             model,
+            inp=self._get_signature_input_ids,
             params=self._get_signature_params,
+            optional_params=self._get_signature_optional_params,
             logits_getter_fn=self._get_signature_logits_getter_fn,
         )
 
