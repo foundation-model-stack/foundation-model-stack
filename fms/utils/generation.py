@@ -115,31 +115,32 @@ def _make_cache_contiguous(
     # kv updates are required for torch.compile with
     # mode='reduce-overhead'
     n_kv_s: List[List[torch.Tensor]] = []
-    for layer_idx in range(len(past_key_value_states)):
-        n_kv_s.append([])
+    for layer_idx, layer_cache in enumerate(past_key_value_states):
+        # n_kv_s.append([])
         if (
-            isinstance(past_key_value_states[layer_idx], Iterable)
-            and (
-                isinstance(past_key_value_states[layer_idx][0], torch.Tensor)
-                and isinstance(past_key_value_states[layer_idx][1], torch.Tensor)
-            )
-            and (
-                not past_key_value_states[layer_idx][0].is_contiguous()
-                or not past_key_value_states[layer_idx][1].is_contiguous()
-            )
-        ):
-            n_kv_s[layer_idx] = tuple(
+            isinstance(layer_cache, Iterable)
+            and all(
                 [
-                    past_key_value_states[layer_idx][0]
-                    .clone(memory_format=torch.contiguous_format)
-                    .detach(),
-                    past_key_value_states[layer_idx][1]
-                    .clone(memory_format=torch.contiguous_format)
-                    .detach(),
+                    isinstance(cache_element, torch.Tensor)
+                    for cache_element in layer_cache
                 ]
             )
+            and any(
+                [not cache_element.is_contiguous() for cache_element in layer_cache]
+            )
+        ):
+            n_kv_s.append(
+                tuple(
+                    [
+                        cache_element.clone(
+                            memory_format=torch.contiguous_format
+                        ).detach()
+                        for cache_element in layer_cache
+                    ]
+                )
+            )
         else:
-            n_kv_s[layer_idx] = past_key_value_states[layer_idx]
+            n_kv_s.append(layer_cache)
     return n_kv_s
 
 
