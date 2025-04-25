@@ -7,6 +7,29 @@ import numpy as np
 from fms.models.llama import LLaMA, LLaMAConfig
 from fms.distributed.strategy import NoOpStrategy, TensorParallelStrategy
 import wandb
+from torch.distributed.tensor.parallel import (
+   parallelize_module,
+   ColwiseParallel,
+   RowwiseParallel,
+   SequenceParallel,
+   PrepareModuleInput,
+   PrepareModuleOutput,
+   SequenceParallel
+)
+
+import torch.distributed._functional_collectives as collectives
+from torch.distributed._functional_collectives import all_gather_tensor as _real_all_gather_tensor
+
+## wrapper to test if the all gather is called automatically
+def debug_all_gather_tensor(tensor, gather_dim: int = 0, group=None):
+    import traceback
+    print(f"\n[DEBUG] all_gather_tensor called on rank {dist.get_rank()}")
+    print(f"        tensor shape: {tensor.shape}, gather_dim: {gather_dim}, group type: {type(group)}")
+    print("        Call stack:")
+    print("".join(traceback.format_stack(limit=4)))
+    return _real_all_gather_tensor(tensor, gather_dim=gather_dim, group=group)
+
+collectives.all_gather_tensor = debug_all_gather_tensor
 
 def setup_distributed(world_size=1, rank=0):
     world_size = int(os.environ.get("WORLD_SIZE", world_size))
@@ -34,7 +57,7 @@ def setup_distributed(world_size=1, rank=0):
     print(f"[Rank {rank}] Process group initialized")
     
     #  make sure all processes are ready
-    dist.barrier()
+    # dist.barrier()
 
 def debug_tensor_parallel_strategy():
     setup_distributed()
@@ -66,16 +89,13 @@ def debug_tensor_parallel_strategy():
         print("\nCreating model with TP strategy...")
         model = LLaMA(config=config, distributed_strategy=strategy)
         print("Model created with 2 layers and TP strategy.")
-        
-        print(f"Number of layers: {len(model.layers)}")
-        print(f"Rank: {rank}, World size: {world_size}")
-        print(f"Device mesh: {strategy.device_mesh}")
-        
+
         print("\nRunning forward pass...")
-        x = torch.randint(0, config.src_vocab_size, (2, 16))
+        x = torch.randint(0, config.src_vocab_size, (4, 16))
         with torch.no_grad():
             out = model(x)
         print(f"[Rank {rank}] Output shape: {out.shape}")
+        
         
         if rank == 0 and wandb.run is not None:
             output_np = out.cpu().numpy()

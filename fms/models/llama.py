@@ -130,8 +130,17 @@ class LLaMABlock(nn.Module):
         #     self_attn_past_key_value = None
 
         # first we do MHA and Add&Norm
+        print(f"[LLM_BLK] Initial x shape: {x.shape}")
+
         residual = x
+
+        print(f"[LLM_BLK] Residual shape before ln: {residual.shape}")
         x = self.ln(x)
+
+
+        print(f"[LLM_BLK] After ln shape: {x.shape}")
+
+
         x = self.attn(
             x,
             mask=mask,
@@ -367,11 +376,13 @@ class LLaMA(nn.Module):
             is_causal_mask = False
 
         x_in = self.shared(x_in)
+        print(f"[LLM] After embedding (shared): {x_in.shape}")
 
         # this is the output cache for all the decoder layers
         present_key_value_states = []
 
         for i, layer in enumerate(self.layers):
+            print(f"[LLM] Before block {i}: {x_in.shape}")
             output = layer(
                 x_in,
                 mask=mask,
@@ -388,6 +399,8 @@ class LLaMA(nn.Module):
 
             else:
                 x_in = output
+            
+            print(f"[LLM] After block {i}: {x_in.shape}")
 
         dec_out = x_in
         dec_out = self.dec_norm(dec_out)

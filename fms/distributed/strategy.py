@@ -4,6 +4,7 @@ from abc import abstractmethod
 from typing import List, Any
 
 import torch
+import torch.distributed as dist
 import torch.distributed
 from torch import nn
 
@@ -177,7 +178,19 @@ def generate_layer_plan(block: nn.Module, use_sequence_parallelism: bool = False
     ]
 
     for name, module in block.named_modules():
-        if use_sequence_parallelism and isinstance(module, (nn.LayerNorm, nn.Dropout)):
+        print(f"\n[TP] Layer Name: {name}")
+        print(f"[TP] Module: {module}")
+        
+        children = list(module.children())
+        if children:
+            print(f"[TP] Children of {name}:")
+            for child in children:
+                print(f"*********{child}")
+            print(f"[TP] Printed all children:")
+        else:
+            print(f"[TP] {name} has no children.")
+
+        if use_sequence_parallelism and isinstance(module, (nn.LayerNorm, nn.Dropout, LayerNormParameterized)):
             tp_plan[name] = SequenceParallel()
         elif isinstance(module, nn.Linear):
             for pattern in colwise_patterns:
@@ -189,8 +202,11 @@ def generate_layer_plan(block: nn.Module, use_sequence_parallelism: bool = False
                     tp_plan[name] = RowwiseParallel()
                     break
         else:
-            print(f"[TP PLAN] Unmatched Linear: {name}")
+            print(f"[TP] Unmatched Layer: {name}")
 
+    print()
+
+    
     return tp_plan
 
 class TensorParallelStrategy(DistributedStrategy):
@@ -220,13 +236,15 @@ class TensorParallelStrategy(DistributedStrategy):
                 return parallelize_module(module, self.device_mesh, tp_plan)
             else:
                 tp_plan = {
-                    "shared.emb": RowwiseParallel(input_layouts=Replicate()),
+                    "shared.emb": PrepareModuleInput(Shard(1)),  
+                    "shared.head": PrepareModuleOutput(Replicate()),
                 }
-                return parallelize_module(module, self.device_mesh, tp_plan)
+            return parallelize_module(module, self.device_mesh, tp_plan)
+        
         elif model == 'granite':
             tp_plan = {
-                "head": ColwiseParallel(output_layouts=Replicate(),),
-                "base_model.embedding": RowwiseParallel(input_layouts=Replicate()),
+                "base_model.embedding": PrepareModuleInput(Shard(1)),
+                "head": PrepareModuleOutput(Replicate()),
             }
             return parallelize_module(module, self.device_mesh, tp_plan)
 
@@ -244,8 +262,19 @@ class TensorParallelStrategy(DistributedStrategy):
         attn_layer.kvheads = attn_layer.kvheads // self.device_mesh.size()
 
         #Custom parallelization plan for the model
-        return parallelize_module(
+        block = parallelize_module(
             module=block,
             device_mesh=self.device_mesh,
             parallelize_plan=layer_tp_plan
         )
+
+        print(f"\n[Rank {dist.get_rank()}] Test Plan:")
+        module_names = dict(block.named_modules())
+
+        for name, strategy in layer_tp_plan.items():
+            if name in module_names:
+                print(f"[Rank {dist.get_rank()}] {name}: {strategy.__class__.__name__}")
+            else:
+                print(f"[Rank {dist.get_rank()}] {name}: {strategy.__class__.__name__} (NOT FOUND)")
+        
+        return block
