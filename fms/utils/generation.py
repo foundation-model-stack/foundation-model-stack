@@ -5,6 +5,8 @@ from typing import Any, Callable, Iterable, List, MutableMapping, Optional, Tupl
 import torch
 import torch.nn.functional as F
 
+from fms.modules.ssm import SSMCacheUnit
+
 
 logger = logging.getLogger(__name__)
 
@@ -110,13 +112,12 @@ def __update_padding_kwargs(
 
 
 def _make_cache_contiguous(
-    past_key_value_states: List[List[torch.Tensor]],
-) -> List[List[torch.Tensor]]:
+    past_key_value_states: list[Iterable[torch.Tensor] | SSMCacheUnit],
+) -> list[Iterable[torch.Tensor] | SSMCacheUnit]:
     # kv updates are required for torch.compile with
     # mode='reduce-overhead'
-    n_kv_s: List[List[torch.Tensor]] = []
+    n_kv_s: list[Iterable[torch.Tensor] | SSMCacheUnit] = []
     for layer_idx, layer_cache in enumerate(past_key_value_states):
-        # n_kv_s.append([])
         if (
             isinstance(layer_cache, Iterable)
             and all(
