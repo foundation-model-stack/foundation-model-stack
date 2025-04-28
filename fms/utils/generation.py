@@ -117,7 +117,7 @@ def _make_cache_contiguous(
     # kv updates are required for torch.compile with
     # mode='reduce-overhead'
     n_kv_s: list[Iterable[torch.Tensor] | SSMCacheUnit] = []
-    for layer_idx, layer_cache in enumerate(past_key_value_states):
+    for layer_cache in past_key_value_states:
         if (
             isinstance(layer_cache, Iterable)
             and all(
