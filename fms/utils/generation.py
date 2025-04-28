@@ -5,6 +5,8 @@ from typing import Any, Callable, Iterable, List, MutableMapping, Optional, Tupl
 import torch
 import torch.nn.functional as F
 
+from fms.modules.ssm import SSMCacheUnit
+
 
 logger = logging.getLogger(__name__)
 
@@ -110,32 +112,36 @@ def __update_padding_kwargs(
 
 
 def _make_cache_contiguous(
-    past_key_value_states: List[List[torch.Tensor]],
-) -> List[List[torch.Tensor]]:
+    past_key_value_states: list[Iterable[torch.Tensor] | SSMCacheUnit],
+) -> list[Iterable[torch.Tensor] | SSMCacheUnit]:
     # kv updates are required for torch.compile with
     # mode='reduce-overhead'
-    n_kv_s: List[List[torch.Tensor]] = []
-    for layer_idx in range(len(past_key_value_states)):
-        n_kv_s.append([])
+    n_kv_s: list[Iterable[torch.Tensor] | SSMCacheUnit] = []
+    for layer_cache in past_key_value_states:
         if (
-            isinstance(past_key_value_states[layer_idx], Iterable)
-            and (
-                isinstance(past_key_value_states[layer_idx][0], torch.Tensor)
-                and isinstance(past_key_value_states[layer_idx][1], torch.Tensor)
+            isinstance(layer_cache, Iterable)
+            and all(
+                [
+                    isinstance(cache_element, torch.Tensor)
+                    for cache_element in layer_cache
+                ]
             )
-            and (
-                not past_key_value_states[layer_idx][0].is_contiguous()
-                or not past_key_value_states[layer_idx][1].is_contiguous()
+            and any(
+                [not cache_element.is_contiguous() for cache_element in layer_cache]
             )
         ):
-            for tensor_idx in range(len(past_key_value_states[layer_idx])):
-                n_kv_s[layer_idx].append(
-                    past_key_value_states[layer_idx][tensor_idx]
-                    .clone(memory_format=torch.contiguous_format)
-                    .detach()
+            n_kv_s.append(
+                tuple(
+                    [
+                        cache_element.clone(
+                            memory_format=torch.contiguous_format
+                        ).detach()
+                        for cache_element in layer_cache
+                    ]
                 )
+            )
         else:
-            n_kv_s[layer_idx] = past_key_value_states[layer_idx]
+            n_kv_s.append(layer_cache)
     return n_kv_s
 
 
