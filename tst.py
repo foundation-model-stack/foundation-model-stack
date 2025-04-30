@@ -5,22 +5,21 @@ import datetime
 import numpy as np
 
 from fms.models.llama import LLaMA, LLaMAConfig
-from fms.distributed.strategy import NoOpStrategy, TensorParallelStrategy
-import wandb
+from torch.distributed._tensor import distribute_tensor, Shard
+from fms.distributed.strategy import TensorParallelStrategy
 from torch.distributed.tensor.parallel import (
-   parallelize_module,
-   ColwiseParallel,
-   RowwiseParallel,
-   SequenceParallel,
-   PrepareModuleInput,
-   PrepareModuleOutput,
-   SequenceParallel
+    parallelize_module,
+    ColwiseParallel,
+    RowwiseParallel,
+    SequenceParallel,
+    PrepareModuleInput,
+    PrepareModuleOutput,
 )
 
 import torch.distributed._functional_collectives as collectives
 from torch.distributed._functional_collectives import all_gather_tensor as _real_all_gather_tensor
 
-## wrapper to test if the all gather is called automatically
+# Hook to trace if all_gather is triggered
 def debug_all_gather_tensor(tensor, gather_dim: int = 0, group=None):
     import traceback
     print(f"\n[DEBUG] all_gather_tensor called on rank {dist.get_rank()}")
@@ -41,11 +40,8 @@ def setup_distributed(world_size=1, rank=0):
     os.environ['MASTER_PORT'] = '29501'
     
     if not dist.is_initialized():
-        # file-based store for inter-process communication
         store = dist.FileStore("/tmp/shared_file_store", world_size)
-        
         backend = 'nccl' if torch.cuda.is_available() else 'gloo'
-        
         dist.init_process_group(
             backend=backend,
             rank=rank,
@@ -53,11 +49,7 @@ def setup_distributed(world_size=1, rank=0):
             store=store,
             timeout=datetime.timedelta(seconds=30)
         )
-        
     print(f"[Rank {rank}] Process group initialized")
-    
-    #  make sure all processes are ready
-    # dist.barrier()
 
 def debug_tensor_parallel_strategy():
     setup_distributed()
@@ -67,6 +59,7 @@ def debug_tensor_parallel_strategy():
     
     if rank == 0:
         try:
+            import wandb
             wandb.init(project="fms-tp-sp", config={
                 "model": "LLaMA",
                 "nlayers": 2,
@@ -75,72 +68,44 @@ def debug_tensor_parallel_strategy():
                 "sequence_length": 16,
                 "batch_size": 2,
             })
-            print(f"[Rank {rank}] WandB initialized")
+            wandb_enabled = True
+            print("[Rank 0] WandB initialized.")
         except Exception as e:
-            print(f"[Rank {rank}] WandB initialization error: {e}")
-    
-    try:
-        print("Creating TensorParallelStrategy...")
-        strategy = TensorParallelStrategy()
-        print("Strategy created.")
-        
-        config = LLaMAConfig(nlayers=2, fused_weights=False)
-        
-        print("\nCreating model with TP strategy...")
-        model = LLaMA(config=config, distributed_strategy=strategy)
-        print("Model created with 2 layers and TP strategy.")
+            print(f"[Rank 0] WandB initialization failed: {e}")
+            wandb_enabled = False
+    else:
+        wandb_enabled = False
 
-        print("\nRunning forward pass...")
-        x = torch.randint(0, config.src_vocab_size, (4, 16))
-        with torch.no_grad():
-            out = model(x)
-        print(f"[Rank {rank}] Output shape: {out.shape}")
-        
-        
-        if rank == 0 and wandb.run is not None:
-            output_np = out.cpu().numpy()
-            if not np.isnan(output_np).any():
-                wandb.log({
-                    "output_shape": str(out.shape),
-                    "output_hist": wandb.Histogram(output_np),
-                    "success": True
-                })
-            else:
-                print("[Rank 0] Output contains NaNs — skipping histogram logging.")
-                wandb.log({"success": False, "error": "Output contains NaNs"})
-    
-    except Exception as e:
-        print(f"[Rank {rank}] ERROR: {e}")
-        import traceback
-        traceback.print_exc()
-        
-        if rank == 0 and wandb.run is not None:
+    print("[All Ranks] Creating TensorParallelStrategy...")
+    strategy = TensorParallelStrategy()
+
+    config = LLaMAConfig(nlayers=2, fused_weights=False)
+    print(f"[Rank {rank}] Creating model...")
+    model = LLaMA(config=config, distributed_strategy=strategy)
+
+    print(f"[Rank {rank}] Running forward pass...")
+    x = torch.randint(0, config.src_vocab_size, (1, 8))
+    # x = distribute_tensor(x, strategy.device_mesh, placements=[Shard(1)])
+
+    with torch.no_grad():
+        out = model(x)
+
+    print(f"[Rank {rank}] Output shape: {out.shape}")
+
+    if rank == 0 and wandb_enabled:
+        output_np = out.cpu().numpy()
+        if np.isnan(output_np).any():
+            print("[Rank 0] Output contains NaNs — skipping histogram logging.")
+            wandb.log({"success": False, "error": "Output contains NaNs"})
+        else:
             wandb.log({
-                "success": False,
-                "error": str(e),
-                "error_trace": traceback.format_exc()
+                "output_shape": str(out.shape),
+                "output_hist": wandb.Histogram(output_np),
+                "success": True
             })
-        
-        try:
-            if wandb.run is not None:
-                wandb.finish()
-        except:
-            pass
-        
-        try:
-            dist.destroy_process_group()
-        except:
-            pass
-        
-        exit(1)
-        
-    if rank == 0 and wandb.run is not None:
         wandb.finish()
-    
-    try:
-        dist.destroy_process_group()
-    except:
-        pass
+
+    dist.destroy_process_group()
 
 if __name__ == "__main__":
     debug_tensor_parallel_strategy()

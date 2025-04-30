@@ -135,10 +135,26 @@ class LLaMABlock(nn.Module):
         residual = x
 
         print(f"[LLM_BLK] Residual shape before ln: {residual.shape}")
+        if hasattr(residual, '_spec'):
+            layout = residual._spec
+            print(f"[DEBUG] x is DTensor: local shape = {x.to_local().shape}, placements = {x._spec.placements}, mesh = {x._spec.mesh}")
+        else:
+            print(f"[LLM_BLK] residual is a regular tensor")
+
         x = self.ln(x)
 
-
         print(f"[LLM_BLK] After ln shape: {x.shape}")
+
+        if hasattr(x, '_spec'):
+            layout = x._spec
+            print(f"[DEBUG] x is DTensor: local shape = {x.to_local().shape}, placements = {x._spec.placements}, mesh = {x._spec.mesh}")
+        else:
+            print(f"[LLM_BLK] x after ln is a regular tensor")
+
+        print("[LLM_BLK] Inputs passed to attn:", 
+            f"x: {x.shape if x is not None else None},",
+            f"mask: {mask.shape if mask is not None else None},",
+            f"position_ids: {position_ids.shape if position_ids is not None else None}")
 
 
         x = self.attn(

@@ -236,15 +236,13 @@ class TensorParallelStrategy(DistributedStrategy):
                 return parallelize_module(module, self.device_mesh, tp_plan)
             else:
                 tp_plan = {
-                    "shared.emb": PrepareModuleInput(Shard(1)),  
-                    "shared.head": PrepareModuleOutput(Replicate()),
+                    "shared.emb": RowwiseParallel(input_layouts=Replicate()),
                 }
-            return parallelize_module(module, self.device_mesh, tp_plan)
-        
+                return parallelize_module(module, self.device_mesh, tp_plan)
         elif model == 'granite':
             tp_plan = {
-                "base_model.embedding": PrepareModuleInput(Shard(1)),
-                "head": PrepareModuleOutput(Replicate()),
+                "head": ColwiseParallel(output_layouts=Replicate(),),
+                "base_model.embedding": RowwiseParallel(input_layouts=Replicate()),
             }
             return parallelize_module(module, self.device_mesh, tp_plan)
 
