@@ -178,17 +178,6 @@ def generate_layer_plan(block: nn.Module, use_sequence_parallelism: bool = False
     ]
 
     for name, module in block.named_modules():
-        print(f"\n[TP] Layer Name: {name}")
-        print(f"[TP] Module: {module}")
-        
-        children = list(module.children())
-        if children:
-            print(f"[TP] Children of {name}:")
-            for child in children:
-                print(f"*********{child}")
-            print(f"[TP] Printed all children:")
-        else:
-            print(f"[TP] {name} has no children.")
 
         if use_sequence_parallelism and isinstance(module, (nn.LayerNorm, nn.Dropout, LayerNormParameterized)):
             tp_plan[name] = SequenceParallel()
