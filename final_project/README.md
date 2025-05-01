@@ -65,11 +65,52 @@ We’ll run **3 repetitions** per point to smooth noise.
 ### Llama
 
 ```bash
-// TODO: Implement this.
+# ▶ Llama‑2‑7B (Hugging Face weights)
+
+# Quick single‑GPU sanity check (seq‑len 512)
+CUDA_VISIBLE_DEVICES=0 python ../scripts/inference.py \
+    --architecture=llama \
+    --variant=7b \
+    --tokenizer ~/llama_weights/tokenizer.model \
+    --ckpt_dir ~/llama_weights/llama-2-7b/ \
+    --seq_len 512 \
+    --batch_size 1 \
+    --use_flash \
+    --repetitions 3
+
+# Full benchmark matrix from the FlashAttention paper
+torchrun --nnodes 1 --nproc-per-node 8 --standalone \
+    ../scripts/benchmark_inference.py \
+    --architecture=llama \
+    --variant=7b \
+    --tokenizer ~/llama_weights/tokenizer.model \
+    --ckpt_dir ~/llama_weights/llama-2-7b/ \
+    --seq_lens 128 256 512 1024 2048 4096 8192 16384 32768 65536 \
+    --batch_sizes 2 1 \
+    --dtype fp16 \
+    --compile_mode reduce-overhead \
+    --distributed \
+    --check_correctness \
+    --repetitions 3
 ```
 
 ### IBM granite
 
 ```bash
-// TODO: Implement this.
+# ▶ Granite‑7B‑Instruct (IBM Research)
+
+# Eight‑GPU benchmark mirroring FlashAttention settings
+torchrun --nnodes 1 --nproc-per-node 8 --standalone \
+    ../scripts/benchmark_inference.py \
+    --architecture=granite \
+    --variant=7b-instruct \
+    --tokenizer ~/granite_weights/tokenizer.model \
+    --ckpt_dir ~/granite_weights/granite-7b-instruct/ \
+    --seq_lens 128 256 512 1024 2048 4096 8192 16384 32768 65536 \
+    --batch_sizes 2 1 \
+    --dtype fp16 \
+    --use_flash \
+    --compile_mode reduce-overhead \
+    --distributed \
+    --repetitions 3
 ```
