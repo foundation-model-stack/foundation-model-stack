@@ -1,4 +1,13 @@
-# COMS E6998 - High Performance Machine Learning Final Project (Spring 2025)
+# COMS E6998 - HPML Final Project (Spring 2025) - Group 3
+
+# Rubric
+README : 2 pts
+
+- A description of the project
+- An outline of the code repository
+- Example commands to execute the code         
+- Results (including charts/tables) and your observations  
+- Link to your wandb project board (Make sure the wandb project is publicly available)
 
 ## Dev Env Setup
 
