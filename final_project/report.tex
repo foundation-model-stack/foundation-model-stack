@@ -7,6 +7,10 @@
 \usepackage{caption}
 \usepackage{subcaption}
 
+% Use Roman numerals for sections and capital letters for subsections
+\renewcommand{\thesection}{\Roman{section}}
+\renewcommand{\thesubsection}{\Alph{subsection}}
+
 \title{IBM Project 3 --- Implementing Paged Attention in FMS Using Flex Attention}
 \author{
   Thomas Joshi (ttj2108) \and
@@ -36,20 +40,24 @@
   % TODO: Bullet the project goals listed in the proposal.
 
 \section{Literature Review}
-  \subsection{Paged Attention and vLLM}
+  \subsection{Review of Relevant Literature}
+  \subsubsection{Paged Attention and vLLM}
   % TODO: Summarize Paged Attention and prior art (e.g.\ vLLM paper).
 
-  \subsection{Flex Attention and FlashAttention}
+  \subsubsection{Flex Attention and FlashAttention}
   % TODO: Discuss Flex Attention library and related fused‑kernel work.
 
-  \subsection{Memory‑Efficient Attention Strategies}
+  \subsubsection{Memory‑Efficient Attention Strategies}
   % TODO: Briefly cover other approaches (Longformer, MQA/GQA, etc.).
 
+  \subsection{Identification of Gaps in Existing Research}
+  % TODO: Summarize open questions unaddressed by prior work.
+
 \section{Methodology}
-  \subsection{Hardware and Software Environment}
+  \subsection{Data Collection and Preprocessing}
   % TODO: List H100/A100 specs, CUDA, PyTorch 2.1, FMS version.
 
-  \subsection{Implementation Details}
+  \subsection{Model Selection}
   \subsubsection{Custom KV‑Page Allocator}
   % TODO
   \subsubsection{Index Mapping \& Mask Modulation}
@@ -57,17 +65,20 @@
   \subsubsection{Kernel Fusion with \texttt{torch.compile}}
   % TODO
 
-  \subsection{Datasets}
+  \subsection{Optimization Procedures}
   % TODO: Synthetic vs real‑world long‑context corpora.
 
-  \subsection{Benchmark Metrics}
+  \subsection{Profiling Tools and Methods}
   % TODO: Throughput (tokens/s), latency, GPU‑mem, accuracy.
+
+  \subsection{Evaluation Metrics}
+  % TODO: Define throughput, latency, memory footprint, and accuracy metrics.
 
 \section{Experimental Results}
   \subsection{Experimental Setup}
   % TODO: Describe testbed configuration and run parameters.
 
-  \subsection{Performance Comparison}
+  \subsection{Performance Comparison (before and after optimizations) of Different Models}
   \subsubsection{Throughput and Latency}
   % TODO: Insert tables/figures.
   \subsubsection{Memory Utilization}
@@ -78,8 +89,13 @@
   \subsection{Ablation Studies}
   % TODO: Page size sensitivity, paging heuristic variants, etc.
 
+  \subsection{Analysis of Results}
+  % TODO: Provide consolidated insight into experimental findings.
+
 \section{Discussion}
   \subsection{Interpretation of Results}
+  % TODO
+  \subsection{Comparison with Previous Studies}
   % TODO
   \subsection{Challenges and Limitations}
   % TODO
@@ -87,10 +103,18 @@
   % TODO
 
 \section{Conclusion}
-% TODO: Recap contributions and findings.
+\subsection{Summary of Findings}
+% TODO
 
-\section*{Acknowledgements}
-% TODO: Acknowledge mentors, course staff, IBM, etc.
+\subsection{Contributions}
+% TODO
+
+\subsection{Recommendations for Future Research}
+% TODO
+
+\section{References}
+\bibliographystyle{plain}
+\bibliography{references}
 
 \appendix
 \section{Project Proposal}
@@ -98,8 +122,5 @@
 
 \section{Additional Figures}
 % TODO: Place extra plots as needed.
-
-\bibliographystyle{plain}
-\bibliography{references} % TODO: Create a references.bib file or inline \begin{thebibliography} if preferred.
 
 \end{document}
