@@ -130,32 +130,25 @@ class LLaMABlock(nn.Module):
         #     self_attn_past_key_value = None
 
         # first we do MHA and Add&Norm
-        print(f"[LLM_BLK] Initial x shape: {x.shape}")
+        print(f"[LLAMA_DBG] Initial x shape: {x.shape}")
 
         residual = x
 
-        print(f"[LLM_BLK] Residual shape before ln: {residual.shape}")
         if hasattr(residual, '_spec'):
             layout = residual._spec
-            print(f"[DEBUG] x is DTensor: local shape = {x.to_local().shape}, placements = {x._spec.placements}, mesh = {x._spec.mesh}")
+            print(f"[LLAMA_DBG] x is DTensor: local shape = {x.to_local().shape}, placements = {x._spec.placements}, mesh = {x._spec.mesh}")
         else:
-            print(f"[LLM_BLK] residual is a regular tensor")
+            print(f"[LLAMA_DBG] x is a regular tensor")
 
         x = self.ln(x)
 
-        print(f"[LLM_BLK] After ln shape: {x.shape}")
+        print(f"[LLAMA_DBG] After ln shape: {x.shape}")
 
         if hasattr(x, '_spec'):
             layout = x._spec
-            print(f"[DEBUG] x is DTensor: local shape = {x.to_local().shape}, placements = {x._spec.placements}, mesh = {x._spec.mesh}")
+            print(f"[LLAMA_DBG] x is DTensor: local shape = {x.to_local().shape}, placements = {x._spec.placements}, mesh = {x._spec.mesh}")
         else:
-            print(f"[LLM_BLK] x after ln is a regular tensor")
-
-        print("[LLM_BLK] Inputs passed to attn:", 
-            f"x: {x.shape if x is not None else None},",
-            f"mask: {mask.shape if mask is not None else None},",
-            f"position_ids: {position_ids.shape if position_ids is not None else None}")
-
+            print(f"[LLAMA_DBG] x after ln is a regular tensor")
 
         x = self.attn(
             x,
@@ -173,6 +166,17 @@ class LLaMABlock(nn.Module):
         if self.config.p_dropout != 0:
             x = self.dropout(x)
         # residual connection
+        print(f"\n[LLAMA_DBG] x size: {x.size()}, type: {type(x)}")
+        print(f"\n[LLAMA_DBG] residual size: {residual.size()}, type: {type(residual)}")
+
+        if hasattr(x, '_spec'):
+            layout = x._spec
+            print(f"\n[LLAMA_DBG] x is DTensor: local shape = {x.to_local().shape}, placements = {x._spec.placements}, mesh = {x._spec.mesh}")
+        
+        if hasattr(residual, '_spec'):
+            layout = residual._spec
+            print(f"\n[LLAMA_DBG] residual is DTensor: local shape = {x.to_local().shape}, placements = {x._spec.placements}, mesh = {x._spec.mesh}")
+
         x = x + residual
 
         # then we do FF and Add&Norm
@@ -224,7 +228,8 @@ class LLaMA(nn.Module):
             not isinstance(self.distributed_strategy, TensorParallelStrategy)
             or not self.config.tie_heads
         ):
-            self.shared = self.distributed_strategy.distribute_module(shared)
+            print("[LLAMA_DBG] Calling Distribute module:")
+            self.shared = self.distributed_strategy.distribute_module(shared, final_layers=False, model='llama')
         else:
             logger.warning(
                 "You're using TP on a model with tied weights between head and embedding. "
@@ -391,14 +396,18 @@ class LLaMA(nn.Module):
         else:
             is_causal_mask = False
 
+        print(f"[LLM] Before embedding (shared): {x_in.shape}")
         x_in = self.shared(x_in)
         print(f"[LLM] After embedding (shared): {x_in.shape}")
+        if hasattr(x_in, "_spec"):
+            print(f"[LLM] x_in layout: {x_in._spec.placements}, mesh: {x_in._spec.mesh}")
+        else:
+            print("[LLM] x_in is not a DTensor")
 
         # this is the output cache for all the decoder layers
         present_key_value_states = []
 
         for i, layer in enumerate(self.layers):
-            print(f"[LLM] Before block {i}: {x_in.shape}")
             output = layer(
                 x_in,
                 mask=mask,
@@ -415,8 +424,6 @@ class LLaMA(nn.Module):
 
             else:
                 x_in = output
-            
-            print(f"[LLM] After block {i}: {x_in.shape}")
 
         dec_out = x_in
         dec_out = self.dec_norm(dec_out)

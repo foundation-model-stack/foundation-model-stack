@@ -60,32 +60,19 @@ class LayerNormParameterized(nn.Module):
             print(f"[LN-DBG] --> x.to_local().shape = {x.to_local().shape}")
 
         if self.use_mean:
-            print(f"[LN-DBG] Subtracting mean along dim -1")
             x = x - x.mean(-1, keepdim=True)
-            print(f"[LN-DBG] After mean subtraction: {x.shape}, type = {'DTensor' if hasattr(x, '_spec') else 'Tensor'}")
 
         xf = x
         if self.use_high_precision_pow:
-            print(f"[LN-DBG] Casting to float32 for high precision computation")
             xf = x.float()
 
-        print(f"[LN-DBG] Before normalization: {xf.shape}, type = {'DTensor' if hasattr(xf, '_spec') else 'Tensor'}")
         xf = xf * torch.rsqrt(xf.pow(2).mean(-1, keepdim=True) + self.eps)
-        print(f"[LN-DBG] After normalization: {xf.shape}, type = {'DTensor' if hasattr(xf, '_spec') else 'Tensor'}")
-
         x = xf.type_as(x)
-        print(f"[LN-DBG] After type cast: {x.shape}, type = {'DTensor' if hasattr(x, '_spec') else 'Tensor'}")
 
         if self.elementwise_scale:
-            print(f"[LN-DBG] Applying elementwise scaling")
             x = self.weight * x
 
         if self.elementwise_shift:
-            print(f"[LN-DBG] Applying elementwise shift")
             x = x + self.bias
 
-        print(f"[LN-DBG] Output: {x.shape}, type = {'DTensor' if hasattr(x, '_spec') else 'Tensor'}")
-        if hasattr(x, '_spec'):
-            print(f"[LN-DBG] --> x._spec: placements = {x._spec.placements}, mesh = {x._spec.mesh}")
-            print(f"[LN-DBG] --> x.to_local().shape = {x.to_local().shape}")
         return x

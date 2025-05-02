@@ -20,15 +20,15 @@ import torch.distributed._functional_collectives as collectives
 from torch.distributed._functional_collectives import all_gather_tensor as _real_all_gather_tensor
 
 # Hook to trace if all_gather is triggered
-def debug_all_gather_tensor(tensor, gather_dim: int = 0, group=None):
-    import traceback
-    print(f"\n[DEBUG] all_gather_tensor called on rank {dist.get_rank()}")
-    print(f"        tensor shape: {tensor.shape}, gather_dim: {gather_dim}, group type: {type(group)}")
-    print("        Call stack:")
-    print("".join(traceback.format_stack(limit=4)))
-    return _real_all_gather_tensor(tensor, gather_dim=gather_dim, group=group)
+# def debug_all_gather_tensor(tensor, gather_dim: int = 0, group=None):
+#     import traceback
+#     print(f"\n[DEBUG] all_gather_tensor called on rank {dist.get_rank()}")
+#     print(f"        tensor shape: {tensor.shape}, gather_dim: {gather_dim}, group type: {type(group)}")
+#     print("        Call stack:")
+#     print("".join(traceback.format_stack(limit=4)))
+#     return _real_all_gather_tensor(tensor, gather_dim=gather_dim, group=group)
 
-collectives.all_gather_tensor = debug_all_gather_tensor
+# collectives.all_gather_tensor = debug_all_gather_tensor
 
 def setup_distributed(world_size=1, rank=0):
     world_size = int(os.environ.get("WORLD_SIZE", world_size))
