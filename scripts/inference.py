@@ -92,6 +92,13 @@ parser.add_argument(
     help="This is a distributed job (multiple instances run with RANK+WORLD_SIZE)",
 )
 parser.add_argument(
+    "--distributed_strategy",
+    type=str,
+    default=None,
+    choices=["tp", "mp", "fsdp", "hsdp", "ddp", "ring"],
+    help="The distributed strategy to use. If None, will attempt to guess based on --distributed and device count.",
+)
+parser.add_argument(
     "--batch_input",
     action="store_true",
     help="use a batch of prompts as input",
@@ -135,13 +142,16 @@ if args.distributed:
     dist.init_process_group()
 
 print("loading model")
-if args.distributed:
-    distr_param = "tp"
-else:
-    if torch.cuda.device_count() > 1 and world_size == 1:
-        distr_param = "mp"
-    else:
-        distr_param = None
+
+# Determine the distributed strategy
+distr_strategy = args.distributed_strategy # Get from command line first
+
+# If not provided via command line, try to infer
+if distr_strategy is None:
+    if args.distributed:
+        distr_strategy = "tp"  # Default to TP if --distributed is set and no strategy specified
+    elif torch.cuda.device_count() > 1 and world_size == 1:
+        distr_strategy = "mp"  # Default to MP on single node multi-GPU if not distributed
 
 model = get_model(
     args.architecture,
@@ -149,7 +159,7 @@ model = get_model(
     model_path=args.model_path,
     device_type=args.device_type,
     source=args.model_source,
-    distributed_strategy=distr_param,
+    distributed_strategy=distr_strategy,
     group=dist.group.WORLD,
     fused_weights=not args.unfuse_weights,
 )
@@ -245,7 +255,7 @@ def infer(use_cache, do_sample):
     result = generate(
         model,
         ids,
-        max_new_tokens=100,
+        max_new_tokens=20,
         use_cache=use_cache,
         do_sample=do_sample,
         max_seq_len=max_seq_len,
