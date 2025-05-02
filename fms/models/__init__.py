@@ -16,6 +16,7 @@ from torch.distributed.fsdp import MixedPrecision, ShardingStrategy
 
 from fms import distributed
 from fms.distributed.strategy import (
+    RingAttentionStrategy,
     TensorParallelStrategy,
     UniformModelParallelStrategy,
 )
@@ -374,6 +375,10 @@ def get_model(
             initial_device = torch.device("cpu")
     elif distributed_strategy == "mp":
         initial_device = torch.device("cpu")
+    elif distributed_strategy == "ring":
+        print("using RingAttentionStrategy")
+        extra_args["distributed_strategy"] = RingAttentionStrategy(block_size=32, group=group)
+        initial_device = device
     else:
         initial_device = device
 
