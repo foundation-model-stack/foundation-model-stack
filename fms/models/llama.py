@@ -456,6 +456,8 @@ class LLaMA(nn.Module):
         only_last_token: bool = False,
         attn_algorithm: Optional[str] = None,
     ):
+        
+        print(x.shape)
         output, cache = self._helper(
             x,
             mask,

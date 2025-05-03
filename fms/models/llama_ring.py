@@ -143,7 +143,7 @@ def forward_ring(
                 debug_info[k] = v # Directly assign without adding another suffix
         
         # --- ENGINE PATH FOR COMPARISON ---
-        if False and debug_verbosity > 0:
+        if debug_verbosity > 0:
             # Gather the ORIGINAL block input for the engine comparison path
             # Pad x_original to the block size before gathering, similar to how
             # RingAttentionStrategy pads tensors before communication.
