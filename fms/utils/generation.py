@@ -112,11 +112,11 @@ def __update_padding_kwargs(
 
 
 def _make_cache_contiguous(
-    past_key_value_states: list[Iterable[torch.Tensor] | SSMCacheUnit],
-) -> list[Iterable[torch.Tensor] | SSMCacheUnit]:
+    past_key_value_states: list[Union[Iterable[torch.Tensor], SSMCacheUnit]],
+) -> list[Union[Iterable[torch.Tensor],  SSMCacheUnit]]:
     # kv updates are required for torch.compile with
     # mode='reduce-overhead'
-    n_kv_s: list[Iterable[torch.Tensor] | SSMCacheUnit] = []
+    n_kv_s: list[Union[Iterable[torch.Tensor],SSMCacheUnit]] = []
     for layer_cache in past_key_value_states:
         if (
             isinstance(layer_cache, Iterable)
