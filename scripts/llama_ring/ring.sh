@@ -25,17 +25,17 @@ DEFAULT_TOKENIZER_REL_PATH="../llama-hf/tokenizer.model"
 
 # --- Repo & Model Paths ---
 if [[ "$RUN_LOCATION" == "insomnia" ]]; then
-  CURRENT_REPO_DIR="$INSOMNIA_REPO_DIR"
-  # Correct path to the Slurm script
-  SLURM_SCRIPT_PATH="${CURRENT_REPO_DIR}/scripts/llama_ring/run_inference.slurm"
   INSOMNIA_BASE_DIR="/insomnia001/depts/edu/COMSE6998/sg3790"
-  DEFAULT_MODEL_ABS_PATH="${INSOMNIA_BASE_DIR}/${DEFAULT_MODEL_REL_PATH}"
-  DEFAULT_TOKENIZER_ABS_PATH="${INSOMNIA_BASE_DIR}/${DEFAULT_TOKENIZER_REL_PATH}"
+  CURRENT_REPO_DIR="${INSOMNIA_BASE_DIR}/foundation-model-stack"
+  SLURM_SCRIPT_PATH="${CURRENT_REPO_DIR}/scripts/llama_ring/run_inference.slurm"
+  DEFAULT_MODEL_ABS_PATH="${INSOMNIA_BASE_DIR}/llama-hf"
+  DEFAULT_TOKENIZER_ABS_PATH="${INSOMNIA_BASE_DIR}/llama-hf/tokenizer.model"
 else
   CURRENT_REPO_DIR="$LOCAL_REPO_DIR"
   DEFAULT_MODEL_ABS_PATH="${CURRENT_REPO_DIR}/${DEFAULT_MODEL_REL_PATH}"
   DEFAULT_TOKENIZER_ABS_PATH="${CURRENT_REPO_DIR}/${DEFAULT_TOKENIZER_REL_PATH}"
 fi
+
 
 echo "[INFO] cd into $CURRENT_REPO_DIR"
 cd "$CURRENT_REPO_DIR"
@@ -83,6 +83,9 @@ job_id=""; pid=""
 
 if [[ "$RUN_LOCATION" != "insomnia" ]]; then
   # local
+  # Define output file with timestamp before running the command
+  timestamp=$(date +%Y%m%d_%H%M%S)
+  output_file="${CURRENT_REPO_DIR}/testing/inference_local_${timestamp}.out"
   echo "[INFO] torchrun (nproc=2) → $output_file"
   torchrun --nproc_per_node=2 \
     "$CURRENT_REPO_DIR/scripts/inference.py" \
@@ -94,7 +97,6 @@ if [[ "$RUN_LOCATION" != "insomnia" ]]; then
     >"$output_file" 2>&1 &
   pid=$!
   # Construct filename after getting PID
-  output_file="${CURRENT_REPO_DIR}/testing/inference_local_${pid}.out"
   echo "[SUCCESS] local PID=$pid"
   wait_cmd="ps -p $pid"
 else

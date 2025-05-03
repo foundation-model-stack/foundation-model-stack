@@ -104,6 +104,8 @@ def forward_ring(
     attn_algorithm=None,
     distributed_strategy: Optional[DistributedStrategy] = None,
 ):
+    
+    # print(x.shape)
     # --- Debug Verbosity Control ---
     # 0: Off
     # 1: Minimal diff summary (norms)
@@ -141,7 +143,7 @@ def forward_ring(
                 debug_info[k] = v # Directly assign without adding another suffix
         
         # --- ENGINE PATH FOR COMPARISON ---
-        if debug_verbosity > 0:
+        if False and debug_verbosity > 0:
             # Gather the ORIGINAL block input for the engine comparison path
             # Pad x_original to the block size before gathering, similar to how
             # RingAttentionStrategy pads tensors before communication.

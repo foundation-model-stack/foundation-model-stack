@@ -1,4 +1,4 @@
-from typing import Tuple, Dict, Optional, Union
+from typing import List, Tuple, Dict, Optional, Union
 import torch
 import torch.distributed as dist
 import math
@@ -360,33 +360,85 @@ class RingAttentionHelper:
 
         return numerator, denominator
 
+
     def _ring_shift_tensor(self, tensor: torch.Tensor, pad_len: int) -> Tuple[torch.Tensor, int]:
         """
-        Performs a ring shift of a tensor using torch.distributed.
-        Pads to pad_len, sends, receives, and returns received tensor and its valid length.
+        Ring‑shifts `tensor` along its last dimension by one rank:
+        - CPU: non‑blocking isend/irecv.
+        - GPU: all_gather of lengths + all_to_all of only the neighbor’s block.
+        Returns (received_tensor cropped to true length, received_length).
         """
-        send_rank = (self.rank + 1) % self.world_size
-        recv_rank = (self.rank - 1 + self.world_size) % self.world_size
+        rank, world = self.rank, self.world_size
+        send_rank = (rank + 1) % world
+        recv_rank = (rank - 1 + world) % world
 
-        valid_len = tensor.shape[2]
-        padded = _pad_to_block(tensor, pad_len, dim=2).contiguous()
+        # 1) pad along last dim
+        valid_len = tensor.shape[-1]
+        padded = _pad_to_block(tensor, pad_len, dim=-1).contiguous()
 
-        send_len = torch.tensor([valid_len], dtype=torch.int32, device=tensor.device)
-        recv_len = torch.empty(1, dtype=torch.int32, device=tensor.device)
+        if not tensor.is_cuda:
+            """
+            Performs a ring shift of a tensor using torch.distributed.
+            Pads to pad_len, sends, receives, and returns received tensor and its valid length.
+            """
+            send_rank = (self.rank + 1) % self.world_size
+            recv_rank = (self.rank - 1 + self.world_size) % self.world_size
 
-        reqs = [
-            dist.isend(send_len, dst=send_rank),
-            dist.irecv(recv_len, src=recv_rank)
-        ]
-        for req in reqs:
-            req.wait()
+            valid_len = tensor.shape[2]
+            padded = _pad_to_block(tensor, pad_len, dim=2).contiguous()
 
-        tensor_recv = torch.empty_like(padded)
-        reqs = [
-            dist.isend(padded, dst=send_rank),
-            dist.irecv(tensor_recv, src=recv_rank)
-        ]
-        for req in reqs:
-            req.wait()
+            send_len = torch.tensor([valid_len], dtype=torch.int32, device=tensor.device)
+            recv_len = torch.empty(1, dtype=torch.int32, device=tensor.device)
 
-        return tensor_recv, recv_len.item()
+            reqs = [
+                dist.isend(send_len, dst=send_rank),
+                dist.irecv(recv_len, src=recv_rank)
+            ]
+            for req in reqs:
+                req.wait()
+
+            tensor_recv = torch.empty_like(padded)
+            reqs = [
+                dist.isend(padded, dst=send_rank),
+                dist.irecv(tensor_recv, src=recv_rank)
+            ]
+            for req in reqs:
+                req.wait()
+
+            # print(f"[Rank {rank}][CPU] tensor_recv.shape={tuple(tensor_recv.shape)}, recv_len={recv_len}")
+
+            return tensor_recv, recv_len.item()
+
+        else:
+            # GPU: pure‑collective version that mirrors the CPU branch exactly
+
+            # 1) determine how many blocks we really have, then pad that block axis
+            #    tensor is [..., blocks, block_size]
+            valid_len = tensor.size(-2)  
+            padded    = _pad_to_block(tensor, pad_len, dim=-2).contiguous()
+            # now padded.shape[-2] == pad_len, padded.shape[-1] == block_size
+
+            # 2) exchange block‑counts via all_gather
+            len_t    = torch.tensor([valid_len], dtype=torch.int32, device=tensor.device)
+            len_list = [torch.empty_like(len_t) for _ in range(world)]
+            dist.all_gather(len_list, len_t)
+            recv_len = int(len_list[recv_rank].item())
+
+            # 3) build uniform‐shape send/recv lists
+            send_list = [
+                padded.clone() if r == send_rank else torch.zeros_like(padded)
+                for r in range(world)
+            ]
+            recv_list = [torch.empty_like(padded) for _ in range(world)]
+
+            # 4) do the all_to_all
+            dist.all_to_all(recv_list, send_list)
+
+            # 5) pick exactly the CPU‐style return values
+            tensor_recv = recv_list[recv_rank]
+
+            # 6) debug print matches CPU’s: shape of the full padded buffer + the true block count
+            # print(f"[Rank {rank}][GPU] tensor_recv.shape={tuple(tensor_recv.shape)}, recv_len={recv_len}")
+
+            # 7) return (full padded buffer, true block count)
+            return tensor_recv, recv_len

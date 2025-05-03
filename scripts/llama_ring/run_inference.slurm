@@ -31,12 +31,11 @@ torchrun --nproc_per_node=2 \
   "${REPO_DIR}/scripts/inference.py" \
   --architecture llama \
   --variant 7b \
-  --model_path ~/llama-hf \
+  --model_path /insomnia001/depts/edu/COMSE6998/sg3790/llama-hf \
   --model_source hf \
-  --tokenizer ~/llama-hf/tokenizer.model \
+  --tokenizer /insomnia001/depts/edu/COMSE6998/sg3790/llama-hf/tokenizer.model \
   --device_type cuda \
   --default_dtype fp16 \
   --distributed_strategy ring \
   --no_use_cache \
   --distributed \
-  --deterministic
