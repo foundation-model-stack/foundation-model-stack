@@ -1,5 +1,8 @@
+# pip install -r requirements.txt
+
 # Used to install pinned dependencies
 # Useful for dev/test jobs caches
 # Must be kept in sync with setup.py
---index-url https://download.pytorch.org/whl/nightly/cu121
-torch >= 2.2.0.dev # Using nightly build for Flex Attention support
+# --index-url https://download.pytorch.org/whl/nightly/cu121
+# torch >= 2.2.0.dev # Using nightly build for Flex Attention support
+# numpy
