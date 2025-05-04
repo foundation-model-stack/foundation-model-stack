@@ -6,18 +6,23 @@
 set -eo pipefail
 IFS=$'\n\t'
 
-# --- Environment Detection ---
-INSOMNIA_REPO_DIR="/insomnia001/depts/edu/COMSE6998/sg3790/foundation-model-stack"
-if [[ -d "$INSOMNIA_REPO_DIR" ]]; then
+# --- Environment Selection ---
+if [[ "$1" == "insomnia" ]]; then
   RUN_LOCATION="insomnia"
-  echo "[INFO] Detected Insomnia environment. Will use Slurm for GPU execution."
-else
+  echo "[INFO] Running in Insomnia environment. Will use Slurm for GPU execution."
+
+elif [[ "$1" == "local" ]]; then
   RUN_LOCATION="local"
-  echo "[INFO] Detected Local environment. Will use Python directly for CPU execution."
+  echo "[INFO] Running in Local environment. Will use Python directly for CPU execution."
+
+else
+  echo "[ERROR] Invalid or missing argument. Please specify 'insomnia' or 'local'."
+  echo "Usage: $0 [insomnia|local]"
+  exit 1
 fi
 
 # --- Base Paths ---
-LOCAL_REPO_DIR="/Users/sadigulcelik/Documents/CompSci/HPML-2025-Spring/FMSwrapper/foundation-model-stack"
+# LOCAL_REPO_DIR="/Users/sadigulcelik/Documents/CompSci/HPML-2025-Spring/FMSwrapper/foundation-model-stack"
 
 # --- Defaults ---
 DEFAULT_MODEL_REL_PATH="../llama-hf"
@@ -25,12 +30,14 @@ DEFAULT_TOKENIZER_REL_PATH="../llama-hf/tokenizer.model"
 
 # --- Repo & Model Paths ---
 if [[ "$RUN_LOCATION" == "insomnia" ]]; then
-  INSOMNIA_BASE_DIR="/insomnia001/depts/edu/COMSE6998/sg3790"
+  INSOMNIA_BASE_DIR="$(pwd)"
   CURRENT_REPO_DIR="${INSOMNIA_BASE_DIR}/foundation-model-stack"
   SLURM_SCRIPT_PATH="${CURRENT_REPO_DIR}/scripts/llama_ring/run_inference.slurm"
   DEFAULT_MODEL_ABS_PATH="${INSOMNIA_BASE_DIR}/llama-hf"
   DEFAULT_TOKENIZER_ABS_PATH="${INSOMNIA_BASE_DIR}/llama-hf/tokenizer.model"
 else
+  echo "local not supported"
+  exit 1
   CURRENT_REPO_DIR="$LOCAL_REPO_DIR"
   DEFAULT_MODEL_ABS_PATH="${CURRENT_REPO_DIR}/${DEFAULT_MODEL_REL_PATH}"
   DEFAULT_TOKENIZER_ABS_PATH="${CURRENT_REPO_DIR}/${DEFAULT_TOKENIZER_REL_PATH}"
@@ -40,16 +47,18 @@ fi
 echo "[INFO] cd into $CURRENT_REPO_DIR"
 cd "$CURRENT_REPO_DIR"
 
-if [[ "$RUN_LOCATION" == "insomnia" ]]; then
-  echo "[INFO] Fetching latest changes and resetting local branch..."
+# if [[ "$RUN_LOCATION" == "insomnia" ]]; then
+  # echo "[INFO] Fetching latest changes and resetting local branch..."
   # Fetch latest changes from origin
-  git fetch origin || echo "[WARN] git fetch failed"
+  # git fetch origin || echo "[WARN] git fetch failed"
   # Reset the current branch hard to its origin counterpart
-  git reset --hard origin/$(git rev-parse --abbrev-ref HEAD) || echo "[WARN] git reset --hard failed"
-fi
+  # git reset --hard origin/$(git rev-parse --abbrev-ref HEAD) || echo "[WARN] git reset --hard failed"
+# fi
 
 echo "[INFO] pip install -e ."
 pip install -e . >/dev/null 2>&1 || echo "[WARN] pip install failed"
+
+pip install sentencepiece
 
 mkdir -p "${CURRENT_REPO_DIR}/testing"
 cd "$HOME"

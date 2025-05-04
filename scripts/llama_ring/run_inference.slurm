@@ -19,21 +19,22 @@ echo "========================================================"
 # --- Setup Environment ---
 # module load anaconda3/2023.09
 # source activate your_env_name  # Replace with your actual conda env
+# Define repo path for clarity
+WORKING_DIR="$(pwd)"
+REPO_DIR="$WORKING_DIR/foundation-model-stack"
 
-export PYTHONPATH="/insomnia001/depts/edu/COMSE6998/sg3790/foundation-model-stack:$PYTHONPATH"
+export PYTHONPATH="$REPO_DIR:$PYTHONPATH"
 export CUBLAS_WORKSPACE_CONFIG=:4096:8
 
-# Define repo path for clarity
-REPO_DIR="/insomnia001/depts/edu/COMSE6998/sg3790/foundation-model-stack"
 
 # --- Run Inference ---
 torchrun --nproc_per_node=2 \
   "${REPO_DIR}/scripts/inference.py" \
   --architecture llama \
   --variant 7b \
-  --model_path /insomnia001/depts/edu/COMSE6998/sg3790/llama-hf \
+  --model_path $WORKING_DIR/llama-hf \
   --model_source hf \
-  --tokenizer /insomnia001/depts/edu/COMSE6998/sg3790/llama-hf/tokenizer.model \
+  --tokenizer $WORKING_DIR/llama-hf/tokenizer.model \
   --device_type cuda \
   --default_dtype fp16 \
   --distributed_strategy ring \
