@@ -6,7 +6,7 @@ import torch.distributed
 from torch import Tensor, nn
 from torch.distributed.distributed_c10d import ProcessGroup
 from torch.nn import functional as F
-from torch.nn.attention import FlexAttention
+
 
 from fms import distributed
 from fms.distributed.tensorparallel import (
@@ -23,6 +23,7 @@ from fms.modules.positions import PositionEncoder
 from fms.modules.tp import TPModule
 
 # Use PyTorch's built-in FlexAttention
+from torch.nn.attention import flex_attention as _flex_attn_fn
 _DEFAULT_SPARSE_BLOCK_SIZE = 128
 
 
@@ -291,7 +292,6 @@ class MultiHeadAttention(nn.Module):
         self.linear_config = linear_config
         self.scale_factor = scale_factor
         self.paged_attention_config = paged_attention_config or {}
-        self._flex_attn: Optional[FlexAttention] = None
 
         self.in_proj: QKV = (FusedQKV if self.fused else UnfusedQKV)(
             self.emb_dim,
@@ -362,7 +362,7 @@ class MultiHeadAttention(nn.Module):
         """
         if seq_len <= 0:
             raise ValueError("Sequence length must be positive.")
-        if not block_size & (block_size - 1) == 0:
+        if (block_size & (block_size - 1)) != 0:
             raise ValueError(f"Block size {block_size} must be a power of 2")
             
         num_blocks = (seq_len + block_size - 1) // block_size
@@ -417,7 +417,12 @@ class MultiHeadAttention(nn.Module):
         # b x h x kvlen x ds
         # todo: Cross attention (This always is true for now)
         if is_self or past_key_value_state is None:
-            q_out, k_out, v_out = self.in_proj(q, k, v)
+            # When QKV weights are fused we only need the query tensor; the
+            # fused linear produces K and V internally.
+            if self.fused:
+                q_out, k_out, v_out = self.in_proj(q, None, None)
+            else:
+                q_out, k_out, v_out = self.in_proj(q, k, v)
 
             # note: transposes will be moved in a later PR to fix dis-contiguous tensor issues
             queries = q_out.view(batch_size, q_len, self.nheads, self.emb_kq_per_head)
@@ -491,26 +496,18 @@ class MultiHeadAttention(nn.Module):
             paged_block_size = self.paged_attention_config.get("block_size", _DEFAULT_SPARSE_BLOCK_SIZE)
             paged_max_blocks = self.paged_attention_config.get("max_blocks", None)
 
-            block_size = block_size or self.paged_block_size
-            max_blocks = self.paged_max_blocks
+            block_size = block_size or paged_block_size
+            max_blocks = paged_max_blocks
 
             # Validate parameters
             self._validate_paged_attention(q_len, block_size, max_blocks)
 
-            if self._flex_attn is None or self._flex_attn.block_size != block_size:
-                # Use PyTorch's FlexAttention
-                self._flex_attn = FlexAttention(
-                    block_size=block_size,
-                    dropout_p=self.p_dropout if self.training else 0.0,
-                    scale=self.scale_factor,
-                )
-
-            attn = self._flex_attn(
+            attn = _flex_attn_fn.flex_attention(
                 queries,
                 keys_e,
                 values_e,
-                attn_mask=attn_mask,
-                is_causal=is_causal_mask,
+                block_mask=None,  # dense causal mask handled internally
+                scale=self.scale_factor,
             )
         else:
             attn = F.scaled_dot_product_attention(

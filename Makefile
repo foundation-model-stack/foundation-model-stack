@@ -29,6 +29,7 @@ ACTIVATE := . $(VENV_DIR)/bin/activate
 PYPROJECT := $(wildcard pyproject.toml)
 # File listing pytest/CI extras; adjust if you renamed it
 TEST_REQS := test-requirements.txt
+REQS := requirements.txt
 # Stamp file to track installed dependencies
 DEPS_STAMP := $(VENV_DIR)/.deps_stamp
 
@@ -43,9 +44,13 @@ $(VENV_DIR)/bin/python:
 # Install/refresh project & test dependencies exactly once
 deps: $(DEPS_STAMP)
 
-$(DEPS_STAMP): $(PYPROJECT) $(TEST_REQS) | venv
+$(DEPS_STAMP): $(PYPROJECT) $(TEST_REQS) $(REQS) | venv
 	$(PIP) install --upgrade pip
+	# install core runtime deps (nightly PyTorch pinned in requirements.txt)
+	$(PIP) install -r $(REQS)
+	# install project in editable mode
 	$(PIP) install -e .
+	# install test‑only extras
 	$(PIP) install -r $(TEST_REQS)
 	touch $@
 
@@ -63,11 +68,15 @@ clean:
 
 # Run unit tests
 test: deps
-	$(VENV_DIR)/bin/python -m unittest discover -s tests -p "test_*.py"
-	
+	$(VENV_DIR)/bin/pytest tests
+
+# Run paged attention tests
+test-paged-attention: deps
+	$(VENV_DIR)/bin/pytest tests/modules/test_paged_attention.py
+
 # Run embeddings tests
 test-embeddings: deps
-	$(VENV_DIR)/bin/python -m unittest tests.modules.test_embedding
+	$(VENV_DIR)/bin/pytest tests/modules/test_embedding.py
 	
 
 # --------------------------------------------------------------------
