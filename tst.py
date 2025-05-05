@@ -56,25 +56,18 @@ def debug_tensor_parallel_strategy():
     
     rank = dist.get_rank()
     world_size = dist.get_world_size()
+    wandb_enabled = False
     
     if rank == 0:
         try:
             import wandb
-            wandb.init(project="fms-tp-sp", config={
-                "model": "LLaMA",
-                "nlayers": 2,
-                "strategy": "TensorParallel",
-                "vocab_size": 32000,
-                "sequence_length": 16,
-                "batch_size": 2,
-            })
+            wandb.init(project="fms-tp-sp")
             wandb_enabled = True
+
             print("[Rank 0] WandB initialized.")
         except Exception as e:
             print(f"[Rank 0] WandB initialization failed: {e}")
-            wandb_enabled = False
-    else:
-        wandb_enabled = False
+        
 
     print("[All Ranks] Creating TensorParallelStrategy...")
     strategy = TensorParallelStrategy()
@@ -120,17 +113,15 @@ def debug_tensor_parallel_strategy():
 
     print(f"[Rank {rank}] Output shape: {out.shape}")
 
+    # Log results only form 1 process
     if rank == 0 and wandb_enabled:
-        output_np = out.cpu().numpy()
-        if np.isnan(output_np).any():
-            print("[Rank 0] Output contains NaNs — skipping histogram logging.")
-            wandb.log({"success": False, "error": "Output contains NaNs"})
-        else:
-            wandb.log({
-                "output_shape": str(out.shape),
-                "output_hist": wandb.Histogram(output_np),
-                "success": True
-            })
+        wandb.config.update({
+            "output_shape": str(out.shape),
+            "original_sequence_lengths": sequence_lengths,
+            "padded_sequence_length": padded_len,
+            "batch_size": batch_size,
+            "success": True
+        })
         wandb.finish()
 
     dist.destroy_process_group()
