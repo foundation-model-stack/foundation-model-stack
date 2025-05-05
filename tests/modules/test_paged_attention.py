@@ -2,8 +2,6 @@ import pytest
 import torch
 import torch.nn.functional as F
 
-# Newer nightlies expose only the functional API
-from torch.nn.attention import flex_attention as _flex_attn_fn  # noqa: F401
 
 # Default block size for paged attention
 _DEFAULT_SPARSE_BLOCK_SIZE = 128
@@ -132,41 +130,40 @@ def test_llama_paged_attention():
     # Outputs should be close
     torch.testing.assert_close(out1, out2, rtol=1e-3, atol=1e-3)
 
-# TODO: Fix this test.
-# def test_paged_attention_memory():
-#     """Test memory efficiency of paged attention."""
-#     batch_size, seq_len, n_heads, head_dim = 2, 2048, 8, 64
+def test_paged_attention_memory():
+    """Test memory efficiency of paged attention."""
+    batch_size, seq_len, n_heads, head_dim = 2, 2048, 8, 64
     
-#     attn = MultiHeadAttention(
-#         emb_dim=n_heads * head_dim,
-#         emb_kq=head_dim,
-#         emb_v=head_dim,
-#         nheads=n_heads,
-#         kvheads=n_heads,
-#         paged_attention_config={"block_size": 128}
-#     ).cuda()
+    attn = MultiHeadAttention(
+        emb_dim=n_heads * head_dim,
+        emb_kq=head_dim,
+        emb_v=head_dim,
+        nheads=n_heads,
+        kvheads=n_heads,
+        paged_attention_config={"block_size": 128}
+    ).cuda()
 
-#     q = torch.randn(batch_size, seq_len, n_heads * head_dim, device="cuda")
-#     k = torch.randn(batch_size, seq_len, n_heads * head_dim, device="cuda")
-#     v = torch.randn(batch_size, seq_len, n_heads * head_dim, device="cuda")
+    q = torch.randn(batch_size, seq_len, n_heads * head_dim, device="cuda")
+    k = torch.randn(batch_size, seq_len, n_heads * head_dim, device="cuda")
+    v = torch.randn(batch_size, seq_len, n_heads * head_dim, device="cuda")
     
-#     # Measure memory usage with regular attention
-#     torch.cuda.empty_cache()
-#     torch.cuda.reset_peak_memory_stats()
-#     out_regular = attn(q, k, v)
-#     regular_memory = torch.cuda.max_memory_allocated()
+    # Measure memory usage with regular attention
+    torch.cuda.empty_cache()
+    torch.cuda.reset_peak_memory_stats()
+    out_regular = attn(q, k, v)
+    regular_memory = torch.cuda.max_memory_allocated()
     
-#     # Measure memory usage with paged attention
-#     torch.cuda.empty_cache()
-#     torch.cuda.reset_peak_memory_stats()
-#     out_paged = attn(q, k, v, attn_algorithm="paged")
-#     paged_memory = torch.cuda.max_memory_allocated()
+    # Measure memory usage with paged attention
+    torch.cuda.empty_cache()
+    torch.cuda.reset_peak_memory_stats()
+    out_paged = attn(q, k, v, attn_algorithm="paged")
+    paged_memory = torch.cuda.max_memory_allocated()
     
-#     # Paged attention should use less memory
-#     assert paged_memory < regular_memory
+    # Paged attention should use less memory
+    assert paged_memory < regular_memory
     
-#     # But outputs should still match
-#     torch.testing.assert_close(out_paged, out_regular, rtol=1e-3, atol=1e-3)
+    # But outputs should still match
+    torch.testing.assert_close(out_paged, out_regular, rtol=1e-3, atol=1e-3)
 
 def test_paged_attention_max_blocks():
     """Test max blocks limit."""
