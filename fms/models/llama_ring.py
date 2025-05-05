@@ -87,28 +87,17 @@ def forward_ring(
     attn_algorithm=None,
     distributed_strategy: Optional[DistributedStrategy] = None,
 ):
-    if isinstance(distributed_strategy, RingAttentionStrategy):
-        rank = dist.get_rank()
-        x, cache, _ = self._forward_ring_attention(
-            x,
-            mask=mask,
-            position_ids=position_ids,
-            past_key_value_state=past_key_value_state,
-            use_cache=use_cache,
-            is_causal_mask=is_causal_mask,
-            strategy=distributed_strategy,
-            verbosity=0,
-            rank=rank,
-        )
-    else:
-        x, cache, _ = self._forward_engine_attention(
-            x,
-            mask=mask,
-            position_ids=position_ids,
-            past_key_value_state=past_key_value_state,
-            use_cache=use_cache,
-            is_causal_mask=is_causal_mask,
-            verbosity=0,
+    rank = dist.get_rank()
+    x, cache, _ = self._forward_ring_attention(
+        x,
+        mask=mask,
+        position_ids=position_ids,
+        past_key_value_state=past_key_value_state,
+        use_cache=use_cache,
+        is_causal_mask=is_causal_mask,
+        strategy=distributed_strategy,
+        verbosity=0,
+        rank=rank,
         )
 
     return (x, cache) if use_cache else x
