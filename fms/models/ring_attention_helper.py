@@ -193,7 +193,7 @@ class RingAttentionHelper:
         recv_rank = (rank - 1 + world) % world
         valid_len = tensor.shape[-1]
         # Suggestion 3: Keep contiguous() as communication ops often require it
-        padded = _pad_to_block(tensor, pad_len, dim=-1).contiguous()
+        padded = _pad_to_block(tensor, pad_len, dim=-2).contiguous() # Pad sequence dim, not head dim
 
         if not tensor.is_cuda:
             send_len = torch.tensor([valid_len], dtype=torch.int32, device=tensor.device)
