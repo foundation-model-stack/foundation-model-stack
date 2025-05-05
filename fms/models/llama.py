@@ -16,12 +16,8 @@ from fms.distributed.strategy import (
 
 from fms.models.llama_ring import (
     compute_local_qkv_and_rope,
-    compute_qkv_and_rope_thread,
     forward_ring,
-    _diff_debug_dicts,
-    _gather_debug_tensors,
     _forward_ring_attention,
-    _forward_engine_attention,
 )
 
 
@@ -71,12 +67,8 @@ class LLaMAConfig(ModelConfig):
 class LLaMABlock(nn.Module):
 
     compute_local_qkv_and_rope  = compute_local_qkv_and_rope
-    compute_qkv_and_rope_thread = compute_qkv_and_rope_thread
     forward                     = forward_ring
-    _diff_debug_dicts           = _diff_debug_dicts
-    _gather_debug_tensors       = _gather_debug_tensors
     _forward_ring_attention     = _forward_ring_attention
-    _forward_engine_attention   = _forward_engine_attention
     def __init__(self, config: LLaMAConfig, rotary_emb: RotaryEmbedding):
         super(LLaMABlock, self).__init__()
         self.config = config
