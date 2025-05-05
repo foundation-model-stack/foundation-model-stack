@@ -36,7 +36,7 @@ def parse_args():
     parser.add_argument("--tokenizer", type=str, default=str(tokenizer_path), help="Full path to the tokenizer.model file")
     parser.add_argument("--batch_size", type=int, default=1)
     parser.add_argument("--prompt", type=str, default="Periodic Table of Elements: \n * Hydrogen \n * Helium", help="Optional specific prompt text to use instead of random tokens.")
-    parser.add_argument("--num_tokens_to_benchmark", type=int, default=3, help="Number of tokens to generate and benchmark.")
+    parser.add_argument("--num_tokens_to_benchmark", type=int, default=10, help="Number of tokens to generate and benchmark.")
     parser.add_argument("--run_ring_first", action="store_true", help="Explicitly run Ring Attention first (default). Set --no-run_ring_first to run Regular first.")
     parser.add_argument("--no-run_ring_first", dest="run_ring_first", action="store_false")
     parser.set_defaults(run_ring_first=True) # Default to Ring first
@@ -95,10 +95,10 @@ def run_generation_benchmark(model, tokenizer, initial_ids, num_tokens_to_gen, l
             torch.cuda.synchronize() # Sync before timing
         start_time = time.perf_counter()
 
-        logits, past_key_value_states = model.forward(
+        logits = model.forward(
             input_ids_step,
             past_key_value_states=past_key_value_states,
-            use_cache=True # Use KV cache for efficient generation
+            use_cache=False # Use KV cache for efficient generation
         )
 
         next_token_id = torch.argmax(logits[:, -1, :], dim=-1).unsqueeze(-1)
