@@ -6,6 +6,8 @@ import warnings
 import torch
 import numpy as np
 from pathlib import Path
+import subprocess
+import sys
 
 import time # Use time module for manual timing
 from fms import models
@@ -19,6 +21,48 @@ def print0(*args, **kwargs):
     rank = int(os.getenv("RANK", 0))
     if rank == 0:
         print(*args, **kwargs)
+
+def is_inside_slurm():
+    return "SLURM_JOB_ID" in os.environ
+
+def resolve_paths():
+    script_path = Path(__file__).resolve()
+    repo_dir = script_path.parents[2]
+    model_dir = repo_dir.parent / "llama-hf"
+    tokenizer_path = model_dir / "tokenizer.model"
+    env = "insomnia" if "insomnia001" in str(repo_dir) else "local"
+    return {
+        "repo_dir": repo_dir,
+        "script_path": script_path,
+        "model_path": model_dir,
+        "tokenizer_path": tokenizer_path,
+        "env": env
+    }
+
+def launch_self_in_slurm(script_path, extra_args):
+    print("[INFO] Submitting Slurm job...")
+    slurm_cmd = [
+        "sbatch",
+        "--account=edu",
+        "--job-name=benchmark_ring",
+        "--nodes=1",
+        "--ntasks-per-node=1",
+        "--gres=gpu:2",
+        "--mem=60G",
+        "--time=00:30:00",
+        f"--output=inference_insomnia_%j.out",
+        "--wrap",
+        f"python {script_path} {' '.join(extra_args)}"
+    ]
+    print("[INFO] Running:", " ".join(slurm_cmd))
+    result = subprocess.run(slurm_cmd, capture_output=True, text=True)
+    if result.returncode == 0:
+        print("[SUCCESS]", result.stdout.strip())
+    else:
+        print("[ERROR]", result.stderr.strip())
+        sys.exit(1)
+    sys.exit(0)
+
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Benchmark token generation with LLaMA attention strategies")
@@ -140,6 +184,15 @@ def run_generation_benchmark(model, tokenizer, initial_ids, num_tokens_to_gen, l
 def main():
     args = parse_args()
     set_determinism()
+
+    paths = resolve_paths()
+
+    # Only auto-launch Slurm if we're on the Insomnia cluster and not already in a Slurm job
+    if paths["env"] == "insomnia" and not is_inside_slurm():
+        extra_args = sys.argv[1:]
+        launch_self_in_slurm(paths["script_path"], extra_args)
+
+
 
     # --- Initialize Distributed Environment ONLY if launched via torchrun/slurm ---
     # torchrun sets these env vars
