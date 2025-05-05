@@ -197,14 +197,15 @@ def generate_layer_plan(block: nn.Module, use_sequence_parallelism: bool = False
                     break
             for pattern in rowwise_patterns:
                 if re.fullmatch(pattern, name):
-                    tp_plan[name] = RowwiseParallel(output_layouts=Shard(1))
+                    if use_sequence_parallelism:
+                        tp_plan[name] = RowwiseParallel(output_layouts=Shard(1))
+                    else:
+                        tp_plan[name] = RowwiseParallel()
                     break
         else:
             print(f"[TP] Unmatched Layer: {name}")
 
     print()
-
-    
     return tp_plan
 
 class TensorParallelStrategy(DistributedStrategy):
@@ -233,11 +234,16 @@ class TensorParallelStrategy(DistributedStrategy):
                 }
                 return parallelize_module(module, self.device_mesh, tp_plan)
             else:
-                print(f"\n[EDBG] Applying output sharding")
-                tp_plan = {
-                    "shared.emb": RowwiseParallel(input_layouts=Replicate(), output_layouts=Shard(1)),
-                }
-                print(f"\n[EDBG] Applied")
+                if (self.use_sequence_parallelism):
+                    print(f"\n[EDBG] Applying output sharding")
+                    tp_plan = {
+                        "shared.emb": RowwiseParallel(input_layouts=Replicate(), output_layouts=Shard(1)),
+                    }
+                    print(f"\n[EDBG] Applied")
+                else:
+                    tp_plan = {
+                        "shared.emb": RowwiseParallel(input_layouts=Replicate()),
+                    }
                 return parallelize_module(module, self.device_mesh, tp_plan)
         elif model == 'granite':
             tp_plan = {
