@@ -198,7 +198,7 @@ else:
     template = "Below is an instruction that describes a task. Write a response that appropriately completes the request.\n\n### Instruction:\n{}\n\n### Response:"
 
     prompt1 = template.format(
-        "Write an essay on cars vs trains."
+        "List the periodic table of elements in bullet points."
     )
     prompt2 = template.format("Explain some popular greetings in Spanish.")
 
@@ -255,7 +255,7 @@ def infer(use_cache, do_sample):
     result = generate(
         model,
         ids,
-        max_new_tokens=1024,
+        max_new_tokens=5,
         use_cache=use_cache,
         do_sample=do_sample,
         max_seq_len=max_seq_len,
