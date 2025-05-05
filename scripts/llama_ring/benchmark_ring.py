@@ -4,7 +4,6 @@ import statistics
 import random
 import warnings
 import torch
-import numpy as np
 from pathlib import Path
 import subprocess
 import sys
@@ -89,6 +88,7 @@ def parse_args():
 
 
 def set_determinism():
+    import numpy as np # Import numpy here, only when needed
     SEED = 42
     random.seed(SEED)
     np.random.seed(SEED)
@@ -192,10 +192,10 @@ def main():
         extra_args = sys.argv[1:]
         launch_self_in_slurm(paths["script_path"], extra_args)
 
-
-
     # --- Initialize Distributed Environment ONLY if launched via torchrun/slurm ---
     # torchrun sets these env vars
+    # OR if running locally where we might force init later
+
     local_rank = int(os.getenv("LOCAL_RANK", -1))
     world_size = int(os.getenv("WORLD_SIZE", 1))
     rank = int(os.getenv("RANK", 0))
@@ -212,10 +212,13 @@ def main():
 
         if not dist.is_initialized():
              print(f"Initializing distributed process group (Rank {rank}/{world_size}) with backend '{distributed_backend}'...")
-             dist.init_process_group(backend=distributed_backend)
+             # dist.init_process_group(backend=distributed_backend) # Defer init until after potential local setup
     else:
         # Ensure rank is 0 if not distributed
         rank = 0
+
+    # Now that Slurm check is done, set determinism (which imports numpy)
+    set_determinism()
 
 
     device = torch.device(args.device_type, local_rank if local_rank != -1 and args.device_type == "cuda" else 0)
