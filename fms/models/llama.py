@@ -3,6 +3,7 @@ import re
 from dataclasses import dataclass
 from typing import Any, List, Mapping, Optional, Tuple
 
+from fms.models.ring_attention_helper import RingAttentionHelper
 import torch
 import torch.nn as nn
 
@@ -123,6 +124,15 @@ class LLaMABlock(nn.Module):
 
         if self.config.p_dropout != 0:
             self.dropout = nn.Dropout(self.config.p_dropout)
+
+        self.ring_helper = RingAttentionHelper(
+            attn_module=self.attn,
+            strategy=RingAttentionStrategy,
+            llama_block=self,
+            use_cache=False,
+            ff=self.ff_sub_layer,
+            ff_norm=self.ff_ln,
+        )
 
     def forward(
         self,

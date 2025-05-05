@@ -118,16 +118,9 @@ def _forward_ring_attention(
 ):
     residual = x
     x_norm_local = self.ln(x)
-    ring_helper = RingAttentionHelper(
-        attn_module=self.attn,
-        strategy=strategy,
-        llama_block=self,
-        use_cache=use_cache,
-        ff=self.ff_sub_layer,
-        ff_norm=self.ff_ln,
-    )
+
     correct_valid_len = strategy._local_valid_len
-    x, cache, _ = ring_helper.forward(
+    x, cache, _ = self.ring_helper.forward(
         x_norm_local,
         mask=mask,
         strategy=strategy,
