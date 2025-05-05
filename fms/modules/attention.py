@@ -517,12 +517,12 @@ class MultiHeadAttention(nn.Module):
                 or getattr(self._paged_mgr, "page_size", None) != blk_size
             ):
                 num_blocks_per_seq = (q_len + blk_size - 1) // blk_size
-                # If caller didn’t specify max_blocks, allocate extra head‑room
-                # so we have space for future tokens during incremental decoding.
+                # Keep **one** spare page per sequence so a single incremental
+                # token can be cached without reallocating the whole manager.
                 pages_per_seq = (
                     max_blks
                     if max_blks is not None
-                    else num_blocks_per_seq + 8  # 8 spare pages per sequence
+                    else num_blocks_per_seq + 1
                 )
                 # Enough pages for the whole batch so reserve() never exhausts the pool
                 n_pages = pages_per_seq * batch_size
