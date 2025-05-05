@@ -47,6 +47,7 @@ def run_tensor_parallel_benchmark():
     setup_distributed()
 
     rank = dist.get_rank()
+    world_size = dist.get_world_size()
     local_rank = int(os.environ["LOCAL_RANK"])
 
     torch.cuda.set_device(local_rank)
@@ -64,12 +65,42 @@ def run_tensor_parallel_benchmark():
     model.eval()
     print(f"[Rank {rank}] Model created.")
 
-    x = torch.randint(0, config.src_vocab_size, (2, 1024), device=device)
+    # x = torch.randint(0, config.src_vocab_size, (2, 1024), device=device)
+
+    # sequence_lengths = [5, 9, 7] # C1 + 2
+    sequence_lengths = [1] # C3
+    batch_size = len(sequence_lengths)
+    max_seq_len = max(sequence_lengths)
+
+    # C1: Multiple sequences with varying lengths
+    # Pad all sequences in the batch to the longest sequence
+    batch = []
+    for seq_len in sequence_lengths:
+        x = torch.randint(0, config.src_vocab_size, (seq_len,), device=device)
+        pad_amount = max_seq_len - seq_len
+        if pad_amount > 0:
+            x = torch.nn.functional.pad(x, (0, pad_amount), value=0)
+        batch.append(x)
+
+    batch = torch.stack(batch)  # Shape: (batch_size, max_seq_len)
+
+    # C2: If max_seq_len not divisible by world_size, pad to closest higher multiple
+    padded_len = ((max_seq_len + world_size - 1) // world_size) * world_size
+
+    # C3: If sequence length still < world_size, pad to world_size
+    if padded_len < world_size:
+        padded_len = world_size
+
+    if padded_len > max_seq_len:
+        pad_amount = padded_len - max_seq_len
+        batch = torch.nn.functional.pad(batch, (0, pad_amount), value=0) 
+
+    print(f"[Rank {rank}] Final batch shape: {batch.shape} (batch_size={batch_size}, sequence_length={padded_len})")
 
     torch.cuda.reset_peak_memory_stats(device)
     start = time.time()
     with torch.no_grad():
-        out = model(x)
+        out = model(batch)
     end = time.time()
 
     print(f"[Rank {rank}] Output shape: {out.shape}")
