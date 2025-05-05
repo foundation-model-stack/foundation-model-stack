@@ -192,10 +192,6 @@ def main():
         extra_args = sys.argv[1:]
         launch_self_in_slurm(paths["script_path"], extra_args)
 
-    # --- Initialize Distributed Environment ONLY if launched via torchrun/slurm ---
-    # torchrun sets these env vars
-    # OR if running locally where we might force init later
-
     local_rank = int(os.getenv("LOCAL_RANK", -1))
     world_size = int(os.getenv("WORLD_SIZE", 1))
     rank = int(os.getenv("RANK", 0))
@@ -217,10 +213,6 @@ def main():
         # Ensure rank is 0 if not distributed
         rank = 0
 
-    # Now that Slurm check is done, set determinism (which imports numpy)
-    set_determinism()
-
-
     device = torch.device(args.device_type, local_rank if local_rank != -1 and args.device_type == "cuda" else 0)
     torch.set_default_dtype(torch.float16)
 
@@ -233,6 +225,9 @@ def main():
         dist.barrier()
         if rank != 0: # Load on other ranks after rank 0
              tokenizer = tokenizers.get_tokenizer(args.tokenizer)
+
+    # Set determinism AFTER potential Slurm exit and AFTER distributed setup/tokenizer loading
+    set_determinism()
 
     # Use tokenizer's pad_id if available, otherwise default to 0
     pad_id = tokenizer.pad_id if hasattr(tokenizer, 'pad_id') and tokenizer.pad_id is not None else 0
