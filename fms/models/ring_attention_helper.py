@@ -181,31 +181,27 @@ class RingAttentionHelper:
         send_rank = (rank + 1) % world
         recv_rank = (rank - 1 + world) % world
         valid_len = tensor.shape[-2]
+
         padded = _pad_to_block(tensor, pad_len, dim=-2).contiguous()
+        device = tensor.device
 
-        if not tensor.is_cuda:
-            send_len = torch.tensor([valid_len], dtype=torch.int32, device=tensor.device)
-            recv_len = torch.empty(1, dtype=torch.int32, device=tensor.device)
-            tensor_recv = torch.empty_like(padded)
-            ops = [
-                P2POp(op=dist.isend, tensor=send_len, peer=send_rank),
-                P2POp(op=dist.irecv, tensor=recv_len, peer=recv_rank),
-                P2POp(op=dist.isend, tensor=padded, peer=send_rank),
-                P2POp(op=dist.irecv, tensor=tensor_recv, peer=recv_rank),
-            ]
-            reqs = dist.batch_isend_irecv(ops)
-            for req in reqs:
-                req.wait()
-            recv_len = recv_len.item()
-        else:
-            len_t = torch.tensor([valid_len], dtype=torch.int32, device=tensor.device)
-            len_list = [torch.empty_like(len_t) for _ in range(world)]
-            dist.all_gather(len_list, len_t)
-            recv_len = int(len_list[recv_rank].item())
-            send_list = [torch.empty_like(padded) for _ in range(world)]
-            recv_list = [torch.empty_like(padded) for _ in range(world)]
-            send_list[send_rank].copy_(padded)
-            dist.all_to_all(recv_list, send_list)
-            tensor_recv = recv_list[recv_rank]
+        # Create buffers
+        send_len = torch.tensor([valid_len], dtype=torch.int32, device=device)
+        recv_len = torch.empty(1, dtype=torch.int32, device=device)
+        tensor_recv = torch.empty_like(padded)
 
+        # Prepare send/recv ops
+        ops = [
+            P2POp(op=dist.isend, tensor=send_len, peer=send_rank),
+            P2POp(op=dist.irecv, tensor=recv_len, peer=recv_rank),
+            P2POp(op=dist.isend, tensor=padded, peer=send_rank),
+            P2POp(op=dist.irecv, tensor=tensor_recv, peer=recv_rank),
+        ]
+        
+        # Execute async, then wait
+        reqs = dist.batch_isend_irecv(ops)
+        for req in reqs:
+            req.wait()
+
+        recv_len = recv_len.item()
         return tensor_recv, recv_len

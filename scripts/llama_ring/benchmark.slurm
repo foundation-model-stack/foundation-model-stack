@@ -33,6 +33,6 @@ torchrun --nproc_per_node=2 \
   --model_path /insomnia001/depts/edu/COMSE6998/sg3790/llama-hf \
   --tokenizer /insomnia001/depts/edu/COMSE6998/sg3790/llama-hf/tokenizer.model \
   --device_type cuda \
-  --num_tokens_to_benchmark 400 \
+  --num_tokens_to_benchmark 100 \
   --batch_size 1 \
   --run_ring_first
