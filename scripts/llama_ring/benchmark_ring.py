@@ -10,8 +10,15 @@ from pathlib import Path
 import time # Use time module for manual timing
 from fms import models
 from fms.utils import tokenizers
+from fms.distributed.strategy import NoOpStrategy # Import NoOpStrategy
 import torch.distributed as dist # Import distributed module
 
+# Helper for printing only on rank 0
+def print0(*args, **kwargs):
+    # Get rank from env var if available, default to 0
+    rank = int(os.getenv("RANK", 0))
+    if rank == 0:
+        print(*args, **kwargs)
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Benchmark token generation with LLaMA attention strategies")
@@ -27,11 +34,13 @@ def parse_args():
     parser.add_argument("--variant", type=str, default="7b")
     parser.add_argument("--model_path", type=str, default=str(model_dir))
     parser.add_argument("--tokenizer", type=str, default=str(tokenizer_path), help="Full path to the tokenizer.model file")
-    parser.add_argument("--seq_len", type=int, default=10)
     parser.add_argument("--batch_size", type=int, default=1)
     parser.add_argument("--prompt", type=str, default="Periodic Table of Elements: \n * Hydrogen \n * Helium", help="Optional specific prompt text to use instead of random tokens.")
-    parser.add_argument("--num_tokens_to_benchmark", type=int, default=10, help="Number of tokens to generate and benchmark.")
-    parser.add_argument("--run_ring_first", action="store_true")
+    parser.add_argument("--num_tokens_to_benchmark", type=int, default=3, help="Number of tokens to generate and benchmark.")
+    parser.add_argument("--run_ring_first", action="store_true", help="Explicitly run Ring Attention first (default). Set --no-run_ring_first to run Regular first.")
+    parser.add_argument("--no-run_ring_first", dest="run_ring_first", action="store_false")
+    parser.set_defaults(run_ring_first=True) # Default to Ring first
+
     return parser.parse_args()
 
 
@@ -40,15 +49,21 @@ def set_determinism():
     random.seed(SEED)
     np.random.seed(SEED)
     torch.manual_seed(SEED)
-    torch.use_deterministic_algorithms(True)
+    # Note: Deterministic algorithms might not be fully supported with all operations/backends
+    # torch.use_deterministic_algorithms(True)
 
 
 def setup_model(args, strategy=None):
     # Map strategy string to actual strategy object if needed by get_model
-    dist_strategy_param = strategy # Pass the string 'ring' or None
+    dist_strategy_param = strategy # Pass the strategy object ('ring' string or NoOpStrategy class)
     if strategy == "ring":
         # Ensure distributed is initialized before strategy instantiation attempt
-        assert dist.is_initialized(), "RingAttention requires torch.distributed to be initialized"
+        if not dist.is_initialized():
+             # This should ideally not be reached if the main loop logic is correct
+             raise RuntimeError("Attempted to setup Ring Attention without initialized torch.distributed")
+    elif strategy is NoOpStrategy:
+        # Pass the class type itself to get_model
+        dist_strategy_param = NoOpStrategy
 
     model = models.get_model(
         args.architecture,
@@ -65,7 +80,8 @@ def setup_model(args, strategy=None):
 
 def run_generation_benchmark(model, tokenizer, initial_ids, num_tokens_to_gen, label, device):
     """Generates tokens sequentially, timing and printing each one."""
-    print(f"\n[Benchmark] Generating and timing {num_tokens_to_gen} tokens individually for '{label}'...")
+    rank = dist.get_rank() if dist.is_initialized() else 0
+    print0(f"\n[Benchmark] Generating and timing {num_tokens_to_gen} tokens individually for '{label}' (Rank {rank})...")
     current_ids = initial_ids.clone()
     past_key_value_states = None
     token_times = []
@@ -94,99 +110,161 @@ def run_generation_benchmark(model, tokenizer, initial_ids, num_tokens_to_gen, l
         duration_ms = (end_time - start_time) * 1000
         token_times.append(duration_ms)
 
-        # Decode and print the generated token and its time
+        # Decode generated token
         predicted_token_str = tokenizer.convert_ids_to_tokens([next_token_id.item()])
         predicted_text = tokenizer.convert_tokens_to_string(predicted_token_str)
         generated_tokens_text.append(predicted_text)
-        # Removed the print statement from inside the loop
+
         # Update IDs for the next iteration
         current_ids = torch.cat([current_ids, next_token_id], dim=1)
 
-    # Print summary statistics
-    if token_times:
+    # Print summary statistics only on rank 0
+    if rank == 0 and token_times:
         avg_time = statistics.mean(token_times)
         median_time = statistics.median(token_times)
 
         # Print the generated sequence first
-        print(f"\nGenerated Sequence ({label}): {'-'.join(generated_tokens_text)}")
+        print0(f"\nGenerated Sequence ({label}): {'-'.join(generated_tokens_text)}")
         # Then print the timings as bullet points
-        print("Token Timings:")
+        print0("Token Timings:")
         for i, duration_ms in enumerate(token_times):
             # Represent special characters like \n as \\n for cleaner printing
             printable_token = generated_tokens_text[i].encode('unicode_escape').decode('utf-8')
-            print(f"  * Token {i+1} ({printable_token}): {duration_ms:.2f} ms")
-        print(f"\nSummary for {label}:")
-        print(f"  Average time per token: {avg_time:.2f} ms")
-        print(f"  Median time per token: {median_time:.2f} ms")
-        print(f"  Total generation time for {num_tokens_to_gen} tokens: {sum(token_times):.2f} ms")
+            print0(f"  * Token {i+1} ({printable_token}): {duration_ms:.2f} ms")
+        print0(f"\nSummary for {label}:")
+        print0(f"  Average time per token: {avg_time:.2f} ms")
+        print0(f"  Median time per token: {median_time:.2f} ms")
+        print0(f"  Total generation time for {num_tokens_to_gen} tokens: {sum(token_times):.2f} ms")
 
 
 def main():
     args = parse_args()
     set_determinism()
 
-    # --- Initialize Distributed Environment ---
-    # Set default env vars for single-process distributed if not set (e.g., by torchrun)
-    os.environ.setdefault("MASTER_ADDR", "localhost")
-    os.environ.setdefault("MASTER_PORT", "29500") # Default port, change if needed
-    os.environ.setdefault("RANK", "0")
-    os.environ.setdefault("WORLD_SIZE", "1")
+    # --- Initialize Distributed Environment ONLY if launched via torchrun/slurm ---
+    # torchrun sets these env vars
+    local_rank = int(os.getenv("LOCAL_RANK", -1))
+    world_size = int(os.getenv("WORLD_SIZE", 1))
+    rank = int(os.getenv("RANK", 0))
 
-    rank = int(os.environ["RANK"])
-    world_size = int(os.environ["WORLD_SIZE"])
+    distributed_backend = None
+    if world_size > 1:
+        if args.device_type == "cuda":
+            if not torch.cuda.is_available():
+                 raise EnvironmentError("CUDA requested but not available")
+            torch.cuda.set_device(local_rank)
+            distributed_backend = "nccl"
+        else:
+            distributed_backend = "gloo"
 
-    if not dist.is_initialized():
-        dist.init_process_group(backend="gloo") # Use gloo backend for CPU
+        if not dist.is_initialized():
+             print(f"Initializing distributed process group (Rank {rank}/{world_size}) with backend '{distributed_backend}'...")
+             dist.init_process_group(backend=distributed_backend)
+    else:
+        # Ensure rank is 0 if not distributed
+        rank = 0
 
 
-    device = torch.device(args.device_type)
+    device = torch.device(args.device_type, local_rank if local_rank != -1 and args.device_type == "cuda" else 0)
     torch.set_default_dtype(torch.float16)
 
-    tokenizer = tokenizers.get_tokenizer(args.tokenizer)
+    # Load tokenizer only on rank 0 to avoid redundant downloads/loads if applicable
+    tokenizer = None
+    if rank == 0:
+        tokenizer = tokenizers.get_tokenizer(args.tokenizer)
+    if world_size > 1:
+        # Ensure rank 0 has loaded before others proceed
+        dist.barrier()
+        if rank != 0: # Load on other ranks after rank 0
+             tokenizer = tokenizers.get_tokenizer(args.tokenizer)
+
     # Use tokenizer's pad_id if available, otherwise default to 0
     pad_id = tokenizer.pad_id if hasattr(tokenizer, 'pad_id') and tokenizer.pad_id is not None else 0
 
-    if args.prompt:
-        print(f"[INFO] Using prompt: '{args.prompt}'")
-        # Tokenize the prompt using the FMS tokenizer's expected methods
-        tokens = tokenizer.tokenize(args.prompt)
-        prompt_ids_list = tokenizer.convert_tokens_to_ids(tokens)
-
-        # Pad or truncate the prompt
-        current_len = len(prompt_ids_list)
-        target_len = args.seq_len + 10 # Define target_len here
-
-        if current_len < target_len:
-            padded_ids_list = prompt_ids_list + [pad_id] * (target_len - current_len)
-            print(f"[INFO] Prompt padded to sequence length: {target_len}")
-        elif current_len > target_len:
-            padded_ids_list = prompt_ids_list[:target_len]
-            print(f"[INFO] Prompt truncated to sequence length: {target_len}")
+    # Prepare input IDs - only rank 0 needs to print info and create tensor
+    ids = None
+    if rank == 0:
+        if args.prompt:
+            print0(f"[INFO] Using prompt: '{args.prompt}'")
+            tokens = tokenizer.tokenize(args.prompt)
+            prompt_ids_list = tokenizer.convert_tokens_to_ids(tokens)
+            prompt_len = len(prompt_ids_list)
+            print0(f"[INFO] Using prompt length: {prompt_len}")
+            # Directly use the tokenized prompt without padding/truncation
+            ids_tensor = torch.tensor(prompt_ids_list, dtype=torch.long).unsqueeze(0).repeat(args.batch_size, 1)
         else:
-            padded_ids_list = prompt_ids_list
-        ids = torch.tensor(padded_ids_list, dtype=torch.long, device=device).unsqueeze(0).repeat(args.batch_size, 1)
-    else:
-        print(f"[INFO] Generating random token IDs for sequence length: {args.seq_len}")
-        ids = torch.randint(tokenizer.vocab_size(), (args.batch_size, args.seq_len), device=device)
+            # Fallback if no prompt is given (though the default prompt exists)
+            # We need a length, let's default to a small value like 10 if --seq_len is gone
+            prompt_len = 10
+            print0(f"[INFO] No prompt specified, generating random token IDs for sequence length: {prompt_len}")
+            ids_tensor = torch.randint(tokenizer.vocab_size(), (args.batch_size, prompt_len), dtype=torch.long)
 
-    order = [("Regular Attention", None), ("Ring Attention", "ring")]
-    if args.run_ring_first:
+        # Move tensor to device after creation
+        ids = ids_tensor.to(device)
+
+    if world_size > 1:
+        # Broadcast the input tensor from rank 0 to all other ranks
+        # Create a placeholder on other ranks first
+        if rank != 0:
+            # Need shape info from rank 0
+            shape_list = [None] # Placeholder for shape tuple
+            dist.broadcast_object_list(shape_list, src=0)
+            ids_shape = shape_list[0]
+            ids = torch.empty(ids_shape, dtype=torch.long, device=device)
+        elif rank == 0: # Rank 0 needs to provide the shape
+            dist.broadcast_object_list([ids.shape], src=0)
+
+        # Use broadcast instead of broadcast_object_list for tensors
+        dist.broadcast(ids, src=0)
+        dist.barrier() # Ensure all ranks have the tensor
+
+    # Define benchmark order (Default: Ring first)
+    order = [("Ring Attention", "ring"), ("Regular Attention", NoOpStrategy)]
+    if not args.run_ring_first:
         order.reverse()
 
-    print(f"[INFO] Using model: {args.model_path}")
-    print(f"[INFO] Using tokenizer: {args.tokenizer}")
-    print(f"[INFO] Batch size: {args.batch_size}, Seq length: {args.seq_len}")
+    print0(f"[INFO] Using model: {args.model_path}")
+    print0(f"[INFO] Using tokenizer: {args.tokenizer}")
+    print0(f"[INFO] Batch size: {args.batch_size}, Input Seq length: {ids.shape[1]}") # Print actual length
 
     for label, strategy in order:
-        # Distributed environment is always initialized now, so no need to skip
-        # Suppress the specific warning about inv_freq keys
-        # Apply filter right before the operation that causes the warning
-        warnings.filterwarnings("ignore", message="^Keys from checkpoint") # Try simpler filter
-        model = setup_model(args, strategy)
-        # Reset warnings filter immediately after so other warnings are not suppressed
-        warnings.resetwarnings() # Reset warnings filter after model setup
+        is_regular_run = (strategy is NoOpStrategy)
+        should_run_this_rank = not (is_regular_run and rank != 0)
 
-        run_generation_benchmark(model, tokenizer, ids, args.num_tokens_to_benchmark, label, device)
+        # Skip Ring Attention if not running distributed
+        if strategy == "ring" and not dist.is_initialized():
+             print0(f"\n[WARNING] Skipping '{label}' because torch.distributed is not initialized.")
+             print0("[INFO] This usually requires running with torchrun or within a Slurm job launched with torchrun.")
+             continue
+
+        model = None
+        if should_run_this_rank:
+            if is_regular_run:
+                 print0(f"[INFO] Rank {rank} setting up Regular Attention benchmark...")
+            else:
+                 print(f"[INFO] Rank {rank} setting up Ring Attention benchmark...") # Print on all ranks for Ring
+
+            # Suppress the specific warning about inv_freq keys
+            warnings.filterwarnings("ignore", message=r"Keys from checkpoint \(adapted to FMS\) not copied into model:.*rotary_emb\.inv_freq")
+            model = setup_model(args, strategy)
+            warnings.resetwarnings() # Reset warnings filter after model setup
+
+        # Barrier to ensure all ranks wait for model setup on active ranks
+        if world_size > 1:
+            dist.barrier()
+
+        # Run benchmark only on ranks that loaded the model
+        if should_run_this_rank:
+            run_generation_benchmark(model, tokenizer, ids, args.num_tokens_to_benchmark, label, device)
+
+            # Clean up model memory
+            del model
+            if args.device_type == "cuda":
+                torch.cuda.empty_cache()
+
+        # Barrier after each benchmark iteration to ensure synchronization before the next loop or exit
+        if world_size > 1:
+            dist.barrier()
 
 
 if __name__ == "__main__":
