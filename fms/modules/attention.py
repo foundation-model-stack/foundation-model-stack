@@ -442,10 +442,10 @@ class MultiHeadAttention(nn.Module):
             and past_key_value_state is not None
             and past_key_value_state[0].numel() > 0
         ):
-            if is_self:
+            if is_self and attn_algorithm != "paged":
                 keys = torch.cat((past_key_value_state[0], keys), dim=2)
                 values = torch.cat((past_key_value_state[1], values), dim=2)
-            else:
+            elif attn_algorithm != "paged":
                 keys = past_key_value_state[0]
                 values = past_key_value_state[1]
 
@@ -472,6 +472,9 @@ class MultiHeadAttention(nn.Module):
         else:
             keys_e = keys
             values_e = values
+        # Save the tokens produced in this forward pass (needed for assign())
+        fresh_keys_e = keys_e
+        fresh_values_e = values_e
 
         if attn_algorithm:
             # Pick which fused attn kernels will run.
@@ -488,10 +491,19 @@ class MultiHeadAttention(nn.Module):
         if attn_mask is not None and attn_mask.dtype != torch.bool:
             attn_mask = attn_mask.to(dtype=queries.dtype)
 
+        # flex_attention: Do the math – a fused kernel that computes Q × Kᵀ → scores, 
+        # applies soft-max (with optional mask/score hooks), and multiplies by V.  
+        # Optimised to run block-sparse layouts on modern GPUs.
+
+        # PagedAttention: Manage memory – a lightweight page-table & cache manager 
+        # for long/variable-length KV caches during autoregressive decoding. It never 
+        # multiplies tensors itself; it just maps logical token positions to physical 
+        # blocks, allocates/free pages, and then asks flex_attention (or Flash) to do 
+        # the computation.
         if attn_algorithm == "paged":
-            # ------------------------------------------------------------------
-            # Use PyTorch’s experimental PagedAttention manager instead of SDPA
-            # ------------------------------------------------------------------
+            # ------------------------------------------------------------
+            # 1.  Ensure global KV caches are large enough
+            # ------------------------------------------------------------
             blk_size = block_size or self.paged_attention_config.get(
                 "block_size", _DEFAULT_SPARSE_BLOCK_SIZE
             )
@@ -504,10 +516,17 @@ class MultiHeadAttention(nn.Module):
                 self._paged_mgr is None
                 or getattr(self._paged_mgr, "page_size", None) != blk_size
             ):
-                # Choose capacity (n_pages) – default to exactly what we need for
-                # this sequence unless user provided a larger max_blocks.
-                num_blocks = (q_len + blk_size - 1) // blk_size
-                n_pages = max_blks if max_blks is not None else num_blocks
+                num_blocks_per_seq = (q_len + blk_size - 1) // blk_size
+                # If caller didn’t specify max_blocks, allocate extra head‑room
+                # so we have space for future tokens during incremental decoding.
+                pages_per_seq = (
+                    max_blks
+                    if max_blks is not None
+                    else num_blocks_per_seq + 8  # 8 spare pages per sequence
+                )
+                # Enough pages for the whole batch so reserve() never exhausts the pool
+                n_pages = pages_per_seq * batch_size
+
                 self._paged_mgr = PagedAttention(
                     n_pages=n_pages,
                     page_size=blk_size,
@@ -515,28 +534,84 @@ class MultiHeadAttention(nn.Module):
                     device=q.device,
                 )
 
-            # PagedAttention expects the (B, H, L, D) layout that we already have
-            # in `queries / keys_e / values_e`.  Some nightly builds expose a
-            # callable interface; older builds don’t.
-            try:
-                attn = self._paged_mgr(
-                    queries,
-                    keys_e,
-                    values_e,
-                    attn_mask=attn_mask,
-                    is_causal=is_causal_mask,
+            total_slots = self._paged_mgr.n_pages * blk_size
+            cache_needs_resize = (
+                self._k_cache is None
+                or self._k_cache.shape[2] < total_slots
+                or self._k_cache.shape[1] != self.nheads
+            )
+            if cache_needs_resize:
+                self._k_cache = torch.empty(
+                    1,
+                    self.nheads,
+                    total_slots,
+                    self.emb_kq_per_head,
+                    device=q.device,
+                    dtype=queries.dtype,
                 )
-            except (TypeError, AttributeError):
-                # Public PagedAttention (as of PT 2.3) is a cache manager, not a
-                # callable kernel.  Instead, invoke the underlying FlexAttention
-                # kernel directly so we still exercise the same algorithm.
-                attn = _flex_attention(
-                    queries,
-                    keys_e,
-                    values_e,
-                    scale=None,
+                self._v_cache = torch.empty(
+                    1,
+                    self.nheads,
+                    total_slots,
+                    self.emb_v_per_head,
+                    device=q.device,
+                    dtype=values_e.dtype,
                 )
-        
+
+            # ------------------------------------------------------------
+            # 2.  Reserve pages and write *only the new tokens* into cache
+            # ------------------------------------------------------------
+            # Determine starting logical position for each batch element
+            prev_capacity = self._paged_mgr.capacity.clone()            # (B,)
+            positions = torch.arange(q_len, device=q.device)            # (L)
+
+            # Reserve enough space for the total length (prev + new)
+            for b in range(batch_size):
+                new_total = int(prev_capacity[b] + q_len)
+                self._paged_mgr.reserve(
+                    torch.tensor([b], device=q.device),
+                    torch.tensor(new_total, device=q.device),
+                )
+
+            batch_idx = torch.arange(batch_size, device=q.device)       # (B,)
+            # input_pos = prev_capacity.unsqueeze(1) + positions[None, :]
+            input_pos = prev_capacity.unsqueeze(1) + positions          # (B, L)
+
+            with torch.no_grad():
+                self._paged_mgr.assign(
+                    batch_idx,
+                    input_pos.to(dtype=torch.int64),
+                    fresh_keys_e.detach(),
+                    fresh_values_e.detach(),
+                    self._k_cache,
+                    self._v_cache,
+                )
+
+            # ------------------------------------------------------------
+            # 3.  Gather per‑batch K/V from the global cache and compute attention
+            # ------------------------------------------------------------
+            def _gather_kv(b: int):
+                # Gather *all* logical indices from 0 .. current_length‑1 so the
+                # query token can attend to the full prefix, matching baseline.
+                full_len = int(prev_capacity[b] + q_len)
+                logical_idx = torch.arange(full_len, device=q.device)            # (full_len,)
+                phys_block = self._paged_mgr.page_table[b, (logical_idx // blk_size)]
+                offset = phys_block * blk_size + (logical_idx % blk_size)
+                k_b = self._k_cache[0, :, offset, :]    # (H, full_len, D)
+                v_b = self._v_cache[0, :, offset, :]
+                return k_b, v_b
+
+            k_list, v_list = zip(*[_gather_kv(b) for b in range(batch_size)])
+            k_src = torch.stack(k_list)   # (B, H, L, D)
+            v_src = torch.stack(v_list)
+
+            attn = _flex_attention(
+                queries,
+                k_src,
+                v_src,
+                scale=None,
+            )
+
             # (B, H, L, D)  →  (B, L, H*D)
             attn = (
                 attn.transpose(2, 1)
