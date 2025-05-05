@@ -23,7 +23,7 @@ DEFAULT_TOKENIZER_REL_PATH="../llama-hf/tokenizer.model"
 if [[ "$RUN_LOCATION" == "insomnia" ]]; then
   BASE_DIR="/insomnia001/depts/edu/COMSE6998/sg3790"
   CURRENT_REPO_DIR="${BASE_DIR}/foundation-model-stack"
-  SLURM_SCRIPT_PATH="${CURRENT_REPO_DIR}/scripts/llama_ring/run_ring_benchmark.slurm"
+  SLURM_SCRIPT_PATH="${CURRENT_REPO_DIR}/scripts/llama_ring/benchmark.slurm"
   DEFAULT_MODEL_ABS_PATH="${BASE_DIR}/llama-hf"
   DEFAULT_TOKENIZER_ABS_PATH="${BASE_DIR}/llama-hf/tokenizer.model"
 else
