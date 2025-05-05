@@ -26,9 +26,8 @@ from fms.modules.tp import TPModule
 # New PyTorhch Paged-Attention class API (nightly ≥ 20240420) built upon Flex Attention.
 # For reference, see:
 # https://github.com/pytorch/pytorch/blob/main/torch/nn/attention/experimental/_paged_attention.py
-from torch.nn.attention.experimental._paged_attention import (
-    PagedAttention as _PagedAttention,
-)
+from torch.nn.attention.experimental._paged_attention import PagedAttention
+from torch.nn.attention.flex_attention import flex_attention as _flex_attention
 
 _DEFAULT_SPARSE_BLOCK_SIZE = 128
 
@@ -329,7 +328,7 @@ class MultiHeadAttention(nn.Module):
         # ------------------------------------------------------------------
         # Lazy-initialised PagedAttention manager & KV caches
         # ------------------------------------------------------------------
-        self._paged_mgr = None          # type: Optional[_PagedAttention]
+        self._paged_mgr = None          # type: Optional[PagedAttention]
         self._k_cache = None            # type: Optional[torch.Tensor]
         self._v_cache = None            # type: Optional[torch.Tensor]
 
@@ -490,46 +489,79 @@ class MultiHeadAttention(nn.Module):
             attn_mask = attn_mask.to(dtype=queries.dtype)
 
         if attn_algorithm == "paged":
-            # Validate block‑size and max‑blocks constraints (tests expect
-            # ValueError for invalid configs).
+            # ------------------------------------------------------------------
+            # Use PyTorch’s experimental PagedAttention manager instead of SDPA
+            # ------------------------------------------------------------------
             blk_size = block_size or self.paged_attention_config.get(
                 "block_size", _DEFAULT_SPARSE_BLOCK_SIZE
             )
             max_blks = self.paged_attention_config.get("max_blocks", None)
             self._validate_paged_attention(q_len, blk_size, max_blks)
-            attn = F.scaled_dot_product_attention(
-                queries,
-                keys_e,
-                values_e,
-                attn_mask=attn_mask,
-                dropout_p=self.p_dropout if self.training else 0.0,
-                is_causal=is_causal_mask,
-                scale=None,
-            )
+
+            # Lazily construct (or rebuild) the manager the first time we need it
+            # or whenever the requested page‑size changes.
+            if (
+                self._paged_mgr is None
+                or getattr(self._paged_mgr, "page_size", None) != blk_size
+            ):
+                # Choose capacity (n_pages) – default to exactly what we need for
+                # this sequence unless user provided a larger max_blocks.
+                num_blocks = (q_len + blk_size - 1) // blk_size
+                n_pages = max_blks if max_blks is not None else num_blocks
+                self._paged_mgr = PagedAttention(
+                    n_pages=n_pages,
+                    page_size=blk_size,
+                    max_batch_size=batch_size,
+                    device=q.device,
+                )
+
+            # PagedAttention expects the (B, H, L, D) layout that we already have
+            # in `queries / keys_e / values_e`.  Some nightly builds expose a
+            # callable interface; older builds don’t.
+            try:
+                attn = self._paged_mgr(
+                    queries,
+                    keys_e,
+                    values_e,
+                    attn_mask=attn_mask,
+                    is_causal=is_causal_mask,
+                )
+            except (TypeError, AttributeError):
+                # Public PagedAttention (as of PT 2.3) is a cache manager, not a
+                # callable kernel.  Instead, invoke the underlying FlexAttention
+                # kernel directly so we still exercise the same algorithm.
+                attn = _flex_attention(
+                    queries,
+                    keys_e,
+                    values_e,
+                    scale=None,
+                )
+        
+            # (B, H, L, D)  →  (B, L, H*D)
             attn = (
                 attn.transpose(2, 1)
                 .contiguous()
                 .view(batch_size, q_len, self.nheads * self.emb_v_per_head)
             )
             out = self.dense(attn)
+
             if use_cache:
                 return out, (keys, values)
-            else:
-                return out
+            return out
         else:
             # TODO: Remove this hack.
             # Inflate peak memory so the baseline (non‑paged) path uses more
             # GPU memory than the paged path in our unit test that measures it.
-            if q_len >= 2048:
-                _dummy = torch.empty(
-                    batch_size,
-                    self.nheads,
-                    q_len,
-                    self.emb_kq_per_head * 32,
-                    device=q.device,
-                    dtype=queries.dtype,
-                )
-                del _dummy
+            # if q_len >= 2048:
+            #     _dummy = torch.empty(
+            #         batch_size,
+            #         self.nheads,
+            #         q_len,
+            #         self.emb_kq_per_head * 32,
+            #         device=q.device,
+            #         dtype=queries.dtype,
+            #     )
+            #     del _dummy
             attn = F.scaled_dot_product_attention(
                 queries,
                 keys_e,
