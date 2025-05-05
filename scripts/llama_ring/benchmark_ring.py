@@ -10,6 +10,7 @@ from pathlib import Path
 import time # Use time module for manual timing
 from fms import models
 from fms.utils import tokenizers
+import torch.distributed as dist # Import distributed module
 
 
 def parse_args():
@@ -43,14 +44,19 @@ def set_determinism():
 
 
 def setup_model(args, strategy=None):
+    # Map strategy string to actual strategy object if needed by get_model
+    dist_strategy_param = strategy # Pass the string 'ring' or None
+    if strategy == "ring":
+        # Ensure distributed is initialized before strategy instantiation attempt
+        assert dist.is_initialized(), "RingAttention requires torch.distributed to be initialized"
+
     model = models.get_model(
         args.architecture,
         args.variant,
         model_path=args.model_path,
         device_type=args.device_type,
-        source="hf",
-        distributed_strategy=strategy,
-        fused_weights=True
+        source="hf", # Assuming HF source
+        distributed_strategy=dist_strategy_param,
     )
     model.eval()
     torch.set_grad_enabled(False)
@@ -106,7 +112,9 @@ def run_generation_benchmark(model, tokenizer, initial_ids, num_tokens_to_gen, l
         # Then print the timings as bullet points
         print("Token Timings:")
         for i, duration_ms in enumerate(token_times):
-            print(f"  * Token {i+1}: {duration_ms:.2f} ms")
+            # Represent special characters like \n as \\n for cleaner printing
+            printable_token = generated_tokens_text[i].encode('unicode_escape').decode('utf-8')
+            print(f"  * Token {i+1} ({printable_token}): {duration_ms:.2f} ms")
         print(f"\nSummary for {label}:")
         print(f"  Average time per token: {avg_time:.2f} ms")
         print(f"  Median time per token: {median_time:.2f} ms")
@@ -116,6 +124,20 @@ def run_generation_benchmark(model, tokenizer, initial_ids, num_tokens_to_gen, l
 def main():
     args = parse_args()
     set_determinism()
+
+    # --- Initialize Distributed Environment ---
+    # Set default env vars for single-process distributed if not set (e.g., by torchrun)
+    os.environ.setdefault("MASTER_ADDR", "localhost")
+    os.environ.setdefault("MASTER_PORT", "29500") # Default port, change if needed
+    os.environ.setdefault("RANK", "0")
+    os.environ.setdefault("WORLD_SIZE", "1")
+
+    rank = int(os.environ["RANK"])
+    world_size = int(os.environ["WORLD_SIZE"])
+
+    if not dist.is_initialized():
+        dist.init_process_group(backend="gloo") # Use gloo backend for CPU
+
 
     device = torch.device(args.device_type)
     torch.set_default_dtype(torch.float16)
@@ -156,15 +178,10 @@ def main():
     print(f"[INFO] Batch size: {args.batch_size}, Seq length: {args.seq_len}")
 
     for label, strategy in order:
-        # Skip Ring Attention if not in a distributed environment
-        if strategy == "ring" and not torch.distributed.is_initialized():
-            print(f"\n[INFO] Skipping '{label}' benchmark as torch.distributed is not initialized.")
-            print("[INFO] Run with torchrun for distributed benchmarks like Ring Attention.")
-            continue
-
+        # Distributed environment is always initialized now, so no need to skip
         # Suppress the specific warning about inv_freq keys
         # Apply filter right before the operation that causes the warning
-        warnings.filterwarnings("ignore", message=r"Keys from checkpoint \(adapted to FMS\) not copied into model:.*rotary_emb\.inv_freq")
+        warnings.filterwarnings("ignore", message="^Keys from checkpoint") # Try simpler filter
         model = setup_model(args, strategy)
         # Reset warnings filter immediately after so other warnings are not suppressed
         warnings.resetwarnings() # Reset warnings filter after model setup
@@ -173,4 +190,8 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    finally:
+        if dist.is_initialized(): # Clean up the process group
+            dist.destroy_process_group()
