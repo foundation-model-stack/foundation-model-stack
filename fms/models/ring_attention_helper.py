@@ -1,6 +1,7 @@
 from typing import List, Tuple, Dict, Optional, Union
 import torch
 import torch.distributed as dist
+from torch.distributed import P2POp # For batch_isend_irecv
 import math
 
 def _pad_to_block(t, target_len, dim=2):
@@ -96,13 +97,14 @@ class RingAttentionHelper:
         return x
 
     def _compute_max_score_pass(self, q_local, k_local, mask_global, q_start_global, valid_len_local, debug_info):
-        B, H, T_q_local, D_head = q_local.shape
+        B, H, T_q_local, _ = q_local.shape # Use T_q_local from valid_len_local
         device = q_local.device
         dtype = torch.float32
         max_score = torch.full((B, H, T_q_local, 1), -float("inf"), device=device, dtype=dtype)
+        # Suggestion 2: Precompute q_indices_global
         q_indices_global = torch.arange(q_start_global, q_start_global + T_q_local, device=device)
-        current_k_block = k_local.clone()
-        current_k_len = k_local.shape[2]
+        current_k_block = k_local # Suggestion 1: Avoid clone
+        current_k_len = k_local.shape[2] # Assuming k_local is already trimmed to valid_len
 
         for i in range(self.world_size):
             k_start_global = ((self.rank - i + self.world_size) % self.world_size) * self.strategy.block_size
@@ -123,16 +125,17 @@ class RingAttentionHelper:
         return max_score
 
     def _compute_sums_pass(self, q_local, k_local, v_local, mask_global, q_start_global,
-                           valid_len_local, max_score, debug_info):
-        B, H, T_q_local, D_head = q_local.shape
+                           valid_len_local, max_score, debug_info=None): # Added default for debug_info
+        B, H, T_q_local, _ = q_local.shape # Use T_q_local from valid_len_local
         D_v = self.attn.emb_v_per_head
         device = q_local.device
         dtype = torch.float32
         numerator = torch.zeros(B, H, T_q_local, D_v, device=device, dtype=dtype)
         denominator = torch.zeros(B, H, T_q_local, 1, device=device, dtype=dtype)
+        # Suggestion 2: Precompute q_indices_global
         q_indices_global = torch.arange(q_start_global, q_start_global + T_q_local, device=device)
-        current_k_block = k_local.clone()
-        current_v_block = v_local.clone()
+        current_k_block = k_local # Suggestion 1: Avoid clone
+        current_v_block = v_local # Suggestion 1: Avoid clone
         current_k_len = k_local.shape[2]
 
         for i in range(self.world_size):
@@ -159,12 +162,16 @@ class RingAttentionHelper:
 
     def _compute_attention_scores(self, q, k, q_indices_global, k_indices_global, mask=None,
                                   apply_mask=True, keep_causal=True):
-        scores = torch.einsum("bhqd,bhkd->bhqk", q, k) / self.scale
+        # Suggestion 5: Use matmul instead of einsum
+        scores = torch.matmul(q, k.transpose(-2, -1)) / self.scale
         if apply_mask and mask is not None:
             scores = scores + mask.to(scores.dtype)
         if apply_mask and keep_causal:
+            # Suggestion 6: Causal mask could be precomputed if T_q_local and T_k_local are fixed,
+            # but here T_k_local (current_k_len) changes in the loop. Keep calculation here for now.
             causal_mask = (k_indices_global[None, :] > q_indices_global[:, None]).unsqueeze(0).unsqueeze(0)
             scores = scores.masked_fill(causal_mask, -torch.inf)
+
         return scores
 
     def _update_max_score(self, scores, current_max):
@@ -174,7 +181,8 @@ class RingAttentionHelper:
     def _update_totals(self, scores, v, max_score, numerator, denominator):
         stable_scores = (scores - max_score).clamp(min=-10.0, max=10.0)
         exp_scores = torch.exp(stable_scores)
-        exp_scores = torch.nan_to_num(exp_scores, nan=0.0, posinf=torch.finfo(exp_scores.dtype).max, neginf=0.0)
+        # Suggestion 7: Remove nan_to_num if clamping is sufficient
+        # exp_scores = torch.nan_to_num(exp_scores, nan=0.0, posinf=torch.finfo(exp_scores.dtype).max, neginf=0.0)
         numerator += torch.einsum("bhqk,bhkd->bhqd", exp_scores, v.to(numerator.dtype))
         denominator += exp_scores.sum(dim=-1, keepdim=True)
         return numerator, denominator
@@ -184,16 +192,24 @@ class RingAttentionHelper:
         send_rank = (rank + 1) % world
         recv_rank = (rank - 1 + world) % world
         valid_len = tensor.shape[-1]
+        # Suggestion 3: Keep contiguous() as communication ops often require it
         padded = _pad_to_block(tensor, pad_len, dim=-1).contiguous()
 
         if not tensor.is_cuda:
             send_len = torch.tensor([valid_len], dtype=torch.int32, device=tensor.device)
             recv_len = torch.empty(1, dtype=torch.int32, device=tensor.device)
-            dist.isend(send_len, dst=send_rank).wait()
-            dist.irecv(recv_len, src=recv_rank).wait()
             tensor_recv = torch.empty_like(padded)
-            dist.isend(padded, dst=send_rank).wait()
-            dist.irecv(tensor_recv, src=recv_rank).wait()
+
+            # Suggestion 10: Use batch_isend_irecv
+            ops = [
+                P2POp(op=dist.isend, tensor=send_len, peer=send_rank),
+                P2POp(op=dist.irecv, tensor=recv_len, peer=recv_rank),
+                P2POp(op=dist.isend, tensor=padded, peer=send_rank),
+                P2POp(op=dist.irecv, tensor=tensor_recv, peer=recv_rank),
+            ]
+            reqs = dist.batch_isend_irecv(ops)
+            for req in reqs:
+                req.wait()
             recv_len = recv_len.item()
         else:
             valid_len = tensor.size(-2)
@@ -208,5 +224,6 @@ class RingAttentionHelper:
             dist.all_to_all(recv_list, send_list)
             tensor_recv = recv_list[recv_rank]
 
-        dist.barrier()
+        # Suggestion 8: Remove barrier if not strictly needed for correctness
+        # dist.barrier()
         return tensor_recv, recv_len
