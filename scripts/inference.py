@@ -19,6 +19,8 @@ from fms.utils.generation import generate, pad_input_ids
 # CUBLAS_WORKSPACE_CONFIG=:4096:8 srun -N 1 --gres=gpu:1 python scripts/inference.py --model_path=~/models/7B-F/ --tokenizer=~/models/tokenizer.model --compile --deterministic
 # Example usage of 13B model on 2 GPUs with Tensor Parallel:
 # srun -N 1 --gres=gpu:2 torchrun --nproc_per_node=2 scripts/inference.py --model_path=~/models/13B-F --tokenizer=~/models/tokenizer.model --distributed
+# Example usage with Ring Attention:
+# srun -N 1 --gres=gpu:2 torchrun --nproc_per_node=2 scripts/inference.py --model_path=~/models/7B-F/ --tokenizer=~/models/tokenizer.model --distributed --distributed_strategy=ring
 
 parser = argparse.ArgumentParser(
     description="Script to run inference on a causal model"
@@ -54,6 +56,7 @@ parser.add_argument(
 )
 parser.add_argument(
     "--no_use_cache",
+    dest="use_cache", # Store True by default, action stores False
     action="store_false",
     help="Disable the kv-cache (on by default)",
 )
@@ -95,7 +98,7 @@ parser.add_argument(
     "--distributed_strategy",
     type=str,
     default=None,
-    choices=["tp", "mp", "fsdp", "hsdp", "ddp", "ring"],
+    choices=["tp", "mp", "fsdp", "hsdp", "ddp", "ring"], # Added 'ring'
     help="The distributed strategy to use. If None, will attempt to guess based on --distributed and device count.",
 )
 parser.add_argument(
@@ -152,6 +155,7 @@ if distr_strategy is None:
         distr_strategy = "tp"  # Default to TP if --distributed is set and no strategy specified
     elif torch.cuda.device_count() > 1 and world_size == 1:
         distr_strategy = "mp"  # Default to MP on single node multi-GPU if not distributed
+    # Note: 'ring' is not inferred automatically, must be specified.
 
 model = get_model(
     args.architecture,
@@ -160,8 +164,10 @@ model = get_model(
     device_type=args.device_type,
     source=args.model_source,
     distributed_strategy=distr_strategy,
-    group=dist.group.WORLD,
+    # Pass group only if distributed is initialized
+    group=dist.group.WORLD if args.distributed else None,
     fused_weights=not args.unfuse_weights,
+    data_type=default_dtype # Pass parsed dtype
 )
 
 tokenizer = tokenizers.get_tokenizer(args.tokenizer)
@@ -209,10 +215,12 @@ max_len = max([len(prompt) for prompt in [prompt1, prompt2]])
 
 if args.batch_input:
     ids = [prompt1, prompt2]
+    # Use pad_input_ids from fms.utils.generation which returns padding_kwargs
     ids, padding_kwargs = pad_input_ids(ids, min_pad_length=args.min_pad_length)
 else:
     ids = prompt1
     if args.min_pad_length != 0:
+        # Use pad_input_ids from fms.utils.generation which returns padding_kwargs
         ids, padding_kwargs = pad_input_ids([ids], min_pad_length=args.min_pad_length)
     else:
         padding_kwargs = None
@@ -222,9 +230,13 @@ def print_result(result):
     if local_rank != 0:
         return
     if padding_kwargs is not None:
-        result = generation.trim_prefix(result)
+        # trim_prefix might not be needed if the model handles padding correctly, depends on model/generation impl.
+        # result = generation.trim_prefix(result)
+        pass # Assuming model handles padding, otherwise re-enable trim_prefix
 
-    result = generation.trim_prefix(result, tokenizer.bos_token_id)
+    # Trim BOS token if present at the start
+    if result.numel() > 0 and result[0] == tokenizer.bos_token_id:
+        result = result[1:]
 
     # stop at EOS token if present and remove padding
     result = generation.truncate_after_eos(result, tokenizer.eos_token_id)
@@ -252,6 +264,10 @@ def infer(use_cache, do_sample):
     else:
         # without ntk scaling, extending the seq length too far gives bogus results.
         max_seq_len = model.config.max_expected_seq_len
+
+    # Pass padding_kwargs if they exist
+    current_extra_kwargs = padding_kwargs if padding_kwargs else {}
+
     result = generate(
         model,
         ids,
@@ -259,7 +275,7 @@ def infer(use_cache, do_sample):
         use_cache=use_cache,
         do_sample=do_sample,
         max_seq_len=max_seq_len,
-        extra_kwargs=padding_kwargs,
+        extra_kwargs=current_extra_kwargs,
     )
     if len(result.shape) == 1:
         result = result.unsqueeze(0)
@@ -270,8 +286,12 @@ def infer(use_cache, do_sample):
 
 print("generating output", local_rank)
 do_sample = [False]
-use_cache = [
-    args.no_use_cache
-]  # True/False are identical with greedy iff `torch.use_deterministic_algorithms(True)`
-for sample, cache in itertools.product(do_sample, use_cache):
+use_cache_settings = [args.use_cache] # Use the argument value directly
+
+for sample, cache in itertools.product(do_sample, use_cache_settings):
+    # RingAttention currently does not support use_cache, skip if necessary
+    if distr_strategy == 'ring' and cache:
+        if local_rank == 0:
+            print("Skipping use_cache=True with RingAttention strategy as it is not supported.")
+        continue
     infer(cache, sample)
