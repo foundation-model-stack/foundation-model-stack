@@ -171,7 +171,7 @@ class RingAttentionStrategy(DistributedStrategy):
     Distributed strategy for ring attention with automatic input padding.
     Ensures tensors gathered across ranks are the same shape.
     """
-
+    block_size = 1024
     def __init__(self, group=None, from_meta=False):
         super().__init__(from_meta)
         assert torch.distributed.is_initialized(), "Requires initialized process group"
