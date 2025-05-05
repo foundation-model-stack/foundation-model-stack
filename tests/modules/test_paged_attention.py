@@ -137,10 +137,22 @@ def _call_flex(attn, q, k, v):
     """
     return attn(q, k, v, attn_algorithm="paged").detach()
 
-def test_paged_attention_memory():
-    """Peak‑memory comparison after *incremental decoding* using Flex on both paths."""
+
+def test_paged_attention_memory_flash():
+    """
+    Peak‑memory comparison that mirrors real decoding:
+      • baseline uses Flash/mem‑efficient SDP (no KV cache)
+      • paged path reuses its KV cache
+    We measure only the incremental step (prompt peak is discarded) so the
+    scratch buffer is identical and any difference comes from extra working
+    memory.  Paged should win by at least 10 MB.
+    """
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA required for peak‑memory test")
+
     batch_size, seq_len, n_heads, head_dim = 2, 2048, 8, 64
     blk_size = 128
+    atol_mb = 10
 
     attn_base = MultiHeadAttention(
         emb_dim=n_heads * head_dim,
@@ -160,63 +172,46 @@ def test_paged_attention_memory():
         paged_attention_config={"block_size": blk_size}
     ).cuda()
 
-    # Warm-up so the global KV cache exists
-    dummy = torch.randn(batch_size, 1, n_heads * head_dim, device="cuda")
-    attn_base(dummy, dummy, dummy, attn_algorithm="paged", use_cache=True)
-
-    # Free the pages we just allocated, but keep the cache tensors resident
-    for b in range(batch_size):
-        attn_base._paged_mgr.erase(torch.tensor([b], device="cuda"))
-        
     # ------------------------------------------------------------------
-    # Baseline (Flex, no KV cache)
+    # 1. Run the prompt once on both modules (not measured)
     # ------------------------------------------------------------------
-    q0 = torch.randn(batch_size, seq_len, n_heads * head_dim, device="cuda")
-    k0 = torch.randn_like(q0)
-    v0 = torch.randn_like(q0)
+    prompt_q = torch.randn(batch_size, seq_len, n_heads * head_dim, device="cuda")
+    prompt_k = torch.randn_like(prompt_q)
+    prompt_v = torch.randn_like(prompt_q)
 
-    # Reset the manager so the baseline starts with a clean page pool sized
-    # for the *big* sequence, not the 1‑token warm‑up.
-    attn_base._paged_mgr = None
-    attn_base._k_cache = None
-    attn_base._v_cache = None
+    _ = attn_base(prompt_q, prompt_k, prompt_v, attn_algorithm="math")  # baseline prompt
+    _, cache = attn_paged(prompt_q, prompt_k, prompt_v,
+                          attn_algorithm="paged", use_cache=True)        # paged prompt
 
-    torch.cuda.empty_cache()
+    # ------------------------------------------------------------------
+    # 2. Measure peak memory for the incremental step only
+    # ------------------------------------------------------------------
     torch.cuda.reset_peak_memory_stats()
-    _ = _call_flex(attn_base, q0, k0, v0)                       # step‑0
+    incr_q = torch.randn(batch_size, 1, n_heads * head_dim, device="cuda")
+    incr_k = torch.randn_like(incr_q)
+    incr_v = torch.randn_like(incr_q)
 
-    # Reset again so that the second baseline call starts with a fresh
-    # page table; this prevents capacity from doubling (2048 → 4097).
-    attn_base._paged_mgr = None
-    attn_base._k_cache = None
-    attn_base._v_cache = None
+    # Baseline must feed full prompt +1 again
+    full_q = torch.cat([prompt_q, incr_q], dim=1)
+    full_k = torch.cat([prompt_k, incr_k], dim=1)
+    full_v = torch.cat([prompt_v, incr_v], dim=1)
+    _ = attn_base(full_q, full_k, full_v, attn_algorithm="math")
+    baseline_peak = torch.cuda.max_memory_allocated()
 
-    q_full = torch.randn(batch_size, seq_len + 1, n_heads * head_dim, device="cuda")
-    k_full = torch.randn_like(q_full)
-    v_full = torch.randn_like(q_full)
-    _ = _call_flex(attn_base, q_full, k_full, v_full)
-    
-    regular_peak = torch.cuda.max_memory_allocated()
-
-    # ------------------------------------------------------------------
-    # Paged attention (Flex + KV cache)
-    # ------------------------------------------------------------------
-    torch.cuda.empty_cache()
     torch.cuda.reset_peak_memory_stats()
-    _, cache = attn_paged(q0, k0, v0, attn_algorithm="paged", use_cache=True)  # step‑0
-    q1 = torch.randn(batch_size, 1, n_heads * head_dim, device="cuda")
     _ = attn_paged(
-        q1,
+        incr_q,
         attn_algorithm="paged",
         past_key_value_state=cache,
         use_cache=True
-    )                                                      # step‑1
+    )
     paged_peak = torch.cuda.max_memory_allocated()
 
-    # allow 25 MB head-room
-    tolerance = 25 * 2**20   # 25 MiB
-    assert paged_peak <= regular_peak + tolerance, (
-        f"paged {paged_peak} – regular {regular_peak} exceeds {tolerance}-byte slack"
+    diff_mb = (baseline_peak - paged_peak) / 2**20
+    assert paged_peak + atol_mb * 2**20 < baseline_peak, (
+        f"Paged should peak at least {atol_mb} MB lower than baseline "
+        f"but baseline={baseline_peak/2**20:.1f} MB paged={paged_peak/2**20:.1f} MB "
+        f"(diff={diff_mb:.1f} MB)"
     )
 
 def test_paged_attention_max_blocks():
