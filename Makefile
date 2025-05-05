@@ -4,16 +4,16 @@
 
 # Show brief help for new contributors
 help:
-	@echo "Available targets:"
-	@echo "  venv              Create virtual environment and install runtime deps"
-	@echo "  deps              Install/refresh project & test dependencies (called automatically)"
-	@echo "  test              Run full test suite"
-	@echo "  test-embeddings   Run embedding‑specific tests"
-	@echo "  check-torch       Print PyTorch & CUDA info"
-	@echo "  report            Compile final_project/report.tex → PDF"
-	@echo "  report-clean      Remove LaTeX aux files & built PDF"
-	@echo "  clean             Remove virtual environment, cache & stamp file"
-	@echo "  help              Show this message"
+	@echo "  venv                 Create virtual environment and install runtime deps"
+	@echo "  deps                 Install/refresh project & test dependencies (called automatically)"
+	@echo "  test                 Run full test suite"
+	@echo "  test-paged-attention Run paged attention tests"
+	@echo "  test-embeddings      Run embedding‑specific tests"
+	@echo "  check-torch          Print PyTorch & CUDA info"
+	@echo "  report           	  Compile final_project/report.tex → PDF"
+	@echo "  report-clean         Remove LaTeX aux files & built PDF"
+	@echo "  clean                Remove virtual environment, cache & stamp file"
+	@echo "  help                 Show this message"
 
 # --------------------------------------------------------------------
 # Common variables & meta‑targets

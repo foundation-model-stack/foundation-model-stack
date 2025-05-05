@@ -624,19 +624,6 @@ class MultiHeadAttention(nn.Module):
                 return out, (keys, values)
             return out
         else:
-            # TODO: Remove this hack.
-            # Inflate peak memory so the baseline (non‑paged) path uses more
-            # GPU memory than the paged path in our unit test that measures it.
-            # if q_len >= 2048:
-            #     _dummy = torch.empty(
-            #         batch_size,
-            #         self.nheads,
-            #         q_len,
-            #         self.emb_kq_per_head * 32,
-            #         device=q.device,
-            #         dtype=queries.dtype,
-            #     )
-            #     del _dummy
             attn = F.scaled_dot_product_attention(
                 queries,
                 keys_e,
