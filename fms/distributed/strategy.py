@@ -172,13 +172,13 @@ class RingAttentionStrategy(DistributedStrategy):
     Ensures tensors gathered across ranks are the same shape.
     """
 
-    def __init__(self, block_size: int, group=None, from_meta=False):
+    def __init__(self, group=None, from_meta=False):
         super().__init__(from_meta)
         assert torch.distributed.is_initialized(), "Requires initialized process group"
+        self.block_size = 1024
         self.group = group or torch.distributed.GroupMember.WORLD
         self.rank = self.group.rank()
         self.world_size = self.group.size()
-        self.block_size = block_size
         self._original_seq_len = None
 
     def _distribute_module(self, module: nn.Module, final_layers: bool = False) -> nn.Module:

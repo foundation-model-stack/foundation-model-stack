@@ -25,8 +25,6 @@ class RingAttentionHelper:
         self.world_size = dist.get_world_size()
         self.head_dim = attn_module.emb_kq_per_head
         self.scale = math.sqrt(self.head_dim)
-        if not hasattr(self.strategy, 'block_size'):
-            self.strategy.block_size = 512
 
     def forward(self, x_norm, strategy, mask=None, position_ids=None, past_key_value_state=None,
                 is_causal_mask=False, rank=0, valid_len=0, residual=None):
