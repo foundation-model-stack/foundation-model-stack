@@ -208,6 +208,9 @@ class RoBERTaHeadless(nn.Module):
         if self.config.pad_id is not None:
             position_out = position_out.mul(~is_pad.unsqueeze(-1))
 
+        # token_type_ids should be of size (bs, seq_len), same as input_ids.
+        # depending on task, it may be a zero tensor, but the embeddings may not be,
+        # especially if fine-tuned, returning non-zero token_type_out
         if token_type_ids is None:
             token_type_ids = torch.zeros(
                 x.size(),
