@@ -84,11 +84,39 @@ def debug_tensor_parallel_strategy():
     model = LLaMA(config=config, distributed_strategy=strategy)
 
     print(f"[Rank {rank}] Running forward pass...")
-    x = torch.randint(0, config.src_vocab_size, (1, 8))
-    # x = distribute_tensor(x, strategy.device_mesh, placements=[Shard(1)])
+
+    # sequence_lengths = [5, 9, 7] # C1 + 2
+    sequence_lengths = [1] # C3
+    batch_size = len(sequence_lengths)
+    max_seq_len = max(sequence_lengths)
+
+    # C1: Multiple sequences with varying lengths
+    # Pad all sequences in the batch to the longest sequence
+    batch = []
+    for seq_len in sequence_lengths:
+        x = torch.randint(0, config.src_vocab_size, (seq_len,))
+        pad_amount = max_seq_len - seq_len
+        if pad_amount > 0:
+            x = torch.nn.functional.pad(x, (0, pad_amount), value=0)
+        batch.append(x)
+
+    batch = torch.stack(batch)  # Shape: (batch_size, max_seq_len)
+
+    # C2: If max_seq_len not divisible by world_size, pad to closest higher multiple
+    padded_len = ((max_seq_len + world_size - 1) // world_size) * world_size
+
+    # C3: If sequence length still < world_size, pad to world_size
+    if padded_len < world_size:
+        padded_len = world_size
+
+    if padded_len > max_seq_len:
+        pad_amount = padded_len - max_seq_len
+        batch = torch.nn.functional.pad(batch, (0, pad_amount), value=0) 
+
+    print(f"[Rank {rank}] Final batch shape: {batch.shape} (batch_size={batch_size}, sequence_length={padded_len})")
 
     with torch.no_grad():
-        out = model(x)
+        out = model(batch)
 
     print(f"[Rank {rank}] Output shape: {out.shape}")
 
