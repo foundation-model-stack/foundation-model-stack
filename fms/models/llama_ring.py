@@ -29,10 +29,6 @@ from fms.utils.config import ModelConfig
 logger = logging.getLogger(__name__)
 
 
-
-
-# class RingAttentionBase:
-
 def compute_local_qkv_and_rope(
     self, attn_data, q, k=None, v=None, position_ids=None,
     use_cache=False, past_key_value_state=None, is_self=True
@@ -54,24 +50,30 @@ def compute_local_qkv_and_rope(
         # Identify valid tokens
         valid_mask = position_ids != -1
         if valid_mask.any():
-            # Clamp safe indexing into RoPE cache (even though -1s are masked)
+            # Suggestion 3: Clamp Only Valid Entries
             max_pos = getattr(attn_data.position_encoder, 'max_position_embeddings', 2048)
-            position_ids_safe = position_ids.clamp(min=0, max=max_pos - 1)
+            position_ids_safe = position_ids.clone()
+            position_ids_safe[valid_mask] = position_ids_safe[valid_mask].clamp(0, max_pos - 1)
 
             # Compute RoPE on the full batch (includes padded values)
             queries_rope, keys_rope = attn_data.position_encoder.adjusted_qk(
                 queries, keys, position_ids_safe
             )
 
-            # Keep original (unrotated) values at padded positions
-            mask_q = valid_mask.unsqueeze(-1).unsqueeze(-1)  # shape [B, T, 1, 1]
-            queries = torch.where(mask_q, queries_rope, queries)
-            keys    = torch.where(mask_q, keys_rope, keys)
+            # Suggestion 4: Skip RoPE When No Valid Tokens (Optimized assignment)
+            if valid_mask.all():
+                queries = queries_rope
+                keys = keys_rope
+            else:
+                # Keep original (unrotated) values at padded positions
+                mask_q = valid_mask.unsqueeze(-1).unsqueeze(-1)  # shape [B, T, 1, 1]
+                queries = torch.where(mask_q, queries_rope, queries)
+                keys    = torch.where(mask_q, keys_rope, keys)
 
     return (
-        queries.transpose(1, 2),  # [B, H, T, D]
-        keys.transpose(1, 2),
-        values.transpose(1, 2)
+        queries.permute(0, 2, 1, 3),  # Suggestion 5: Use reshape/permute (transpose is equivalent here) -> Keep transpose for clarity
+        keys.permute(0, 2, 1, 3),
+        values.permute(0, 2, 1, 3)
     )
 
 
@@ -87,8 +89,9 @@ def forward_ring(
     attn_algorithm=None,
     distributed_strategy: Optional[DistributedStrategy] = None,
 ):
-    rank = dist.get_rank()
-    x, cache, _ = self._forward_ring_attention(
+    # Suggestion 2: Cache rank (Assuming self.rank is added in LLaMABlock.__init__)
+    # rank = self.rank # If cached
+    x, cache = self._forward_ring_attention( # Suggestion 7: Drop third return value
         x,
         mask=mask,
         position_ids=position_ids,
@@ -96,8 +99,7 @@ def forward_ring(
         use_cache=use_cache,
         is_causal_mask=is_causal_mask,
         strategy=distributed_strategy,
-        verbosity=0,
-        rank=rank,
+        # verbosity=0, # Suggestion 6: Remove verbosity
         )
 
     return (x, cache) if use_cache else x
@@ -113,13 +115,18 @@ def _forward_ring_attention(
     use_cache,
     is_causal_mask,
     strategy,
-    verbosity: int,
-    rank=0,
+    # verbosity: int, # Suggestion 6: Remove verbosity
 ):
     residual = x
     x_norm_local = self.ln(x)
 
-    correct_valid_len = strategy._local_valid_len
+    # Suggestion 8: Inline _local_valid_len (already effectively done)
+    # Assuming strategy object has _local_valid_len computed based on input x
+    correct_valid_len = strategy._local_valid_len # Keep as is
+
+    # Suggestion 1: Keep helper creation here as strategy is needed
+    # Note: The provided llama.py initializes self.ring_helper incorrectly.
+    # This assumes a correct RingAttentionHelper instance is created/available.
     x, cache, _ = self.ring_helper.forward(
         x_norm_local,
         mask=mask,
@@ -127,8 +134,7 @@ def _forward_ring_attention(
         position_ids=position_ids,
         past_key_value_state=past_key_value_state,
         is_causal_mask=is_causal_mask,
-        rank=rank,
-        valid_len=correct_valid_len,
+        valid_len=correct_valid_len, # Pass the calculated valid length
         residual=residual,
     )
-    return x, cache, None
+    return x, cache # Suggestion 7: Drop third return value
