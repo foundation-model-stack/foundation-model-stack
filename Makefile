@@ -10,6 +10,10 @@ help:
 	@echo "  test-paged-attention Run paged attention tests"
 	@echo "  test-embeddings      Run embedding‑specific tests"
 	@echo "  check-torch          Print PyTorch & CUDA info"
+	@echo "  download-tokenizer    Fetch the LLaMA SentencePiece tokenizer"
+	@echo "  bench-llama          Benchmark LLaMA $(LLAMA_VARIANT) (default attention)"
+	@echo "  bench-llama-paged    Benchmark LLaMA $(LLAMA_VARIANT) using paged attention"
+	@echo "  bench-llama-t4       Memory‑friendly LLaMA 7B benchmark for 16 GB T4 GPUs"
 	@echo "  report           	  Compile final_project/report.tex → PDF"
 	@echo "  report-clean         Remove LaTeX aux files & built PDF"
 	@echo "  clean                Remove virtual environment, cache & stamp file"
@@ -30,10 +34,36 @@ PYPROJECT := $(wildcard pyproject.toml)
 # File listing pytest/CI extras; adjust if you renamed it
 TEST_REQS := test-requirements.txt
 REQS := requirements.txt
+# Benchmark helpers
+BENCH_SCRIPT := scripts/benchmark_inference.py
+LLAMA_VARIANT ?= 7b                     # default; override e.g. 13b via `make LLAMA_VARIANT=13b bench-llama`
+
+# Where we keep the tokenizer (file target below will download it if missing)
+TOKENIZER_FILE := $(HOME)/llama_weights/tokenizer.model
+TOKENIZER_URL  ?= https://huggingface.co/hf-internal-testing/llama-tokenizer/resolve/main/tokenizer.model
+
+# Path passed to benchmark script (override with `make TOKENIZER=/your/path`)
+TOKENIZER ?= $(TOKENIZER_FILE)
+# Extra args can be supplied at the CLI:  `make bench-llama EXTRA="--seq_len=1024"`
+EXTRA ?=
+
+# Preset that fits in ~15 GB (batch‑1, shorter prompt/generation, no compile)
+T4_EXTRA := --batch_size=1 --seq_len=256 --max_new_tokens=128 \
+            --skip_compile_runs
+
+# --------------------------------------------------------------------
+# Automatic download of the SentencePiece tokenizer
+# --------------------------------------------------------------------
+$(TOKENIZER_FILE):
+	@echo "Downloading LLaMA tokenizer to $@…"
+	@mkdir -p $(dir $@)
+	curl -L --fail -o $@ "$(TOKENIZER_URL)"
+	@echo "✔  Tokenizer downloaded"
+
 # Stamp file to track installed dependencies
 DEPS_STAMP := $(VENV_DIR)/.deps_stamp
 
-.PHONY: venv deps test test-embeddings check-torch report report-clean clean help
+.PHONY: venv deps test test-embeddings check-torch report report-clean clean help bench-llama bench-llama-paged bench-llama-t4 download-tokenizer
 
 # Create virtual‑env if it doesn't exist
 venv: $(VENV_DIR)/bin/python
@@ -78,6 +108,35 @@ test-paged-attention: deps
 test-embeddings: deps
 	$(VENV_DIR)/bin/pytest tests/modules/test_embedding.py
 	
+
+# --------------------------------------------------------------------
+# Benchmark targets  (LLaMA 7B single‑GPU inference)
+# --------------------------------------------------------------------
+
+## Eager + compiled benchmarks (default attention implementation)
+bench-llama: deps $(TOKENIZER_FILE)
+	@echo "Running benchmark on LLaMA $(LLAMA_VARIANT) (default attention)…"
+	CUDA_VISIBLE_DEVICES=0 $(VENV_DIR)/bin/python $(BENCH_SCRIPT) \
+	    --architecture=llama --variant=$(LLAMA_VARIANT) \
+	    --tokenizer="$(TOKENIZER)" $(EXTRA)
+
+## Same benchmarks but force paged‑attention via env var picked up in attention.py
+bench-llama-paged: deps $(TOKENIZER_FILE)
+	@echo "Running benchmark on LLaMA $(LLAMA_VARIANT) with paged‑attention…"
+	CUDA_VISIBLE_DEVICES=0 FMS_ATTENTION_ALGO=paged \
+	    $(VENV_DIR)/bin/python $(BENCH_SCRIPT) \
+	    --architecture=llama --variant=$(LLAMA_VARIANT) \
+	    --tokenizer="$(TOKENIZER)" $(EXTRA)
+
+## Memory‑friendly benchmark for 16 GB GPUs like NVIDIA T4
+bench-llama-t4: deps $(TOKENIZER_FILE)
+	@echo "Running memory‑friendly benchmark (T4 preset)…"
+	CUDA_VISIBLE_DEVICES=0 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
+	    $(VENV_DIR)/bin/python $(BENCH_SCRIPT) \
+	    --architecture=llama --variant=$(LLAMA_VARIANT) \
+	    --tokenizer="$(TOKENIZER)" $(T4_EXTRA) $(EXTRA)
+
+download-tokenizer: $(TOKENIZER_FILE)
 
 # --------------------------------------------------------------------
 # LaTeX targets  (final_project/report.tex → final_project/report.pdf)
