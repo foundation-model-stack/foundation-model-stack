@@ -177,6 +177,15 @@ def generate_layer_plan(block: nn.Module, use_sequence_parallelism: bool = False
         r"ff_sub_layer\.w2",
     ]
 
+    if use_sequence_parallelism:
+        tp_plan["attn"] = PrepareModuleInput(
+            input_layouts=(Shard(1),),
+            desired_input_layouts=(Replicate(),),
+        )
+        tp_plan["ff_sub_layer"] = PrepareModuleInput(
+            input_layouts=(Shard(1),),
+            desired_input_layouts=(Replicate(),),
+        )
     for name, module in block.named_modules():
         if use_sequence_parallelism and isinstance(module, (nn.LayerNorm, nn.Dropout, LayerNormParameterized)):
             tp_plan[name] = SequenceParallel()
