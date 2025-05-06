@@ -509,6 +509,29 @@ class MultiHeadAttention(nn.Module):
             )
             max_blks = self.paged_attention_config.get("max_blocks", None)
             self._validate_paged_attention(q_len, blk_size, max_blks)
+            # ------------------------------------------------------------------
+            # Fast path: stateless paged‑attention (no KV cache).
+            # If the caller did *not* request caching (`use_cache=False`) and did
+            # not supply a prior `past_key_value_state`, we should avoid touching
+            # the persistent global KV caches.  Otherwise, a second forward pass
+            # on the same module would accidentally attend to tokens from the
+            # previous sequence and yield incorrect results (as seen in
+            # test_llama_paged_attention).  In this stateless case we simply
+            # run flex_attention directly and return the result.
+            # ------------------------------------------------------------------
+            if not use_cache and past_key_value_state is None:
+                attn = _flex_attention(
+                    queries,
+                    keys_e,
+                    values_e,
+                    scale=None,
+                )
+                attn = (
+                    attn.transpose(2, 1)
+                    .contiguous()
+                    .view(batch_size, q_len, self.nheads * self.emb_v_per_head)
+                )
+                return self.dense(attn)
 
             # Lazily construct (or rebuild) the manager the first time we need it
             # or whenever the requested page‑size changes.
