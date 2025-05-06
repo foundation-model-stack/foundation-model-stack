@@ -14,6 +14,7 @@ help:
 	@echo "  bench-llama          Benchmark LLaMA $(LLAMA_VARIANT) (default attention)"
 	@echo "  bench-llama-paged    Benchmark LLaMA $(LLAMA_VARIANT) using paged attention"
 	@echo "  bench-llama-t4       Memory‑friendly LLaMA 7B benchmark for 16 GB T4 GPUs"
+	@echo "  bench-llama-paged-t4 Memory‑friendly paged LLaMA 7B benchmark for 16 GB T4 GPUs"
 	@echo "  report           	  Compile final_project/report.tex → PDF"
 	@echo "  report-clean         Remove LaTeX aux files & built PDF"
 	@echo "  clean                Remove virtual environment, cache & stamp file"
@@ -63,7 +64,7 @@ $(TOKENIZER_FILE):
 # Stamp file to track installed dependencies
 DEPS_STAMP := $(VENV_DIR)/.deps_stamp
 
-.PHONY: venv deps test test-embeddings check-torch report report-clean clean help bench-llama bench-llama-paged bench-llama-t4 download-tokenizer
+.PHONY: venv deps test test-embeddings check-torch report report-clean clean help bench-llama bench-llama-paged bench-llama-t4 bench-llama-paged-t4 download-tokenizer
 
 # Create virtual‑env if it doesn't exist
 venv: $(VENV_DIR)/bin/python
@@ -132,6 +133,14 @@ bench-llama-paged: deps $(TOKENIZER_FILE)
 bench-llama-t4: deps $(TOKENIZER_FILE)
 	@echo "Running memory‑friendly benchmark (T4 preset)…"
 	CUDA_VISIBLE_DEVICES=0 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
+	    $(VENV_DIR)/bin/python $(BENCH_SCRIPT) \
+	    --architecture=llama --variant=$(LLAMA_VARIANT) \
+	    --tokenizer="$(TOKENIZER)" $(T4_EXTRA) $(EXTRA)
+
+## Memory‑friendly paged‑attention benchmark for 16 GB GPUs like NVIDIA T4
+bench-llama-paged-t4: deps $(TOKENIZER_FILE)
+	@echo "Running memory‑friendly benchmark (T4 preset) with paged‑attention…"
+	CUDA_VISIBLE_DEVICES=0 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True FMS_ATTENTION_ALGO=paged \
 	    $(VENV_DIR)/bin/python $(BENCH_SCRIPT) \
 	    --architecture=llama --variant=$(LLAMA_VARIANT) \
 	    --tokenizer="$(TOKENIZER)" $(T4_EXTRA) $(EXTRA)
