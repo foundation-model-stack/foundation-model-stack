@@ -201,7 +201,7 @@ def _guess_num_layers(state_dict):
 
     for key in state_dict.keys():
         # when there's a list of layers, layers have numeric IDs in the key
-        layerid = re.sub("[^.]*\\.([0-9]+)\\..*", "\\1", key)
+        layerid = re.sub("[^.]*\.([0-9]+)\..*", "\\1", key)
         if layerid != key:
             layers.add(layerid)
     return len(layers)
@@ -322,7 +322,7 @@ def get_model(
                 the variant will refer to the hf model_id_or_path.
     model_path: the path to the state_dict of weights. If None, don't load.
     device_type: where to load the model
-    distributed_strategy: None, 'fsdp', 'hsdp', 'tp', or 'mp'.
+    distributed_strategy: None, 'fsdp', 'hsdp', 'tp', or 'mp', 'ring'.
     checkpoint_sharding: how the checkpoint files are sharded: None, 'tp',
                 'fsdp', or 'layer'. If None, guess based on files.
     source: If the weights in the state dict didn't come from an FMS model,
@@ -336,6 +336,8 @@ def get_model(
 
     if distributed_strategy is None or distributed_strategy == "":
         if world_size > 1:
+            # Default to TP if multiple devices and no strategy specified
+            logger.info("Multiple devices detected, defaulting distributed strategy to 'tp'")
             distributed_strategy = "tp"
 
     if device_type == "cuda":
@@ -354,9 +356,8 @@ def get_model(
         if extra_args.get("linear_config", None) and "gptq" in extra_args[
             "linear_config"
         ].get("linear_type", None):
-            # TODO: introduce logger with different log levels?
-            print(
-                f"[WARNING] data_type {data_type} provided, but GPTQ does not support "
+            logger.warning(
+                f"data_type {data_type} provided, but GPTQ does not support "
                 "casting to custom data type. Will use checkpoint data type instead."
             )
             data_type_parsed = None
@@ -376,10 +377,10 @@ def get_model(
     elif distributed_strategy == "mp":
         initial_device = torch.device("cpu")
     elif distributed_strategy == "ring":
-        print("using RingAttentionStrategy")
-        extra_args["distributed_strategy"] = RingAttentionStrategy(block_size=32, group=group)
+        # RingAttentionStrategy requires model parameters to be on the target device initially
+        # The strategy itself handles data movement (sharding/gathering)
         initial_device = device
-    else:
+    else: # Includes TP and None/single device cases
         initial_device = device
 
     # infer the model architecture and variant if they do not exist yet
@@ -403,16 +404,25 @@ def get_model(
             world_size=world_size,
         )
 
+    # Instantiate the appropriate DistributedStrategy object
     if "distributed_strategy" not in extra_args:
         if distributed_strategy == "tp":
-            print("using tensor parallel")
+            logger.info("Using TensorParallelStrategy")
             extra_args["distributed_strategy"] = TensorParallelStrategy(group)
         elif distributed_strategy == "mp":
-            print("using model parallel")
+            logger.info("Using UniformModelParallelStrategy")
             devices = [i for i in range(torch.cuda.device_count())]
             extra_args["distributed_strategy"] = UniformModelParallelStrategy(
                 devices, _guess_num_layers(lazy_sd)
             )
+        elif distributed_strategy == "ring":
+            logger.info("Using RingAttentionStrategy")
+            # Assume block_size needs to be provided or inferred elsewhere if needed here.
+            # For now, let's assume it's passed via kwargs or handled in the model itself.
+            block_size = extra_args.pop('ring_block_size', 128) # Example: default or get from kwargs
+            logger.info(f"RingAttention block size: {block_size}")
+            extra_args["distributed_strategy"] = RingAttentionStrategy(block_size=block_size, group=group)
+        # else: NoOpStrategy will be used by default in LLaMA init
 
     # Create the model on meta device to allocate weights lazily
     fms_model = _get_model_instance(
@@ -444,6 +454,7 @@ def get_model(
     def model_wrap(model):
         if _is_dp(distributed_strategy):
             return _fsdp_wrap(model, distributed_strategy, device, rank == 0)
+        # No specific wrapping needed for TP, MP, Ring here (handled via layer/module distribution)
         return model
 
     if not pre_load:
@@ -482,11 +493,10 @@ def get_model(
         fms_model.post_init()
 
     # Make sure any uninitialized tensors are at least moved to device
-    # TODO: should we raise a warning? are uninitialized tensors ever acceptable?
     if initial_device != torch.device("meta"):
         fms_model._apply(
             lambda t: torch.empty_like(t, device=initial_device)
-            if t.device == torch.device("meta")
+            if hasattr(t, 'device') and t.device == torch.device("meta")
             else t
         )
 
