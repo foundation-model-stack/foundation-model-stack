@@ -20,14 +20,6 @@ else
   exit 1
 fi
 
-# --- Detect Environment ---
-INSOMNIA_REPO_DIR="/insomnia001/depts/edu/COMSE6998/sg3790/foundation-model-stack"
-if [[ -d "$INSOMNIA_REPO_DIR" ]]; then
-  RUN_LOCATION="insomnia"
-  echo "[INFO] Detected Insomnia environment. Will use Slurm for GPU execution."
-else
-  exit 1
-fi
 
 # --- Base Paths ---
 CURR_DIR=$(pwd)
@@ -70,7 +62,7 @@ cleanup() {
 trap cleanup SIGINT SIGTERM
 
 # Build args
-script_args=(); script_args+=("$@")
+script_args=("@");
 if ! printf '%s\n' "${script_args[@]}" | grep -q -- '--model_path'; then
   script_args+=(--model_path "$DEFAULT_MODEL_REL_PATH")
 fi
@@ -81,7 +73,7 @@ fi
 echo "[INFO] Launching inference with args: ${script_args[*]}"
 
 job_id=""; pid=""
-
+cd "$CURR_DIR"
 OUT_FILENAME="bench.out"
 echo "[INFO] sbatch --output="$OUT_FILENAME" "$SLURM_SCRIPT_PATH" "${script_args[@]}" 2>&1"
 sbatch_out=$(sbatch --output="$OUT_FILENAME" "$SLURM_SCRIPT_PATH" "${script_args[@]}" 2>&1) || {

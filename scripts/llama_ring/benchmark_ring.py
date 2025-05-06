@@ -13,6 +13,8 @@ from fms.utils import tokenizers
 from fms.distributed.strategy import NoOpStrategy # Import NoOpStrategy
 import torch.distributed as dist # Import distributed module
 
+from itertools import combinations
+
 # Helper for printing only on rank 0
 def print0(*args, **kwargs):
     # Get rank from env var if available, default to 0
@@ -37,8 +39,7 @@ def parse_args():
     parser.add_argument("--model_path", type=str, default=str(model_dir))
     parser.add_argument("--tokenizer", type=str, default=str(tokenizer_path), help="Full path to the tokenizer.model file")
     parser.add_argument("--batch_size", type=int, default=1)
-    parser.add_argument("--prompt", type=str, default=", ".join([str(i) for i in range(0,800)]),
-                    help="Optional specific prompt text to use instead of random tokens.")
+    parser.add_argument("--prompt_len", type=int, default=800, help="Prompt text len to use.")
     parser.add_argument("--num_tokens_to_benchmark", type=int, default=30, help="Number of tokens to generate and benchmark.")
     parser.add_argument("--run_ring_first", action="store_true", help="Explicitly run Ring Attention first (default). Set --no-run_ring_first to run Regular first.")
     parser.add_argument("--no-run_ring_first", dest="run_ring_first", action="store_false")
@@ -139,6 +140,7 @@ def run_generation_benchmark(model, tokenizer, initial_ids, num_tokens_to_gen, l
         print0(f"  Median time per token: {median_time:.2f} ms")
         print0(f"  Total generation time for {num_tokens_to_gen} tokens: {sum(token_times):.2f} ms")
 
+    return logits
 
 def main():
     args = parse_args()
@@ -187,9 +189,10 @@ def main():
     # Prepare input IDs - only rank 0 needs to print info and create tensor
     ids = None
     if rank == 0:
-        if args.prompt:
-            print0(f"[INFO] Using prompt: '{args.prompt}'")
-            tokens = tokenizer.tokenize(args.prompt)
+        if args.prompt_len:
+            prompt = ", ".join([str(i) for i in range(0,args.prompt_len)])
+            print0(f"[INFO] Using prompt: '{prompt}'")
+            tokens = tokenizer.tokenize(prompt)
             prompt_ids_list = tokenizer.convert_tokens_to_ids(tokens)
             prompt_len = len(prompt_ids_list)
             print0(f"[INFO] Using prompt length: {prompt_len}")
@@ -230,6 +233,7 @@ def main():
     print0(f"[INFO] Using tokenizer: {args.tokenizer}")
     print0(f"[INFO] Batch size: {args.batch_size}, Input Seq length: {ids.shape[1]}") # Print actual length
 
+    results = []
     for label, strategy in order:
         is_regular_run = (strategy is NoOpStrategy)
         should_run_this_rank = not (is_regular_run and rank != 0)
@@ -258,7 +262,7 @@ def main():
 
         # Run benchmark only on ranks that loaded the model
         if should_run_this_rank:
-            run_generation_benchmark(model, tokenizer, ids, args.num_tokens_to_benchmark, label, device)
+            results.append(run_generation_benchmark(model, tokenizer, ids, args.num_tokens_to_benchmark, label, device))
 
             # Clean up model memory
             del model
@@ -269,6 +273,11 @@ def main():
         if world_size > 1:
             dist.barrier()
 
+    comparisons = list(combinations(results, 2))
+    for (out1, out2) in comparisons:
+        print(f"out1: shape:{out1.size()}, tensor:{out1}")
+        print(f"out2: shape:{out2.size()}, tensor:{out2}")
+        torch.testing.assert_close(out1, out2)
 
 if __name__ == "__main__":
     try:

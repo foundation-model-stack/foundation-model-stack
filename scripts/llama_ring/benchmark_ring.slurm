@@ -26,7 +26,7 @@ export PYTHONPATH="$REPO_DIR:$PYTHONPATH"
 export CUBLAS_WORKSPACE_CONFIG=:4096:8
 
 
-
+echo "$REPO_DIR/scripts/llama_ring/benchmark_ring.py"
 # --- Run Benchmark Script ---
 torchrun --nproc_per_node=2 \
   $REPO_DIR/scripts/llama_ring/benchmark_ring.py \
@@ -37,4 +37,5 @@ torchrun --nproc_per_node=2 \
   --device_type cuda \
   --num_tokens_to_benchmark 30 \
   --batch_size 1 \
-  --run_ring_first
+  --run_ring_first \
+  --prompt_len 100
