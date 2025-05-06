@@ -78,62 +78,36 @@ def compute_local_qkv_and_rope(
 
 def forward_ring(
     self,
-    x, # This 'x' might be a tuple (tensor, cache_state) from the previous layer if use_cache=True
+    x,
     *,
     mask=None,
     position_ids=None,
     past_key_value_state=None,
     use_cache=False,
     is_causal_mask=False,
-    attn_algorithm=None, # Keep standard attn args
+    attn_algorithm=None,
     distributed_strategy: Optional[DistributedStrategy] = None,
 ):
-    # If x is a tuple (result of previous layer with use_cache=True), unpack it
+    # Unpack input if it's a tuple
     input_tensor = x[0] if isinstance(x, tuple) else x
 
-    x, cache = self._forward_ring_attention( # Suggestion 7: Drop third return value
-        input_tensor,
-        mask=mask,
-        position_ids=position_ids,
-        past_key_value_state=past_key_value_state,
-        use_cache=use_cache,
-        is_causal_mask=is_causal_mask,
-        strategy=distributed_strategy,
-        # verbosity=0, # Suggestion 6: Remove verbosity
-        )
+    # Inlined _forward_ring_attention logic
+    residual = input_tensor
+    x_norm_local = self.ln(input_tensor)
 
-    return (x, cache) if use_cache else x
+    correct_valid_len = distributed_strategy._local_valid_len
 
-def _forward_ring_attention(
-    self,
-    x,
-    *,
-    mask,
-    position_ids,
-    past_key_value_state,
-    use_cache,
-    is_causal_mask,
-    strategy,
-    # verbosity: int, # Suggestion 6: Remove verbosity
-):
-    residual = x
-    x_norm_local = self.ln(x)
-
-    # Suggestion 8: Inline _local_valid_len (already effectively done)
-    # Assuming strategy object has _local_valid_len computed based on input x
-    correct_valid_len = strategy._local_valid_len # Keep as is
-
-    # Suggestion 1: Keep helper creation here as strategy is needed
-    # Note: The provided llama.py initializes self.ring_helper incorrectly.
-    # This assumes a correct RingAttentionHelper instance is created/available.
+    # Run ring attention forward directly
     x, cache, _ = self.ring_helper.forward(
         x_norm_local,
         mask=mask,
-        strategy=strategy,
+        strategy=distributed_strategy,
         position_ids=position_ids,
-        past_key_value_state=past_key_value_state, # Usually None for ring?
+        past_key_value_state=past_key_value_state,
         is_causal_mask=is_causal_mask,
-        valid_len=correct_valid_len, # Pass the calculated valid length
+        valid_len=correct_valid_len,
         residual=residual,
     )
-    return x, cache # Suggestion 7: Drop third return value
+
+    return (x, cache) if use_cache else x
+

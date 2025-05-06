@@ -210,7 +210,6 @@ class RingAttentionHelper:
     def _ring_shift_tensor(self, tensor: torch.Tensor, pad_len: int) -> Tuple[torch.Tensor, int]:
         """
         Ring‑shifts `tensor` along its last dimension by one rank:
-        - CPU: non‑blocking isend/irecv.
         - GPU: all_gather of lengths + all_to_all of only the neighbor's block.
         Returns (received_tensor cropped to true length, received_length).
         """
