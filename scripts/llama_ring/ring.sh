@@ -7,17 +7,19 @@ set -eo pipefail
 IFS=$'\n\t'
 
 # --- Environment Selection ---
-if [[ "$1" == "insomnia" ]]; then
+if [[ "$1" == "insomnia_ring" ]]; then
   RUN_LOCATION="insomnia"
-  echo "[INFO] Running in Insomnia environment. Will use Slurm for GPU execution."
+  SCRIPT="ring"
+  echo "[INFO] Running in Insomnia Ring environment. Will use Slurm on ring nodes for GPU execution."
 
-elif [[ "$1" == "local" ]]; then
-  RUN_LOCATION="local"
-  echo "[INFO] Running in Local environment. Will use Python directly for CPU execution."
+elif [[ "$1" == "insomnia_default" ]]; then
+  RUN_LOCATION="insomnia"
+  SCRIPT="default"
+  echo "[INFO] Running in Insomnia Default environment. Will use Slurm on default nodes for GPU execution."
 
 else
-  echo "[ERROR] Invalid or missing argument. Please specify 'insomnia' or 'local'."
-  echo "Usage: $0 [insomnia|local]"
+  echo "[ERROR] Invalid or missing argument. Please specify 'insomnia_ring', 'insomnia_default', or 'local'."
+  echo "Usage: $0 [insomnia_ring|insomnia_default|local]"
   exit 1
 fi
 
@@ -29,19 +31,16 @@ DEFAULT_MODEL_REL_PATH="../llama-hf"
 DEFAULT_TOKENIZER_REL_PATH="../llama-hf/tokenizer.model"
 
 # --- Repo & Model Paths ---
-if [[ "$RUN_LOCATION" == "insomnia" ]]; then
-  INSOMNIA_BASE_DIR="$(pwd)"
-  CURRENT_REPO_DIR="${INSOMNIA_BASE_DIR}/foundation-model-stack"
-  SLURM_SCRIPT_PATH="${CURRENT_REPO_DIR}/scripts/llama_ring/run_inference.slurm"
-  DEFAULT_MODEL_ABS_PATH="${INSOMNIA_BASE_DIR}/llama-hf"
-  DEFAULT_TOKENIZER_ABS_PATH="${INSOMNIA_BASE_DIR}/llama-hf/tokenizer.model"
+INSOMNIA_BASE_DIR="$(pwd)"
+CURRENT_REPO_DIR="${INSOMNIA_BASE_DIR}/foundation-model-stack"
+if [[ "$SCRIPT" == "default" ]]; then
+  SLURM_SCRIPT_PATH="${CURRENT_REPO_DIR}/scripts/llama_ring/run_default_inference.slurm"
 else
-  echo "local not supported"
-  exit 1
-  CURRENT_REPO_DIR="$LOCAL_REPO_DIR"
-  DEFAULT_MODEL_ABS_PATH="${CURRENT_REPO_DIR}/${DEFAULT_MODEL_REL_PATH}"
-  DEFAULT_TOKENIZER_ABS_PATH="${CURRENT_REPO_DIR}/${DEFAULT_TOKENIZER_REL_PATH}"
+  SLURM_SCRIPT_PATH="${CURRENT_REPO_DIR}/scripts/llama_ring/run_inference.slurm"
 fi
+DEFAULT_MODEL_ABS_PATH="${INSOMNIA_BASE_DIR}/llama-hf"
+DEFAULT_TOKENIZER_ABS_PATH="${INSOMNIA_BASE_DIR}/llama-hf/tokenizer.model"
+
 
 
 echo "[INFO] cd into $CURRENT_REPO_DIR"
@@ -57,21 +56,15 @@ cd "$CURRENT_REPO_DIR"
 
 echo "[INFO] pip install -e ."
 pip install -e . >/dev/null 2>&1 || echo "[WARN] pip install failed"
-
 pip install sentencepiece
 
 mkdir -p "${CURRENT_REPO_DIR}/testing"
 cd "$HOME"
 
-echo "[INFO] Cleaning old outputs…"
-rm -f "$HOME"/inference_insomnia_*.out "${CURRENT_REPO_DIR}/testing/inference_local_*.out"
-
 cleanup() {
   echo; echo "[INFO] Cleaning up…"
   if [[ "$RUN_LOCATION" == "insomnia" && -n "${job_id:-}" ]]; then
     scancel "$job_id" || true
-  elif [[ "$RUN_LOCATION" == "local" && -n "${pid:-}" ]]; then
-    kill "$pid" 2>/dev/null || true
   fi
   exit 130
 }
@@ -90,48 +83,29 @@ echo "[INFO] Launching inference with args: ${script_args[*]}"
 
 job_id=""; pid=""
 
-if [[ "$RUN_LOCATION" != "insomnia" ]]; then
-  # local
-  # Define output file with timestamp before running the command
-  timestamp=$(date +%Y%m%d_%H%M%S)
-  output_file="${CURRENT_REPO_DIR}/testing/inference_local_${timestamp}.out"
-  echo "[INFO] torchrun (nproc=2) → $output_file"
-  torchrun --nproc_per_node=2 \
-    "$CURRENT_REPO_DIR/scripts/inference.py" \
-    --architecture llama --variant 7b \
-    --device_type cpu --default_dtype fp16 \
-    --model_source hf --no_use_cache \
-    --distributed --distributed_strategy ring \
-    "${script_args[@]}" \
-    >"$output_file" 2>&1 &
-  pid=$!
-  # Construct filename after getting PID
-  echo "[SUCCESS] local PID=$pid"
-  wait_cmd="ps -p $pid"
-else
-  # insomnia
-  echo "[INFO] sbatch ${SLURM_SCRIPT_PATH} ${script_args[*]}"
-  sbatch_out=$(sbatch "$SLURM_SCRIPT_PATH" "${script_args[@]}" 2>&1) || {
-    echo "[ERROR] sbatch failed: $sbatch_out"; exit 1
-  }
-  job_id=$(echo "$sbatch_out" | grep -oP 'Submitted batch job \K[0-9]+')
-  # Match the updated Slurm script's #SBATCH --output pattern
-  output_file="${HOME}/inference_insomnia_${job_id}.out"
-  echo "[SUCCESS] Slurm job $job_id"
-  wait_cmd="squeue -u $USER"
-fi
+OUT_FILENAME="llama_${SCRIPT}.out"
+echo "[INFO] sbatch ${SLURM_SCRIPT_PATH} ${script_args[*]}"
+sbatch_out=$(sbatch --output="$OUT_FILENAME" "$SLURM_SCRIPT_PATH" "${script_args[@]}" 2>&1) || {
+  echo "[ERROR] sbatch failed: $sbatch_out"; exit 1
+}
+job_id=$(echo "$sbatch_out" | grep -oP 'Submitted batch job \K[0-9]+')
+# Match the updated Slurm script's #SBATCH --output pattern
+output_file="${HOME}/inference_insomnia_${job_id}.out"
+echo "[SUCCESS] Slurm job $job_id"
+wait_cmd="squeue -u $USER"
+
 
 echo "[INFO] Monitor with: $wait_cmd"
-echo "[INFO] Will tail: $output_file"
+# echo "[INFO] Will tail: $output_file"
 
-# wait & tail
-for i in {1..12}; do
-  if [[ -s "$output_file" ]]; then
-    echo; echo "[INFO] Tailing…"; tail -n +1 -f "$output_file"; exit 0
-  fi
-  printf '.'
-  sleep 5
-done
+# # wait & tail
+# for i in {1..12}; do
+#   if [[ -s "$output_file" ]]; then
+#     echo; echo "[INFO] Tailing…"; tail -n +1 -f "$output_file"; exit 0
+#   fi
+#   printf '.'
+#   sleep 5
+# done
 
-echo; echo "[ERROR] No output in $output_file"
-cleanup
+# echo; echo "[ERROR] No output in $output_file"
+# cleanup

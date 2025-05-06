@@ -10,7 +10,6 @@
 #SBATCH --mem=60G
 #SBATCH --time=00:30:00
 
-
 echo "========================================================"
 echo "Starting Ring Attention Inference Job on $(hostname) at $(date)"
 echo "SLURM Job ID: $SLURM_JOB_ID"
@@ -37,6 +36,4 @@ torchrun --nproc_per_node=2 \
   --tokenizer $WORKING_DIR/llama-hf/tokenizer.model \
   --device_type cuda \
   --default_dtype fp16 \
-  --distributed_strategy ring \
   --no_use_cache \
-  --distributed \
