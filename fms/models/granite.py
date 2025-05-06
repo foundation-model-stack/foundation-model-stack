@@ -192,7 +192,7 @@ class GraniteHeadless(nn.Module):
         layers = []
         for i in range(self.config.nlayers):
             block: nn.Module = GraniteBlock(self.config, self.rot_emb)
-            block = self.distributed_strategy.distribute_layer(block, i)
+            block = self.distributed_strategy.distribute_layer(block, i, model='granite')
             layers.append(block)
         self.layers = nn.ModuleList(layers)
 
@@ -205,7 +205,7 @@ class GraniteHeadless(nn.Module):
             use_high_precision_pow=True,
         )
         self.dec_norm = self.distributed_strategy.distribute_module(
-            dec_norm, final_layers=True
+            dec_norm, final_layers=True, model='granite'
         )
 
         if self.config.p_dropout:
