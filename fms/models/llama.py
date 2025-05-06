@@ -69,10 +69,11 @@ class LLaMABlock(nn.Module):
 
     # Assign the methods imported from llama_ring
     compute_local_qkv_and_rope  = compute_local_qkv_and_rope
-    forward_ring                     = forward_ring
-    def __init__(self, config: LLaMAConfig, rotary_emb: RotaryEmbedding):
+    forward_ring                = forward_ring
+    def __init__(self, config: LLaMAConfig, rotary_emb: RotaryEmbedding, distributed_strategy: Optional[DistributedStrategy] = None):
         super(LLaMABlock, self).__init__()
         self.config = config
+        self.distributed_strategy = distributed_strategy
         emb_kq = self.config.emb_dim // self.config.nheads
         emb_v = self.config.emb_dim // self.config.nheads
 
@@ -125,14 +126,20 @@ class LLaMABlock(nn.Module):
         if self.config.p_dropout != 0:
             self.dropout = nn.Dropout(self.config.p_dropout)
 
-        self.ring_helper = RingAttentionHelper(
-            attn_module=self.attn,
-            strategy=RingAttentionStrategy,
-            llama_block=self,
-            use_cache=False,
-            ff=self.ff_sub_layer,
-            ff_norm=self.ff_ln,
-        )
+
+        # ADDED BY RING ATTENTION
+        if isinstance(self.distributed_strategy, RingAttentionStrategy):
+
+            self.ring_helper = RingAttentionHelper(
+                attn_module=self.attn,
+                strategy=RingAttentionStrategy,
+                llama_block=self,
+                use_cache=False,
+                ff=self.ff_sub_layer,
+                ff_norm=self.ff_ln,
+            )
+            
+            forward = forward_ring
 
     def forward(
         self,
@@ -144,22 +151,7 @@ class LLaMABlock(nn.Module):
         use_cache=False,
         is_causal_mask=False,
         attn_algorithm=None,
-        distributed_strategy: Optional[DistributedStrategy] = None,
     ):
-        
-        if isinstance(distributed_strategy, RingAttentionStrategy):
-
-            return forward_ring(
-                self,
-                x,
-                mask=mask,
-                position_ids=position_ids,
-                past_key_value_state=past_key_value_state,
-                use_cache=use_cache,
-                is_causal_mask=is_causal_mask,
-                attn_algorithm=attn_algorithm,
-                distributed_strategy=distributed_strategy,
-            )
 
         # if the cache is not empty, we need to get the kv cache for self and cross attention
         self_attn_past_key_value = past_key_value_state
@@ -256,7 +248,7 @@ class LLaMA(nn.Module):
 
         layers = []
         for i in range(self.config.nlayers):
-            block: nn.Module = LLaMABlock(self.config, self.rot_emb)
+            block: nn.Module = LLaMABlock(self.config, self.rot_emb, self.distributed_strategy)
             block = self.distributed_strategy.distribute_layer(block, i)
             layers.append(block)
         self.layers = nn.ModuleList(layers)
@@ -378,8 +370,8 @@ class LLaMA(nn.Module):
         x_in = self.shared(x_in)
 
         # Shard input if using RingAttentionStrategy
-        if isinstance(distributed_strategy, RingAttentionStrategy):
-            x_in = distributed_strategy.shard_input(x_in)
+        if isinstance(self.distributed_strategy, RingAttentionStrategy):
+            x_in = self.distributed_strategy.shard_input(x_in)
             # Note: RingAttentionStrategy currently doesn't handle KV cache passing
             # If use_cache=True with RingAttention, behavior might be unexpected.
             if use_cache:
@@ -390,7 +382,6 @@ class LLaMA(nn.Module):
         present_key_value_states = []
 
         for i, layer in enumerate(self.layers):
-            # Pass the distributed_strategy down to the layer's forward method
             output = layer(
                 x=x_in,
                 mask=mask,
@@ -399,7 +390,6 @@ class LLaMA(nn.Module):
                 use_cache=use_cache,
                 is_causal_mask=is_causal_mask,
                 attn_algorithm=attn_algorithm,
-                distributed_strategy=distributed_strategy,
             )
 
             if use_cache:
@@ -417,8 +407,8 @@ class LLaMA(nn.Module):
             dec_out = self.dropout(dec_out)
 
         # Gather output if using RingAttentionStrategy
-        if isinstance(distributed_strategy, RingAttentionStrategy):
-            gathered_dec_out = distributed_strategy.gather_output(dec_out)
+        if isinstance(self.distributed_strategy, RingAttentionStrategy):
+            gathered_dec_out = self.distributed_strategy.gather_output(dec_out)
             # Slice back to the original sequence length if needed
             # gather_output already handles slicing if _original_seq_len is set
             dec_out = gathered_dec_out
@@ -444,9 +434,7 @@ class LLaMA(nn.Module):
             position_ids,
             past_key_value_states,
             use_cache,
-            attn_algorithm,
-            # Pass the strategy from the main model instance
-            distributed_strategy=self.distributed_strategy,
+            attn_algorithm
         )
 
         if only_last_token:
