@@ -3,7 +3,7 @@ import re
 from dataclasses import dataclass
 from typing import Any, List, Mapping, Optional, Tuple
 
-from fms.models.ring_attention_helper import RingAttentionHelper
+from fms.models.llama_ring import RingAttentionHelper
 import torch
 import torch.nn as nn
 
