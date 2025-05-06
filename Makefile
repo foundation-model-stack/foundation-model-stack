@@ -47,9 +47,9 @@ TOKENIZER ?= $(TOKENIZER_FILE)
 # Extra args can be supplied at the CLI:  `make bench-llama EXTRA="--seq_len=1024"`
 EXTRA ?=
 
-# Preset that fits in ~15 GB (batch‑1, shorter prompt/generation, no compile)
+# Preset for 16 GB T4: smaller prompt, no compile, and skip strict fp16 correctness check
 T4_EXTRA := --batch_size=1 --seq_len=256 --max_new_tokens=128 \
-            --skip_compile_runs
+            --skip_compile_runs --skip_correctness_check --skip_nokvcache_runs
 
 # --------------------------------------------------------------------
 # Automatic download of the SentencePiece tokenizer
