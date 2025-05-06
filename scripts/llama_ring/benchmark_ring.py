@@ -37,7 +37,7 @@ def parse_args():
     parser.add_argument("--model_path", type=str, default=str(model_dir))
     parser.add_argument("--tokenizer", type=str, default=str(tokenizer_path), help="Full path to the tokenizer.model file")
     parser.add_argument("--batch_size", type=int, default=1)
-    parser.add_argument("--prompt", type=str, default=", ".join([str(i) for i in range(0,400)]),
+    parser.add_argument("--prompt", type=str, default=", ".join([str(i) for i in range(0,800)]),
                     help="Optional specific prompt text to use instead of random tokens.")
     parser.add_argument("--num_tokens_to_benchmark", type=int, default=30, help="Number of tokens to generate and benchmark.")
     parser.add_argument("--run_ring_first", action="store_true", help="Explicitly run Ring Attention first (default). Set --no-run_ring_first to run Regular first.")
