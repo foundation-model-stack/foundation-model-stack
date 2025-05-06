@@ -33,9 +33,7 @@ torchrun --nproc_per_node=2 \
   $REPO_DIR/scripts/benchmark_inference.py \
   --architecture llama \
   --variant 7b \
-  --model_path $WORKING_DIR/llama-hf \
   --tokenizer $WORKING_DIR/llama-hf/tokenizer.model \
   --device_type cuda \
-  --num_tokens_to_benchmark 30 \
   --batch_size 1 \
-  --run_ring_first
+  --skip_e2e_runs
