@@ -22,7 +22,7 @@ def setup_distributed():
 
     wandb.init(project="fms-tp-sp", config={
                 "model": "LLaMA",
-                "nlayers": 2,
+                "nlayers": 32,
                 "strategy": "TensorParallel",
                 "vocab_size": 32000,
                 "sequence_length": 16,
@@ -63,7 +63,7 @@ def run_sequence_parallel_benchmark():
     strategy = TensorParallelStrategy()
     print(f"[Rank {rank}] Strategy initialized.")
 
-    config = LLaMAConfig(nlayers=2, max_expected_seq_len=1024, fused_weights=False)
+    config = LLaMAConfig(nlayers=32, max_expected_seq_len=1024, fused_weights=False)
     print(f"[Rank {rank}] Building LLaMA model with config: {config}")
     model = LLaMA(config=config, distributed_strategy=strategy).to(device)
     model.eval()
@@ -183,7 +183,7 @@ def run_tensor_parallel_benchmark():
     strategy = TensorParallelStrategy()
     print(f"[Rank {rank}] Strategy initialized.")
 
-    config = LLaMAConfig(nlayers=2, max_expected_seq_len=1024, fused_weights=False)
+    config = LLaMAConfig(nlayers=32, max_expected_seq_len=1024, fused_weights=False)
     print(f"[Rank {rank}] Building LLaMA model with config: {config}")
     model = LLaMA(config=config, distributed_strategy=strategy).to(device)
     model.eval()
