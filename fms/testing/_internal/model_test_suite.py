@@ -2,7 +2,7 @@ import abc
 import os
 import platform
 import tempfile
-from typing import List, Optional, Union
+from typing import Optional, Union
 
 import numpy as np
 import pytest
@@ -108,7 +108,7 @@ class SignatureFixtureMixin:
         return None
 
     @pytest.fixture(scope="class", autouse=True)
-    def signature(self, model_id: Optional[str], **kwargs) -> List[float]:
+    def signature(self, model_id: Optional[str], **kwargs) -> list[float]:
         """include this fixture to get a models signature (defaults to what is in tests/resources/expectations)"""
         return self._signature(model_id)
 
@@ -139,7 +139,7 @@ class SignatureFixtureMixin:
         )
         return expectation_file_path
 
-    def _signature(self, model_id: Optional[str]) -> List[float]:
+    def _signature(self, model_id: Optional[str]) -> list[float]:
         try:
             expectation_file = open(
                 self._get_expectation_path("test_model_output", model_id)
@@ -204,12 +204,12 @@ class ModelCompileTestSuite(ModelFixtureMixin):
 
     @property
     @abc.abstractmethod
-    def _get_signature_params(self) -> Union[int, List[str]]:
+    def _get_signature_params(self) -> Union[int, list[str]]:
         """the value to pass into params in get_signature function for this model
 
         Returns
         -------
-        Union[int, List[str]]
+        Union[int, list[str]]
             the params to set to the default tensor value (inp) in get_signature. If an integer, will use *args, if a
             list, will use **kwargs
         """
@@ -242,6 +242,18 @@ class ModelCompileTestSuite(ModelFixtureMixin):
 class ModelConsistencyTestSuite(ModelFixtureMixin, SignatureFixtureMixin):
     """All tests related to model consistency will be part of this test suite"""
 
+    @property
+    @abc.abstractmethod
+    def _get_signature_input_ids(self) -> Optional[torch.Tensor]:
+        """the value to pass into inp in get_signature function for this model
+
+        Returns
+        -------
+        Optional[torch.Tensor]
+            the input ids
+        """
+        return None
+
     @staticmethod
     def _get_signature_logits_getter_fn(f_out) -> torch.Tensor:
         """function which given the output of forward, will return the logits as a torch.Tensor
@@ -255,23 +267,37 @@ class ModelConsistencyTestSuite(ModelFixtureMixin, SignatureFixtureMixin):
 
     @property
     @abc.abstractmethod
-    def _get_signature_params(self) -> Union[int, List[str]]:
+    def _get_signature_params(self) -> Union[int, list[str]]:
         """the value to pass into params in get_signature function for this model
 
         Returns
         -------
-        Union[int, List[str]]
+        Union[int, list[str]]
             the params to set to the default tensor value (inp) in get_signature. If an integer, will use *args, if a
             list, will use **kwargs
         """
         pass
+
+    @property
+    @abc.abstractmethod
+    def _get_signature_optional_params(self) -> Optional[dict[str, torch.Tensor]]:
+        """the value to pass into optional_params in get_signature function for this model
+
+        Returns
+        -------
+        Optional[dict[str, torch.Tensor]]
+            the dictionary of optional params to pass to the model
+        """
+        return None
 
     def test_model_output(self, model, signature, model_id, capture_expectation):
         """test consistency of model output with signature"""
 
         actual = get_signature(
             model,
+            inp=self._get_signature_input_ids,
             params=self._get_signature_params,
+            optional_params=self._get_signature_optional_params,
             logits_getter_fn=self._get_signature_logits_getter_fn,
         )
 
