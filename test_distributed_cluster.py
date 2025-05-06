@@ -4,6 +4,7 @@ import torch.distributed as dist
 import datetime
 import time
 import wandb
+import matplotlib.pyplot as plt
 
 from fms.models.llama import LLaMA, LLaMAConfig
 from fms.distributed.strategy import TensorParallelStrategy
@@ -43,7 +44,10 @@ def setup_distributed():
     print(f"[Rank {rank}] Distributed process group initialized")
 
 
-def run_tensor_parallel_benchmark():
+def run_sequence_parallel_benchmark():
+    latency = list()
+    memory_used = list()
+    print("Benchmarking sequence parallelism")
     setup_distributed()
 
     rank = dist.get_rank()
@@ -64,8 +68,6 @@ def run_tensor_parallel_benchmark():
     model = LLaMA(config=config, distributed_strategy=strategy).to(device)
     model.eval()
     print(f"[Rank {rank}] Model created.")
-
-    # x = torch.randint(0, config.src_vocab_size, (2, 1024), device=device)
 
     # sequence_lengths = [5, 9, 7] # C1 + 2
     sequence_lengths = [1] # C3
@@ -98,9 +100,11 @@ def run_tensor_parallel_benchmark():
     print(f"[Rank {rank}] Final batch shape: {batch.shape} (batch_size={batch_size}, sequence_length={padded_len})")
 
     torch.cuda.reset_peak_memory_stats(device)
+    torch.cuda.synchronize()
     start = time.time()
     with torch.no_grad():
         out = model(batch)
+    torch.cuda.synchronize()
     end = time.time()
 
     print(f"[Rank {rank}] Output shape: {out.shape}")
@@ -108,8 +112,159 @@ def run_tensor_parallel_benchmark():
     print(f"[Rank {rank}] Max memory allocated: {torch.cuda.max_memory_allocated(device) / 1e9:.2f} GB")
     print(f"[Rank {rank}] Device mesh: {strategy.device_mesh}")
 
+    print("PASSED BASELINE SEQUENCE PARALLELISM CASES")
+
+    print("STARTING BATCH SIZE 256 CASE")
+    x = torch.randint(0, config.src_vocab_size, (2, 256), device=device)
+    torch.cuda.reset_peak_memory_stats(device)
+    torch.cuda.synchronize()
+    start = time.time()
+    with torch.no_grad():
+        out = model(x)
+    torch.cuda.synchronize()
+    end = time.time()
+
+    print(f"[Rank {rank}] Forward pass time: {end - start:.2f} sec")
+    print(f"[Rank {rank}] Max memory allocated: {torch.cuda.max_memory_allocated(device) / 1e9:.2f} GB")
+    latency.append(end - start)
+    memory_used.append(torch.cuda.max_memory_allocated(device) / 1e9)
+
+    print("STARTING BATCH SIZE 512 CASE")
+    x = torch.randint(0, config.src_vocab_size, (2, 512), device=device)
+    torch.cuda.reset_peak_memory_stats(device)
+    torch.cuda.synchronize()
+    start = time.time()
+    with torch.no_grad():
+        out = model(x)
+    torch.cuda.synchronize()
+    end = time.time()
+
+    print(f"[Rank {rank}] Forward pass time: {end - start:.2f} sec")
+    print(f"[Rank {rank}] Max memory allocated: {torch.cuda.max_memory_allocated(device) / 1e9:.2f} GB")
+    latency.append(end - start)
+    memory_used.append(torch.cuda.max_memory_allocated(device) / 1e9)
+
+    print("STARTING BATCH SIZE 1024 CASE")
+    x = torch.randint(0, config.src_vocab_size, (2, 1024), device=device)
+    torch.cuda.reset_peak_memory_stats(device)
+    torch.cuda.synchronize()
+    start = time.time()
+    with torch.no_grad():
+        out = model(x)
+    torch.cuda.synchronize()
+    end = time.time()
+
+    print(f"[Rank {rank}] Forward pass time: {end - start:.2f} sec")
+    print(f"[Rank {rank}] Max memory allocated: {torch.cuda.max_memory_allocated(device) / 1e9:.2f} GB")
+    latency.append(end - start)
+    memory_used.append(torch.cuda.max_memory_allocated(device) / 1e9)
+
     dist.destroy_process_group()
 
+    return latency, memory_used
+
+def run_tensor_parallel_benchmark():
+    latency = list()
+    memory_used = list()
+    print("Benchmarking tensor parallelism without sequence parallelism")
+    os.environ["USE_SEQUENCE_PARALLELISM"] = "False"
+    setup_distributed()
+
+    rank = dist.get_rank()
+    world_size = dist.get_world_size()
+    local_rank = int(os.environ["LOCAL_RANK"])
+
+    torch.cuda.set_device(local_rank)
+    device = torch.device("cuda", local_rank)
+
+    print(f"[Rank {rank}] Running on GPU {local_rank}: {torch.cuda.get_device_name(device)} (UUID: {torch.cuda.get_device_properties(device).uuid})")
+
+    print(f"[Rank {rank}] Initializing tensor parallel strategy...")
+    strategy = TensorParallelStrategy()
+    print(f"[Rank {rank}] Strategy initialized.")
+
+    config = LLaMAConfig(nlayers=2, max_expected_seq_len=1024, fused_weights=False)
+    print(f"[Rank {rank}] Building LLaMA model with config: {config}")
+    model = LLaMA(config=config, distributed_strategy=strategy).to(device)
+    model.eval()
+    print(f"[Rank {rank}] Model created.")
+
+    print("STARTING BATCH SIZE 256 CASE")
+    x = torch.randint(0, config.src_vocab_size, (2, 256), device=device)
+    torch.cuda.reset_peak_memory_stats(device)
+    torch.cuda.synchronize()
+    start = time.time()
+    with torch.no_grad():
+        out = model(x)
+    torch.cuda.synchronize()
+    end = time.time()
+
+    print(f"[Rank {rank}] Forward pass time: {end - start:.2f} sec")
+    print(f"[Rank {rank}] Max memory allocated: {torch.cuda.max_memory_allocated(device) / 1e9:.2f} GB")
+    latency.append(end - start)
+    memory_used.append(torch.cuda.max_memory_allocated(device) / 1e9)
+
+    print("STARTING BATCH SIZE 512 CASE")
+    x = torch.randint(0, config.src_vocab_size, (2, 512), device=device)
+    torch.cuda.reset_peak_memory_stats(device)
+    torch.cuda.synchronize()
+    start = time.time()
+    with torch.no_grad():
+        out = model(x)
+    torch.cuda.synchronize()
+    end = time.time()
+
+    print(f"[Rank {rank}] Forward pass time: {end - start:.2f} sec")
+    print(f"[Rank {rank}] Max memory allocated: {torch.cuda.max_memory_allocated(device) / 1e9:.2f} GB")
+    latency.append(end - start)
+    memory_used.append(torch.cuda.max_memory_allocated(device) / 1e9)
+
+    print("STARTING BATCH SIZE 1024 CASE")
+    x = torch.randint(0, config.src_vocab_size, (2, 1024), device=device)
+    torch.cuda.reset_peak_memory_stats(device)
+    torch.cuda.synchronize()
+    start = time.time()
+    with torch.no_grad():
+        out = model(x)
+    torch.cuda.synchronize()
+    end = time.time()
+
+    print(f"[Rank {rank}] Forward pass time: {end - start:.2f} sec")
+    print(f"[Rank {rank}] Max memory allocated: {torch.cuda.max_memory_allocated(device) / 1e9:.2f} GB")
+    latency.append(end - start)
+    memory_used.append(torch.cuda.max_memory_allocated(device) / 1e9)
+
+    dist.destroy_process_group()
+
+    return latency, memory_used
 
 if __name__ == "__main__":
-    run_tensor_parallel_benchmark()
+    sp_times, sp_mem = run_sequence_parallel_benchmark()
+    tp_times, tp_mem = run_tensor_parallel_benchmark()
+
+    seq_length = [256, 512, 1024]
+
+    output_dir = "distributed_tests_plots"
+    os.makedirs(output_dir, exist_ok=True)
+
+    plt.figure(figsize=(10, 5))
+    plt.plot(seq_length, sp_times, marker='o', label='Sequence Parallel')
+    plt.plot(seq_length, tp_times, marker='o', label='Tensor Parallel')
+    plt.title('Execution Time vs Sequence Length')
+    plt.xlabel('Sequence Length')
+    plt.ylabel('Execution Time (s)')
+    plt.legend()
+    plt.grid(True)
+    plt.savefig(os.path.join(output_dir, 'execution_time_vs_seq_length.png'))
+    plt.close()
+
+    plt.figure(figsize=(10, 5))
+    plt.plot(seq_length, sp_mem, marker='o', label='Sequence Parallel')
+    plt.plot(seq_length, tp_mem, marker='o', label='Tensor Parallel')
+    plt.title('Memory Usage vs Sequence Length')
+    plt.xlabel('Sequence Length')
+    plt.ylabel('Memory Usage (GB)')
+    plt.legend()
+    plt.grid(True)
+    plt.savefig(os.path.join(output_dir, 'memory_usage_vs_seq_length.png'))
+    plt.close()
