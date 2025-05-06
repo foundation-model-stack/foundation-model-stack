@@ -3,6 +3,7 @@ import re
 from dataclasses import dataclass
 from typing import Any, List, Mapping, Optional, Tuple
 
+from fms.models.ring_attention_helper import RingAttentionHelper
 import torch
 import torch.nn as nn
 
@@ -17,12 +18,8 @@ from fms.distributed.strategy import (
 # Import the cleaned-up functions from llama_ring
 from fms.models.llama_ring import (
     compute_local_qkv_and_rope,
-    # compute_qkv_and_rope_thread, # Removed
     forward_ring,
-    # _diff_debug_dicts, # Removed
-    # _gather_debug_tensors, # Removed
     _forward_ring_attention,
-    # _forward_engine_attention, # Removed
 )
 
 
@@ -73,13 +70,8 @@ class LLaMABlock(nn.Module):
 
     # Assign the methods imported from llama_ring
     compute_local_qkv_and_rope  = compute_local_qkv_and_rope
-    # compute_qkv_and_rope_thread = compute_qkv_and_rope_thread # Removed
-    forward                     = forward_ring # This assigns the ring-aware forward method
-    # _diff_debug_dicts           = _diff_debug_dicts # Removed
-    # _gather_debug_tensors       = _gather_debug_tensors # Removed
+    forward_ring                     = forward_ring
     _forward_ring_attention     = _forward_ring_attention
-    # _forward_engine_attention   = _forward_engine_attention # Removed
-
     def __init__(self, config: LLaMAConfig, rotary_emb: RotaryEmbedding):
         super(LLaMABlock, self).__init__()
         self.config = config
@@ -135,10 +127,83 @@ class LLaMABlock(nn.Module):
         if self.config.p_dropout != 0:
             self.dropout = nn.Dropout(self.config.p_dropout)
 
-    # The forward method is now assigned from forward_ring in llama_ring.py
-    # The original forward method below is effectively replaced.
-    # def forward(...): # Original implementation is replaced
-    #    ...
+        self.ring_helper = RingAttentionHelper(
+            attn_module=self.attn,
+            strategy=RingAttentionStrategy,
+            llama_block=self,
+            use_cache=False,
+            ff=self.ff_sub_layer,
+            ff_norm=self.ff_ln,
+        )
+
+    def forward(
+        self,
+        x,
+        *,
+        mask=None,
+        position_ids=None,
+        past_key_value_state=None,
+        use_cache=False,
+        is_causal_mask=False,
+        attn_algorithm=None,
+        distributed_strategy: Optional[DistributedStrategy] = None,
+    ):
+        
+        if isinstance(distributed_strategy, RingAttentionStrategy):
+
+            return forward_ring(
+                self,
+                x,
+                mask=mask,
+                position_ids=position_ids,
+                past_key_value_state=past_key_value_state,
+                use_cache=use_cache,
+                is_causal_mask=is_causal_mask,
+                attn_algorithm=attn_algorithm,
+                distributed_strategy=distributed_strategy,
+            )
+
+        # if the cache is not empty, we need to get the kv cache for self and cross attention
+        self_attn_past_key_value = past_key_value_state
+        # if past_key_value_state is not None:
+        #     self_attn_past_key_value = past_key_value_state[:2]
+        # else:
+        #     self_attn_past_key_value = None
+
+        # first we do MHA and Add&Norm
+        residual = x
+        x = self.ln(x)
+        x = self.attn(
+            q=x,
+            mask=mask,
+            position_ids=position_ids,
+            attn_algorithm=attn_algorithm,
+            past_key_value_state=self_attn_past_key_value,
+            use_cache=use_cache,
+            is_self=True,
+            is_causal_mask=is_causal_mask,
+        )
+        cache = None
+        if use_cache:
+            x, cache = x
+        if self.config.p_dropout != 0:
+            x = self.dropout(x)
+        # residual connection
+        x = x + residual
+
+        # then we do FF and Add&Norm
+        residual = x
+        x = self.ff_ln(x)
+        x = self.ff_sub_layer(x)
+        if self.config.p_dropout != 0:
+            x = self.dropout(x)
+        # another residual
+        x = x + residual
+
+        if use_cache:
+            return (x, cache)
+        else:
+            return x
 
 
 class LLaMA(nn.Module):
@@ -373,6 +438,8 @@ class LLaMA(nn.Module):
         only_last_token: bool = False,
         attn_algorithm: Optional[str] = None,
     ):
+        
+        # print(x.shape)
         output, cache = self._helper(
             x,
             mask,

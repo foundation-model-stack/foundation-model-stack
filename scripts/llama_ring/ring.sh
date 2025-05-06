@@ -90,7 +90,7 @@ sbatch_out=$(sbatch --output="$OUT_FILENAME" "$SLURM_SCRIPT_PATH" "${script_args
 }
 job_id=$(echo "$sbatch_out" | grep -oP 'Submitted batch job \K[0-9]+')
 # Match the updated Slurm script's #SBATCH --output pattern
-output_file="${HOME}/inference_insomnia_${job_id}.out"
+
 echo "[SUCCESS] Slurm job $job_id"
 wait_cmd="squeue -u $USER"
 

@@ -377,8 +377,9 @@ def get_model(
     elif distributed_strategy == "mp":
         initial_device = torch.device("cpu")
     elif distributed_strategy == "ring":
-        # RingAttentionStrategy requires model parameters to be on the target device initially
-        # The strategy itself handles data movement (sharding/gathering)
+        print("using RingAttentionStrategy")
+        extra_args["distributed_strategy"] = RingAttentionStrategy(group=group)
+
         initial_device = device
     else: # Includes TP and None/single device cases
         initial_device = device
