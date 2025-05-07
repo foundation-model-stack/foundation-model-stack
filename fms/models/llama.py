@@ -132,14 +132,14 @@ class LLaMABlock(nn.Module):
 
             self.ring_helper = RingAttentionHelper(
                 attn_module=self.attn,
-                strategy=RingAttentionStrategy,
+                strategy=self.distributed_strategy,
                 llama_block=self,
                 use_cache=False,
                 ff=self.ff_sub_layer,
                 ff_norm=self.ff_ln,
             )
             
-            forward = forward_ring
+            self.forward = self.forward_ring
 
     def forward(
         self,
@@ -340,7 +340,7 @@ class LLaMA(nn.Module):
         # Embed the given vocabulary indices using the given attention mask, with pre-/post-norm and dropout as specified
         # x_in: batch_size x seq_len
         # mask: batch_size x seq_len x seq_len
-        original_seq_len = x_in.size(1) # Capture original sequence length
+        # bias: nheads x seq_len x seq_len
         if past_key_value_states is None or len(past_key_value_states) == 0:
             past_key_value_states = [None for _ in range(len(self.layers))]
 

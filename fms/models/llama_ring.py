@@ -84,8 +84,7 @@ def forward_ring(
     past_key_value_state=None,
     use_cache=False,
     is_causal_mask=False,
-    attn_algorithm=None,
-    distributed_strategy: Optional[DistributedStrategy] = None,
+    attn_algorithm=None
 ):
     # Unpack input if it's a tuple
     input_tensor = x[0] if isinstance(x, tuple) else x
@@ -94,14 +93,14 @@ def forward_ring(
     residual = input_tensor
     x_norm_local = self.ln(input_tensor)
 
-    correct_valid_len = distributed_strategy._local_valid_len
+    correct_valid_len = self.distributed_strategy._local_valid_len
 
     # Run ring attention forward directly
     x, cache, _ = self.ring_helper.forward(
         x_norm_local,
         residual=residual,
         mask=mask,
-        strategy=distributed_strategy,
+        strategy=self.distributed_strategy,
         position_ids=position_ids,
         past_key_value_state=past_key_value_state,
         is_causal_mask=is_causal_mask,
@@ -120,13 +119,15 @@ class RingAttentionHelper:
         self.llama_block = llama_block
         self.rank = dist.get_rank()
         self.world_size = dist.get_world_size()
+        self.block_size = strategy.block_size
         self.head_dim = attn_module.emb_kq_per_head
         self.scale = self.head_dim ** 0.5
 
     def forward(self, x_norm, residual, strategy, mask=None, position_ids=None, past_key_value_state=None,
                 is_causal_mask=False, rank=0, valid_len=0):
 
-        start_idx_global = self.rank * self.strategy.block_size
+        self.block_size = strategy.block_size
+        start_idx_global = self.rank * self.block_size
         B, T = x_norm.shape[:2]
 
         if position_ids is None:
@@ -196,7 +197,7 @@ class RingAttentionHelper:
         Applies the feedforward block after attention, including residual connections and padding.
         """
         residual_1 = residual + attn_out
-        residual_1_padded = self._pad_to_block(residual_1, self.strategy.block_size, dim=1)
+        residual_1_padded = self._pad_to_block(residual_1, self.block_size, dim=1)
         ff_ln_out_padded = self.ff_norm(residual_1_padded)
         ff_out_padded = self.ff(ff_ln_out_padded)
         ff_out_trimmed = ff_out_padded[:, :valid_len, :]
@@ -219,13 +220,13 @@ class RingAttentionHelper:
         current_k_len = k_local.shape[2]
 
         for i in range(self.world_size):
-            k_start_global = ((self.rank - i + self.world_size) % self.world_size) * self.strategy.block_size
+            k_start_global = ((self.rank - i + self.world_size) % self.world_size) * self.block_size
             k_indices_global = torch.arange(k_start_global, k_start_global + current_k_len, device=device)
 
             current_mask = mask_global[:, :, q_start_global:q_start_global+T_q_local, k_start_global:k_start_global+current_k_len] if mask_global is not None else None
             if current_k_len == 0:
                 if i < self.world_size - 1:
-                    current_k_block, current_k_len = self._ring_shift_tensor(current_k_block, self.strategy.block_size)
+                    current_k_block, current_k_len = self._ring_shift_tensor(current_k_block, self.block_size)
                 continue
             
             scores = self._compute_attention_scores(
@@ -235,7 +236,7 @@ class RingAttentionHelper:
             
             max_score = self._update_max_score(scores, max_score)
             if i < self.world_size - 1:
-                current_k_block, current_k_len = self._ring_shift_tensor(current_k_block, self.strategy.block_size)
+                current_k_block, current_k_len = self._ring_shift_tensor(current_k_block, self.block_size)
 
         return max_score
 
@@ -260,12 +261,12 @@ class RingAttentionHelper:
         current_k_len = k_local.shape[2]
 
         for i in range(self.world_size):
-            k_start_global = ((self.rank - i + self.world_size) % self.world_size) * self.strategy.block_size
+            k_start_global = ((self.rank - i + self.world_size) % self.world_size) * self.block_size
             k_indices_global = torch.arange(k_start_global, k_start_global + current_k_len, device=device)
             if current_k_len == 0:
                 if i < self.world_size - 1:
-                    current_k_block, current_k_len = self._ring_shift_tensor(current_k_block, self.strategy.block_size)
-                    current_v_block, _ = self._ring_shift_tensor(current_v_block, self.strategy.block_size)
+                    current_k_block, current_k_len = self._ring_shift_tensor(current_k_block, self.block_size)
+                    current_v_block, _ = self._ring_shift_tensor(current_v_block, self.block_size)
                 continue
             current_mask = mask_global[:, :, q_start_global:q_start_global+T_q_local, k_start_global:k_start_global+current_k_len] if mask_global is not None else None
             scores = self._compute_attention_scores(
@@ -277,8 +278,8 @@ class RingAttentionHelper:
             )
             
             if i < self.world_size - 1:
-                current_k_block, current_k_len = self._ring_shift_tensor(current_k_block, self.strategy.block_size)
-                current_v_block, _ = self._ring_shift_tensor(current_v_block, self.strategy.block_size)
+                current_k_block, current_k_len = self._ring_shift_tensor(current_k_block, self.block_size)
+                current_v_block, _ = self._ring_shift_tensor(current_v_block, self.block_size)
 
         return numerator, denominator
 
@@ -329,7 +330,6 @@ class RingAttentionHelper:
         tensor_recv = torch.empty_like(padded)
 
         # Prepare send/recv ops
-        print(f"DEBUG: rank: {self.rank}, padded.size():{padded.size()}, send_len: {send_len}")
         ops = [
             P2POp(op=dist.isend, tensor=send_len, peer=send_rank),
             P2POp(op=dist.irecv, tensor=recv_len, peer=recv_rank),
