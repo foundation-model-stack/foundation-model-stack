@@ -201,7 +201,7 @@ def _guess_num_layers(state_dict):
 
     for key in state_dict.keys():
         # when there's a list of layers, layers have numeric IDs in the key
-        layerid = re.sub("[^.]*\.([0-9]+)\..*", "\\1", key)
+        layerid = re.sub("[^.]*\\.([0-9]+)\\..*", "\\1", key)
         if layerid != key:
             layers.add(layerid)
     return len(layers)
@@ -336,8 +336,6 @@ def get_model(
 
     if distributed_strategy is None or distributed_strategy == "":
         if world_size > 1:
-            # Default to TP if multiple devices and no strategy specified
-            logger.info("Multiple devices detected, defaulting distributed strategy to 'tp'")
             distributed_strategy = "tp"
 
     if device_type == "cuda":
@@ -356,8 +354,9 @@ def get_model(
         if extra_args.get("linear_config", None) and "gptq" in extra_args[
             "linear_config"
         ].get("linear_type", None):
-            logger.warning(
-                f"data_type {data_type} provided, but GPTQ does not support "
+            # TODO: introduce logger with different log levels?
+            print(
+                f"[WARNING] data_type {data_type} provided, but GPTQ does not support "
                 "casting to custom data type. Will use checkpoint data type instead."
             )
             data_type_parsed = None
@@ -497,7 +496,7 @@ def get_model(
     if initial_device != torch.device("meta"):
         fms_model._apply(
             lambda t: torch.empty_like(t, device=initial_device)
-            if hasattr(t, 'device') and t.device == torch.device("meta")
+            if t.device == torch.device("meta")
             else t
         )
 

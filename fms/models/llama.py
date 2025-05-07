@@ -244,7 +244,12 @@ class LLaMA(nn.Module):
             max_seq_len=self.config.max_expected_seq_len,
             ratio=self.config.rope_theta,
         )
-        # RoPE init deferred to post_init
+        # RoPE init
+        for device in set(
+            [param.device for param in self.parameters()]
+            + [buffer.device for buffer in self.buffers()]
+        ):
+            self.rot_emb.compute_freqs_cis(device, self.config.max_expected_seq_len)
 
         layers = []
         for i in range(self.config.nlayers):
@@ -286,7 +291,39 @@ class LLaMA(nn.Module):
             ):
                 m.reset_parameters()
 
-    # Removed validate_reset_parameters as it might be complex with distribution
+    def validate_reset_parameters(self):
+        # Verifies that the above self.reset_parameters() executed correctly.
+        # This may not always be the case for distributed settings with sharded tensors,
+        # such as FSDP or TP. Note that performing this check may require unsharding /
+        # re-materializing the full model on a single rank to access the underlying tensors.
+        tolerance = 1e-3
+
+        def check_close(x):
+            assert x.mean().abs() < tolerance
+            assert x.std().sub(0.02).abs() < tolerance
+
+        with torch.no_grad():
+            for p in self.parameters():
+                assert p.isnan().int().sum() == 0
+                assert p.isinf().int().sum() == 0
+            for m in self.modules():
+                if isinstance(LayerNormParameterized):
+                    if m.elementwise_scale:
+                        assert m.weight.sum() == m.weight.numel()
+                    if m.elementwise_shift:
+                        assert m.bias.add(1).sum() == m.bias.numel()
+                elif isinstance(WordEmbedding):
+                    check_close(m.emb.weight)
+                    check_close(m.head.weight)
+                elif isinstance(GatedLinearUnit):
+                    check_close(m.w1.weight)
+                    check_close(m.w2.weight)
+                    check_close(m.wg.weight)
+                elif isinstance(MultiHeadAttention):
+                    check_close(m.query.weight)
+                    check_close(m.key.weight)
+                    check_close(m.value.weight)
+                    check_close(m.dense.weight)
 
     def _clean_up_rot_emb_cache(
         self,
@@ -321,11 +358,10 @@ class LLaMA(nn.Module):
 
         # init RoPE on the right device(s)
         for device in set(
-            [param.device for param in self.parameters() if hasattr(param, 'device')]
-            + [buffer.device for buffer in self.buffers() if hasattr(buffer, 'device')]
+            [param.device for param in self.parameters()]
+            + [buffer.device for buffer in self.buffers()]
         ):
-            if device != torch.device("meta"):
-                self.rot_emb.compute_freqs_cis(device, self.config.max_expected_seq_len)
+            self.rot_emb.compute_freqs_cis(device, self.config.max_expected_seq_len)
 
     def _helper(
         self,
@@ -349,13 +385,7 @@ class LLaMA(nn.Module):
 
         # if we are using the cache, the key length needs to be extended with the past keys length
         if use_cache and past_key_value_states[0] is not None:
-            # KVCache structure depends on the attention implementation (standard vs ring)
-            # Standard MHA expects past_key_value_state to be a tuple (K, V)
-            # Check if the first layer's cache is the standard tuple type
-            if isinstance(past_key_value_states[0], tuple) and len(past_key_value_states[0]) > 0:
-                klen += past_key_value_states[0][0].size(-2)
-            # RingAttention might not use cache in the same way, klen adjustment might not be needed or different.
-            # Currently, forward_ring implementation sets cache=None, so this path might not be fully exercised for ring.
+            klen += past_key_value_states[0][0].size(-2)
 
         # if mask is none, we need to specify causal mask
         if mask is None:
@@ -398,10 +428,7 @@ class LLaMA(nn.Module):
             else:
                 x_in = output
 
-        # Unpack x_in before passing to dec_norm if it's a tuple (from use_cache=True)
-        dec_out = x_in[0] if isinstance(x_in, tuple) else x_in
-
-        # Apply final layer norm
+        dec_out = x_in
         dec_out = self.dec_norm(dec_out)
         if self.config.p_dropout:
             dec_out = self.dropout(dec_out)
