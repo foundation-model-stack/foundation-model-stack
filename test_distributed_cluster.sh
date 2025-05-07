@@ -1,14 +1,15 @@
 #!/bin/bash
 #SBATCH --account=edu
-#SBATCH --job-name=tp_test
+#SBATCH --job-name=sp_test
 #SBATCH --partition=gpu
-#SBATCH --gres=gpu:h100:2
+#SBATCH --gres=gpu:2
+#SBATCH --constraint='l40'
 #SBATCH --ntasks=2
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G
 #SBATCH --time=00:20:00
-#SBATCH --output=rg3681_logs/tp_test_%j.out
-#SBATCH --error=rg3681_logs/tp_test_%j.err
+#SBATCH --output=distributed_test_logs/sp_test_%j.out
+#SBATCH --error=distributed_test_logs/sp_test_%j.err
 #SBATCH --export=ALL
 
 cd ~/foundation-model-stack
