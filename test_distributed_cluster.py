@@ -46,7 +46,8 @@ def setup_distributed():
 
 def run_sequence_parallel_benchmark():
     latency = list()
-    memory_used = list()
+    memory_allocated = list()
+    memory_reserved = list()
     print("Benchmarking sequence parallelism")
     setup_distributed()
 
@@ -127,7 +128,8 @@ def run_sequence_parallel_benchmark():
     print(f"[Rank {rank}] Forward pass time: {end - start:.2f} sec")
     print(f"[Rank {rank}] Max memory allocated: {torch.cuda.max_memory_allocated(device) / 1e9:.2f} GB")
     latency.append(end - start)
-    memory_used.append(torch.cuda.max_memory_allocated(device) / 1e9)
+    memory_allocated.append(torch.cuda.max_memory_allocated(device) / 1e9)
+    memory_reserved.append(torch.cuda.max_memory_reserved(device) / 1e9)
 
     print("STARTING BATCH SIZE 512 CASE")
     x = torch.randint(0, config.src_vocab_size, (2, 512), device=device)
@@ -142,7 +144,8 @@ def run_sequence_parallel_benchmark():
     print(f"[Rank {rank}] Forward pass time: {end - start:.2f} sec")
     print(f"[Rank {rank}] Max memory allocated: {torch.cuda.max_memory_allocated(device) / 1e9:.2f} GB")
     latency.append(end - start)
-    memory_used.append(torch.cuda.max_memory_allocated(device) / 1e9)
+    memory_allocated.append(torch.cuda.max_memory_allocated(device) / 1e9)
+    memory_reserved.append(torch.cuda.max_memory_reserved(device) / 1e9)
 
     print("STARTING BATCH SIZE 1024 CASE")
     x = torch.randint(0, config.src_vocab_size, (2, 1024), device=device)
@@ -157,15 +160,17 @@ def run_sequence_parallel_benchmark():
     print(f"[Rank {rank}] Forward pass time: {end - start:.2f} sec")
     print(f"[Rank {rank}] Max memory allocated: {torch.cuda.max_memory_allocated(device) / 1e9:.2f} GB")
     latency.append(end - start)
-    memory_used.append(torch.cuda.max_memory_allocated(device) / 1e9)
+    memory_allocated.append(torch.cuda.max_memory_allocated(device) / 1e9)
+    memory_reserved.append(torch.cuda.max_memory_reserved(device) / 1e9)
 
     dist.destroy_process_group()
 
-    return latency, memory_used
+    return latency, memory_allocated, memory_reserved
 
 def run_tensor_parallel_benchmark():
     latency = list()
-    memory_used = list()
+    memory_allocated = list()
+    memory_reserved = list()
     print("Benchmarking tensor parallelism without sequence parallelism")
     os.environ["USE_SEQUENCE_PARALLELISM"] = "False"
     setup_distributed()
@@ -202,7 +207,8 @@ def run_tensor_parallel_benchmark():
     print(f"[Rank {rank}] Forward pass time: {end - start:.2f} sec")
     print(f"[Rank {rank}] Max memory allocated: {torch.cuda.max_memory_allocated(device) / 1e9:.2f} GB")
     latency.append(end - start)
-    memory_used.append(torch.cuda.max_memory_allocated(device) / 1e9)
+    memory_allocated.append(torch.cuda.max_memory_allocated(device) / 1e9)
+    memory_reserved.append(torch.cuda.max_memory_reserved(device) / 1e9)
 
     print("STARTING BATCH SIZE 512 CASE")
     x = torch.randint(0, config.src_vocab_size, (2, 512), device=device)
@@ -217,7 +223,8 @@ def run_tensor_parallel_benchmark():
     print(f"[Rank {rank}] Forward pass time: {end - start:.2f} sec")
     print(f"[Rank {rank}] Max memory allocated: {torch.cuda.max_memory_allocated(device) / 1e9:.2f} GB")
     latency.append(end - start)
-    memory_used.append(torch.cuda.max_memory_allocated(device) / 1e9)
+    memory_allocated.append(torch.cuda.max_memory_allocated(device) / 1e9)
+    memory_reserved.append(torch.cuda.max_memory_reserved(device) / 1e9)
 
     print("STARTING BATCH SIZE 1024 CASE")
     x = torch.randint(0, config.src_vocab_size, (2, 1024), device=device)
@@ -232,15 +239,16 @@ def run_tensor_parallel_benchmark():
     print(f"[Rank {rank}] Forward pass time: {end - start:.2f} sec")
     print(f"[Rank {rank}] Max memory allocated: {torch.cuda.max_memory_allocated(device) / 1e9:.2f} GB")
     latency.append(end - start)
-    memory_used.append(torch.cuda.max_memory_allocated(device) / 1e9)
+    memory_allocated.append(torch.cuda.max_memory_allocated(device) / 1e9)
+    memory_reserved.append(torch.cuda.max_memory_reserved(device) / 1e9)
 
     dist.destroy_process_group()
 
-    return latency, memory_used
+    return latency, memory_allocated, memory_reserved
 
 if __name__ == "__main__":
-    sp_times, sp_mem = run_sequence_parallel_benchmark()
-    tp_times, tp_mem = run_tensor_parallel_benchmark()
+    sp_times, sp_mem_allocated, sp_mem_reserved = run_sequence_parallel_benchmark()
+    tp_times, tp_mem_allocated, tp_mem_reserved = run_tensor_parallel_benchmark()
 
     seq_length = [256, 512, 1024]
 
@@ -259,12 +267,23 @@ if __name__ == "__main__":
     plt.close()
 
     plt.figure(figsize=(10, 5))
-    plt.plot(seq_length, sp_mem, marker='o', label='Sequence Parallel')
-    plt.plot(seq_length, tp_mem, marker='o', label='Tensor Parallel')
-    plt.title('Memory Usage vs Sequence Length')
+    plt.plot(seq_length, sp_mem_allocated, marker='o', label='Sequence Parallel')
+    plt.plot(seq_length, tp_mem_allocated, marker='o', label='Tensor Parallel')
+    plt.title('Memory Allocated vs Sequence Length')
     plt.xlabel('Sequence Length')
-    plt.ylabel('Memory Usage (GB)')
+    plt.ylabel('Memory Allocated (GB)')
     plt.legend()
     plt.grid(True)
-    plt.savefig(os.path.join(output_dir, 'memory_usage_vs_seq_length.png'))
+    plt.savefig(os.path.join(output_dir, 'memory_allocated_vs_seq_length.png'))
+    plt.close()
+
+    plt.figure(figsize=(10, 5))
+    plt.plot(seq_length, sp_mem_reserved, marker='o', label='Sequence Parallel')
+    plt.plot(seq_length, tp_mem_reserved, marker='o', label='Tensor Parallel')
+    plt.title('Memory Reserved vs Sequence Length')
+    plt.xlabel('Sequence Length')
+    plt.ylabel('Memory Reserved (GB)')
+    plt.legend()
+    plt.grid(True)
+    plt.savefig(os.path.join(output_dir, 'memory_reserved_vs_seq_length.png'))
     plt.close()
