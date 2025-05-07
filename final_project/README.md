@@ -1,116 +1,104 @@
 # COMS E6998 - HPML Final Project (Spring 2025) - Group 3
 
-# Rubric
-README : 2 pts
+## Description
 
-- A description of the project
-- An outline of the code repository
-- Example commands to execute the code         
-- Results (including charts/tables) and your observations  
-- Link to your wandb project board (Make sure the wandb project is publicly available)
+Our project aims to integrate PyTorch's Paged Attention into the Foundation Model Stack (FMS) using Flex Attention. We intend to enhance memory efficiency and inference speed for long-context language models without sacrificing model accuracy. Specifically, we will implement a dynamic, paged key-value (KV) cache that minimizes memory fragmentation, benchmark its performance against standard attention mechanisms, and evaluate the impact of various paging strategies on overall model performance.
 
-## Dev Env Setup
+## Outline of Code Repository
 
-### Convert .tex to .pdf
-
-```bash
-sudo apt-get update
-sudo apt-get install texlive-full
-
-make all
-make clean
+```text
+foundation-model-stack/
+├── .github/
+│   └── workflows/
+├── final_project/
+│   ├── README.md   # This file!
+│   └── report.tex  # Final project report
+├── fms/
+│   ├── datasets/
+│   ├── models/
+│   │   ├── gpt_bigcode/
+│   │   ├── llama/
+│   │   ├── roberta/
+│   │   └── hf/
+│   ├── modules/
+│   │   ├── attention.py  # This is the core implementation of paged attention
+│   │   └── # other files
+│   ├── training/
+│   └── utils/
+├── notebooks/
+├── scripts/
+│   ├── benchmark_inference.py
+│   ├── train_causal.py
+│   └── # other helper & benchmark scripts
+├── static/
+├── tests/
+│   ├── modules/
+│   │   ├── test_paged_attention.py  # Unit test that we added to validate behavior of paged attention implementation
+│   │   └── # other files
+├── .gitignore
+├── .isort.cfg
+├── LICENSE
+├── README.md
+├── code-of-conduct.md
+├── hf-requirements.txt
+├── requirements.txt  # Includes using a Python wheel for installing the latest/nightly PyTorch dev build
+├── test-requirements.txt
+├── Makefile  # Includes all of the setup and build/test targets that we add/use in the repo
+└── setup.py
 ```
 
-### Setup benchmarks
+## Example Commands
+
+### Dev Env Setup: Ensure PyTorch 2.8+dev is installed and GPU with CUDA is available
 
 ```bash
-git clone https://github.com/thomasjoshi/foundation-model-stack.git
-cd foundation-model-stack
+make check-torch
+```
 
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -e .[inference,benchmark]
+Example output:
+```bash
+ndhillon@instance-20250303-021938:~/foundation-model-stack$ make check-torch
+.venv/bin/python -c "import torch, sys; print(f'PyTorch version: {torch.__version__}\\nCUDA available: {torch.cuda.is_available()}'); print(f'GPU device: {torch.cuda.get_device_name(0)}' if torch.cuda.is_available() else '')"
+PyTorch version: 2.8.0.dev20250503+cu126
+CUDA available: True
+GPU device: Tesla T4
+```
 
+### Download Llama Tokenizer (needed for Llama inference)
 
+```bash
+make download-tokenizer
+```
+
+### Run Llama Inference Benchmarks with Regular Attention
+
+```bash
+make bench-llama
+
+# If you are using a machine with < 16GB of GPU memory, recommend running a lighter benchmark
+make bench-llama-t4
 ```
 
 
-## GPU Memory Hierarchy on NVIDIA T4
-
-| Level | Size | Bandwidth / Latency | Notes |
-|-------|------|---------------------|-------|
-| Registers | 64 k × 32‑bit per SM | ~20 TB/s aggregate | fastest, not addressable for tiling |
-| Shared Mem / L1 | Configurable 64 KB : 32 KB or 32 KB : 64 KB per SM | ~7–8 TB/s¹ | we’ll request 64 KB shared / 32 KB L1 |
-| L2 cache | 4 MB total | ~1 TB/s (est.) | — |
-| HBM (GDDR6) | 16 GB, 320 GB/s | 300–400 ns | quadratic memory growth lives here |
-
-¹Measured by Jia *et al.* “Dissecting the Nvidia Turing T4 GPU via Micro‑benchmarking” (2019).
-
-## Choosing the right tile (block) size
-
-FlashAttention shows that performance is maximized when one tile fits *exactly* shared memory and avoids register spilling. 
-The NVIDIA T4 has 64KB of SRAM, therefore all benchmarks on this GPU should be using FLASH_ATTENTION_BLOCK=64.
-
-Note: This is exactly the block size the FlashAttention authors selected for T4 in Fig. 8 (page 29) where they note that “T4 SRAM is smaller...so we need to make the block sizes smaller in FlashAttention”
-
-## Benchmark Test Suite
-
-| Model | Context lengths | Batch sizes | Dtype |
-|-------|-----------------|------------|-------|
-| Llama‑2‑7B‑HF | 128, 256, 512, 1K, 2K, 4K, 8K, 16K, 32K, 64K | 1 (≤ 8 K) / 2 (≤ 2 K) | fp16 |
-| Granite‑7B‑Instruct | same | same | fp16 |
-
-We’ll run **3 repetitions** per point to smooth noise.
-
-### Llama
+### Run Llama Inference Benchmarks with Paged Attention
 
 ```bash
-# ▶ Llama‑2‑7B (Hugging Face weights)
+bench-llama-paged
 
-# Quick single‑GPU sanity check (seq‑len 512)
-CUDA_VISIBLE_DEVICES=0 python ../scripts/inference.py \
-    --architecture=llama \
-    --variant=7b \
-    --tokenizer ~/llama_weights/tokenizer.model \
-    --ckpt_dir ~/llama_weights/llama-2-7b/ \
-    --seq_len 512 \
-    --batch_size 1 \
-    --use_flash \
-    --repetitions 3
-
-# Full benchmark matrix from the FlashAttention paper
-torchrun --nnodes 1 --nproc-per-node 8 --standalone \
-    ../scripts/benchmark_inference.py \
-    --architecture=llama \
-    --variant=7b \
-    --tokenizer ~/llama_weights/tokenizer.model \
-    --ckpt_dir ~/llama_weights/llama-2-7b/ \
-    --seq_lens 128 256 512 1024 2048 4096 8192 16384 32768 65536 \
-    --batch_sizes 2 1 \
-    --dtype fp16 \
-    --compile_mode reduce-overhead \
-    --distributed \
-    --check_correctness \
-    --repetitions 3
+# If you are using a machine with < 16GB of GPU memory, recommend running a lighter benchmark
+make bench-llama-paged-t4
 ```
 
-### IBM granite
+### Run Paged Attention Unit Tests
 
 ```bash
-# ▶ Granite‑7B‑Instruct (IBM Research)
-
-# Eight‑GPU benchmark mirroring FlashAttention settings
-torchrun --nnodes 1 --nproc-per-node 8 --standalone \
-    ../scripts/benchmark_inference.py \
-    --architecture=granite \
-    --variant=7b-instruct \
-    --tokenizer ~/granite_weights/tokenizer.model \
-    --ckpt_dir ~/granite_weights/granite-7b-instruct/ \
-    --seq_lens 128 256 512 1024 2048 4096 8192 16384 32768 65536 \
-    --batch_sizes 2 1 \
-    --dtype fp16 \
-    --use_flash \
-    --compile_mode reduce-overhead \
-    --distributed \
-    --repetitions 3
+make test-paged-attention
 ```
+
+## Results
+
+- TODO: Results (including charts/tables) and your observations  
+
+## Wandb Project Board
+
+https://wandb.ai/nsd2147-columbia-university/HPML%20Final%20Project/overview
