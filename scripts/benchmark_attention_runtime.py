@@ -9,6 +9,7 @@ from torch import distributed as dist
 from fms import models
 from fms.utils import fusion, tokenizers
 import csv
+import datetime
 import wandb
 
 SEQUENCE_LENGTHS = [128, 256, 512, 1024, 2048]
@@ -76,10 +77,20 @@ print(f"loading complete on rank {local_rank}")
 
 BATCH_SIZE = args.batch_size
 
+# -----------------------------------------------------------
+# Output paths: final_project/  + timestamp
+# -----------------------------------------------------------
+TIMESTAMP = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+OUT_DIR = os.path.join(os.path.dirname(__file__), "..", "final_project")
+os.makedirs(OUT_DIR, exist_ok=True)
+
 if args.output_csv:
-    output_csv = args.output_csv
+    base_csv = os.path.splitext(os.path.basename(args.output_csv))[0]
+    output_csv = os.path.join(OUT_DIR, f"{base_csv}_{TIMESTAMP}.csv")
 else:
-    output_csv = f"attention_runtime_{'paged' if args.paged else 'default'}.csv"
+    output_csv = os.path.join(
+        OUT_DIR, f"attention_runtime_{'paged' if args.paged else 'default'}_{TIMESTAMP}.csv"
+    )
 
 import csv
 results = []

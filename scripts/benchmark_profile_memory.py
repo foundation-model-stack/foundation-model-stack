@@ -5,6 +5,7 @@ import random
 import numpy as np
 import torch
 import time
+import datetime
 from torch import distributed as dist
 from fms import models
 from fms.utils import fusion, tokenizers
@@ -81,10 +82,20 @@ print(f"loading complete on rank {local_rank}")
 
 BATCH_SIZE = args.batch_size
 
+# Set up output directory, timestamp, and CSV output path
+TIMESTAMP = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+OUT_DIR = os.path.join(os.path.dirname(__file__), "..", "final_project")
+os.makedirs(OUT_DIR, exist_ok=True)
+
 if args.output_csv:
-    output_csv = args.output_csv
+    base_csv = args.output_csv
+    # If the user passed a path, strip any existing directory & extension to replace them
+    base_csv = os.path.splitext(os.path.basename(base_csv))[0]
+    output_csv = os.path.join(OUT_DIR, f"{base_csv}_{TIMESTAMP}.csv")
 else:
-    output_csv = f"profile_memory_{'paged' if args.paged else 'default'}.csv"
+    output_csv = os.path.join(
+        OUT_DIR, f"profile_memory_{'paged' if args.paged else 'default'}_{TIMESTAMP}.csv"
+    )
 
 results = []
 with open(output_csv, "w", newline="") as csvfile:
