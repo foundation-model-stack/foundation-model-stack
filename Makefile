@@ -132,6 +132,9 @@ bench-llama-paged: deps $(TOKENIZER_FILE)
 	    --tokenizer="$(TOKENIZER)" $(EXTRA)
 
 ## Memory‑friendly benchmark for 16 GB GPUs like NVIDIA T4
+
+# Note: Run the T4-friendly benchmark at seq_len = 1024 using the command below:
+# make bench-llama-t4 EXTRA="--seq_len=1024"
 bench-llama-t4: deps $(TOKENIZER_FILE)
 	@echo "Running memory‑friendly benchmark (T4 preset)…"
 	CUDA_VISIBLE_DEVICES=0 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
@@ -141,6 +144,8 @@ bench-llama-t4: deps $(TOKENIZER_FILE)
 
 ## Memory‑friendly paged‑attention benchmark for 16 GB GPUs like NVIDIA T4
 
+# Note: Run the T4-friendly benchmark at seq_len = 1024 using the command below:
+# make bench-llama-t4 EXTRA="--seq_len=1024"
 bench-llama-paged-t4: deps $(TOKENIZER_FILE)
 	@echo "Running memory‑friendly benchmark (T4 preset) with paged‑attention…"
 	CUDA_VISIBLE_DEVICES=0 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True FMS_ATTENTION_ALGO=paged \
@@ -148,9 +153,10 @@ bench-llama-paged-t4: deps $(TOKENIZER_FILE)
 	    --architecture=llama --variant=$(LLAMA_VARIANT) \
 	    --tokenizer="$(TOKENIZER)" $(T4_EXTRA) $(EXTRA)
 
+# Note: Llama 7B has a max context window of 4096 tokens.
 # Run the full T4 sweep (default + paged) across several sequence lengths
 bench-llama-t4-sweep: deps $(TOKENIZER_FILE)
-	@for LEN in 128 256 512 1024 2048 4096 8192; do \
+	@for LEN in 128 256 512 1024 2048 4096; do \
 		echo "=== Default attention | seq_len=$$LEN ==="; \
 		CUDA_VISIBLE_DEVICES=0 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
 		$(VENV_DIR)/bin/python $(BENCH_SCRIPT) \
