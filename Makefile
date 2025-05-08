@@ -228,13 +228,13 @@ profile-memory: deps $(TOKENIZER_FILE)
 	@echo "Profiling peak memory usage (default attention)…"
 	CUDA_VISIBLE_DEVICES=0 $(VENV_DIR)/bin/python scripts/benchmark_profile_memory.py \
 	    --architecture=llama --variant=$(LLAMA_VARIANT) \
-	    --tokenizer="$(TOKENIZER)" > profile_memory_default.tsv
+	    --tokenizer="$(TOKENIZER)" --output_csv=profile_memory_default.csv
 	@echo "Profiling peak memory usage (paged attention)…"
 	CUDA_VISIBLE_DEVICES=0 FMS_ATTENTION_ALGO=paged \
 	    $(VENV_DIR)/bin/python scripts/benchmark_profile_memory.py \
 	    --architecture=llama --variant=$(LLAMA_VARIANT) \
-	    --tokenizer="$(TOKENIZER)" --paged > profile_memory_paged.tsv
-	@echo "✔  Results written to profile_memory_default.tsv and profile_memory_paged.tsv"
+	    --tokenizer="$(TOKENIZER)" --paged --output_csv=profile_memory_paged.csv
+	@echo "✔  Results written to profile_memory_default.csv and profile_memory_paged.csv (and plots)"
 
 profile-throughput: deps $(TOKENIZER_FILE)
 	@echo "Profiling throughput (default attention)…"
