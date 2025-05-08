@@ -233,7 +233,7 @@ profile-memory: deps $(TOKENIZER_FILE)
 	CUDA_VISIBLE_DEVICES=0 FMS_ATTENTION_ALGO=paged \
 	    $(VENV_DIR)/bin/python scripts/benchmark_profile_memory.py \
 	    --architecture=llama --variant=$(LLAMA_VARIANT) \
-	    --tokenizer="$(TOKENIZER)" --paged --output_csv=profile_memory_paged.csv
+	    --tokenizer="$(TOKENIZER)" --paged --use-cache --output_csv=profile_memory_paged.csv
 	@echo "✔  Results written to profile_memory_default.csv and profile_memory_paged.csv (and plots)"
 
 profile-throughput: deps $(TOKENIZER_FILE)

@@ -22,6 +22,7 @@ parser.add_argument("--batch_size", type=int, default=2)
 parser.add_argument("--deterministic", action="store_true", help="Set seeds and torch.use_deterministic_algorithms? Requires env variable `CUBLAS_WORKSPACE_CONFIG=:4096:8`.")
 parser.add_argument("--unfuse_weights", action="store_true", help="Unfuse any fused weight modules that support the unfuse_weights method.")
 parser.add_argument("--paged", action="store_true", help="Enable paged attention via env var.")
+parser.add_argument("--use-cache", action="store_true", help="Enable paged attention via env var.")
 parser.add_argument("--output_csv", type=str, default=None, help="Path to output CSV file.")
 args = parser.parse_args()
 
@@ -51,6 +52,8 @@ if args.paged:
 else:
     os.environ.pop("FMS_ATTENTION_ALGO", None)
 
+use_cache = args.use_cache
+
 print("loading model")
 model = models.get_model(args.architecture, args.variant, device_type=args.device_type)
 if args.unfuse_weights:
@@ -79,7 +82,7 @@ with open(output_csv, "w", newline="") as csvfile:
         torch.cuda.reset_peak_memory_stats()
         try:
             with torch.no_grad():
-                _ = model.forward(ids, use_cache=True)
+                _ = model.forward(ids, use_cache=use_cache)
             peak_mem = torch.cuda.max_memory_allocated() / 1e9  # GB
             print(f"[OK] seq_len={seq_len} peak_memory_gb={peak_mem:.4f}")
         except RuntimeError as e:
