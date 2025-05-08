@@ -1,0 +1,6 @@
+seq_len,runtime_ms_with_cache,runtime_ms_without_cache
+128,214.883,211.028
+256,392.690,366.026
+512,800.475,768.230
+1024,OOM,1518.629
+2048,OOM,3133.939

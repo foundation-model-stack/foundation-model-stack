@@ -1,0 +1,6 @@
+seq_len,peak_memory_gb
+128,13.7868
+256,14.3698
+512,OOM
+1024,OOM
+2048,OOM
