@@ -149,7 +149,7 @@ class NtkRopeScaling(RopeScaling):
         return alpha
 
     def needs_scaling(self, max_seq_len: int, alpha: int, dev_idx: int):
-        max_seq_len = max(max_seq_len, self.max_seq_len * alpha)
+        max_seq_len = max(max_seq_len, self.rope.max_seq_len * alpha)
 
         return not (
             alpha in self.rope.cached_freqs[dev_idx]
@@ -158,7 +158,7 @@ class NtkRopeScaling(RopeScaling):
 
     def compute_scaled_freqs(self, device: str, max_seq_len: int, alpha: int):
         dim = self.rope.rotary_emb_self.dim
-        ratio = ratio * alpha ** (dim / (dim - 2))
+        ratio = self.rope.ratio * alpha ** (dim / (dim - 2))
 
         freqs = 1.0 / (
             ratio
