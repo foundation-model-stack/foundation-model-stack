@@ -142,37 +142,23 @@ print(f"Wrote results to {output_csv}")
 # Plotting
 try:
     import matplotlib.pyplot as plt
-    import pandas as pd
-    def plot_both_curves(this_csv, is_paged):
-        # Try to find the other csv
-        base = 'paged' if is_paged else 'default'
-        other = 'default' if is_paged else 'paged'
-        this_label = f"paged={is_paged}"
-        other_csv = this_csv.replace(base, other)
-        plt.figure(figsize=(8,5))
-        # Plot this run
-        xs = [s for s, ms in results if ms is not None]
-        ys = [ms for s, ms in results if ms is not None]
-        plt.plot(xs, ys, marker='o', label=this_label)
-        # Try to plot the other run if it exists
-        if os.path.exists(other_csv):
-            df = pd.read_csv(other_csv)
-            xs2 = df['seq_len'].values
-            ys2 = [float(x) if x != 'OOM' else None for x in df['runtime_ms_with_cache']]
-            xs2 = [x for x, y in zip(xs2, ys2) if y is not None]
-            ys2 = [y for y in ys2 if y is not None]
-            plt.plot(xs2, ys2, marker='o', label=f"paged={'default' in other_csv}")
-        else:
-            print(f"[INFO] {other_csv} not found. Only plotting this run.")
-        plt.xlabel("Sequence Length")
-        plt.ylabel("Runtime (ms)")
-        plt.title("Attention Runtime vs Sequence Length")
-        plt.xscale("log", base=2)
-        plt.yscale("log")
-        plt.grid(True, which="both", ls="--", lw=0.5)
-        plt.legend()
-        plt.tight_layout()
-        plt.show()
-    plot_both_curves(output_csv, args.paged)
+    xs = [s for s, ms_with, ms_without in results if ms_with is not None and ms_without is not None]
+    ys_with = [ms_with for s, ms_with, ms_without in results if ms_with is not None and ms_without is not None]
+    ys_without = [ms_without for s, ms_with, ms_without in results if ms_with is not None and ms_without is not None]
+    plt.figure(figsize=(8,5))
+    plt.plot(xs, ys_with, marker='o', color='blue', label="With KV Cache (use_cache=True)")
+    plt.plot(xs, ys_without, marker='o', color='red', label="Without KV Cache (use_cache=False)")
+    plt.xlabel("Sequence Length")
+    plt.ylabel("Runtime (ms)")
+    plt.title("Attention Runtime vs Sequence Length (With/Without KV Cache)")
+    plt.xscale("log", base=2)
+    plt.yscale("log")
+    plt.grid(True, which="both", ls="--", lw=0.5)
+    plt.legend()
+    plt.tight_layout()
+    plot_path = output_csv.replace('.csv', '_plot.png')
+    plt.savefig(plot_path)
+    print(f"[PLOT] Saved plot to {plot_path}")
+    plt.show()
 except ImportError:
-    print(f"[INFO] matplotlib or pandas not installed. Plot manually from {output_csv}")
+    print(f"[INFO] matplotlib not installed. Plot manually from {output_csv}")
