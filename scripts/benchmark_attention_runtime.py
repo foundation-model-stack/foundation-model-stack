@@ -43,7 +43,7 @@ print(f"# Attention Runtime Benchmark (paged={args.paged})")
 print("# seq_len\truntime_ms")
 
 for seq_len in SEQUENCE_LENGTHS:
-    input_ids = torch.randint(tokenizer.vocab_size(), (BATCH_SIZE, seq_len), device=device, dtype=torch.long)
+    input_ids = torch.randint(0, tokenizer.vocab_size(), (BATCH_SIZE, seq_len), device=device, dtype=torch.long)
     input_ids.requires_grad = False
     # Forward pass timing only
     torch.cuda.empty_cache()
