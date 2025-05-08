@@ -6,6 +6,7 @@ from typing import Any, Mapping, Optional, Tuple
 
 import torch
 import torch.nn as nn
+import numpy as np
 
 from fms import models
 from fms.distributed.strategy import DistributedStrategy, NoOpStrategy
