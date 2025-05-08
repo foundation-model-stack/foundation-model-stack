@@ -298,19 +298,33 @@ def generate(
         # prefill
         if i == 0:
             kwargs["mask"] = kwargs["mask"].unsqueeze(1)
+            
+            outputs_list = []
+            current_kv_cache = kwargs["past_key_value_states"]
+            for seq_i in range(input_ids.size(0)):
+                input_ids_i = input_ids[seq_i].unsqueeze(0)
+                slot_mapping_i = kwargs["slot_mapping"][seq_i].unsqueeze(0)
+                position_ids_i = kwargs["position_ids"][seq_i].unsqueeze(0)
+                mask_i = kwargs["mask"][seq_i].unsqueeze(0)
 
-            # batch dynamic
-            torch._dynamo.mark_static(input_ids, 0)
-            torch._dynamo.mark_static(kwargs["slot_mapping"], 0)
-            torch._dynamo.mark_static(kwargs["position_ids"], 0)
-            torch._dynamo.mark_static(kwargs["mask"], 0)
+                # batch dynamic
+                torch._dynamo.mark_static(input_ids, 0)
+                torch._dynamo.mark_static(kwargs["slot_mapping"], 0)
+                torch._dynamo.mark_static(kwargs["position_ids"], 0)
+                torch._dynamo.mark_static(kwargs["mask"], 0)
 
-            # seq dynamic
-            torch._dynamo.mark_dynamic(input_ids, 1)
-            torch._dynamo.mark_dynamic(kwargs["slot_mapping"], 1)
-            torch._dynamo.mark_dynamic(kwargs["position_ids"], 1)
-            torch._dynamo.mark_dynamic(kwargs["mask"], 2)
-            torch._dynamo.mark_dynamic(kwargs["mask"], 3)
+                # seq dynamic
+                torch._dynamo.mark_dynamic(input_ids, 1)
+                torch._dynamo.mark_dynamic(kwargs["slot_mapping"], 1)
+                torch._dynamo.mark_dynamic(kwargs["position_ids"], 1)
+                torch._dynamo.mark_dynamic(kwargs["mask"], 2)
+                torch._dynamo.mark_dynamic(kwargs["mask"], 3)
+
+                output, current_kv_cache = model(input_ids_i, slot_mapping=slot_mapping_i, position_ids=position_ids_i, mask=mask_i, past_key_value_states=current_kv_cache, use_cache=kwargs["use_cache"])
+                
+                outputs_list.append(output[0].squeeze(0))
+            
+            output = (torch.stack(outputs_list), current_kv_cache)
 
         # decode
         else:
@@ -330,7 +344,7 @@ def generate(
             torch._dynamo.mark_static(kwargs["slot_mapping"], 1)  # always 1
             torch._dynamo.mark_static(kwargs["position_ids"], 1)  # always 1
 
-        output = model(input_ids, **kwargs)
+            output = model(input_ids, **kwargs)
         if use_cache:
             logits, past_key_value_states = output
             # TODO: this should go away when reduce-overhead issues are fixed, or
