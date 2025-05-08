@@ -113,55 +113,26 @@ def run_sequence_parallel_benchmark():
     print(f"[Rank {rank}] Max memory allocated: {torch.cuda.max_memory_allocated(device) / 1e9:.2f} GB")
     print(f"[Rank {rank}] Device mesh: {strategy.device_mesh}")
 
-    print("PASSED BASELINE SEQUENCE PARALLELISM CASES")
+    print("Passed baseline sequence parallelism cases")
 
-    print("STARTING BATCH SIZE 256 CASE")
-    x = torch.randint(0, config.src_vocab_size, (2, 256), device=device)
-    torch.cuda.reset_peak_memory_stats(device)
-    torch.cuda.synchronize()
-    start = time.time()
-    with torch.no_grad():
-        out = model(x)
-    torch.cuda.synchronize()
-    end = time.time()
+    seq_lengths = [256, 512, 1024]
+    for seq_len in seq_lengths:
+        print(f"Starting sequence length {seq_len} test")
+        x = torch.randint(0, config.src_vocab_size, (2, seq_len), device=device)
+        torch.cuda.reset_peak_memory_stats(device)
+        torch.cuda.synchronize()
+        start = time.time()
+        with torch.no_grad():
+            out = model(x)
+        torch.cuda.synchronize()
+        end = time.time()
 
-    print(f"[Rank {rank}] Forward pass time: {end - start:.2f} sec")
-    print(f"[Rank {rank}] Max memory allocated: {torch.cuda.max_memory_allocated(device) / 1e9:.2f} GB")
-    latency.append(end - start)
-    memory_allocated.append(torch.cuda.max_memory_allocated(device) / 1e9)
-    memory_reserved.append(torch.cuda.max_memory_reserved(device) / 1e9)
-
-    print("STARTING BATCH SIZE 512 CASE")
-    x = torch.randint(0, config.src_vocab_size, (2, 512), device=device)
-    torch.cuda.reset_peak_memory_stats(device)
-    torch.cuda.synchronize()
-    start = time.time()
-    with torch.no_grad():
-        out = model(x)
-    torch.cuda.synchronize()
-    end = time.time()
-
-    print(f"[Rank {rank}] Forward pass time: {end - start:.2f} sec")
-    print(f"[Rank {rank}] Max memory allocated: {torch.cuda.max_memory_allocated(device) / 1e9:.2f} GB")
-    latency.append(end - start)
-    memory_allocated.append(torch.cuda.max_memory_allocated(device) / 1e9)
-    memory_reserved.append(torch.cuda.max_memory_reserved(device) / 1e9)
-
-    print("STARTING BATCH SIZE 1024 CASE")
-    x = torch.randint(0, config.src_vocab_size, (2, 1024), device=device)
-    torch.cuda.reset_peak_memory_stats(device)
-    torch.cuda.synchronize()
-    start = time.time()
-    with torch.no_grad():
-        out = model(x)
-    torch.cuda.synchronize()
-    end = time.time()
-
-    print(f"[Rank {rank}] Forward pass time: {end - start:.2f} sec")
-    print(f"[Rank {rank}] Max memory allocated: {torch.cuda.max_memory_allocated(device) / 1e9:.2f} GB")
-    latency.append(end - start)
-    memory_allocated.append(torch.cuda.max_memory_allocated(device) / 1e9)
-    memory_reserved.append(torch.cuda.max_memory_reserved(device) / 1e9)
+        print(f"[Rank {rank}] Forward pass time: {end - start:.2f} sec")
+        print(f"[Rank {rank}] Max memory allocated: {torch.cuda.max_memory_allocated(device) / 1e9:.2f} GB")
+        print(f"[Rank {rank}] Max memory reserved: {torch.cuda.max_memory_reserved(device) / 1e9:.2f} GB")
+        latency.append(end - start)
+        memory_allocated.append(torch.cuda.max_memory_allocated(device) / 1e9)
+        memory_reserved.append(torch.cuda.max_memory_reserved(device) / 1e9)
 
     dist.destroy_process_group()
 
@@ -194,53 +165,25 @@ def run_tensor_parallel_benchmark():
     model.eval()
     print(f"[Rank {rank}] Model created.")
 
-    print("STARTING BATCH SIZE 256 CASE")
-    x = torch.randint(0, config.src_vocab_size, (2, 256), device=device)
-    torch.cuda.reset_peak_memory_stats(device)
-    torch.cuda.synchronize()
-    start = time.time()
-    with torch.no_grad():
-        out = model(x)
-    torch.cuda.synchronize()
-    end = time.time()
+    ## check across varying sequence lengths to compare against TP-only impl
+    seq_lengths = [256, 512, 1024]
+    for seq_len in seq_lengths:
+        print(f"Starting sequence length {seq_len} test")
+        x = torch.randint(0, config.src_vocab_size, (2, seq_len), device=device)
+        torch.cuda.reset_peak_memory_stats(device)
+        torch.cuda.synchronize()
+        start = time.time()
+        with torch.no_grad():
+            out = model(x)
+        torch.cuda.synchronize()
+        end = time.time()
 
-    print(f"[Rank {rank}] Forward pass time: {end - start:.2f} sec")
-    print(f"[Rank {rank}] Max memory allocated: {torch.cuda.max_memory_allocated(device) / 1e9:.2f} GB")
-    latency.append(end - start)
-    memory_allocated.append(torch.cuda.max_memory_allocated(device) / 1e9)
-    memory_reserved.append(torch.cuda.max_memory_reserved(device) / 1e9)
-
-    print("STARTING BATCH SIZE 512 CASE")
-    x = torch.randint(0, config.src_vocab_size, (2, 512), device=device)
-    torch.cuda.reset_peak_memory_stats(device)
-    torch.cuda.synchronize()
-    start = time.time()
-    with torch.no_grad():
-        out = model(x)
-    torch.cuda.synchronize()
-    end = time.time()
-
-    print(f"[Rank {rank}] Forward pass time: {end - start:.2f} sec")
-    print(f"[Rank {rank}] Max memory allocated: {torch.cuda.max_memory_allocated(device) / 1e9:.2f} GB")
-    latency.append(end - start)
-    memory_allocated.append(torch.cuda.max_memory_allocated(device) / 1e9)
-    memory_reserved.append(torch.cuda.max_memory_reserved(device) / 1e9)
-
-    print("STARTING BATCH SIZE 1024 CASE")
-    x = torch.randint(0, config.src_vocab_size, (2, 1024), device=device)
-    torch.cuda.reset_peak_memory_stats(device)
-    torch.cuda.synchronize()
-    start = time.time()
-    with torch.no_grad():
-        out = model(x)
-    torch.cuda.synchronize()
-    end = time.time()
-
-    print(f"[Rank {rank}] Forward pass time: {end - start:.2f} sec")
-    print(f"[Rank {rank}] Max memory allocated: {torch.cuda.max_memory_allocated(device) / 1e9:.2f} GB")
-    latency.append(end - start)
-    memory_allocated.append(torch.cuda.max_memory_allocated(device) / 1e9)
-    memory_reserved.append(torch.cuda.max_memory_reserved(device) / 1e9)
+        print(f"[Rank {rank}] Forward pass time: {end - start:.2f} sec")
+        print(f"[Rank {rank}] Max memory allocated: {torch.cuda.max_memory_allocated(device) / 1e9:.2f} GB")
+        print(f"[Rank {rank}] Max memory reserved: {torch.cuda.max_memory_reserved(device) / 1e9:.2f} GB")
+        latency.append(end - start)
+        memory_allocated.append(torch.cuda.max_memory_allocated(device) / 1e9)
+        memory_reserved.append(torch.cuda.max_memory_reserved(device) / 1e9)
 
     dist.destroy_process_group()
 
