@@ -1,3 +1,4 @@
+from collections import defaultdict
 import copy
 import math
 from typing import MutableMapping, Optional, Tuple
@@ -99,25 +100,28 @@ class Alibi(PositionEncoder):
         return attn_mask
 
 
-class RopeScaling:
-    def __init__(self, rope):
-        self.rope = rope
+class RopeNoScalingImpl:
+    def __init__(
+        self,
+        dim: int,
+        ratio: float = 10_000.0,
+        orig_max_seq_len: int = 2048,
+        scaling_info: dict = defaultdict(),
+    ):
+        self.dim = dim
+        self.ratio = ratio
+        self.orig_max_seq_len = orig_max_seq_len
+        self.scaling_info = scaling_info
 
-    def get_alpha(self, seq_len: int) -> int:
+    def get_alpha(self, current_max_seq_len: int) -> int:
         return 1
 
-    def needs_scaling(self, max_seq_len: int, alpha: int, dev_idx: int):
-        return not (
-            self.rope.max_seq_len_cached[dev_idx] > 0
-            or (
-                alpha in self.rope.cached_freqs[dev_idx]
-                and max_seq_len <= self.rope.max_seq_len_cached[dev_idx]
-            )
-        )
+    def scaled_max_seq_len(self, current_max_seq_len: int, alpha: int):
+        return current_max_seq_len
 
-    def compute_scaled_freqs(self, device: str, max_seq_len: int, alpha: int):
-        ratio = self.rope.ratio
-        dim = self.rope.dim
+    def compute_scaled_freqs(self, device: str, alpha: int):
+        ratio = self.ratio
+        dim = self.dim
 
         freqs = 1.0 / (
             ratio
@@ -126,7 +130,7 @@ class RopeScaling:
         return freqs
 
 
-class NtkRopeScaling(RopeScaling):
+class RopeNtkScalingImpl(RopeNoScalingImpl):
     # NTK scaling.
     # https://arxiv.org/abs/2306.15595
     # https://www.reddit.com/r/LocalLLaMA/comments/14lz7j5/ntkaware_scaled_rope_allows_llama_models_to_have/
@@ -137,8 +141,8 @@ class NtkRopeScaling(RopeScaling):
     # `2**i` where i is the ratio of actual vs initial max seq len. (i.e. 2,
     # 4, 8, ... as needed)
 
-    def get_alpha(self, seq_len: int):
-        alpha = seq_len / self.rope.max_seq_len
+    def get_alpha(self, current_max_seq_len: int) -> int:
+        alpha = current_max_seq_len / self.orig_max_seq_len
         alpha = math.ceil(alpha)
         # for some reason math.log2 didn't `torch.compile` but
         # `math.log` does
@@ -148,17 +152,12 @@ class NtkRopeScaling(RopeScaling):
         alpha = int(alpha)
         return alpha
 
-    def needs_scaling(self, max_seq_len: int, alpha: int, dev_idx: int):
-        max_seq_len = max(max_seq_len, self.rope.max_seq_len * alpha)
+    def scaled_max_seq_len(self, current_max_seq_len: int, alpha: int):
+        return max(current_max_seq_len, self.orig_max_seq_len * alpha)
 
-        return not (
-            alpha in self.rope.cached_freqs[dev_idx]
-            and max_seq_len <= self.rope.max_seq_len_cached[dev_idx]
-        )
-
-    def compute_scaled_freqs(self, device: str, max_seq_len: int, alpha: int):
-        dim = self.rope.rotary_emb_self.dim
-        ratio = self.rope.ratio * alpha ** (dim / (dim - 2))
+    def compute_scaled_freqs(self, device: str, alpha: int):
+        dim = self.dim
+        ratio = self.ratio * alpha ** (dim / (dim - 2))
 
         freqs = 1.0 / (
             ratio
@@ -167,14 +166,14 @@ class NtkRopeScaling(RopeScaling):
         return freqs
 
 
-class Llama3RopeScaling(RopeScaling):
-    def compute_scaled_freqs(self, device: str, max_seq_len: int, alpha: int):
-        freqs = super().compute_scaled_freqs(device, max_seq_len, alpha)
+class RopeLlama3ScalingImpl(RopeNoScalingImpl):
+    def compute_scaled_freqs(self, device: str, alpha: int):
+        freqs = super().compute_scaled_freqs(device, alpha)
 
-        factor = self.rope.scaling["factor"]
-        low_freq_factor = self.rope.scaling["low_freq_factor"]
-        high_freq_factor = self.rope.scaling["high_freq_factor"]
-        old_context_len = self.rope.scaling["original_max_position_embeddings"]
+        factor = self.scaling_info["factor"]
+        low_freq_factor = self.scaling_info["low_freq_factor"]
+        high_freq_factor = self.scaling_info["high_freq_factor"]
+        old_context_len = self.scaling_info["original_max_position_embeddings"]
 
         low_freq_wavelen = old_context_len / low_freq_factor
         high_freq_wavelen = old_context_len / high_freq_factor
@@ -196,9 +195,9 @@ class Llama3RopeScaling(RopeScaling):
 
 
 _rope_scale_mapping = {
-    "llama3": Llama3RopeScaling,
-    "ntk": NtkRopeScaling,
-    "regular": RopeScaling,
+    "llama3": RopeLlama3ScalingImpl,
+    "ntk": RopeNtkScalingImpl,
+    "regular": RopeNoScalingImpl,
 }
 
 
@@ -207,7 +206,7 @@ class RotaryEmbedding(PositionEncoder):
         self,
         dim: int,
         ratio: float = 10_000.0,
-        max_seq_len=2048,
+        max_seq_len: int = 2048,
         partial_rope=1.0,
         scaling={},
     ):
@@ -234,14 +233,14 @@ class RotaryEmbedding(PositionEncoder):
         super(RotaryEmbedding, self).__init__()
         self.partial_rope = partial_rope
         self.dim = int(partial_rope * dim)
-        self.ratio = ratio
-        self.scaling = copy.deepcopy(scaling)
-        if "rope_type" not in self.scaling:
-            self.scaling["rope_type"] = "regular"
-        self.rope_scaling = _rope_scale_mapping[self.scaling["rope_type"]](self)
+        own_scaling = copy.deepcopy(scaling)
+        if "rope_type" not in own_scaling:
+            own_scaling["rope_type"] = "regular"
+        self.rope_scaling: RopeNoScalingImpl = _rope_scale_mapping[
+            own_scaling["rope_type"]
+        ](self.dim, ratio, max_seq_len, own_scaling)
         self.cached_freqs: MutableMapping[int, MutableMapping[int, torch.Tensor]] = {}
         self.max_seq_len_cached: MutableMapping[int, int] = {}
-        self.max_seq_len = max_seq_len
 
     def compute_freqs_cis(self, device, max_seq_len=2048):
         alpha = self.rope_scaling.get_alpha(max_seq_len)
@@ -252,20 +251,27 @@ class RotaryEmbedding(PositionEncoder):
         if dev_idx not in self.max_seq_len_cached:
             self.max_seq_len_cached[dev_idx] = 0
 
-        if self.rope_scaling.needs_scaling(max_seq_len, alpha, dev_idx):
-            freqs = self.rope_scaling.compute_scaled_freqs(device, max_seq_len, alpha)
-            t = torch.arange(max_seq_len, device=device, dtype=freqs.dtype)
-            freqs = torch.outer(t, freqs).float()
-            self.max_seq_len_cached[dev_idx] = max_seq_len
-            self.cached_freqs[dev_idx][alpha] = torch.stack(
-                [
-                    torch.cos(freqs),
-                    -torch.sin(freqs),
-                    torch.sin(freqs),
-                    torch.cos(freqs),
-                ],
-                dim=2,
-            ).view(*freqs.size(), 2, 2)
+        if alpha not in self.cached_freqs[dev_idx]:
+            # This avoids a graph break from computing scaled_max_seq_len if not needed
+            scaled_max_seq_len = self.rope_scaling.scaled_max_seq_len(
+                max_seq_len, alpha
+            )
+            if scaled_max_seq_len > self.max_seq_len_cached[dev_idx]:
+                # This only runs if a particular combination of alpha
+                # and max_seq_len hasn't been seen before
+                freqs = self.rope_scaling.compute_scaled_freqs(device, alpha)
+                t = torch.arange(scaled_max_seq_len, device=device, dtype=freqs.dtype)
+                freqs = torch.outer(t, freqs).float()
+                self.max_seq_len_cached[dev_idx] = scaled_max_seq_len
+                self.cached_freqs[dev_idx][alpha] = torch.stack(
+                    [
+                        torch.cos(freqs),
+                        -torch.sin(freqs),
+                        torch.sin(freqs),
+                        torch.cos(freqs),
+                    ],
+                    dim=2,
+                ).view(*freqs.size(), 2, 2)
 
         return alpha
 
