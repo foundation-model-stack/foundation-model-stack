@@ -194,6 +194,8 @@ REPORT_PDF := $(REPORT_DIR)/report.pdf
 report: $(REPORT_PDF)
 
 $(REPORT_PDF): $(REPORT_TEX)
+	cp ../profile_memory_default_plot.png final_project/profile_memory_default_plot.png || cp profile_memory_default_plot.png final_project/profile_memory_default_plot.png || true
+	cp ../profile_memory_paged_plot.png final_project/profile_memory_paged_plot.png || cp profile_memory_paged_plot.png final_project/profile_memory_paged_plot.png || true
 ifeq ($(shell command -v latexmk 2>/dev/null),)
 	@echo "latexmk not found – falling back to pdflatex (running twice)…"
 	cd $(REPORT_DIR) && pdflatex -interaction=nonstopmode $(notdir $(REPORT_TEX)) >/dev/null
@@ -236,15 +238,15 @@ profile-memory: deps $(TOKENIZER_FILE)
 	    --tokenizer="$(TOKENIZER)" --paged --use-cache --output_csv=profile_memory_paged.csv
 	@echo "✔  Results written to profile_memory_default.csv and profile_memory_paged.csv (and plots)"
 
-profile-throughput: deps $(TOKENIZER_FILE)
-	@echo "Profiling throughput (default attention)…"
-	CUDA_VISIBLE_DEVICES=0 $(VENV_DIR)/bin/python scripts/benchmark_profile_throughput.py \
-	    --architecture=llama --variant=$(LLAMA_VARIANT) \
-	    --tokenizer="$(TOKENIZER)" > profile_throughput_default.tsv
-	@echo "Profiling throughput (paged attention)…"
-	CUDA_VISIBLE_DEVICES=0 FMS_ATTENTION_ALGO=paged \
-	    $(VENV_DIR)/bin/python scripts/benchmark_profile_throughput.py \
-	    --architecture=llama --variant=$(LLAMA_VARIANT) \
-	    --tokenizer="$(TOKENIZER)" --paged > profile_throughput_paged.tsv
-	@echo "✔  Results written to profile_throughput_default.tsv and profile_throughput_paged.tsv"
+# profile-throughput: deps $(TOKENIZER_FILE)
+# 	@echo "Profiling throughput (default attention)…"
+# 	CUDA_VISIBLE_DEVICES=0 $(VENV_DIR)/bin/python scripts/benchmark_profile_throughput.py \
+# 	    --architecture=llama --variant=$(LLAMA_VARIANT) \
+# 	    --tokenizer="$(TOKENIZER)" > profile_throughput_default.tsv
+# 	@echo "Profiling throughput (paged attention)…"
+# 	CUDA_VISIBLE_DEVICES=0 FMS_ATTENTION_ALGO=paged \
+# 	    $(VENV_DIR)/bin/python scripts/benchmark_profile_throughput.py \
+# 	    --architecture=llama --variant=$(LLAMA_VARIANT) \
+# 	    --tokenizer="$(TOKENIZER)" --paged > profile_throughput_paged.tsv
+# 	@echo "✔  Results written to profile_throughput_default.tsv and profile_throughput_paged.tsv"
 
