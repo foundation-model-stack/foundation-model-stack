@@ -54,11 +54,6 @@ class LayerNormParameterized(nn.Module):
             self.bias.data.zero_()
 
     def forward(self, x):
-        print(f"[LN-DBG] Input: {x.shape}, type = {'DTensor' if hasattr(x, '_spec') else 'Tensor'}")
-        if hasattr(x, '_spec'):
-            print(f"[LN-DBG] --> x._spec: placements = {x._spec.placements}, mesh = {x._spec.mesh}")
-            print(f"[LN-DBG] --> x.to_local().shape = {x.to_local().shape}")
-
         if self.use_mean:
             x = x - x.mean(-1, keepdim=True)
 

@@ -130,25 +130,10 @@ class LLaMABlock(nn.Module):
         #     self_attn_past_key_value = None
 
         # first we do MHA and Add&Norm
-        print(f"[LLAMA_DBG] Initial x shape: {x.shape}")
 
         residual = x
 
-        if hasattr(residual, '_spec'):
-            layout = residual._spec
-            print(f"[LLAMA_DBG] x is DTensor: local shape = {x.to_local().shape}, placements = {x._spec.placements}, mesh = {x._spec.mesh}")
-        else:
-            print(f"[LLAMA_DBG] x is a regular tensor")
-
         x = self.ln(x)
-
-        print(f"[LLAMA_DBG] After ln shape: {x.shape}")
-
-        if hasattr(x, '_spec'):
-            layout = x._spec
-            print(f"[LLAMA_DBG] x is DTensor: local shape = {x.to_local().shape}, placements = {x._spec.placements}, mesh = {x._spec.mesh}")
-        else:
-            print(f"[LLAMA_DBG] x after ln is a regular tensor")
 
         x = self.attn(
             x,
@@ -165,17 +150,6 @@ class LLaMABlock(nn.Module):
             x, cache = x
         if self.config.p_dropout != 0:
             x = self.dropout(x)
-        # residual connection
-        print(f"\n[LLAMA_DBG] x size: {x.size()}, type: {type(x)}")
-        print(f"\n[LLAMA_DBG] residual size: {residual.size()}, type: {type(residual)}")
-
-        if hasattr(x, '_spec'):
-            layout = x._spec
-            print(f"\n[LLAMA_DBG] x is DTensor: local shape = {x.to_local().shape}, placements = {x._spec.placements}, mesh = {x._spec.mesh}")
-        
-        if hasattr(residual, '_spec'):
-            layout = residual._spec
-            print(f"\n[LLAMA_DBG] residual is DTensor: local shape = {x.to_local().shape}, placements = {x._spec.placements}, mesh = {x._spec.mesh}")
 
         x = x + residual
 
@@ -228,7 +202,6 @@ class LLaMA(nn.Module):
             not isinstance(self.distributed_strategy, TensorParallelStrategy)
             or not self.config.tie_heads
         ):
-            print("[LLAMA_DBG] Calling Distribute module:")
             self.shared = self.distributed_strategy.distribute_module(shared, final_layers=False, model='llama')
         else:
             logger.warning(
@@ -396,13 +369,7 @@ class LLaMA(nn.Module):
         else:
             is_causal_mask = False
 
-        print(f"[LLM] Before embedding (shared): {x_in.shape}")
         x_in = self.shared(x_in)
-        print(f"[LLM] After embedding (shared): {x_in.shape}")
-        if hasattr(x_in, "_spec"):
-            print(f"[LLM] x_in layout: {x_in._spec.placements}, mesh: {x_in._spec.mesh}")
-        else:
-            print("[LLM] x_in is not a DTensor")
 
         # this is the output cache for all the decoder layers
         present_key_value_states = []

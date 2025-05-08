@@ -201,8 +201,6 @@ def generate_layer_plan(block: nn.Module, use_sequence_parallelism: bool = False
                     else:
                         tp_plan[name] = RowwiseParallel()
                     break
-        else:
-            print(f"[TP] Unmatched Layer: {name}")
 
     print()
     return tp_plan
@@ -234,11 +232,9 @@ class TensorParallelStrategy(DistributedStrategy):
                 return parallelize_module(module, self.device_mesh, tp_plan)
             else:
                 if (self.use_sequence_parallelism):
-                    print(f"\n[EDBG] Applying output sharding")
                     tp_plan = {
                         "shared.emb": RowwiseParallel(input_layouts=Replicate(), output_layouts=Shard(1)),
                     }
-                    print(f"\n[EDBG] Applied")
                 else:
                     tp_plan = {
                         "shared.emb": RowwiseParallel(input_layouts=Replicate()),
@@ -270,14 +266,5 @@ class TensorParallelStrategy(DistributedStrategy):
             device_mesh=self.device_mesh,
             parallelize_plan=layer_tp_plan
         )
-
-        print(f"\n[Rank {dist.get_rank()}] Test Plan:")
-        module_names = dict(block.named_modules())
-
-        for name, strategy in layer_tp_plan.items():
-            if name in module_names:
-                print(f"[Rank {dist.get_rank()}] {name}: {strategy.__class__.__name__}")
-            else:
-                print(f"[Rank {dist.get_rank()}] {name}: {strategy.__class__.__name__} (NOT FOUND)")
         
         return block

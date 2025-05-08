@@ -19,16 +19,34 @@ from torch.distributed.tensor.parallel import (
 import torch.distributed._functional_collectives as collectives
 from torch.distributed._functional_collectives import all_gather_tensor as _real_all_gather_tensor
 
-# Hook to trace if all_gather is triggered
-# def debug_all_gather_tensor(tensor, gather_dim: int = 0, group=None):
-#     import traceback
-#     print(f"\n[DEBUG] all_gather_tensor called on rank {dist.get_rank()}")
-#     print(f"        tensor shape: {tensor.shape}, gather_dim: {gather_dim}, group type: {type(group)}")
-#     print("        Call stack:")
-#     print("".join(traceback.format_stack(limit=4)))
-#     return _real_all_gather_tensor(tensor, gather_dim=gather_dim, group=group)
+# Hook to trace when collectives are triggered
+def debug_all_gather_tensor(tensor, gather_dim: int = 0, group=None):
+    import traceback
+    print(f"\n[DEBUG] all_gather_tensor called on rank {dist.get_rank()}")
+    print(f"        tensor shape: {tensor.shape}, gather_dim: {gather_dim}, group type: {type(group)}")
+    print("        Call stack:")
+    print("".join(traceback.format_stack(limit=4)))
+    return _real_all_gather_tensor(tensor, gather_dim=gather_dim, group=group)
 
-# collectives.all_gather_tensor = debug_all_gather_tensor
+
+_real_reduce_scatter_tensor = collectives.reduce_scatter_tensor
+def debug_reduce_scatter_tensor(*args, **kwargs):
+    import traceback
+    tensor = args[0] if len(args) > 0 else kwargs.get("tensor", None)
+    scatter_dim = kwargs.get("scatter_dim", None)
+    group = kwargs.get("group", None)
+
+    print(f"\n[DEBUG] reduce_scatter_tensor called on rank {dist.get_rank()}")
+    print(f"        tensor shape: {tensor.shape if tensor is not None else 'Unknown'}")
+    print(f"        scatter_dim: {scatter_dim}, group type: {type(group)}")
+    print("        Call stack:")
+    print("".join(traceback.format_stack(limit=4)))
+
+    return _real_reduce_scatter_tensor(*args, **kwargs)
+
+collectives.all_gather_tensor = debug_all_gather_tensor
+collectives.reduce_scatter_tensor = debug_reduce_scatter_tensor
+
 
 def setup_distributed(world_size=1, rank=0):
     world_size = int(os.environ.get("WORLD_SIZE", world_size))

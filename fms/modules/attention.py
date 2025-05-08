@@ -370,10 +370,6 @@ class MultiHeadAttention(nn.Module):
         # b x h x kvlen x ds
         # todo: Cross attention (This always is true for now)
         if is_self or past_key_value_state is None:
-            print(f"[ATTN_DBG] Before in_proj - q shape: {q.shape}, is DTensor: {hasattr(q, '_spec')}")
-            if hasattr(q, "_spec"):
-                print(f"[ATTN_DBG] in_proj input layout: {q._spec.placements}, mesh: {q._spec.mesh}")
-
             q_out, k_out, v_out = self.in_proj(q, k, v)
 
             # note: transposes will be moved in a later PR to fix dis-contiguous tensor issues
@@ -467,15 +463,8 @@ class MultiHeadAttention(nn.Module):
             .contiguous()
             .view(batch_size, q_len, self.nheads * self.emb_v_per_head)
         )
-        print(f"[ATTN_DBG] Before dense - attn shape: {attn.shape}, is DTensor: {hasattr(attn, '_spec')}")
-        if hasattr(attn, "_spec"):
-            print(f"[ATTN_DBG] dense input layout: {attn._spec.placements}, mesh: {attn._spec.mesh}")
 
         out = self.dense(attn)
-
-        print(f"[ATTN_DBG] After dense - out shape: {out.shape}, is DTensor: {hasattr(out, '_spec')}")
-        if hasattr(out, "_spec"):
-            print(f"[ATTN_DBG] out layout: {out._spec.placements}, mesh: {out._spec.mesh}")
 
         # if use_cache=True, we return the hidden_state as well as the kv cache
         if use_cache:
