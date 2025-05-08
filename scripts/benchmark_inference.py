@@ -8,6 +8,7 @@ import threading
 
 import numpy as np
 import torch
+import wandb
 from torch import distributed as dist
 from torch._dynamo import OptimizedModule
 
@@ -157,6 +158,25 @@ parser.add_argument(
 
 args = parser.parse_args()
 
+# ────────────────────────────────────────────────────────────
+# Initialize Weights & Biases run so every benchmark is logged
+# ────────────────────────────────────────────────────────────
+attention_algo = os.getenv("FMS_ATTENTION_ALGO", "default")
+wandb_run = wandb.init(
+    project="hpml-final-project",
+    entity="nsd2147-columbia-university",
+    name=f"{args.architecture}-{args.variant}-{attention_algo}-seq{args.seq_len}",
+    tags=[attention_algo, f"seq_{args.seq_len}", "t4-sweep"],
+    config={
+        "architecture": args.architecture,
+        "variant": args.variant,
+        "attention": attention_algo,
+        "seq_len": args.seq_len,
+        "batch_size": args.batch_size,
+        "device": torch.cuda.get_device_name(0) if torch.cuda.is_available() else "cpu",
+    },
+)
+
 local_rank = int(os.getenv("LOCAL_RANK", 0))
 world_size = int(os.getenv("WORLD_SIZE", 1))
 if args.device_type == "cuda":
@@ -280,16 +300,21 @@ def end_to_end(model, use_cache, expected=None):
     return result
 
 
-e2e_expected_cache = end_to_end(model, True)
-e2e_expected_nocache = end_to_end(model, True)
+if args.skip_e2e_runs:
+    e2e_expected_cache = None
+    e2e_expected_nocache = None
+else:
+    e2e_expected_cache = end_to_end(model, True)
+    e2e_expected_nocache = end_to_end(model, True)
 
 
-def log_result(result):
+def log_result(result, metric_name="ms_per_token"):
     if local_rank == 0:
         median = statistics.median(result)
         per_token = median / MAX_NEW_TOKENS
         ms = per_token * 1000
         print(f"\t{ms:0.2f} ms per token")
+        wandb.log({metric_name: ms})
 
 
 def bench_one(use_cache):
@@ -297,7 +322,8 @@ def bench_one(use_cache):
     log_result(
         timeit.repeat(
             lambda: one_token(model, use_cache), number=MAX_NEW_TOKENS, repeat=repeat
-        )
+        ),
+        metric_name=f"single_token_use_cache_{use_cache}"
     )
 
 
@@ -306,7 +332,7 @@ def bench_end_to_end(use_cache, expected):
     result = timeit.repeat(
         lambda: end_to_end(model, use_cache, expected), number=1, repeat=repeat
     )
-    log_result(result)
+    log_result(result, metric_name=f"e2e_use_cache_{use_cache}")
 
 
 print0(
@@ -398,6 +424,7 @@ def profile_memory(model, tokenizer, device, batch_size, seq_len):
     peak_mem = torch.cuda.max_memory_allocated() / 1e9  # GB
     # Print the result in a clear, parseable format for downstream analysis or logging.
     print(f"Peak memory usage (GB): {peak_mem:.4f}")
+    wandb.log({"peak_memory_GB": peak_mem})
 
 # After all setup (argument parsing, model/tokenizer/device setup), add this at the top level:
 if args.profile_memory:
@@ -445,3 +472,6 @@ def profile_throughput(model, tokenizer, device, batch_size, seq_len, num_reques
 # Top-level call for throughput profiling
 if args.profile_throughput:
     profile_throughput(model, tokenizer, device, batch_size=BATCH_SIZE, seq_len=SEQ_LEN, num_requests=args.num_requests)
+
+# Close the W&B run so it uploads all metadata.
+wandb_run.finish()

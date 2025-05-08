@@ -79,11 +79,10 @@ make bench-llama
 make bench-llama-t4
 ```
 
-
 ### Run Llama Inference Benchmarks with Paged Attention
 
 ```bash
-bench-llama-paged
+make bench-llama-paged
 
 # If you are using a machine with < 16GB of GPU memory, recommend running a lighter benchmark
 make bench-llama-paged-t4
@@ -97,8 +96,15 @@ make test-paged-attention
 
 ## Results
 
-- TODO: Results (including charts/tables) and your observations  
+TODO: Include this
 
-## Wandb Project Board
+## Wandb Project Dashboard
 
-https://wandb.ai/nsd2147-columbia-university/HPML%20Final%20Project/overview
+https://wandb.ai/nsd2147-columbia-university/hpml-final-project
+
+Note: To setup the Eeights and Biases project run the following 
+command (only needed once).
+
+```bash
+wandb init --project hpml-final-project --entity nsd2147-columbia-university
+```
