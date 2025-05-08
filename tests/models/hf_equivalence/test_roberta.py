@@ -42,10 +42,9 @@ def test_roberta_base_for_masked_lm_equivalency():
 
     # test the param count is the same before we load hf fms model
     model_param_count = sum([p.numel() for p in model.parameters()])
-    # note: we subtract 3*768 for the following reasons:
-    #     1x768 - our model does not have a token_type_embeddings as part of its embeddings
-    #     2x768 - our model uses 512 positional encodings instead of 514 (they don't use their position 0, and their position 1 is the zeros vector)
-    hf_model_param_count = sum([p.numel() for p in hf_model.parameters()]) - 3 * 768
+    # note: we subtract 2*768 because our model uses 512 positional encodings instead
+    # of 514 (they don't use their position 0, and their position 1 is the zeros vector)
+    hf_model_param_count = sum([p.numel() for p in hf_model.parameters()]) - 2 * 768
     assert model_param_count == hf_model_param_count
 
     hf_model_fms = to_hf_api(
