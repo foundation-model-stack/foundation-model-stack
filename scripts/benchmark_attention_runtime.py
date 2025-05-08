@@ -72,7 +72,7 @@ import csv
 results = []
 with open(output_csv, "w", newline="") as csvfile:
     writer = csv.writer(csvfile)
-    writer.writerow(["seq_len", "runtime_ms"])
+    writer.writerow(["seq_len", "runtime_ms_with_cache", "runtime_ms_without_cache"])
     for seq_len in SEQUENCE_LENGTHS:
         print(f"[INFO] Benchmarking seq_len={seq_len} ...", flush=True)
         ids = torch.randint(tokenizer.vocab_size(), (BATCH_SIZE, seq_len), device=device, dtype=torch.long)
@@ -82,7 +82,6 @@ with open(output_csv, "w", newline="") as csvfile:
         def run():
             with torch.no_grad():
                 logits = model.forward(ids, use_cache=True)
-                _ = logits if isinstance(logits, torch.Tensor) else logits[0]
                 del logits
                 torch.cuda.empty_cache()
         # Warmup
@@ -94,18 +93,50 @@ with open(output_csv, "w", newline="") as csvfile:
             run()
             torch.cuda.synchronize()
             end = time.time()
-            runtime_ms = (end - start) * 1000
-            writer.writerow([seq_len, f"{runtime_ms:.3f}"])
-            results.append((seq_len, runtime_ms))
-            print(f"[OK] seq_len={seq_len} runtime_ms={runtime_ms:.3f}", flush=True)
+            runtime_ms_with_cache = (end - start) * 1000
+            writer.writerow([seq_len, f"{runtime_ms_with_cache:.3f}", "N/A"])
+            results.append((seq_len, runtime_ms_with_cache, None))
+            print(f"[OK] seq_len={seq_len} runtime_ms_with_cache={runtime_ms_with_cache:.3f}", flush=True)
         except RuntimeError as e:
             if "out of memory" in str(e):
-                writer.writerow([seq_len, "OOM"])
-                results.append((seq_len, None))
+                writer.writerow([seq_len, "OOM", "N/A"])
+                results.append((seq_len, None, None))
                 print(f"[OOM] seq_len={seq_len}", flush=True)
                 torch.cuda.empty_cache()
             else:
                 raise
+
+        # Without cache
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize()
+        ids = ids.detach()
+        def run_without_cache():
+            with torch.no_grad():
+                logits = model.forward(ids, use_cache=False)
+                del logits
+                torch.cuda.empty_cache()
+        # Warmup
+        try:
+            for _ in range(2):
+                run_without_cache()
+            torch.cuda.synchronize()
+            start = time.time()
+            run_without_cache()
+            torch.cuda.synchronize()
+            end = time.time()
+            runtime_ms_without_cache = (end - start) * 1000
+            writer.writerow([seq_len, "N/A", f"{runtime_ms_without_cache:.3f}"])
+            results.append((seq_len, None, runtime_ms_without_cache))
+            print(f"[OK] seq_len={seq_len} runtime_ms_without_cache={runtime_ms_without_cache:.3f}", flush=True)
+        except RuntimeError as e:
+            if "out of memory" in str(e):
+                writer.writerow([seq_len, "N/A", "OOM"])
+                results.append((seq_len, None, None))
+                print(f"[OOM] seq_len={seq_len}", flush=True)
+                torch.cuda.empty_cache()
+            else:
+                raise
+
 print(f"Wrote results to {output_csv}")
 
 # Plotting
@@ -127,7 +158,7 @@ try:
         if os.path.exists(other_csv):
             df = pd.read_csv(other_csv)
             xs2 = df['seq_len'].values
-            ys2 = [float(x) if x != 'OOM' else None for x in df['runtime_ms']]
+            ys2 = [float(x) if x != 'OOM' else None for x in df['runtime_ms_with_cache']]
             xs2 = [x for x, y in zip(xs2, ys2) if y is not None]
             ys2 = [y for y in ys2 if y is not None]
             plt.plot(xs2, ys2, marker='o', label=f"paged={'default' in other_csv}")
