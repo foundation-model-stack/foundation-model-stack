@@ -195,6 +195,7 @@ class RingAttentionKernel:
             future_mask = future_mask.unsqueeze(0).unsqueeze(0) 
             scores = scores.masked_fill(future_mask, float("-inf"))
         return scores
+    
     @staticmethod
     def _max_pass(
         q: Tensor,
@@ -228,6 +229,8 @@ class RingAttentionKernel:
 
             # no need for last round communication
             if i < strategy.world_size - 1:
+
+                # ring attention communication -- shift kvs
                 k_fp32, _ = strategy._ring_shift_tensor(k_fp32, k_len_current_block)
 
         return max_score
@@ -275,6 +278,8 @@ class RingAttentionKernel:
             
             # no need for last round communication
             if i < strategy.world_size - 1:
+
+                # ring attention communication -- shift kvs
                 k_fp32, _ = strategy._ring_shift_tensor(k_fp32, k_len_current_block)
                 v_fp32, _ = strategy._ring_shift_tensor(v_fp32, k_len_current_block)
 
