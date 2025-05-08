@@ -23,7 +23,7 @@
 
 \maketitle
 \begin{abstract}
-% TODO: Summarize the goal of integrating Paged Attention into IBM's Foundation Model Stack (FMS) using Flex Attention, highlight expected memory and speed benefits, and mention benchmarks to be run.
+% TODO: Summarize the goal of integrating Paged Attention into IBM's Foundation Model Stack (FMS) using Flex Attention, highlight expected memory and speed benefits, and mention benchmarks to be run.
 \end{abstract}
 
 \tableofcontents
@@ -42,10 +42,10 @@
 \section{Literature Review}
   \subsection{Review of Relevant Literature}
   \subsubsection{Paged Attention and vLLM}
-  % TODO: Summarize Paged Attention and prior art (e.g.\ vLLM paper).
+  % TODO: Summarize Paged Attention and prior art (e.g.\ vLLM paper).
 
-  \subsubsection{Flex Attention and FlashAttention}
-  % TODO: Discuss Flex Attention library and related fused‑kernel work.
+  \subsubsection{Flex Attention and FlashAttention}
+  % TODO: Discuss Flex Attention library and related fused‑kernel work.
 
   \subsubsection{Memory‑Efficient Attention Strategies}
   % TODO: Briefly cover other approaches (Longformer, MQA/GQA, etc.).
@@ -55,7 +55,7 @@
 
 \section{Methodology}
   \subsection{Data Collection and Preprocessing}
-  % TODO: List H100/A100 specs, CUDA, PyTorch 2.1, FMS version.
+  % TODO: List H100/A100 specs, CUDA, PyTorch 2.1, FMS version.
 
   \subsection{Model Selection}
   \subsubsection{Custom KV‑Page Allocator}
@@ -83,6 +83,16 @@
   % TODO: Insert tables/figures.
   \subsubsection{Memory Utilization}
   % TODO
+  \begin{figure}[h]
+    \centering
+    \includegraphics[width=0.7\textwidth]{../profile_memory_default_plot.png}
+    \caption{Peak Memory Usage vs Sequence Length (Default Attention)}
+  \end{figure}
+  \begin{figure}[h]
+    \centering
+    \includegraphics[width=0.7\textwidth]{../profile_memory_paged_plot.png}
+    \caption{Peak Memory Usage vs Sequence Length (Paged Attention)}
+  \end{figure}
   \subsubsection{Accuracy Impact}
   % TODO
 
