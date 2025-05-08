@@ -45,15 +45,14 @@ print("# seq_len\truntime_ms")
 for seq_len in SEQUENCE_LENGTHS:
     input_ids = torch.randint(tokenizer.vocab_size(), (BATCH_SIZE, seq_len), device=device, dtype=torch.long)
     input_ids.requires_grad = False
-    # Forward + backward pass timing
+    # Forward pass timing only
     torch.cuda.empty_cache()
     torch.cuda.synchronize()
     input_ids = input_ids.detach()
     input_ids.requires_grad = False
     def run():
         logits = model(input_ids)
-        loss = logits.sum()
-        loss.backward()
+        _ = logits.sum().item()  # Ensure computation
     # Warmup
     for _ in range(2):
         run()
