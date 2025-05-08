@@ -386,3 +386,7 @@ def profile_memory(model, tokenizer, device, batch_size, seq_len):
     peak_mem = torch.cuda.max_memory_allocated() / 1e9  # GB
     # Print the result in a clear, parseable format for downstream analysis or logging.
     print(f"Peak memory usage (GB): {peak_mem:.4f}")
+
+# After all setup (argument parsing, model/tokenizer/device setup), add this at the top level:
+if args.profile_memory:
+    profile_memory(model, tokenizer, device, batch_size=BATCH_SIZE, seq_len=SEQ_LEN)
