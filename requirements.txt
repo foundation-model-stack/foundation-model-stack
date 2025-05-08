@@ -5,3 +5,4 @@
 
 # FlexAttention lives in nightly builds; pin to a known‑good wheel built on 2025‑05‑03 for CUDA 12.6
 torch==2.8.0.dev20250503+cu126
+wandb>=0.16.6

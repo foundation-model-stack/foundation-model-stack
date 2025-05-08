@@ -18,6 +18,7 @@ help:
 	@echo "  report           	  Compile final_project/report.tex → PDF"
 	@echo "  report-clean         Remove LaTeX aux files & built PDF"
 	@echo "  clean                Remove virtual environment, cache & stamp file"
+	@echo "  wandb-login          Log into Weights & Biases inside the venv"
 	@echo "  help                 Show this message"
 
 # --------------------------------------------------------------------
@@ -64,7 +65,7 @@ $(TOKENIZER_FILE):
 # Stamp file to track installed dependencies
 DEPS_STAMP := $(VENV_DIR)/.deps_stamp
 
-.PHONY: venv deps test test-embeddings check-torch report report-clean clean help bench-llama bench-llama-paged bench-llama-t4 bench-llama-paged-t4 download-tokenizer
+.PHONY: venv deps test test-embeddings check-torch report report-clean clean help bench-llama bench-llama-paged bench-llama-t4 bench-llama-paged-t4 download-tokenizer wandb-login
 
 # Create virtual‑env if it doesn't exist
 venv: $(VENV_DIR)/bin/python
@@ -209,3 +210,9 @@ else
 endif
 	rm -f $(REPORT_PDF)
 
+
+# --------------------------------------------------------------------
+# Weights & Biases helper
+# --------------------------------------------------------------------
+wandb-login: deps
+	$(VENV_DIR)/bin/wandb login
