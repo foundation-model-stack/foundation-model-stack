@@ -19,6 +19,9 @@ help:
 	@echo "  report-clean         Remove LaTeX aux files & built PDF"
 	@echo "  clean                Remove virtual environment, cache & stamp file"
 	@echo "  help                 Show this message"
+	@echo "  bench-attention-runtime  Benchmark attention runtime (default & paged) for various sequence lengths"
+	@echo "  profile-memory         Profile peak memory usage for various sequence lengths (default & paged)"
+	@echo "  profile-throughput     Profile throughput for various sequence lengths (default & paged)"
 
 # --------------------------------------------------------------------
 # Common variables & meta‑targets
@@ -64,7 +67,7 @@ $(TOKENIZER_FILE):
 # Stamp file to track installed dependencies
 DEPS_STAMP := $(VENV_DIR)/.deps_stamp
 
-.PHONY: venv deps test test-embeddings check-torch report report-clean clean help bench-llama bench-llama-paged bench-llama-t4 bench-llama-paged-t4 download-tokenizer
+.PHONY: venv deps test test-embeddings check-torch report report-clean clean help bench-llama bench-llama-paged bench-llama-t4 bench-llama-paged-t4 download-tokenizer profile-memory profile-throughput
 
 # Create virtual‑env if it doesn't exist
 venv: $(VENV_DIR)/bin/python
@@ -208,4 +211,40 @@ else
 	cd $(REPORT_DIR) && latexmk -C
 endif
 	rm -f $(REPORT_PDF)
+
+bench-attention-runtime: deps $(TOKENIZER_FILE)
+	@echo "Running attention runtime benchmark (default attention)…"
+	CUDA_VISIBLE_DEVICES=0 $(VENV_DIR)/bin/python scripts/benchmark_attention_runtime.py \
+	    --architecture=llama --variant=$(LLAMA_VARIANT) \
+	    --tokenizer="$(TOKENIZER)" > attention_runtime_default.tsv
+	@echo "Running attention runtime benchmark (paged attention)…"
+	CUDA_VISIBLE_DEVICES=0 FMS_ATTENTION_ALGO=paged \
+	    $(VENV_DIR)/bin/python scripts/benchmark_attention_runtime.py \
+	    --architecture=llama --variant=$(LLAMA_VARIANT) \
+	    --tokenizer="$(TOKENIZER)" --paged > attention_runtime_paged.tsv
+	@echo "✔  Results written to attention_runtime_default.tsv and attention_runtime_paged.tsv"
+
+profile-memory: deps $(TOKENIZER_FILE)
+	@echo "Profiling peak memory usage (default attention)…"
+	CUDA_VISIBLE_DEVICES=0 $(VENV_DIR)/bin/python scripts/benchmark_profile_memory.py \
+	    --architecture=llama --variant=$(LLAMA_VARIANT) \
+	    --tokenizer="$(TOKENIZER)" > profile_memory_default.tsv
+	@echo "Profiling peak memory usage (paged attention)…"
+	CUDA_VISIBLE_DEVICES=0 FMS_ATTENTION_ALGO=paged \
+	    $(VENV_DIR)/bin/python scripts/benchmark_profile_memory.py \
+	    --architecture=llama --variant=$(LLAMA_VARIANT) \
+	    --tokenizer="$(TOKENIZER)" --paged > profile_memory_paged.tsv
+	@echo "✔  Results written to profile_memory_default.tsv and profile_memory_paged.tsv"
+
+profile-throughput: deps $(TOKENIZER_FILE)
+	@echo "Profiling throughput (default attention)…"
+	CUDA_VISIBLE_DEVICES=0 $(VENV_DIR)/bin/python scripts/benchmark_profile_throughput.py \
+	    --architecture=llama --variant=$(LLAMA_VARIANT) \
+	    --tokenizer="$(TOKENIZER)" > profile_throughput_default.tsv
+	@echo "Profiling throughput (paged attention)…"
+	CUDA_VISIBLE_DEVICES=0 FMS_ATTENTION_ALGO=paged \
+	    $(VENV_DIR)/bin/python scripts/benchmark_profile_throughput.py \
+	    --architecture=llama --variant=$(LLAMA_VARIANT) \
+	    --tokenizer="$(TOKENIZER)" --paged > profile_throughput_paged.tsv
+	@echo "✔  Results written to profile_throughput_default.tsv and profile_throughput_paged.tsv"
 
