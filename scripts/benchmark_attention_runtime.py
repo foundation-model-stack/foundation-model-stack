@@ -4,6 +4,7 @@ import os
 import random
 import numpy as np
 import torch
+import time
 from torch import distributed as dist
 from fms import models
 from fms.utils import fusion, tokenizers
@@ -70,17 +71,17 @@ for seq_len in SEQUENCE_LENGTHS:
     ids = ids.detach()
     def run():
         with torch.no_grad():
-            _ = model.forward(ids, use_cache=True)
+            logits = model.forward(ids, use_cache=True)
+            _ = logits if isinstance(logits, torch.Tensor) else logits[0]
+            del logits
+            torch.cuda.empty_cache()
     # Warmup
     for _ in range(2):
         run()
-        torch.cuda.empty_cache()
     torch.cuda.synchronize()
-    import time
     start = time.time()
     run()
     torch.cuda.synchronize()
     end = time.time()
-    torch.cuda.empty_cache()
     runtime_ms = (end - start) * 1000
     print(f"{seq_len}\t{runtime_ms:.3f}") 
