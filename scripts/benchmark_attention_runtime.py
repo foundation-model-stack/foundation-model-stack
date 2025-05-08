@@ -79,43 +79,43 @@ with open(output_csv, "w", newline="") as csvfile:
         torch.cuda.empty_cache()
         torch.cuda.synchronize()
         ids = ids.detach()
-        def run():
+
+        runtime_ms_with_cache = None
+        runtime_ms_without_cache = None
+
+        # With cache
+        def run_with_cache():
             with torch.no_grad():
                 logits = model.forward(ids, use_cache=True)
                 del logits
                 torch.cuda.empty_cache()
-        # Warmup
-        try:
-            for _ in range(2):
-                run()
-            torch.cuda.synchronize()
-            start = time.time()
-            run()
-            torch.cuda.synchronize()
-            end = time.time()
-            runtime_ms_with_cache = (end - start) * 1000
-            writer.writerow([seq_len, f"{runtime_ms_with_cache:.3f}", None])
-            results.append((seq_len, runtime_ms_with_cache, None))
-            print(f"[OK] seq_len={seq_len} runtime_ms_with_cache={runtime_ms_with_cache:.3f}", flush=True)
-        except RuntimeError as e:
-            if "out of memory" in str(e):
-                writer.writerow([seq_len, "OOM", "N/A"])
-                results.append((seq_len, None, None))
-                print(f"[OOM] seq_len={seq_len}", flush=True)
-                torch.cuda.empty_cache()
-            else:
-                raise
-
         # Without cache
-        torch.cuda.empty_cache()
-        torch.cuda.synchronize()
-        ids = ids.detach()
         def run_without_cache():
             with torch.no_grad():
                 logits = model.forward(ids, use_cache=False)
                 del logits
                 torch.cuda.empty_cache()
-        # Warmup
+
+        # Benchmark with cache
+        try:
+            for _ in range(2):
+                run_with_cache()
+            torch.cuda.synchronize()
+            start = time.time()
+            run_with_cache()
+            torch.cuda.synchronize()
+            end = time.time()
+            runtime_ms_with_cache = (end - start) * 1000
+            print(f"[OK] seq_len={seq_len} runtime_ms_with_cache={runtime_ms_with_cache:.3f}", flush=True)
+        except RuntimeError as e:
+            if "out of memory" in str(e):
+                print(f"[OOM] seq_len={seq_len} with cache", flush=True)
+                torch.cuda.empty_cache()
+                runtime_ms_with_cache = "OOM"
+            else:
+                raise
+
+        # Benchmark without cache
         try:
             for _ in range(2):
                 run_without_cache()
@@ -125,17 +125,22 @@ with open(output_csv, "w", newline="") as csvfile:
             torch.cuda.synchronize()
             end = time.time()
             runtime_ms_without_cache = (end - start) * 1000
-            writer.writerow([seq_len, None, f"{runtime_ms_without_cache:.3f}"])
-            results.append((seq_len, None, runtime_ms_without_cache))
             print(f"[OK] seq_len={seq_len} runtime_ms_without_cache={runtime_ms_without_cache:.3f}", flush=True)
         except RuntimeError as e:
             if "out of memory" in str(e):
-                writer.writerow([seq_len, "N/A", "OOM"])
-                results.append((seq_len, None, None))
-                print(f"[OOM] seq_len={seq_len}", flush=True)
+                print(f"[OOM] seq_len={seq_len} without cache", flush=True)
                 torch.cuda.empty_cache()
+                runtime_ms_without_cache = "OOM"
             else:
                 raise
+
+        # Write both results in a single row
+        writer.writerow([
+            seq_len,
+            f"{runtime_ms_with_cache:.3f}" if isinstance(runtime_ms_with_cache, float) else runtime_ms_with_cache,
+            f"{runtime_ms_without_cache:.3f}" if isinstance(runtime_ms_without_cache, float) else runtime_ms_without_cache
+        ])
+        results.append((seq_len, runtime_ms_with_cache, runtime_ms_without_cache))
 
 print(f"Wrote results to {output_csv}")
 
