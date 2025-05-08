@@ -10,7 +10,7 @@ from fms import models
 from fms.utils import fusion, tokenizers
 import csv
 
-SEQUENCE_LENGTHS = [128, 256, 512, 1024, 2048, 4096, 8192]
+SEQUENCE_LENGTHS = [128, 256, 512, 1024, 2048, 4096]
 
 parser = argparse.ArgumentParser(description="Benchmark attention runtime for various sequence lengths.")
 parser.add_argument("--device_type", type=str, default="cuda")
