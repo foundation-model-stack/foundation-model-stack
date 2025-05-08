@@ -5,12 +5,56 @@ from torch import Tensor
 from typing import Optional, Tuple
 
 from fms.modules.attention import MultiHeadAttention
-from fms.distributed.strategy import RingAttentionStrategy
+from fms.distributed.strategy import DistributedStrategy, RingAttentionStrategy
+
+
+
+def ring_forward(
+    self,
+    x,
+    *,
+    mask=None,
+    position_ids=None,
+    past_key_value_state=None,
+    use_cache=False,
+    is_causal_mask=False,
+    attn_algorithm=None,
+    distributed_strategy: Optional[DistributedStrategy] = None,
+):
+
+    residual = x 
+    x_norm = self.ln(x)
+
+
+    x = RingAttentionKernel.ring_attention(
+        x_norm=x_norm,
+        attn_module=self.attn,
+        strategy=distributed_strategy,
+        valid_len=distributed_strategy._local_valid_len,
+        mask=mask, 
+        position_ids=position_ids, # Sharded position_ids
+        past_key_value_state=past_key_value_state, 
+        causal=is_causal_mask,
+    )
+    
+    # use cache and dropout have not yet been implemented / tested
+    x = x + residual
+
+    # then we do FF and Add&Norm
+    residual = x
+    x = self.ff_ln(x)
+    x = self.ff_sub_layer(x)
+    x = x + residual
+
+    if use_cache:
+        return (x, None)
+    else:
+        return x
 
 class RingAttentionKernel:
 
     @staticmethod
-    def forward(
+    def ring_attention(
         x_norm: Tensor,
         attn_module: MultiHeadAttention,
         strategy: RingAttentionStrategy,
@@ -29,6 +73,7 @@ class RingAttentionKernel:
         # slice to valid length to be safe
         current_rank_input_slice = x_norm[:, :valid_len]
 
+        # compute position ids
         if position_ids is not None:
             position_ids_for_rope_computation = position_ids[:, current_rank_token_global_start_idx : current_rank_token_global_start_idx + valid_len]
         elif valid_len > 0:
@@ -61,7 +106,7 @@ class RingAttentionKernel:
         else:
             out = torch.empty((batch_size, 0, emb_dim), device=x_norm.device, dtype=x_norm.dtype)
 
-        return out, None
+        return out
 
 
     @staticmethod
@@ -107,16 +152,23 @@ class RingAttentionKernel:
         accum_dtype: torch.dtype,
         causal: bool,
     ) -> Tensor:
+        
+        # compute max score for normalization 
+        # this could be optimized with online softmax
         max_score = RingAttentionKernel._max_pass(
             q, k, mask, q_start, num_valid_tokens, strategy, scale, causal, accum_dtype
         )
-        numerator_out, denominator_out = RingAttentionKernel._sum_pass(
+
+        # compute the numerator and denominator for attention calc
+        numerator, denominator = RingAttentionKernel._sum_pass(
             q, k, v, mask, q_start, num_valid_tokens, max_score, strategy, scale, accum_dtype, causal
         )
+
+        # guard against empty calc
         if num_valid_tokens == 0:
             return torch.empty((q.shape[0], q.shape[1], 0, v.shape[-1]),
                                device=q.device, dtype=q.dtype)
-        return (numerator_out / (denominator_out + torch.finfo(denominator_out.dtype).eps)).to(q.dtype)
+        return (numerator / (denominator + torch.finfo(denominator.dtype).eps)).to(q.dtype)
     
 
     @staticmethod
