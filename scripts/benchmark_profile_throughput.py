@@ -24,20 +24,26 @@ parser.add_argument("--output_csv", type=str, help="Filename (without timestamp)
 args = parser.parse_args()
 
 # -----------------------------------------------------------
-# Output directory and timestamped filenames
+# Output paths: final_project/csv  and  final_project/images  + timestamp
 # -----------------------------------------------------------
 TIMESTAMP = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-OUT_DIR = os.path.join(os.path.dirname(__file__), "..", "final_project")
-os.makedirs(OUT_DIR, exist_ok=True)
+BASE_DIR = os.path.join(os.path.dirname(__file__), "..", "final_project")
+CSV_DIR = os.path.join(BASE_DIR, "csv")
+IMG_DIR = os.path.join(BASE_DIR, "images")
+os.makedirs(CSV_DIR, exist_ok=True)
+os.makedirs(IMG_DIR, exist_ok=True)
 
 if args.output_csv:
     base_csv = os.path.splitext(os.path.basename(args.output_csv))[0]
-    output_csv = os.path.join(OUT_DIR, f"{base_csv}_{TIMESTAMP}.csv")
+    output_csv = os.path.join(CSV_DIR, f"{base_csv}_{TIMESTAMP}.csv")
 else:
     output_csv = os.path.join(
-        OUT_DIR, f"throughput_profile_{'paged' if args.paged else 'default'}_{TIMESTAMP}.csv"
+        CSV_DIR, f"throughput_profile_{'paged' if args.paged else 'default'}_{TIMESTAMP}.csv"
     )
-plot_path = output_csv.replace(".csv", "_plot.png")
+plot_path = os.path.join(
+    IMG_DIR,
+    os.path.splitext(os.path.basename(output_csv))[0] + "_plot.png"
+)
 
 # ────────────────────────────────────────────────────────────
 # Initialize Weights & Biases run so every benchmark is logged
