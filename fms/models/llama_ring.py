@@ -61,7 +61,7 @@ class RingAttentionKernel:
         else:
             out = torch.empty((batch_size, 0, emb_dim), device=x_norm.device, dtype=x_norm.dtype)
 
-        return out
+        return out, None
 
 
     @staticmethod
