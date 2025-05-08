@@ -69,8 +69,8 @@ for seq_len in SEQUENCE_LENGTHS:
     torch.cuda.synchronize()
     ids = ids.detach()
     def run():
-        logits = model.forward(ids, use_cache=True)
-        _ = logits.sum().item()
+        _ = model.forward(ids, use_cache=True)
+
     # Warmup
     for _ in range(2):
         run()
