@@ -5,7 +5,7 @@ from fms import models
 from fms.utils import tokenizers
 import csv
 
-SEQUENCE_LENGTHS = [128, 256, 512, 1024, 2048, 4096, 8192]
+SEQUENCE_LENGTHS = [128, 256, 512, 1024, 2048]
 BATCH_SIZE = 1
 
 parser = argparse.ArgumentParser(description="Profile peak memory usage for various sequence lengths.")
