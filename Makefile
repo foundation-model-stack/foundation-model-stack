@@ -19,7 +19,7 @@ help:
 	@echo "  report-clean         Remove LaTeX aux files & built PDF"
 	@echo "  clean                Remove virtual environment, cache & stamp file"
 	@echo "  help                 Show this message"
-	@echo "  bench-attention-runtime  Benchmark attention runtime (default & paged) for various sequence lengths"
+	@echo "  bench-attention-runtime  Benchmark attention runtime (default & paged) for various sequence lengths (CSV output)"
 	@echo "  profile-memory         Profile peak memory usage for various sequence lengths (default & paged)"
 	@echo "  profile-throughput     Profile throughput for various sequence lengths (default & paged)"
 
@@ -216,13 +216,13 @@ bench-attention-runtime: deps $(TOKENIZER_FILE)
 	@echo "Running attention runtime benchmark (default attention)…"
 	CUDA_VISIBLE_DEVICES=0 $(VENV_DIR)/bin/python scripts/benchmark_attention_runtime.py \
 	    --architecture=llama --variant=$(LLAMA_VARIANT) \
-	    --tokenizer="$(TOKENIZER)" > attention_runtime_default.tsv
+	    --tokenizer="$(TOKENIZER)" --output_csv=attention_runtime_default.csv
 	@echo "Running attention runtime benchmark (paged attention)…"
 	CUDA_VISIBLE_DEVICES=0 FMS_ATTENTION_ALGO=paged \
 	    $(VENV_DIR)/bin/python scripts/benchmark_attention_runtime.py \
 	    --architecture=llama --variant=$(LLAMA_VARIANT) \
-	    --tokenizer="$(TOKENIZER)" --paged > attention_runtime_paged.tsv
-	@echo "✔  Results written to attention_runtime_default.tsv and attention_runtime_paged.tsv"
+	    --tokenizer="$(TOKENIZER)" --paged --output_csv=attention_runtime_paged.csv
+	@echo "✔  Results written to attention_runtime_default.csv and attention_runtime_paged.csv"
 
 profile-memory: deps $(TOKENIZER_FILE)
 	@echo "Profiling peak memory usage (default attention)…"
