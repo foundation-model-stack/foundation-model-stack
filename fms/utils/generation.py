@@ -4,7 +4,7 @@ from typing import Any, Callable, List, MutableMapping, Optional, Tuple, Union
 
 import torch
 import torch.nn.functional as F
-
+import random
 
 logger = logging.getLogger(__name__)
 
@@ -242,6 +242,8 @@ def generate(
     ]
     kwargs["block_table"] = None
     block_numbers = [i for i in range(NUM_BLOCKS)]
+    random.seed(0)
+    random.shuffle(block_numbers)
     left_padded_prompt_mask = (kwargs["position_ids"] == 0).sum(dim=1) - 1
     current_context_lengths = (kwargs["position_ids"] != 0).sum(dim=1) + 1
     current_tkv_mask = left_padded_prompt_mask + current_context_lengths
