@@ -10,6 +10,8 @@ from fms import models
 from fms.utils import fusion, tokenizers
 import csv
 
+import wandb
+
 SEQUENCE_LENGTHS = [128, 256, 512, 1024, 2048]
 BATCH_SIZE = 1
 
@@ -25,6 +27,18 @@ parser.add_argument("--paged", action="store_true", help="Enable paged attention
 parser.add_argument("--use-cache", action="store_true", help="Enable paged attention via env var.")
 parser.add_argument("--output_csv", type=str, default=None, help="Path to output CSV file.")
 args = parser.parse_args()
+
+# ────────────────────────────────────────────────────────────
+# Initialize Weights & Biases run so every benchmark is logged
+# ────────────────────────────────────────────────────────────
+attention_algo = "paged" if args.paged else "default"
+wandb_run = wandb.init(
+    project="hpml-final-project",
+    entity="nsd2147-columbia-university",
+    name=f"{args.architecture}-{args.variant}-{attention_algo}-mem-profile",
+    tags=[attention_algo, "mem_profile", f"use_cache_{args.use_cache}"],
+    config=vars(args),
+)
 
 local_rank = int(os.getenv("LOCAL_RANK", 0))
 world_size = int(os.getenv("WORLD_SIZE", 1))
@@ -92,6 +106,11 @@ with open(output_csv, "w", newline="") as csvfile:
                 peak_mem = "OOM"
             else:
                 raise
+        # Log to W&B (use NaN for OOM so charts are continuous)
+        wandb.log({
+            "seq_len": seq_len,
+            "peak_memory_gb": float(peak_mem) if isinstance(peak_mem, float) else float('nan')
+        })
         writer.writerow([
             seq_len,
             f"{peak_mem:.4f}" if isinstance(peak_mem, float) else peak_mem
@@ -120,3 +139,6 @@ try:
     plt.show()
 except ImportError:
     print(f"[INFO] matplotlib not installed. Plot manually from {output_csv}") 
+
+# Close the W&B run so it uploads all metadata.
+wandb_run.finish()

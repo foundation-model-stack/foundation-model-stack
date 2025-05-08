@@ -3,6 +3,7 @@ import torch
 import argparse
 import threading
 import timeit
+import wandb
 from fms import models
 from fms.utils import tokenizers
 
@@ -17,6 +18,18 @@ parser.add_argument("--tokenizer", type=str, required=True)
 parser.add_argument("--device_type", type=str, default="cuda")
 parser.add_argument("--paged", action="store_true", help="Enable paged attention via env var.")
 args = parser.parse_args()
+
+# ────────────────────────────────────────────────────────────
+# Initialize Weights & Biases run so every benchmark is logged
+# ────────────────────────────────────────────────────────────
+attention_algo = "paged" if args.paged else "default"
+wandb_run = wandb.init(
+    project="hpml-final-project",
+    entity="nsd2147-columbia-university",
+    name=f"{args.architecture}-{args.variant}-{attention_algo}-throughput",
+    tags=[attention_algo, "throughput_profile"],
+    config=vars(args),
+)
 
 if args.paged:
     os.environ["FMS_ATTENTION_ALGO"] = "paged"
@@ -54,4 +67,14 @@ for seq_len in SEQUENCE_LENGTHS:
     throughput = total_tokens / total_time if total_time > 0 else float('inf')
     avg_latency = (total_time / total_tokens) * 1000 if total_tokens > 0 else 0  # ms per token
     peak_mem = torch.cuda.max_memory_allocated() / 1e9  # GB
+    # Log to Weights & Biases
+    wandb.log({
+        "seq_len": seq_len,
+        "throughput_tokens_per_sec": throughput,
+        "avg_latency_ms_per_token": avg_latency,
+        "peak_memory_gb": peak_mem
+    })
     print(f"{seq_len}\t{throughput:.2f}\t{avg_latency:.2f}\t{peak_mem:.4f}") 
+
+# Close the W&B run so it uploads all metadata.
+wandb_run.finish()

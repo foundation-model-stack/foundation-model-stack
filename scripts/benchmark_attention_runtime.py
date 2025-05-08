@@ -9,6 +9,7 @@ from torch import distributed as dist
 from fms import models
 from fms.utils import fusion, tokenizers
 import csv
+import wandb
 
 SEQUENCE_LENGTHS = [128, 256, 512, 1024, 2048]
 
@@ -23,6 +24,18 @@ parser.add_argument("--unfuse_weights", action="store_true", help="Unfuse any fu
 parser.add_argument("--paged", action="store_true", help="Enable paged attention via env var.")
 parser.add_argument("--output_csv", type=str, default=None, help="Path to output CSV file.")
 args = parser.parse_args()
+
+# ────────────────────────────────────────────────────────────
+# Initialize Weights & Biases run so every benchmark is logged
+# ────────────────────────────────────────────────────────────
+attention_algo = "paged" if args.paged else "default"
+wandb_run = wandb.init(
+    project="hpml-final-project",
+    entity="nsd2147-columbia-university",
+    name=f"{args.architecture}-{args.variant}-{attention_algo}-attn-runtime",
+    tags=[attention_algo, "attn_runtime"],
+    config=vars(args),
+)
 
 local_rank = int(os.getenv("LOCAL_RANK", 0))
 world_size = int(os.getenv("WORLD_SIZE", 1))
@@ -134,6 +147,13 @@ with open(output_csv, "w", newline="") as csvfile:
             else:
                 raise
 
+        # Log to W&B (use NaN for OOM so the chart plots correctly)
+        wandb.log({
+            "seq_len": seq_len,
+            "runtime_ms_with_cache": float(runtime_ms_with_cache) if isinstance(runtime_ms_with_cache, float) else float('nan'),
+            "runtime_ms_without_cache": float(runtime_ms_without_cache) if isinstance(runtime_ms_without_cache, float) else float('nan')
+        })
+
         # Write both results in a single row
         writer.writerow([
             seq_len,
@@ -167,3 +187,6 @@ try:
     plt.show()
 except ImportError:
     print(f"[INFO] matplotlib not installed. Plot manually from {output_csv}")
+
+# Close the W&B run so it uploads all metadata.
+wandb_run.finish()
