@@ -300,8 +300,12 @@ def end_to_end(model, use_cache, expected=None):
     return result
 
 
-e2e_expected_cache = end_to_end(model, True)
-e2e_expected_nocache = end_to_end(model, True)
+if args.skip_e2e_runs:
+    e2e_expected_cache = None
+    e2e_expected_nocache = None
+else:
+    e2e_expected_cache = end_to_end(model, True)
+    e2e_expected_nocache = end_to_end(model, True)
 
 
 def log_result(result, metric_name="ms_per_token"):
@@ -420,6 +424,7 @@ def profile_memory(model, tokenizer, device, batch_size, seq_len):
     peak_mem = torch.cuda.max_memory_allocated() / 1e9  # GB
     # Print the result in a clear, parseable format for downstream analysis or logging.
     print(f"Peak memory usage (GB): {peak_mem:.4f}")
+    wandb.log({"peak_memory_GB": peak_mem})
 
 # After all setup (argument parsing, model/tokenizer/device setup), add this at the top level:
 if args.profile_memory:

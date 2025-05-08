@@ -13,6 +13,8 @@ help:
 	@echo "  download-tokenizer    Fetch the LLaMA SentencePiece tokenizer"
 	@echo "  bench-llama          Benchmark LLaMA $(LLAMA_VARIANT) (default attention)"
 	@echo "  bench-llama-paged    Benchmark LLaMA $(LLAMA_VARIANT) using paged attention"
+	@echo "  bench-llama-mem      Profile peak GPU memory for LLaMA $(LLAMA_VARIANT)"
+	@echo "  bench-llama-mem-paged-t4 Profile peak GPU memory for paged‑attention (T4 preset)"
 	@echo "  bench-llama-t4       Memory‑friendly LLaMA 7B benchmark for 16 GB T4 GPUs"
 	@echo "  bench-llama-paged-t4 Memory‑friendly paged LLaMA 7B benchmark for 16 GB T4 GPUs"
 	@echo "  bench-llama-t4-sweep Run default & paged T4 benchmarks for all seq lens (128…8192)"
@@ -66,7 +68,7 @@ $(TOKENIZER_FILE):
 # Stamp file to track installed dependencies
 DEPS_STAMP := $(VENV_DIR)/.deps_stamp
 
-.PHONY: venv deps test test-embeddings check-torch report report-clean clean help bench-llama bench-llama-paged bench-llama-t4 bench-llama-paged-t4 bench-llama-t4-sweep download-tokenizer wandb-login
+.PHONY: venv deps test test-embeddings check-torch report report-clean clean help bench-llama bench-llama-mem bench-llama-paged bench-llama-t4 bench-llama-paged-t4 bench-llama-t4-sweep bench-llama-mem-paged-t4 download-tokenizer wandb-login
 
 # Create virtual‑env if it doesn't exist
 venv: $(VENV_DIR)/bin/python
@@ -130,6 +132,29 @@ bench-llama-paged: deps $(TOKENIZER_FILE)
 	    $(VENV_DIR)/bin/python $(BENCH_SCRIPT) \
 	    --architecture=llama --variant=$(LLAMA_VARIANT) \
 	    --tokenizer="$(TOKENIZER)" $(EXTRA)
+
+## Peak‑memory profile (single forward pass) — logs to W&B
+## Peak-memory profile (single forward pass) — logs to W&B
+bench-llama-mem: deps $(TOKENIZER_FILE)
+	@echo "Profiling peak GPU memory on LLaMA $(LLAMA_VARIANT)…"
+	CUDA_VISIBLE_DEVICES=0 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
+	    $(VENV_DIR)/bin/python $(BENCH_SCRIPT) \
+	    --architecture=llama --variant=$(LLAMA_VARIANT) \
+	    --tokenizer="$(TOKENIZER)" --profile_memory \
+	    --batch_size=1 --seq_len=256 \
+	    --skip_eager_runs --skip_compile_runs --skip_single_token_runs --skip_e2e_runs \
+	    $(EXTRA)
+
+## Peak‑memory profile for paged‑attention on 16 GB T4
+bench-llama-mem-paged-t4: deps $(TOKENIZER_FILE)
+	@echo "Profiling peak GPU memory on LLaMA $(LLAMA_VARIANT) with paged‑attention (T4)…"
+	CUDA_VISIBLE_DEVICES=0 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True FMS_ATTENTION_ALGO=paged \
+	    $(VENV_DIR)/bin/python $(BENCH_SCRIPT) \
+	    --architecture=llama --variant=$(LLAMA_VARIANT) \
+	    --tokenizer="$(TOKENIZER)" --profile_memory \
+	    --batch_size=1 --seq_len=256 \
+	    --skip_eager_runs --skip_compile_runs --skip_single_token_runs --skip_e2e_runs \
+	    $(EXTRA)
 
 ## Memory‑friendly benchmark for 16 GB GPUs like NVIDIA T4
 
