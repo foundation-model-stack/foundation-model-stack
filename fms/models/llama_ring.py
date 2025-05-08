@@ -20,7 +20,7 @@ class RingAttentionKernel:
         position_ids: Optional[Tensor] = None,
         past_key_value_state: Optional[Tuple[Tensor, Tensor]] = None,
         causal: bool = False,
-    ) -> Tuple[Tensor, Optional[Tuple[Tensor, Tensor]]]:
+    ) -> Tensor:
 
         batch_size, num_valid_tokens_input_shard, emb_dim = x_norm.shape 
         assert num_valid_tokens_input_shard == valid_len
@@ -41,12 +41,10 @@ class RingAttentionKernel:
             q, k, v = RingAttentionKernel._compute_qkv_and_rope(
                 attn_module, current_rank_input_slice, position_ids_for_rope_computation
             )
-            kv_cache = (k, v)
         else:
             nheads, emb_kq_per_head, emb_v_per_head = attn_module.nheads, attn_module.emb_kq_per_head, attn_module.emb_v_per_head
             q = k = torch.empty((batch_size, nheads, 0, emb_kq_per_head), device=x_norm.device, dtype=x_norm.dtype)
             v = torch.empty((batch_size, nheads, 0, emb_v_per_head), device=x_norm.device, dtype=x_norm.dtype)
-            kv_cache = None
 
         scale = attn_module.scale_factor or math.sqrt(attn_module.emb_kq_per_head)
         
@@ -63,7 +61,7 @@ class RingAttentionKernel:
         else:
             out = torch.empty((batch_size, 0, emb_dim), device=x_norm.device, dtype=x_norm.dtype)
 
-        return out, kv_cache
+        return out
 
 
     @staticmethod
@@ -219,7 +217,7 @@ class RingAttentionKernel:
                 current_scores = RingAttentionKernel._attn_scores(q_fp32, k_fp32, query_global_indices, key_block_global_indices, scale, current_attention_mask_slice, causal)
                 score_delta = torch.where(torch.isneginf(max_score), float("-inf"), current_scores - max_score)
                 exp_scores = torch.exp(score_delta.clamp(min=log_min_exp_threshold, max=log_max_exp_threshold))
-                exp_scores = exp_scores.masked_fill(torch.isneginf(max_score), 0.0)
+                # exp_scores = exp_scores.masked_fill(torch.isneginf(max_score), 0.0) # This line is likely redundant
                 numerator += torch.matmul(exp_scores, v_fp32.narrow(2, 0, k_len_current_block))
                 denomminator += exp_scores.sum(dim=-1, keepdim=True)
             
