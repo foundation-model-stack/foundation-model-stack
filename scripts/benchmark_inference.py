@@ -4,6 +4,7 @@ import os
 import random
 import statistics
 import timeit
+import threading
 
 import numpy as np
 import torch
@@ -141,6 +142,17 @@ parser.add_argument(
     "--profile_memory",
     action="store_true",
     help="Profile peak memory usage for a single forward pass (current --seq_len) and print result."
+)
+parser.add_argument(
+    "--profile_throughput",
+    action="store_true",
+    help="Profile throughput for multiple concurrent generation requests."
+)
+parser.add_argument(
+    "--num_requests",
+    type=int,
+    default=4,
+    help="Number of concurrent requests for throughput profiling."
 )
 
 args = parser.parse_args()
@@ -390,3 +402,46 @@ def profile_memory(model, tokenizer, device, batch_size, seq_len):
 # After all setup (argument parsing, model/tokenizer/device setup), add this at the top level:
 if args.profile_memory:
     profile_memory(model, tokenizer, device, batch_size=BATCH_SIZE, seq_len=SEQ_LEN)
+
+def profile_throughput(model, tokenizer, device, batch_size, seq_len, num_requests):
+    """Profile throughput and latency for multiple concurrent generation requests (true concurrency with threads)."""
+    if not (hasattr(device, 'type') and device.type == 'cuda'):
+        raise RuntimeError('profile_throughput requires a CUDA device.')
+    # Generate random input IDs for each request
+    requests = [
+        torch.randint(
+            tokenizer.vocab_size(), (batch_size, seq_len), device=device, dtype=torch.long
+        )
+        for _ in range(num_requests)
+    ]
+    # Clear any cached memory to ensure a clean measurement of peak usage.
+    torch.cuda.empty_cache()
+    # Reset PyTorch's peak memory statistics so our measurement is accurate for this run.
+    torch.cuda.reset_peak_memory_stats()
+    # Time the concurrent forward passes using threads to simulate real-world multi-request serving
+    import timeit
+    results = [None] * num_requests
+    def run_forward(i):
+        with torch.no_grad():
+            results[i] = model.forward(requests[i], use_cache=True)
+    threads = [threading.Thread(target=run_forward, args=(i,)) for i in range(num_requests)]
+    start_time = timeit.default_timer()
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    end_time = timeit.default_timer()
+    # Calculate metrics
+    total_time = end_time - start_time
+    total_tokens = num_requests * batch_size * seq_len
+    throughput = total_tokens / total_time if total_time > 0 else float('inf')
+    avg_latency = (total_time / total_tokens) * 1000 if total_tokens > 0 else 0  # ms per token
+    peak_mem = torch.cuda.max_memory_allocated() / 1e9  # GB
+    # Print results in a clear, parseable format
+    print(f"Throughput (tokens/sec): {throughput:.2f}")
+    print(f"Average latency (ms/token): {avg_latency:.2f}")
+    print(f"Peak memory usage (GB): {peak_mem:.4f}")
+
+# Top-level call for throughput profiling
+if args.profile_throughput:
+    profile_throughput(model, tokenizer, device, batch_size=BATCH_SIZE, seq_len=SEQ_LEN, num_requests=args.num_requests)

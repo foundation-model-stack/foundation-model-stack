@@ -147,6 +147,37 @@ bench-llama-paged-t4: deps $(TOKENIZER_FILE)
 
 download-tokenizer: $(TOKENIZER_FILE)
 
+# Run memory profiling for a single forward pass at a given sequence length and batch size.
+# Usage:
+#   make mem-profile [SEQ_LEN=4096] [BATCH_SIZE=1] [TOKENIZER=~/llama_weights/tokenizer.model]
+mem-profile:
+	$(VENV_DIR)/bin/python scripts/benchmark_inference.py \
+		--profile_memory \
+		--seq_len=$(SEQ_LEN) \
+		--batch_size=$(BATCH_SIZE) \
+		--architecture=llama \
+		--variant=7b \
+		--tokenizer=$(TOKENIZER)
+
+# Run throughput profiling for multiple concurrent generation requests.
+# Usage:
+#   make throughput-profile [NUM_REQUESTS=4] [SEQ_LEN=4096] [BATCH_SIZE=1] [TOKENIZER=~/llama_weights/tokenizer.model]
+throughput-profile:
+	$(VENV_DIR)/bin/python scripts/benchmark_inference.py \
+		--profile_throughput \
+		--num_requests=$(NUM_REQUESTS) \
+		--seq_len=$(SEQ_LEN) \
+		--batch_size=$(BATCH_SIZE) \
+		--architecture=llama \
+		--variant=7b \
+		--tokenizer=$(TOKENIZER)
+
+# Default values (can be overridden on the command line)
+NUM_REQUESTS ?= 4
+SEQ_LEN ?= 4096
+BATCH_SIZE ?= 1
+TOKENIZER ?= $(HOME)/llama_weights/tokenizer.model
+
 # --------------------------------------------------------------------
 # LaTeX targets  (final_project/report.tex → final_project/report.pdf)
 # --------------------------------------------------------------------
@@ -177,3 +208,4 @@ else
 	cd $(REPORT_DIR) && latexmk -C
 endif
 	rm -f $(REPORT_PDF)
+
