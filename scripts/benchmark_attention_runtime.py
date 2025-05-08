@@ -69,16 +69,18 @@ for seq_len in SEQUENCE_LENGTHS:
     torch.cuda.synchronize()
     ids = ids.detach()
     def run():
-        _ = model.forward(ids, use_cache=True)
-
+        with torch.no_grad():
+            _ = model.forward(ids, use_cache=True)
     # Warmup
     for _ in range(2):
         run()
+        torch.cuda.empty_cache()
     torch.cuda.synchronize()
     import time
     start = time.time()
     run()
     torch.cuda.synchronize()
     end = time.time()
+    torch.cuda.empty_cache()
     runtime_ms = (end - start) * 1000
     print(f"{seq_len}\t{runtime_ms:.3f}") 
