@@ -367,7 +367,6 @@ if not args.skip_compile_runs:
             bench_end_to_end(False, e2e_expected_nocache)
 
 def profile_memory(model, tokenizer, device, batch_size, seq_len):
-    # This docstring clarifies the function's purpose for future maintainers.
     """Print peak GPU memory usage (GB) for a single forward pass at the given sequence length."""
     # Ensure we are running on a CUDA device, since memory profiling is only meaningful on GPU.
     if not (hasattr(device, 'type') and device.type == 'cuda'):
@@ -387,9 +386,3 @@ def profile_memory(model, tokenizer, device, batch_size, seq_len):
     peak_mem = torch.cuda.max_memory_allocated() / 1e9  # GB
     # Print the result in a clear, parseable format for downstream analysis or logging.
     print(f"Peak memory usage (GB): {peak_mem:.4f}")
-
-if __name__ == "__main__":
-    # If the user requested memory profiling, run it and exit to avoid running other benchmarks.
-    if args.profile_memory:
-        profile_memory(model, tokenizer, device, batch_size=BATCH_SIZE, seq_len=SEQ_LEN)
-        exit(0)
