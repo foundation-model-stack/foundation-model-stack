@@ -4,6 +4,7 @@ import torch
 import argparse
 from fms import models
 from fms.utils import tokenizers
+import numpy as np
 
 SEQUENCE_LENGTHS = [128, 256, 512, 1024, 2048, 4096, 8192]
 BATCH_SIZE = 1
@@ -16,16 +17,27 @@ parser.add_argument("--device_type", type=str, default="cuda")
 parser.add_argument("--paged", action="store_true", help="Enable paged attention via env var.")
 args = parser.parse_args()
 
+local_rank = int(os.getenv("LOCAL_RANK", 0))
+world_size = int(os.getenv("WORLD_SIZE", 1))
+if args.device_type == "cuda":
+    device = torch.device(args.device_type, local_rank)
+    torch.cuda.set_device(device)
+else:
+    device = torch.device(args.device_type)
+
+torch.set_default_dtype(torch.half)
+
 if args.paged:
     os.environ["FMS_ATTENTION_ALGO"] = "paged"
 else:
     os.environ.pop("FMS_ATTENTION_ALGO", None)
 
-device = torch.device(args.device_type)
+print("loading model")
 model = models.get_model(args.architecture, args.variant, device_type=args.device_type)
 model.eval()
 tokenizer = tokenizers.get_tokenizer(args.tokenizer)
-torch.set_grad_enabled(True)
+torch.set_grad_enabled(False)
+print(f"loading complete on rank {local_rank}")
 
 print(f"# Attention Runtime Benchmark (paged={args.paged})")
 print("# seq_len\truntime_ms")
