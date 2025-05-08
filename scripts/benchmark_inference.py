@@ -165,6 +165,8 @@ attention_algo = os.getenv("FMS_ATTENTION_ALGO", "default")
 wandb_run = wandb.init(
     project="hpml-final-project",
     entity="nsd2147-columbia-university",
+    name=f"{args.architecture}-{args.variant}-{attention_algo}-seq{args.seq_len}",
+    tags=[attention_algo, f"seq_{args.seq_len}", "t4-sweep"],
     config={
         "architecture": args.architecture,
         "variant": args.variant,
