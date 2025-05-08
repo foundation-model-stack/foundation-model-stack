@@ -94,7 +94,7 @@ with open(output_csv, "w", newline="") as csvfile:
             torch.cuda.synchronize()
             end = time.time()
             runtime_ms_with_cache = (end - start) * 1000
-            writer.writerow([seq_len, f"{runtime_ms_with_cache:.3f}", "N/A"])
+            writer.writerow([seq_len, f"{runtime_ms_with_cache:.3f}", None])
             results.append((seq_len, runtime_ms_with_cache, None))
             print(f"[OK] seq_len={seq_len} runtime_ms_with_cache={runtime_ms_with_cache:.3f}", flush=True)
         except RuntimeError as e:
@@ -125,7 +125,7 @@ with open(output_csv, "w", newline="") as csvfile:
             torch.cuda.synchronize()
             end = time.time()
             runtime_ms_without_cache = (end - start) * 1000
-            writer.writerow([seq_len, "N/A", f"{runtime_ms_without_cache:.3f}"])
+            writer.writerow([seq_len, None, f"{runtime_ms_without_cache:.3f}"])
             results.append((seq_len, None, runtime_ms_without_cache))
             print(f"[OK] seq_len={seq_len} runtime_ms_without_cache={runtime_ms_without_cache:.3f}", flush=True)
         except RuntimeError as e:
