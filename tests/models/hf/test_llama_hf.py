@@ -73,7 +73,7 @@ class LLaMA2HFFixtures(ModelFixtureMixin, HFConfigFixtureMixin, HFModelFixtureMi
         # compute the freq from rot_emb since it is gathered lazily
         rot_emb = fms_hf_model.decoder.model.rot_emb
         max_seq_len = rot_emb.max_seq_len
-        alpha = rot_emb._alpha(max_seq_len)
+        alpha = rot_emb.rope_scaling.get_alpha(max_seq_len)
         ratio = rot_emb.ratio
         dim = rot_emb.dim
         if rot_emb.scaling["rope_type"] == "ntk":
