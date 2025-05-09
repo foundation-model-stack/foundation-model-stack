@@ -68,7 +68,6 @@ class HFAdaptedGraniteHeadless(HFDecoderModelArchitecture):
         # in the case we have not yet received the encoder/decoder/embedding, initialize it here
         if decoder is None or embedding is None:
             params = config.to_dict()
-            print(f'{params=}')
             model = GraniteHeadless(**params)
             decoder = model if decoder is None else decoder
             embedding = model.embedding if embedding is None else embedding
@@ -110,7 +109,7 @@ class HFAdaptedGraniteHeadless(HFDecoderModelArchitecture):
         }
 
 
-class HFAdaptedGraniteForCausalLM(LMHeadModelLMHeadMixin, HFAdaptedGraniteHeadless):
+class HFAdaptedGraniteForCausalLM(HFAdaptedGraniteHeadless, LMHeadModelLMHeadMixin):
 
     def __init__(self, config: HFAdaptedGraniteConfig, *args, **kwargs):
         super().__init__(config=config, bias=False, *args, **kwargs)

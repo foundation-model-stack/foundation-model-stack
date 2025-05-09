@@ -1,8 +1,5 @@
 import pytest
-import torch
 from transformers import (
-    GraniteConfig,
-    GraniteForCausalLM,
     PretrainedConfig,
     PreTrainedModel,
     PreTrainedTokenizer,

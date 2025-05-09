@@ -13,7 +13,6 @@ class HFAdaptedGraniteConfig(PretrainedConfig):
         "num_attention_heads": "nheads",
         "num_hidden_layers": "nlayers",
         "num_key_value_heads": "kvheads",
-        "intermediate_size": "hidden_dim",
         "rms_norm_eps": "norm_eps",
         "max_position_embeddings": "max_expected_seq_len",
         "rope_theta": "rope_base",
@@ -25,8 +24,8 @@ class HFAdaptedGraniteConfig(PretrainedConfig):
     def __init__(
         self,
         src_vocab_size: Optional[int] = 49155,
-        dim: Optional[int] = 16,
-        hidden_dim: Optional[int] = 8192,
+        emb_dim: Optional[int] = 2048,
+        hidden_dim: Optional[int] = 50,
         nlayers: int = 40,
         nheads: int = 32,
         kvheads: int = 8,
@@ -42,7 +41,7 @@ class HFAdaptedGraniteConfig(PretrainedConfig):
         **kwargs,
     ):
         self.src_vocab_size = src_vocab_size
-        self.dim = dim
+        self.emb_dim = emb_dim
         self.hidden_dim = hidden_dim
         self.norm_eps = norm_eps
         self.nheads = nheads

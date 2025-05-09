@@ -27,7 +27,7 @@ def convert_to_hf(
     oss_hf_model = GraniteForCausalLM(
         GraniteConfig(
             vocab_size=hf_config.src_vocab_size,
-            hidden_size=hf_config.dim,
+            hidden_size=hf_config.emb_dim,
             intermediate_size=hf_config.hidden_dim,
             num_hidden_layers=hf_config.nlayers,
             num_attention_heads=hf_config.nheads,
@@ -67,6 +67,20 @@ def convert_to_hf(
             oss_hf_layer.self_attn.k_proj.weight.copy_(hf_k)
             oss_hf_layer.self_attn.v_proj.weight.copy_(hf_v)
             oss_hf_layer.self_attn.o_proj.weight.copy_(fms_hf_layer.attn.dense.weight)
+
+            # mlp
+            wg1_fused = fms_hf_layer.ff_sub_layer.wg1_fused.weight
+            wg_splits = [wg1_fused.size(0) // 2, wg1_fused.size(0) // 2]
+            w1, wg = torch.split(
+                fms_hf_layer.ff_sub_layer.wg1_fused.weight, wg_splits, dim=0
+            )
+            oss_hf_layer.mlp.gate_proj.weight.copy_(wg)
+            oss_hf_layer.mlp.up_proj.weight.copy_(w1)
+            oss_hf_layer.mlp.down_proj.weight.copy_(
+                fms_hf_layer.ff_sub_layer.w2.weight
+            )
+
+            oss_hf_layer.mlp.down_proj.weight.copy_(fms_hf_layer.ff_sub_layer.w2.weight)
 
             # layer norm
             oss_hf_layer.input_layernorm.weight.copy_(fms_hf_layer.ln.weight)
