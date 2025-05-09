@@ -8,11 +8,14 @@ import torch
 import torch.nn as nn
 
 from fms import models
-from fms.distributed.strategy import DistributedStrategy, NoOpStrategy
+from fms.distributed.strategy import (
+    DistributedStrategy,
+    NoOpStrategy,
+)
+
 from fms.modules.attention import MultiHeadAttention
 from fms.modules.feedforward import GatedLinearUnit
 from fms.modules.layernorm import LayerNormParameterized
-from fms.modules.linear import get_linear_type
 from fms.modules.positions import RotaryEmbedding
 from fms.utils import serialization
 from fms.utils.activation import str_to_activation
@@ -22,36 +25,74 @@ from fms.utils.config import ModelConfig
 logger = logging.getLogger(__name__)
 
 
+"""
+======= Mapping =======
+    inner_dim = config.intermediate_size
+    architecture = "mistral"
+    config_params["activation_fn"] = config.hidden_act
+    config_params["emb_dim"] = config.hidden_size
+    config_params["max_expected_seq_len"] = config.max_position_embeddings
+    config_params["kvheads"] = config.num_key_value_heads
+    config_params["p_dropout"] = config.attention_dropout
+    config_params["norm_eps"] = config.rms_norm_eps
+    config_params["rope_base"] = config.rope_theta
+    ig_params["src_vocab_size"] = config.vocab_size
+    config_params["nheads"] = config.num_attention_heads
+    config_params["nlayers"] = config.num_hidden_layers
+    config_params["hidden_grow_factor"] = inner_dim / config.hidden_size
+    config_params["tie_heads"] = config.tie_word_embeddings
+
+========= config.json -- https://huggingface.co/mistralai/Mistral-7B-Instruct-v0.3/blob/main/config.json
+  "attention_dropout": 0.0,
+  "bos_token_id": 1,          X
+  "eos_token_id": 2,          X
+  "hidden_act": "silu",
+  "hidden_size": 4096,
+  "initializer_range": 0.02,  X
+  "intermediate_size": 14336,
+  "max_position_embeddings": 32768,
+  "model_type": "mistral",
+  "num_attention_heads": 32,
+  "num_hidden_layers": 32,
+  "num_key_value_heads": 8,
+  "rms_norm_eps": 1e-05,
+  "rope_theta": 1000000.0,
+  "sliding_window": null,     X 
+  "tie_word_embeddings": false,
+  "torch_dtype": "bfloat16",
+  "transformers_version": "4.42.0.dev0",
+  "use_cache": true,
+  "vocab_size": 32768
+"""
+
+
 @dataclass
-class GraniteConfig(ModelConfig):
-    src_vocab_size: int = 32_000  # can be set by tokenizer
-    emb_dim: int = 4096
-    norm_eps: float = 1e-5
+class MistralConfig(ModelConfig):
+    src_vocab_size: int = 32768
     nheads: int = 32
-    kvheads: int = 0
     nlayers: int = 32
-    pad_id: int = -1
-    hidden_grow_factor: float = 8 / 3
-    multiple_of: int = 256
-    activation_fn: str = "swish"
-    p_dropout: float = 0.0
-    max_expected_seq_len: int = 4096
-    ntk_scaling: bool = False
-    attn_bias: bool = False
-    mlp_bias: bool = False
+    hidden_grow_factor: float = 14336 / 4096  # intermediate_size / hidden_size:emb_dim
+    multiple_of: int = 256  # borrowed from llama
     tie_heads: bool = False
-    rope_theta: float = 10_000.0
-    embedding_multiplier: float = 1.0
-    logits_scaling: float = 1.0
-    residual_multiplier: float = 1.0
-    attention_multiplier: float = 1.0
-    linear_config: Optional[Mapping[str, Any]] = None
-    fused_weights: bool = True
+    p_dropout: float = 0.0
+    activation_fn: str = "swish"
+    emb_dim: int = 4096
+    max_expected_seq_len: int = 32768
+    kvheads: int = 8
+    norm_eps: float = 1e-5
+    sliding_window: int = 4000
+    rope_base: float = 100_0000.0  # Same as rope_theta
+    fused_weights: bool = True  # FMS Specific -- For CPU/GPU = T, AIU = F
+    pad_id: int = -1  # borrowed from granite, we do need it
+    linear_config: Optional[Mapping[str, Any]] = None  # To suppor quantization
 
 
-class GraniteBlock(nn.Module):
-    def __init__(self, config: GraniteConfig, rotary_emb: RotaryEmbedding):
-        super(GraniteBlock, self).__init__()
+_7b_config = MistralConfig()
+
+
+class MistralBlock(nn.Module):
+    def __init__(self, config: MistralConfig, rotary_emb: RotaryEmbedding):
+        super(MistralBlock, self).__init__()
         self.config = config
         emb_kq = self.config.emb_dim // self.config.nheads
         emb_v = self.config.emb_dim // self.config.nheads
@@ -86,11 +127,10 @@ class GraniteBlock(nn.Module):
             self.config.nheads,
             kvheads,
             p_dropout=self.config.p_dropout,
-            use_bias=self.config.attn_bias,
+            use_bias=False,
             position_encoder=rotary_emb,
             fused=self.config.fused_weights,
             linear_config=self.config.linear_config,
-            scale_factor=self.config.attention_multiplier,
         )
         self.ff_sub_layer = GatedLinearUnit(
             self.config.emb_dim,
@@ -98,7 +138,7 @@ class GraniteBlock(nn.Module):
             multiple_of=self.config.multiple_of,
             activation_fn=str_to_activation(self.config.activation_fn),
             p_dropout=self.config.p_dropout,
-            use_bias=self.config.mlp_bias,
+            use_bias=False,
             fused=self.config.fused_weights,
             linear_config=self.config.linear_config,
         )
@@ -119,6 +159,10 @@ class GraniteBlock(nn.Module):
     ):
         # if the cache is not empty, we need to get the kv cache for self and cross attention
         self_attn_past_key_value = past_key_value_state
+        # if past_key_value_state is not None:
+        #     self_attn_past_key_value = past_key_value_state[:2]
+        # else:
+        #     self_attn_past_key_value = None
 
         # first we do MHA and Add&Norm
         residual = x
@@ -139,7 +183,7 @@ class GraniteBlock(nn.Module):
         if self.config.p_dropout != 0:
             x = self.dropout(x)
         # residual connection
-        x = x * self.config.residual_multiplier + residual
+        x = x + residual
 
         # then we do FF and Add&Norm
         residual = x
@@ -148,7 +192,7 @@ class GraniteBlock(nn.Module):
         if self.config.p_dropout != 0:
             x = self.dropout(x)
         # another residual
-        x = x * self.config.residual_multiplier + residual
+        x = x + residual
 
         if use_cache:
             return (x, cache)
@@ -156,19 +200,15 @@ class GraniteBlock(nn.Module):
             return x
 
 
-class GraniteHeadless(nn.Module):
+class MistralHeadless(nn.Module):
     def __init__(
         self,
-        config: GraniteConfig,
+        config: MistralConfig,
         distributed_strategy: DistributedStrategy = NoOpStrategy,
     ):
-        super(GraniteHeadless, self).__init__()
+        super(MistralHeadless, self).__init__()
         self.config = config
         self.distributed_strategy = distributed_strategy
-
-        self.width = self.config.emb_dim
-        self.pad_id = self.config.pad_id
-        self.max_expected_seq_len = self.config.max_expected_seq_len
 
         self.embedding = nn.Embedding(
             self.config.src_vocab_size,
@@ -176,13 +216,11 @@ class GraniteHeadless(nn.Module):
             padding_idx=self.config.pad_id,
         )
 
-        rope_scaling = {"rope_type": "ntk" if self.config.ntk_scaling else "regular"}
-
         self.rot_emb = RotaryEmbedding(
             dim=self.config.emb_dim // self.config.nheads,
-            scaling=rope_scaling,
+            ntk_scaling=False,
             max_seq_len=self.config.max_expected_seq_len,
-            ratio=self.config.rope_theta,
+            ratio=self.config.rope_base,
         )
         # RoPE init
         for device in set(
@@ -193,7 +231,7 @@ class GraniteHeadless(nn.Module):
 
         layers = []
         for i in range(self.config.nlayers):
-            block: nn.Module = GraniteBlock(self.config, self.rot_emb)
+            block: nn.Module = MistralBlock(self.config, self.rot_emb)
             block = self.distributed_strategy.distribute_layer(block, i)
             layers.append(block)
         self.layers = nn.ModuleList(layers)
@@ -299,7 +337,6 @@ class GraniteHeadless(nn.Module):
             is_causal_mask = False
 
         x_in = self.embedding(x_in)
-        x_in = x_in * self.config.embedding_multiplier
 
         # this is the output cache for all the decoder layers
         present_key_value_states = []
@@ -330,31 +367,31 @@ class GraniteHeadless(nn.Module):
         return dec_out, present_key_value_states
 
 
-class Granite(nn.Module):
+class Mistral(nn.Module):
     def __init__(
         self,
-        config: Optional[GraniteConfig] = None,
+        config: Optional[MistralConfig] = None,
         distributed_strategy: DistributedStrategy = NoOpStrategy,
         **kwargs,
     ):
-        super(Granite, self).__init__()
+        super(Mistral, self).__init__()
         if config is not None:
             self.config = config
         else:
-            self.config = GraniteConfig()
+            self.config = MistralConfig()
         self.config = self.config.updated(**kwargs)
         self.distributed_strategy = distributed_strategy
 
-        self.base_model = GraniteHeadless(self.config, self.distributed_strategy)
+        self.base_model = MistralHeadless(self.config, self.distributed_strategy)
         self.head = nn.Linear(
             self.config.emb_dim, self.config.src_vocab_size, bias=False
         )
 
     @classmethod
-    def from_config(cls, config: GraniteConfig) -> "Granite":
+    def from_config(cls, config: MistralConfig) -> "Mistral":
         return cls(config)
 
-    def get_config(self) -> GraniteConfig:
+    def get_config(self) -> MistralConfig:
         return self.config
 
     def reset_parameters(self):
@@ -392,7 +429,6 @@ class Granite(nn.Module):
         if only_last_token:
             output = output[:, -1, :]
         preds = self.head(output)
-        preds = preds / self.config.logits_scaling
 
         if use_cache:
             return preds, cache
@@ -400,41 +436,32 @@ class Granite(nn.Module):
             return preds
 
 
-_8b_config = GraniteConfig(
-    src_vocab_size=49155,
-    emb_dim=4096,
-    norm_eps=1e-5,
-    nheads=32,
-    kvheads=8,
-    nlayers=40,
-    hidden_grow_factor=12800 / 4096,
-    max_expected_seq_len=8192,
-    rope_theta=10_000.0,
-    pad_id=0,
-    p_dropout=0.0,  # overwriting config.json
-    tie_heads=True,
-    embedding_multiplier=12.0,
-    logits_scaling=16.0,
-    residual_multiplier=0.22,
-    attention_multiplier=0.0078125,
-)
-
-_architecture_name = "granite"
+_architecture_name = "mistral"
 
 
-def _granite_factory_factory(config):
+def _mistral_factory_factory(config):
     def factory(**kwargs):
-        return Granite(config, **kwargs)
+        return Mistral(config, **kwargs)
 
     return factory
 
 
-models.register_model(_architecture_name, "8b", _granite_factory_factory(_8b_config))
+models.register_model(_architecture_name, "7b", _mistral_factory_factory(_7b_config))
+
+
+# =============== Serialization ==================
+
+
+serialization.register_adapter_step(
+    _architecture_name,
+    "swiglu_unfused_to_fused",
+    serialization._mlp_glu_unfused_to_fused_adapter_step,
+)
 
 
 def _weight_fusion(
-    input_sd: Mapping, model_config: Optional[GraniteConfig] = None, **kwargs
-):
+    input_sd: Mapping[str, Any], model_config: Optional[MistralConfig] = None, **kwargs
+) -> Mapping[str, Any]:
     has_fused_weights = True
     if model_config:
         if not model_config.fused_weights:
@@ -449,6 +476,30 @@ def _weight_fusion(
 
 
 serialization.register_adapter_step(_architecture_name, "weight_fusion", _weight_fusion)
+
+
+def _hf_gptq_mistral_check(
+    input_sd: Mapping[str, Any], model_config: Optional[MistralConfig] = None, **kwargs
+) -> Mapping[str, Any]:
+    has_fused_weights = True
+    linear_type = "torch_linear"
+    if model_config:
+        if not model_config.fused_weights:
+            has_fused_weights = False
+        if model_config.linear_config:
+            linear_type = model_config.linear_config["linear_type"]
+
+    if "gptq" in linear_type and has_fused_weights:
+        raise ValueError(
+            "GPTQ HF mistral checkpoints cannot be loaded into a model with fused weights"
+        )
+
+    return input_sd
+
+
+serialization.register_adapter_step(
+    _architecture_name, "hf_gptq_fusion_check", _hf_gptq_mistral_check
+)
 
 
 def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]:
@@ -484,34 +535,28 @@ serialization.register_adapter_step(
 def _get_rope_params(linear_type: str) -> list[str]:
     if "gptq" in linear_type:
         return ["qweight", "scales", "qzeros", "bias"]
-    if "int8" in linear_type:
-        # quantize_weight is fms-model-optimizer identifier of weight clip values
-        return ["weight", "bias", "quantize_weight"]
     else:  # torch.nn.Linear
         return ["weight", "bias"]
 
 
 def _hf_to_fms_rope(
-    input_sd: Mapping[str, Any], model_config: Optional[GraniteConfig] = None, **kwargs
+    input_sd: Mapping[str, Any], model_config: Optional[MistralConfig] = None, **kwargs
 ) -> Mapping[str, Any]:
     new_sd = {}
 
     if model_config:
         head_size = model_config.emb_dim // model_config.nheads
-        linear_type_str = "torch_linear"
+        linear_type = "torch_linear"
         if model_config.linear_config:
-            linear_type_str = get_linear_type(
-                model_config.linear_config,
-                module_name=None,  # if callable, linear_type should return default str
-            )
+            linear_type = model_config.linear_config["linear_type"]
     else:
         logger.warning("Missing model_config, assuming defaults for head_size")
         head_size = 128  # Good default for most models
-        linear_type_str = "torch_linear"
+        linear_type = "torch_linear"
 
-    rope_params = _get_rope_params(linear_type_str)
+    rope_params = _get_rope_params(linear_type)
     trans_required_pattern = re.compile(
-        f"base_model.layers.[0-9]+.attn.in_proj.(query|key).({'|'.join(rope_params)})"
+        f"layers.[0-9]+.attn.in_proj.(query|key).({'|'.join(rope_params)})"
     )
     for name, param in input_sd.items():
         # hf -> fms requires a transpose operation for the query and key
@@ -524,14 +569,12 @@ def _hf_to_fms_rope(
         # combination projection + RoPE ends up producing the same outputs.
         # Therefore, to make FMS produce the correct order of outputs when
         # loading from an HF checkpoint, we need to undo the transformation
-        # that HF does from the original Meta weights
-        is_gptq_2d_qparam = "gptq" in linear_type_str and param.dim() == 2
-        if bool(trans_required_pattern.match(name)) and param.numel() > 1:
+        # that HF does from the original Meta weights:
+        if bool(trans_required_pattern.match(name)):
             temp = param
-            if is_gptq_2d_qparam:
+            if "gptq" in linear_type and temp.dim() == 2:
                 # GPTQ qweights are [in_feat, out_feat] (unlike usual [out_feat, in_feat])
-                # and are fully transposed before & after process.
-                # GPTQ scales and qzeros are also transposed accordingly
+                # and are fully transposed before & after process
                 temp = temp.transpose(0, 1)
             # num_heads is used in the transformation required for hf->fms
             # can't be precomputed because q and k might have different num_heads
@@ -539,11 +582,11 @@ def _hf_to_fms_rope(
 
             if temp.dim() == 2:  # weight
                 temp_view = temp.view(num_heads, 2, -1, temp.size(1))
-            else:  # 1-dim parameters
+            else:  # bias
                 temp_view = temp.view(num_heads, 2, -1)
             temp = temp_view.transpose(1, 2).reshape(*temp.size())
 
-            if is_gptq_2d_qparam:
+            if "gptq" in linear_type and temp.dim() == 2:
                 temp = temp.transpose(0, 1)
 
             new_sd[name] = temp
@@ -552,29 +595,6 @@ def _hf_to_fms_rope(
 
     return new_sd
 
-
-def _hf_gptq_granite_check(
-    input_sd: Mapping[str, Any], model_config: Optional[GraniteConfig] = None, **kwargs
-) -> Mapping[str, Any]:
-    has_fused_weights = True
-    linear_type = "torch_linear"
-    if model_config:
-        if not model_config.fused_weights:
-            has_fused_weights = False
-        if model_config.linear_config:
-            linear_type = model_config.linear_config["linear_type"]
-
-    if "gptq" in linear_type and has_fused_weights:
-        raise ValueError(
-            "GPTQ HF granite checkpoints cannot be loaded into a model with fused weights"
-        )
-
-    return input_sd
-
-
-serialization.register_adapter_step(
-    "granite", "hf_gptq_fusion_check", _hf_gptq_granite_check
-)
 
 serialization.register_adapter_step(
     _architecture_name, "hf_to_fms_rope", _hf_to_fms_rope

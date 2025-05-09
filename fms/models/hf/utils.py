@@ -192,6 +192,15 @@ def _infer_model_configuration(
         config_params["p_dropout"] = config.hidden_dropout_prob
         config_params["norm_eps"] = config.layer_norm_eps
         config_params["activation_fn"] = config.hidden_act
+    elif architecture == "RobertaForQuestionAnswering":
+        inner_dim = config.intermediate_size
+        architecture = "roberta_question_answering"
+        config_params["emb_dim"] = config.hidden_size
+        config_params["pad_id"] = config.pad_token_id
+        config_params["max_pos"] = config.max_position_embeddings - 2
+        config_params["p_dropout"] = config.hidden_dropout_prob
+        config_params["norm_eps"] = config.layer_norm_eps
+        config_params["activation_fn"] = config.hidden_act
     elif architecture == "GraniteForCausalLM":
         inner_dim = config.intermediate_size
         architecture = "granite"
@@ -206,6 +215,17 @@ def _infer_model_configuration(
         config_params["attention_multiplier"] = config.attention_multiplier
         config_params["logits_scaling"] = config.logits_scaling
         config_params["embedding_multiplier"] = config.embedding_multiplier
+    elif architecture == "MistralForCausalLM":
+        inner_dim = config.intermediate_size
+        architecture = "mistral"
+        config_params["activation_fn"] = config.hidden_act
+        config_params["emb_dim"] = config.hidden_size
+        config_params["max_expected_seq_len"] = config.max_position_embeddings
+        config_params["kvheads"] = config.num_key_value_heads
+        config_params["p_dropout"] = config.attention_dropout
+        config_params["norm_eps"] = config.rms_norm_eps
+        config_params["rope_base"] = config.rope_theta
+        config_params["sliding_window"] = config.sliding_window
     elif architecture == "BambaForCausalLM":
         inner_dim = config.intermediate_size
         architecture = "bamba"
