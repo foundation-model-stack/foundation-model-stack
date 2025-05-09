@@ -117,7 +117,7 @@ class RopeNoScalingImpl:
         return 1
 
     def scaled_max_seq_len(self, current_max_seq_len: int, alpha: int):
-        return current_max_seq_len
+        return max(current_max_seq_len, self.orig_max_seq_len)
 
     def compute_scaled_freqs(self, device: str, alpha: int):
         ratio = self.ratio
