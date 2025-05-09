@@ -310,17 +310,18 @@ def generate(
                 mask_i = kwargs["mask"][seq_i].unsqueeze(0)
 
                 # batch dynamic
-                torch._dynamo.mark_static(input_ids, 0)
-                torch._dynamo.mark_static(kwargs["slot_mapping"], 0)
-                torch._dynamo.mark_static(kwargs["position_ids"], 0)
-                torch._dynamo.mark_static(kwargs["mask"], 0)
+                torch._dynamo.mark_static(input_ids_i, 0)
+                torch._dynamo.mark_static(slot_mapping_i, 0)
+                torch._dynamo.mark_static(position_ids_i, 0)
+                torch._dynamo.mark_static(mask_i, 0)
 
                 # seq dynamic
-                torch._dynamo.mark_dynamic(input_ids, 1)
-                torch._dynamo.mark_dynamic(kwargs["slot_mapping"], 1)
-                torch._dynamo.mark_dynamic(kwargs["position_ids"], 1)
-                torch._dynamo.mark_dynamic(kwargs["mask"], 2)
-                torch._dynamo.mark_dynamic(kwargs["mask"], 3)
+                torch._dynamo.mark_dynamic(input_ids_i, 1)
+                torch._dynamo.mark_dynamic(slot_mapping_i, 1)
+                torch._dynamo.mark_dynamic(position_ids_i, 1)
+                torch._dynamo.mark_dynamic(mask_i, 2)
+                torch._dynamo.mark_dynamic(mask_i, 3)
+
                 only_last_token = kwargs.get("only_last_token", False)
 
                 output, current_kv_cache = model(input_ids_i, slot_mapping=slot_mapping_i, position_ids=position_ids_i, mask=mask_i, past_key_value_states=current_kv_cache, use_cache=kwargs["use_cache"], only_last_token=only_last_token)
