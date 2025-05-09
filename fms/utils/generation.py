@@ -321,8 +321,9 @@ def generate(
                 torch._dynamo.mark_dynamic(kwargs["position_ids"], 1)
                 torch._dynamo.mark_dynamic(kwargs["mask"], 2)
                 torch._dynamo.mark_dynamic(kwargs["mask"], 3)
+                only_last_token = kwargs.get("only_last_token", False)
 
-                output, current_kv_cache = model(input_ids_i, slot_mapping=slot_mapping_i, position_ids=position_ids_i, mask=mask_i, past_key_value_states=current_kv_cache, use_cache=kwargs["use_cache"])
+                output, current_kv_cache = model(input_ids_i, slot_mapping=slot_mapping_i, position_ids=position_ids_i, mask=mask_i, past_key_value_states=current_kv_cache, use_cache=kwargs["use_cache"], only_last_token=only_last_token)
                 
                 outputs_list.append(output[0].squeeze(0))
             
