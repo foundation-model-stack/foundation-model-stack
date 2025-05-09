@@ -1,10 +1,28 @@
 # COMS E6998 - HPML Final Project (Spring 2025) - Group 3
 
-## Description
+# HPML Project: Flex Attention in IBM FMS 
+
+## Team Information
+
+- **Team Name**: IBM Group 3
+- **Members**:
+  - Neil Dhillon (nsd2147) 
+  - Thomas Joshi (ttj2108) 
+  - Herman Saini (hss2173)
+
+---
+
+## 1. Problem Statement
 
 Our project aims to integrate PyTorch's Paged Attention into the Foundation Model Stack (FMS) using Flex Attention. We intend to enhance memory efficiency and inference speed for long-context language models without sacrificing model accuracy. Specifically, we will implement a dynamic, paged key-value (KV) cache that minimizes memory fragmentation, benchmark its performance against standard attention mechanisms, and evaluate the impact of various paging strategies on overall model performance.
 
-## Outline of Code Repository
+---
+
+## 2. Model Description
+
+Llama 7B with Paged Attention implemented using PyTorch's Flex Attention API and KV Cache manager.
+
+### Outline of Code Repository
 
 ```text
 foundation-model-stack/
@@ -47,54 +65,9 @@ foundation-model-stack/
 └── setup.py
 ```
 
-## Example Commands
+---
 
-### Dev Env Setup: Ensure PyTorch 2.8+dev is installed and GPU with CUDA is available
-
-```bash
-make check-torch
-```
-
-Example output:
-```bash
-ndhillon@instance-20250303-021938:~/foundation-model-stack$ make check-torch
-.venv/bin/python -c "import torch, sys; print(f'PyTorch version: {torch.__version__}\\nCUDA available: {torch.cuda.is_available()}'); print(f'GPU device: {torch.cuda.get_device_name(0)}' if torch.cuda.is_available() else '')"
-PyTorch version: 2.8.0.dev20250503+cu126
-CUDA available: True
-GPU device: Tesla T4
-```
-
-### Download Llama Tokenizer (needed for Llama inference)
-
-```bash
-make download-tokenizer
-```
-
-### Run Llama Inference Benchmarks with Regular Attention
-
-```bash
-make bench-llama
-
-# If you are using a machine with < 16GB of GPU memory, recommend running a lighter benchmark
-make bench-llama-t4
-```
-
-### Run Llama Inference Benchmarks with Paged Attention
-
-```bash
-make bench-llama-paged
-
-# If you are using a machine with < 16GB of GPU memory, recommend running a lighter benchmark
-make bench-llama-paged-t4
-```
-
-### Run Paged Attention Unit Tests
-
-```bash
-make test-paged-attention
-```
-
-## Results
+## 3. Final Results Summary
 
 ### Attention Runtime Benchmarks (NVIDIA L4 GPU - 24GB)
 
@@ -136,7 +109,42 @@ make test-paged-attention
 
 **Take‑away:** Peak GPU memory during _single‐step_ evaluation is governed by the model weights; KV caching only matters once you start **multi‑step generation**, where it grows linearly with the number of generated tokens.
 
-## Wandb Project Dashboard
+
+---
+
+## 4. Reproducibility Instructions
+
+### A. Requirements
+
+Install dependencies:
+```bash
+make deps
+```
+
+Check PyTorch version & CUDA availability:
+```bash
+make check-torch
+```
+
+You should have PyTorch 2.8+dev or newer.
+
+```
+PyTorch version: 2.8.0.dev20250503+cu126
+CUDA available: True
+GPU device: Tesla T4
+```
+
+Download Llama Tokenizer (needed for Llama inference)
+
+```bash
+make download-tokenizer
+```
+
+---
+
+B. Wandb Dashboard
+
+### Wandb Project Dashboard
 
 https://wandb.ai/nsd2147-columbia-university/hpml-final-project
 
@@ -146,3 +154,63 @@ command (only needed once).
 ```bash
 wandb init --project hpml-final-project --entity nsd2147-columbia-university
 ```
+
+---
+
+### C. Specify for Inference
+
+#### Run Llama Inference Benchmarks with Regular Attention
+
+```bash
+make bench-llama
+
+# If you are using a machine with < 16GB of GPU memory, recommend running a lighter benchmark
+make bench-llama-t4
+```
+
+#### Run Llama Inference Benchmarks with Paged Attention
+
+```bash
+make bench-llama-paged
+
+# If you are using a machine with < 16GB of GPU memory, recommend running a lighter benchmark
+make bench-llama-paged-t4
+```
+
+---
+
+### D. Evaluation
+
+#### Benchmark attention runtime (default & paged) for various sequence lengths (CSV output)
+```bash
+make bench-attention-runtime
+```
+
+#### Profile peak memory usage for various sequence lengths (default & paged)
+```bash
+make profile-memory 
+```
+
+---
+
+### E. Quickstart: Minimum Reproducible Result
+
+#### Run default & paged T4 benchmarks for all sequence lens (128...8192)"
+
+```bash
+make bench-llama-t4-sweep
+```
+
+#### Run Paged Attention Unit Tests
+
+```bash
+make test-paged-attention
+```
+
+---
+
+## 5. Notes - Helpful References
+
+- fms/modules/attention.py
+- tests/modules/test_paged_attention.py
+- https://medium.com/@nsd2147/paging-through-attention-how-we-cut-gpu-memory-waste-for-long-context-llms-7fa94bb84a31
