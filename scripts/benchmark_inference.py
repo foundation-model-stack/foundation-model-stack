@@ -102,6 +102,13 @@ parser.add_argument(
     help="This is a distributed job (multiple instances run with RANK+WORLD_SIZE)",
 )
 parser.add_argument(
+    "--distributed_strategy",
+    type=str,
+    default=None,
+    choices=["tp", "mp", "fsdp", "hsdp", "ddp", "ring"], # Added 'ring'
+    help="The distributed strategy to use. If None, will attempt to guess based on --distributed and device count.",
+)
+parser.add_argument(
     "--skip_correctness_check",
     action="store_true",
     help="Do not test correctness of outputs vs just timing",
@@ -164,7 +171,11 @@ if world_size > 1:
     torch._C._distributed_c10d._register_process_group("default", dist.group.WORLD)
 
 print("loading model")
-model = models.get_model(args.architecture, args.variant, device_type=args.device_type)
+model = models.get_model(
+    args.architecture, 
+    args.variant, 
+    distr_strategy=args.distributed_strategy,
+    device_type=args.device_type)
 
 if args.unfuse_weights:
     print("unfusing weights")
