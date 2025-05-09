@@ -18,10 +18,9 @@ def ring_forward(
     past_key_value_state=None,
     use_cache=False,
     is_causal_mask=False,
-    attn_algorithm=None,
-    distributed_strategy: Optional[DistributedStrategy] = None,
+    attn_algorithm=None
 ):
-
+    
     residual = x 
     x_norm = self.ln(x)
 
@@ -29,8 +28,8 @@ def ring_forward(
     x = RingAttentionKernel.ring_attention(
         x_norm=x_norm,
         attn_module=self.attn,
-        strategy=distributed_strategy,
-        valid_len=distributed_strategy._local_valid_len,
+        strategy=self.distributed_strategy,
+        valid_len=self.distributed_strategy._local_valid_len,
         mask=mask, 
         position_ids=position_ids, # Sharded position_ids
         past_key_value_state=past_key_value_state, 
@@ -65,7 +64,7 @@ class RingAttentionKernel:
         past_key_value_state: Optional[Tuple[Tensor, Tensor]] = None,
         causal: bool = False,
     ) -> Tensor:
-
+        
         batch_size, num_valid_tokens_input_shard, emb_dim = x_norm.shape 
         assert num_valid_tokens_input_shard == valid_len
         current_rank_token_global_start_idx = strategy.rank * strategy.block_size

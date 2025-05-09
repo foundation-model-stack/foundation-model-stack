@@ -66,6 +66,7 @@ class LLaMABlock(nn.Module):
     def __init__(self, config: LLaMAConfig, rotary_emb: RotaryEmbedding, distributed_strategy: DistributedStrategy):
         super(LLaMABlock, self).__init__()
         self.config = config
+        self.distributed_strategy = distributed_strategy
         emb_kq = self.config.emb_dim // self.config.nheads
         emb_v = self.config.emb_dim // self.config.nheads
 
@@ -130,8 +131,7 @@ class LLaMABlock(nn.Module):
         past_key_value_state=None,
         use_cache=False,
         is_causal_mask=False,
-        attn_algorithm=None,
-        distributed_strategy: Optional[DistributedStrategy] = None,
+        attn_algorithm=None
     ):
         # if the cache is not empty, we need to get the kv cache for self and cross attention
         self_attn_past_key_value = past_key_value_state
@@ -175,6 +175,9 @@ class LLaMABlock(nn.Module):
         else:
             return x
         
+        
+
+
 
 class LLaMA(nn.Module):
     def __init__(
@@ -396,8 +399,7 @@ class LLaMA(nn.Module):
                 past_key_value_state=past_key_value_states[i],
                 use_cache=use_cache,
                 is_causal_mask=is_causal_mask,
-                attn_algorithm=attn_algorithm,
-                distributed_strategy=distributed_strategy, # Pass strategy to the block
+                attn_algorithm=attn_algorithm
             )
 
             if use_cache:
@@ -431,14 +433,7 @@ class LLaMA(nn.Module):
         attn_algorithm: Optional[str] = None,
     ):
         output, cache = self._helper(
-            x,
-            mask,
-            position_ids,
-            past_key_value_states,
-            use_cache,
-            attn_algorithm,
-            # Pass the strategy from the main model instance
-            distributed_strategy=self.distributed_strategy,
+            x, mask, position_ids, past_key_value_states, use_cache, attn_algorithm, self.distributed_strategy
         )
 
         if only_last_token:

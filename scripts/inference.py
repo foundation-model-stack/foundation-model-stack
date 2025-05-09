@@ -204,7 +204,7 @@ else:
     template = "Below is an instruction that describes a task. Write a response that appropriately completes the request.\n\n### Instruction:\n{}\n\n### Response:"
 
     prompt1 = template.format(
-        "List the periodic table of elements in bullet points."
+        "Provide a list of instructions for preparing chicken soup."
     )
     prompt2 = template.format("Explain some popular greetings in Spanish.")
 
@@ -215,12 +215,10 @@ max_len = max([len(prompt) for prompt in [prompt1, prompt2]])
 
 if args.batch_input:
     ids = [prompt1, prompt2]
-    # Use pad_input_ids from fms.utils.generation which returns padding_kwargs
     ids, padding_kwargs = pad_input_ids(ids, min_pad_length=args.min_pad_length)
 else:
     ids = prompt1
     if args.min_pad_length != 0:
-        # Use pad_input_ids from fms.utils.generation which returns padding_kwargs
         ids, padding_kwargs = pad_input_ids([ids], min_pad_length=args.min_pad_length)
     else:
         padding_kwargs = None
@@ -230,13 +228,9 @@ def print_result(result):
     if local_rank != 0:
         return
     if padding_kwargs is not None:
-        # trim_prefix might not be needed if the model handles padding correctly, depends on model/generation impl.
-        # result = generation.trim_prefix(result)
-        pass # Assuming model handles padding, otherwise re-enable trim_prefix
+        result = generation.trim_prefix(result)
 
-    # Trim BOS token if present at the start
-    if result.numel() > 0 and result[0] == tokenizer.bos_token_id:
-        result = result[1:]
+    result = generation.trim_prefix(result, tokenizer.bos_token_id)
 
     # stop at EOS token if present and remove padding
     result = generation.truncate_after_eos(result, tokenizer.eos_token_id)
@@ -271,7 +265,7 @@ def infer(use_cache, do_sample):
     result = generate(
         model,
         ids,
-        max_new_tokens=5,
+        max_new_tokens=100,
         use_cache=use_cache,
         do_sample=do_sample,
         max_seq_len=max_seq_len,

@@ -1,18 +1,14 @@
 import os
 from abc import abstractmethod
 from typing import List, Optional, Tuple
-from torch.distributed import P2POp
-
-import torch
-import torch.distributed
-from torch import nn
-
-from fms.utils import tp_wrapping
 
 import torch
 from torch import Tensor, nn
+import torch.distributed
 import torch.distributed as dist # Keep this for P2POp if not already imported
-from typing import Optional
+from torch.distributed import P2POp
+
+from fms.utils import tp_wrapping
 
 
 if "DISTRIBUTED_STRATEGY_IGNORE_MODULES" in os.environ:
