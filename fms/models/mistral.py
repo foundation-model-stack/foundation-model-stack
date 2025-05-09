@@ -1,7 +1,7 @@
 import logging
 import math
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Mapping, Optional, Tuple
 
 import torch
@@ -82,6 +82,7 @@ class MistralConfig(ModelConfig):
     norm_eps: float = 1e-5
     sliding_window: int = 4000
     rope_base: float = 100_0000.0  # Same as rope_theta
+    rope_scaling: dict = field(default_factory=lambda: {})
     fused_weights: bool = True  # FMS Specific -- For CPU/GPU = T, AIU = F
     pad_id: int = -1  # borrowed from granite, we do need it
     linear_config: Optional[Mapping[str, Any]] = None  # To suppor quantization
@@ -218,7 +219,7 @@ class MistralHeadless(nn.Module):
 
         self.rot_emb = RotaryEmbedding(
             dim=self.config.emb_dim // self.config.nheads,
-            ntk_scaling=False,
+            scaling=self.config.rope_scaling,
             max_seq_len=self.config.max_expected_seq_len,
             ratio=self.config.rope_base,
         )
