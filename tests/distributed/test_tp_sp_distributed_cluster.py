@@ -10,6 +10,7 @@ from fms.models.llama import LLaMA, LLaMAConfig
 from fms.distributed.strategy import TensorParallelStrategy
 
 
+# Sets up torch.distributed and initializes wandb logging
 def setup_distributed():
     rank = int(os.environ["RANK"])
     world_size = int(os.environ["WORLD_SIZE"])
@@ -21,15 +22,16 @@ def setup_distributed():
     os.environ['MASTER_PORT'] = os.environ.get('MASTER_PORT', '29501')
 
     wandb.init(project="fms-tp-sp", config={
-                "model": "LLaMA",
-                "nlayers": 32,
-                "strategy": "TensorParallel",
-                "vocab_size": 32000,
-                "sequence_length": 16,
-                "batch_size": 2,
-            })
+        "model": "LLaMA",
+        "nlayers": 32,
+        "strategy": "TensorParallel",
+        "vocab_size": 32000,
+        "sequence_length": 16,
+        "batch_size": 2,
+    })
     print(f"[Rank {rank}] WandB initialized")
 
+    # Initialize the process group
     if not dist.is_initialized():
         store = dist.FileStore("/tmp/shared_file_store", world_size)
         backend = 'nccl' if torch.cuda.is_available() else 'gloo'
@@ -44,10 +46,12 @@ def setup_distributed():
     print(f"[Rank {rank}] Distributed process group initialized")
 
 
+# Runs benchmark for sequence parallelism (SP)
 def run_sequence_parallel_benchmark():
-    latency = list()
-    memory_allocated = list()
-    memory_reserved = list()
+    latency = []
+    memory_allocated = []
+    memory_reserved = []
+
     print("Benchmarking sequence parallelism")
     setup_distributed()
 
@@ -58,25 +62,20 @@ def run_sequence_parallel_benchmark():
     torch.cuda.set_device(local_rank)
     device = torch.device("cuda", local_rank)
 
-    print(f"[Rank {rank}] Running on GPU {local_rank}: {torch.cuda.get_device_name(device)} (UUID: {torch.cuda.get_device_properties(device).uuid})")
+    print(f"[Rank {rank}] Running on GPU {local_rank}: {torch.cuda.get_device_name(device)}")
 
-    print(f"[Rank {rank}] Initializing tensor parallel strategy...")
     strategy = TensorParallelStrategy()
-    print(f"[Rank {rank}] Strategy initialized.")
+    print(f"[Rank {rank}] Strategy initialized")
 
     config = LLaMAConfig(nlayers=32, max_expected_seq_len=1024, fused_weights=False)
-    print(f"[Rank {rank}] Building LLaMA model with config: {config}")
     model = LLaMA(config=config, distributed_strategy=strategy).to(device)
     model.eval()
-    print(f"[Rank {rank}] Model created.")
+    print(f"[Rank {rank}] Model created")
 
-    # sequence_lengths = [5, 9, 7] # C1 + 2
-    sequence_lengths = [1] # C3
+    # C1: Initial test with padding logic for short sequences
+    sequence_lengths = [1]
     batch_size = len(sequence_lengths)
     max_seq_len = max(sequence_lengths)
-
-    # C1: Multiple sequences with varying lengths
-    # Pad all sequences in the batch to the longest sequence
     batch = []
     for seq_len in sequence_lengths:
         x = torch.randint(0, config.src_vocab_size, (seq_len,), device=device)
@@ -84,22 +83,19 @@ def run_sequence_parallel_benchmark():
         if pad_amount > 0:
             x = torch.nn.functional.pad(x, (0, pad_amount), value=0)
         batch.append(x)
+    batch = torch.stack(batch)
 
-    batch = torch.stack(batch)  # Shape: (batch_size, max_seq_len)
-
-    # C2: If max_seq_len not divisible by world_size, pad to closest higher multiple
+    # C2 + C3: Pad to multiple of world size or at least world size
     padded_len = ((max_seq_len + world_size - 1) // world_size) * world_size
-
-    # C3: If sequence length still < world_size, pad to world_size
     if padded_len < world_size:
         padded_len = world_size
-
     if padded_len > max_seq_len:
         pad_amount = padded_len - max_seq_len
-        batch = torch.nn.functional.pad(batch, (0, pad_amount), value=0) 
+        batch = torch.nn.functional.pad(batch, (0, pad_amount), value=0)
 
-    print(f"[Rank {rank}] Final batch shape: {batch.shape} (batch_size={batch_size}, sequence_length={padded_len})")
+    print(f"[Rank {rank}] Final batch shape: {batch.shape}")
 
+    # Forward pass on padded input
     torch.cuda.reset_peak_memory_stats(device)
     torch.cuda.synchronize()
     start = time.time()
@@ -115,6 +111,7 @@ def run_sequence_parallel_benchmark():
 
     print("Passed baseline sequence parallelism cases")
 
+    # C4: Main benchmark loop across longer sequence lengths
     seq_lengths = [256, 512, 1024]
     for seq_len in seq_lengths:
         print(f"Starting sequence length {seq_len} test")
@@ -135,13 +132,15 @@ def run_sequence_parallel_benchmark():
         memory_reserved.append(torch.cuda.max_memory_reserved(device) / 1e9)
 
     dist.destroy_process_group()
-
     return latency, memory_allocated, memory_reserved
 
+
+# Runs benchmark for tensor parallelism (TP) only (no SP)
 def run_tensor_parallel_benchmark():
-    latency = list()
-    memory_allocated = list()
-    memory_reserved = list()
+    latency = []
+    memory_allocated = []
+    memory_reserved = []
+
     print("Benchmarking tensor parallelism without sequence parallelism")
     os.environ["USE_SEQUENCE_PARALLELISM"] = "False"
     setup_distributed()
@@ -153,19 +152,17 @@ def run_tensor_parallel_benchmark():
     torch.cuda.set_device(local_rank)
     device = torch.device("cuda", local_rank)
 
-    print(f"[Rank {rank}] Running on GPU {local_rank}: {torch.cuda.get_device_name(device)} (UUID: {torch.cuda.get_device_properties(device).uuid})")
+    print(f"[Rank {rank}] Running on GPU {local_rank}: {torch.cuda.get_device_name(device)}")
 
-    print(f"[Rank {rank}] Initializing tensor parallel strategy...")
     strategy = TensorParallelStrategy()
-    print(f"[Rank {rank}] Strategy initialized.")
+    print(f"[Rank {rank}] Strategy initialized")
 
     config = LLaMAConfig(nlayers=32, max_expected_seq_len=1024, fused_weights=False)
-    print(f"[Rank {rank}] Building LLaMA model with config: {config}")
     model = LLaMA(config=config, distributed_strategy=strategy).to(device)
     model.eval()
-    print(f"[Rank {rank}] Model created.")
+    print(f"[Rank {rank}] Model created")
 
-    ## check across varying sequence lengths to compare against TP-only impl
+    # Benchmark loop over standard sequence lengths
     seq_lengths = [256, 512, 1024]
     for seq_len in seq_lengths:
         print(f"Starting sequence length {seq_len} test")
@@ -186,18 +183,19 @@ def run_tensor_parallel_benchmark():
         memory_reserved.append(torch.cuda.max_memory_reserved(device) / 1e9)
 
     dist.destroy_process_group()
-
     return latency, memory_allocated, memory_reserved
 
+
+# Entry point — runs both benchmarks and generates comparison plots
 if __name__ == "__main__":
     sp_times, sp_mem_allocated, sp_mem_reserved = run_sequence_parallel_benchmark()
     tp_times, tp_mem_allocated, tp_mem_reserved = run_tensor_parallel_benchmark()
 
     seq_length = [256, 512, 1024]
-
     output_dir = "distributed_tests_plots"
     os.makedirs(output_dir, exist_ok=True)
 
+    # Plot: Execution time
     plt.figure(figsize=(10, 5))
     plt.plot(seq_length, sp_times, marker='o', label='Sequence Parallel')
     plt.plot(seq_length, tp_times, marker='o', label='Tensor Parallel')
@@ -209,6 +207,7 @@ if __name__ == "__main__":
     plt.savefig(os.path.join(output_dir, 'execution_time_vs_seq_length.png'))
     plt.close()
 
+    # Plot: Memory allocated
     plt.figure(figsize=(10, 5))
     plt.plot(seq_length, sp_mem_allocated, marker='o', label='Sequence Parallel')
     plt.plot(seq_length, tp_mem_allocated, marker='o', label='Tensor Parallel')
@@ -220,6 +219,7 @@ if __name__ == "__main__":
     plt.savefig(os.path.join(output_dir, 'memory_allocated_vs_seq_length.png'))
     plt.close()
 
+    # Plot: Memory reserved
     plt.figure(figsize=(10, 5))
     plt.plot(seq_length, sp_mem_reserved, marker='o', label='Sequence Parallel')
     plt.plot(seq_length, tp_mem_reserved, marker='o', label='Tensor Parallel')
