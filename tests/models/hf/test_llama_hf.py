@@ -74,7 +74,9 @@ class LLaMA2HFFixtures(ModelFixtureMixin, HFConfigFixtureMixin, HFModelFixtureMi
         rot_emb = fms_hf_model.decoder.model.rot_emb
         max_seq_len = rot_emb.rope_scaling.orig_max_seq_len
         alpha = rot_emb.rope_scaling.get_alpha(max_seq_len)
-        freqs = rot_emb.rope_scaling.compute_scaled_freqs(oss_hf_model.model.rotary_emb.inv_freq.device, alpha)
+        freqs = rot_emb.rope_scaling.compute_scaled_freqs(
+            oss_hf_model.model.rotary_emb.inv_freq.device, alpha
+        )
 
         with torch.no_grad():
             oss_hf_model.model.embed_tokens.weight.copy_(fms_hf_model.embedding.weight)
