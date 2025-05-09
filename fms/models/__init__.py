@@ -378,9 +378,8 @@ def get_model(
     elif distributed_strategy == "ring":
         print("using RingAttentionStrategy")
         extra_args["distributed_strategy"] = RingAttentionStrategy(group=group)
-
         initial_device = device
-    else: # Includes TP and None/single device cases
+    else:
         initial_device = device
 
     # infer the model architecture and variant if they do not exist yet
@@ -404,25 +403,16 @@ def get_model(
             world_size=world_size,
         )
 
-    # Instantiate the appropriate DistributedStrategy object
     if "distributed_strategy" not in extra_args:
         if distributed_strategy == "tp":
-            logger.info("Using TensorParallelStrategy")
+            print("using tensor parallel")
             extra_args["distributed_strategy"] = TensorParallelStrategy(group)
         elif distributed_strategy == "mp":
-            logger.info("Using UniformModelParallelStrategy")
+            print("using model parallel")
             devices = [i for i in range(torch.cuda.device_count())]
             extra_args["distributed_strategy"] = UniformModelParallelStrategy(
                 devices, _guess_num_layers(lazy_sd)
             )
-        elif distributed_strategy == "ring":
-            logger.info("Using RingAttentionStrategy")
-            # Assume block_size needs to be provided or inferred elsewhere if needed here.
-            # For now, let's assume it's passed via kwargs or handled in the model itself.
-            block_size = extra_args.pop('ring_block_size', 128) # Example: default or get from kwargs
-            logger.info(f"RingAttention block size: {block_size}")
-            extra_args["distributed_strategy"] = RingAttentionStrategy(block_size=block_size, group=group)
-        # else: NoOpStrategy will be used by default in LLaMA init
 
     # Create the model on meta device to allocate weights lazily
     fms_model = _get_model_instance(
@@ -454,7 +444,6 @@ def get_model(
     def model_wrap(model):
         if _is_dp(distributed_strategy):
             return _fsdp_wrap(model, distributed_strategy, device, rank == 0)
-        # No specific wrapping needed for TP, MP, Ring here (handled via layer/module distribution)
         return model
 
     if not pre_load:
@@ -493,6 +482,7 @@ def get_model(
         fms_model.post_init()
 
     # Make sure any uninitialized tensors are at least moved to device
+    # TODO: should we raise a warning? are uninitialized tensors ever acceptable?
     if initial_device != torch.device("meta"):
         fms_model._apply(
             lambda t: torch.empty_like(t, device=initial_device)

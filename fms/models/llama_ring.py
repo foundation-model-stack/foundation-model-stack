@@ -1,81 +1,15 @@
-import logging
-import re
-from dataclasses import dataclass
-from typing import Any, List, Mapping, Optional, Tuple, Dict
-
+import math
 import torch
 import torch.nn as nn
-import torch.distributed as dist # Import dist for rank info
-from torch.distributed import P2POp  # For batch_isend_irecv
+from torch import Tensor
+from typing import Optional, Tuple
 
-from fms import models
-from fms.distributed.strategy import (
-    DistributedStrategy,
-    NoOpStrategy,
-    RingAttentionStrategy,
-    TensorParallelStrategy,
-)
 from fms.modules.attention import MultiHeadAttention
-from fms.modules.embedding import WordEmbedding
-from fms.modules.feedforward import GatedLinearUnit
-from fms.modules.layernorm import LayerNormParameterized
-from fms.modules.positions import RotaryEmbedding
-from fms.utils import serialization
-from fms.utils.activation import str_to_activation
-from fms.utils.config import ModelConfig
+from fms.distributed.strategy import DistributedStrategy, RingAttentionStrategy
 
 
-logger = logging.getLogger(__name__)
 
-
-def compute_local_qkv_and_rope(
-    self, attn_data, q, k=None, v=None, position_ids=None,
-    use_cache=False, past_key_value_state=None, is_self=True
-):
-    B, T, _ = q.shape
-    q_out, k_out, v_out = attn_data.in_proj(q, k, v)
-
-    queries = q_out.view(B, T, attn_data.nheads, attn_data.emb_kq_per_head)
-    keys    = k_out.view(B, T, attn_data.kvheads, attn_data.emb_kq_per_head)
-    values  = v_out.view(B, T, attn_data.kvheads, attn_data.emb_v_per_head)
-
-    if attn_data.position_encoder is not None and T > 0:
-        assert position_ids is not None, "position_ids must be provided for rotary encoding"
-        # Adjust assertion for T=0 case where position_ids might be (B, 0)
-        expected_pos_shape = (B, T)
-        if not (T == 0 and position_ids.shape == (B, 0)) and position_ids.shape != expected_pos_shape:
-                raise AssertionError(f"Expected position_ids shape {expected_pos_shape}, got {position_ids.shape}")
-
-        # Identify valid tokens
-        valid_mask = position_ids != -1
-        if valid_mask.any():
-            # Suggestion 3: Clamp Only Valid Entries
-            max_pos = getattr(attn_data.position_encoder, 'max_position_embeddings', 2048)
-            position_ids_safe = position_ids.clone()
-            position_ids_safe[valid_mask] = position_ids_safe[valid_mask].clamp(0, max_pos - 1)
-
-            # Compute RoPE on the full batch (includes padded values)
-            queries_rope, keys_rope = attn_data.position_encoder.adjusted_qk(
-                queries, keys, position_ids_safe
-            )
-
-            # Suggestion 4: Skip RoPE When No Valid Tokens (Optimized assignment)
-            if valid_mask.all():
-                queries = queries_rope
-                keys = keys_rope
-            else:
-                # Keep original (unrotated) values at padded positions
-                mask_q = valid_mask.unsqueeze(-1).unsqueeze(-1)  # shape [B, T, 1, 1]
-                queries = torch.where(mask_q, queries_rope, queries)
-                keys    = torch.where(mask_q, keys_rope, keys)
-
-    return (
-        queries.permute(0, 2, 1, 3),  # Suggestion 5: Use reshape/permute (transpose is equivalent here) -> Keep transpose for clarity
-        keys.permute(0, 2, 1, 3),
-        values.permute(0, 2, 1, 3)
-    )
-
-def forward_ring(
+def ring_forward(
     self,
     x,
     *,
@@ -84,274 +18,270 @@ def forward_ring(
     past_key_value_state=None,
     use_cache=False,
     is_causal_mask=False,
-    attn_algorithm=None
+    attn_algorithm=None,
+    distributed_strategy: Optional[DistributedStrategy] = None,
 ):
-    # Unpack input if it's a tuple
-    input_tensor = x[0] if isinstance(x, tuple) else x
 
-    # Inlined _forward_ring_attention logic
-    residual = input_tensor
-    x_norm_local = self.ln(input_tensor)
+    residual = x 
+    x_norm = self.ln(x)
 
-    correct_valid_len = self.distributed_strategy._local_valid_len
 
-    # Run ring attention forward directly
-    x, cache, _ = self.ring_helper.forward(
-        x_norm_local,
-        residual=residual,
-        mask=mask,
-        strategy=self.distributed_strategy,
-        position_ids=position_ids,
-        past_key_value_state=past_key_value_state,
-        is_causal_mask=is_causal_mask,
-        valid_len=correct_valid_len,
+    x = RingAttentionKernel.ring_attention(
+        x_norm=x_norm,
+        attn_module=self.attn,
+        strategy=distributed_strategy,
+        valid_len=distributed_strategy._local_valid_len,
+        mask=mask, 
+        position_ids=position_ids, # Sharded position_ids
+        past_key_value_state=past_key_value_state, 
+        causal=is_causal_mask,
     )
-
-    return (x, cache) if use_cache else x
-
-class RingAttentionHelper:
-    def __init__(self, attn_module, strategy, llama_block, use_cache=False, ff=None, ff_norm=None):
-        self.attn = attn_module
-        self.ff = ff
-        self.ff_norm = ff_norm
-        self.strategy = strategy
-        self.use_cache = use_cache
-        self.llama_block = llama_block
-        self.rank = dist.get_rank()
-        self.world_size = dist.get_world_size()
-        self.block_size = strategy.block_size
-        self.head_dim = attn_module.emb_kq_per_head
-        self.scale = self.head_dim ** 0.5
-
-    def forward(self, x_norm, residual, strategy, mask=None, position_ids=None, past_key_value_state=None,
-                is_causal_mask=False, rank=0, valid_len=0):
-
-        self.block_size = strategy.block_size
-        start_idx_global = self.rank * self.block_size
-        B, T = x_norm.shape[:2]
-
-        if position_ids is None:
-            position_ids = torch.full((B, T), fill_value=-1, dtype=torch.long, device=x_norm.device)
-            if valid_len > 0:
-                valid_pos = torch.arange(start_idx_global, start_idx_global + valid_len, device=x_norm.device)
-                position_ids[:, :valid_len] = valid_pos.unsqueeze(0)
-
-        q_local, k_local, v_local = self.llama_block.compute_local_qkv_and_rope(
-            self.attn,
-            q=x_norm, k=x_norm, v=x_norm,
-            position_ids=position_ids,
-            use_cache=False,
-            past_key_value_state=past_key_value_state,
-            is_self=True
-        )
-
-        q_local = q_local[:, :, :valid_len, :]
-        k_local = k_local[:, :, :valid_len, :]
-        v_local = v_local[:, :, :valid_len, :]
-
-        x_norm_local = x_norm[:, :valid_len, :]
-        residual_local = residual[:, :valid_len, :]
-
-        attn_out = self.attention(
-            q_local=q_local, 
-            k_local=k_local, 
-            v_local=v_local, 
-            mask_global=mask, 
-            valid_len=valid_len, 
-            q_start_global=start_idx_global
-        )
-
-        result = self.feedforward(
-            attn_out=attn_out, 
-            residual=residual_local, 
-            valid_len=valid_len
-        )
-
-        return result, None, None
     
-    def attention(self, q_local: torch.Tensor, k_local: torch.Tensor, v_local: torch.Tensor, 
-                  mask_global: Optional[torch.Tensor], valid_len, q_start_global):
-        """
-        Computes ring-style attention using a two-pass approach.
-        """
-        B, H, T_q_local, D_head = q_local.shape
-        D_v = self.attn.emb_v_per_head
+    # use cache and dropout have not yet been implemented / tested
+    x = x + residual
 
-        max_score = self._compute_max_score_pass(
-            q_local, k_local, mask_global, q_start_global, T_q_local
-        )
+    # then we do FF and Add&Norm
+    residual = x
+    x = self.ff_ln(x)
+    x = self.ff_sub_layer(x)
+    x = x + residual
 
-        numerator, denominator = self._compute_sums_pass(
-            q_local, k_local, v_local, mask_global, q_start_global, T_q_local, max_score
-        )
+    if use_cache:
+        return (x, None)
+    else:
+        return x
 
-        attn_out_h = numerator / (denominator + 1e-10)
-        attn_out = attn_out_h.to(q_local.dtype)
-        assert attn_out.shape == (B, H, T_q_local, D_v), f"Unexpected attn_out shape: {attn_out.shape}"
-        attn_out = attn_out.transpose(1, 2).contiguous().reshape(B, T_q_local, H * D_v)
-        attn_out = self.attn.dense(attn_out)
-        return attn_out
-    
-    def feedforward(self, attn_out, residual, valid_len):
-        """
-        Applies the feedforward block after attention, including residual connections and padding.
-        """
-        residual_1 = residual + attn_out
-        residual_1_padded = self._pad_to_block(residual_1, self.block_size, dim=1)
-        ff_ln_out_padded = self.ff_norm(residual_1_padded)
-        ff_out_padded = self.ff(ff_ln_out_padded)
-        ff_out_trimmed = ff_out_padded[:, :valid_len, :]
-        
-        return ff_out_trimmed + residual_1 
-    
-    def _compute_max_score_pass(self, q_local: torch.Tensor, k_local: torch.Tensor,
-                                mask_global: Optional[torch.Tensor], q_start_global: int,
-                                valid_len_local: int) -> torch.Tensor:
-        """
-        First pass: Computes maximum attention scores for numerical stability.
-        """
-        B, H, T_q_local, _ = q_local.shape
+class RingAttentionKernel:
 
-        device = q_local.device
-        dtype = torch.float32
-        max_score = torch.full((B, H, T_q_local, 1), -float("inf"), device=device, dtype=dtype)
-        q_indices_global = torch.arange(q_start_global, q_start_global + T_q_local, device=device)
-        current_k_block = k_local
-        current_k_len = k_local.shape[2]
+    @staticmethod
+    def ring_attention(
+        x_norm: Tensor,
+        attn_module: MultiHeadAttention,
+        strategy: RingAttentionStrategy,
+        valid_len: int,
+        *,
+        mask: Optional[Tensor] = None,
+        position_ids: Optional[Tensor] = None,
+        past_key_value_state: Optional[Tuple[Tensor, Tensor]] = None,
+        causal: bool = False,
+    ) -> Tensor:
 
-        for i in range(self.world_size):
-            k_start_global = ((self.rank - i + self.world_size) % self.world_size) * self.block_size
-            k_indices_global = torch.arange(k_start_global, k_start_global + current_k_len, device=device)
+        batch_size, num_valid_tokens_input_shard, emb_dim = x_norm.shape 
+        assert num_valid_tokens_input_shard == valid_len
+        current_rank_token_global_start_idx = strategy.rank * strategy.block_size
 
-            current_mask = mask_global[:, :, q_start_global:q_start_global+T_q_local, k_start_global:k_start_global+current_k_len] if mask_global is not None else None
-            if current_k_len == 0:
-                if i < self.world_size - 1:
-                    current_k_block, current_k_len = self._ring_shift_tensor(current_k_block, self.block_size)
-                continue
-            
-            scores = self._compute_attention_scores(
-                q_local, current_k_block[:, :, :current_k_len, :],
-                q_indices_global, k_indices_global, current_mask, apply_mask=True
+        # slice to valid length to be safe
+        current_rank_input_slice = x_norm[:, :valid_len]
+
+        # compute position ids
+        if position_ids is not None:
+            position_ids_for_rope_computation = position_ids[:, current_rank_token_global_start_idx : current_rank_token_global_start_idx + valid_len]
+        elif valid_len > 0:
+            position_ids_for_rope_computation = torch.arange(current_rank_token_global_start_idx, current_rank_token_global_start_idx + valid_len, device=x_norm.device).unsqueeze(0).expand(batch_size, -1)
+        else:
+            position_ids_for_rope_computation = None
+
+        # compute QKV + RoPE
+        if valid_len:
+            q, k, v = RingAttentionKernel._compute_qkv_and_rope(
+                attn_module, current_rank_input_slice, position_ids_for_rope_computation
             )
-            
-            max_score = self._update_max_score(scores, max_score)
-            if i < self.world_size - 1:
-                current_k_block, current_k_len = self._ring_shift_tensor(current_k_block, self.block_size)
+        else:
+            nheads, emb_kq_per_head, emb_v_per_head = attn_module.nheads, attn_module.emb_kq_per_head, attn_module.emb_v_per_head
+            q = k = torch.empty((batch_size, nheads, 0, emb_kq_per_head), device=x_norm.device, dtype=x_norm.dtype)
+            v = torch.empty((batch_size, nheads, 0, emb_v_per_head), device=x_norm.device, dtype=x_norm.dtype)
+
+        scale = attn_module.scale_factor or math.sqrt(attn_module.emb_kq_per_head)
+        
+        accum_dtype = torch.float32
+
+        # main ring attention 
+        out = RingAttentionKernel._compute_attention_ring(
+            q, k, v, mask, strategy, current_rank_token_global_start_idx, valid_len, scale, accum_dtype, causal # valid_len is num_valid_tokens for this rank
+        )
+
+        if valid_len:
+            proj = out.transpose(1, 2).reshape(batch_size, valid_len, -1)
+            out = attn_module.dense(proj)
+        else:
+            out = torch.empty((batch_size, 0, emb_dim), device=x_norm.device, dtype=x_norm.dtype)
+
+        return out
+
+
+    @staticmethod
+    def _compute_qkv_and_rope(
+        attn: MultiHeadAttention,
+        x: Tensor,
+        rope_position_ids: Optional[Tensor]
+    ) -> Tuple[Tensor, Tensor, Tensor]:
+        batch_size, seq_len, _ = x.shape # x is current_rank_input_slice, so seq_len is valid_len for this rank
+        q_proj, k_proj, v_proj = attn.in_proj(x, None, None)
+        nheads, kvheads = attn.nheads, attn.kvheads
+        emb_kq_per_head, emb_v_per_head = attn.emb_kq_per_head, attn.emb_v_per_head
+
+        # reshape & apply RoPE if needed
+        q = q_proj.view(batch_size, seq_len, nheads, emb_kq_per_head)
+        k = k_proj.view(batch_size, seq_len, kvheads, emb_kq_per_head)
+        v = v_proj.view(batch_size, seq_len, kvheads, emb_v_per_head)
+        if attn.position_encoder and seq_len:
+            assert rope_position_ids is not None
+            valid_rope_pos_mask = rope_position_ids.ne(-1)
+            if valid_rope_pos_mask.any():
+                rope_internal_max_seq_len = getattr(attn.position_encoder, "max_seq_len", 2048)
+                clamped_rope_ids = rope_position_ids.clamp(0, rope_internal_max_seq_len - 1)
+                q, k = attn.position_encoder.adjusted_qk(q, k, clamped_rope_ids)
+
+        q, k, v = [x_tensor.permute(0, 2, 1, 3) for x_tensor in (q, k, v)]
+        if nheads != kvheads:
+            kv_to_q_head_ratio = nheads // kvheads
+            k = k.repeat_interleave(kv_to_q_head_ratio, dim=1)
+            v = v.repeat_interleave(kv_to_q_head_ratio, dim=1)
+        return q, k, v
+    
+    @staticmethod
+    def _compute_attention_ring(
+        q: Tensor,
+        k: Tensor,
+        v: Tensor,
+        mask: Optional[Tensor],
+        strategy: RingAttentionStrategy,
+        q_start: int, # global start index for queries in q
+        num_valid_tokens: int,   # number of queries in q for this rank's block (num_queries_in_block)
+        scale: float,
+        accum_dtype: torch.dtype,
+        causal: bool,
+    ) -> Tensor:
+        
+        # compute max score for normalization 
+        # this could be optimized with online softmax
+        max_score = RingAttentionKernel._max_pass(
+            q, k, mask, q_start, num_valid_tokens, strategy, scale, causal, accum_dtype
+        )
+
+        # compute the numerator and denominator for attention calc
+        numerator, denominator = RingAttentionKernel._sum_pass(
+            q, k, v, mask, q_start, num_valid_tokens, max_score, strategy, scale, accum_dtype, causal
+        )
+
+        # guard against empty calc
+        if num_valid_tokens == 0:
+            return torch.empty((q.shape[0], q.shape[1], 0, v.shape[-1]),
+                               device=q.device, dtype=q.dtype)
+        return (numerator / (denominator + torch.finfo(denominator.dtype).eps)).to(q.dtype)
+    
+
+    @staticmethod
+    def _attn_scores(
+        Q: Tensor,
+        K: Tensor,
+        query_indices: Tensor, # global indices for queries in Q
+        key_indices: Tensor,   # global indices for keys in K
+        scale: float,
+        mask: Optional[Tensor],
+        causal: bool,
+    ) -> Tensor:
+        batch_size, nheads, num_q, _ = Q.shape # num_q is num_queries_in_block for Q
+        num_k = K.shape[2]          # num_k is current_block_k_len for K
+        if num_q == 0 or num_k == 0:
+            return Q.new_empty((batch_size, nheads, num_q, num_k))
+
+        scores = torch.matmul(Q / scale, K.transpose(-2, -1))
+        if mask is not None:
+            scores = scores + mask.to(scores.dtype)
+        if causal:
+            # build a [1,1,q_len,k_len] mask where key_pos > query_pos
+            future_mask = (key_indices[None, :] > query_indices[:, None])
+            future_mask = future_mask.unsqueeze(0).unsqueeze(0) 
+            scores = scores.masked_fill(future_mask, float("-inf"))
+        return scores
+    
+    @staticmethod
+    def _max_pass(
+        q: Tensor,
+        k: Tensor,
+        mask: Optional[Tensor],
+        q_start: int, # global start index for queries in q
+        num_valid_tokens: int,   # number of queries in q for this rank's block
+        strategy: RingAttentionStrategy,
+        scale: float,
+        causal: bool,
+        accum_dtype: torch.dtype,
+    ) -> Tensor:
+        batch_size, nheads, _, _ = q.shape
+        max_score = torch.full((batch_size, nheads, num_valid_tokens, 1),
+                               torch.finfo(accum_dtype).min,
+                               device=q.device, dtype=accum_dtype)
+        query_global_indices = torch.arange(q_start, q_start + num_valid_tokens, device=q.device)
+        q_fp32 = q.to(accum_dtype)
+        k_fp32 = k.to(accum_dtype)
+
+        for i in range(strategy.world_size):
+            source_rank = (strategy.rank - i) % strategy.world_size
+            block_offset_for_source_rank = source_rank * strategy.block_size
+            k_len_current_block = k_fp32.shape[2]
+            if num_valid_tokens and k_len_current_block:
+                key_block_global_indices = torch.arange(block_offset_for_source_rank, block_offset_for_source_rank + k_len_current_block, device=q.device)
+                current_attention_mask_slice = (mask[..., q_start:q_start+num_valid_tokens, block_offset_for_source_rank:block_offset_for_source_rank+k_len_current_block]
+                        if mask is not None else None)
+                current_scores = RingAttentionKernel._attn_scores(q_fp32, k_fp32, query_global_indices, key_block_global_indices, scale, current_attention_mask_slice, causal)
+                max_score = torch.maximum(max_score, current_scores.amax(dim=-1, keepdim=True))
+
+            # no need for last round communication
+            if i < strategy.world_size - 1:
+
+                # ring attention communication -- shift kvs
+                k_fp32, _ = strategy._ring_shift_tensor(k_fp32, k_len_current_block)
 
         return max_score
 
-
-    def _compute_sums_pass(self, q_local: torch.Tensor, k_local: torch.Tensor, v_local: torch.Tensor,
-                           mask_global: Optional[torch.Tensor], q_start_global: int,
-                           valid_len_local: int, max_score: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        """
-        Second pass: Computes numerator and denominator for the softmax.
-        """
-
-        B, H, T_q_local, _ = q_local.shape
-
-        D_v = self.attn.emb_v_per_head
-        device = q_local.device
-        dtype = torch.float32
-        numerator = torch.zeros(B, H, T_q_local, D_v, device=device, dtype=dtype)
-        denominator = torch.zeros(B, H, T_q_local, 1, device=device, dtype=dtype)
-        q_indices_global = torch.arange(q_start_global, q_start_global + T_q_local, device=device)
-        current_k_block = k_local
-        current_v_block = v_local
-        current_k_len = k_local.shape[2]
-
-        for i in range(self.world_size):
-            k_start_global = ((self.rank - i + self.world_size) % self.world_size) * self.block_size
-            k_indices_global = torch.arange(k_start_global, k_start_global + current_k_len, device=device)
-            if current_k_len == 0:
-                if i < self.world_size - 1:
-                    current_k_block, current_k_len = self._ring_shift_tensor(current_k_block, self.block_size)
-                    current_v_block, _ = self._ring_shift_tensor(current_v_block, self.block_size)
-                continue
-            current_mask = mask_global[:, :, q_start_global:q_start_global+T_q_local, k_start_global:k_start_global+current_k_len] if mask_global is not None else None
-            scores = self._compute_attention_scores(
-                q_local, current_k_block[:, :, :current_k_len, :],
-                q_indices_global, k_indices_global, current_mask, apply_mask=True
-            )
-            numerator, denominator = self._update_totals(
-                scores, current_v_block[:, :, :current_k_len, :], max_score, numerator, denominator
-            )
-            
-            if i < self.world_size - 1:
-                current_k_block, current_k_len = self._ring_shift_tensor(current_k_block, self.block_size)
-                current_v_block, _ = self._ring_shift_tensor(current_v_block, self.block_size)
-
-        return numerator, denominator
-
-    def _compute_attention_scores(self, q, k, q_indices_global, k_indices_global, mask=None,
-                                  apply_mask=True, keep_causal=True):
-        scores = torch.matmul(q, k.transpose(-2, -1)) / self.scale
-        if apply_mask and mask is not None:
-            scores = scores + mask.to(scores.dtype)
-        if apply_mask and keep_causal:
-            causal_mask = (k_indices_global[None, :] > q_indices_global[:, None]).unsqueeze(0).unsqueeze(0)
-            scores = scores.masked_fill(causal_mask, -torch.inf)
-
-        return scores
-
-    def _update_max_score(self, scores, current_max):
-        block_max = scores.masked_fill(scores == -torch.inf, torch.finfo(scores.dtype).min).amax(dim=-1, keepdim=True)
-        return torch.maximum(current_max, block_max)
-
-    def _update_totals(self, scores, v, max_score, numerator, denominator):
-        stable_scores = (scores - max_score).clamp(min=-10.0, max=10.0)
-        exp_scores = torch.exp(stable_scores)
-
-        # Handle potential NaNs or Infs in exp_scores after masking/clamping
-        exp_scores = torch.nan_to_num(exp_scores, nan=0.0, posinf=torch.finfo(exp_scores.dtype).max, neginf=0.0)
-
-        numerator += torch.einsum("bhqk,bhkd->bhqd", exp_scores, v.to(numerator.dtype))
-        denominator += exp_scores.sum(dim=-1, keepdim=True)
-        return numerator, denominator
-
-    def _ring_shift_tensor(self, tensor: torch.Tensor, pad_len: int) -> Tuple[torch.Tensor, int]:
-        """
-        Ring‑shifts `tensor` along its last dimension by one rank:
-        - GPU: all_gather of lengths + all_to_all of only the neighbor's block.
-        Returns (received_tensor cropped to true length, received_length).
-        """
-
-        rank, world = self.rank, self.world_size
-        send_rank = (rank + 1) % world
-        recv_rank = (rank - 1 + world) % world
-        valid_len = tensor.shape[-2]
-
-        padded = self._pad_to_block(tensor, pad_len, dim=-2).contiguous()
-        device = tensor.device
-
-        # Create buffers
-        send_len = torch.tensor([valid_len], dtype=torch.int32, device=device)
-        recv_len = torch.empty(1, dtype=torch.int32, device=device)
-        tensor_recv = torch.empty_like(padded)
-
-        # Prepare send/recv ops
-        ops = [
-            P2POp(op=dist.isend, tensor=send_len, peer=send_rank),
-            P2POp(op=dist.irecv, tensor=recv_len, peer=recv_rank),
-            P2POp(op=dist.isend, tensor=padded, peer=send_rank),
-            P2POp(op=dist.irecv, tensor=tensor_recv, peer=recv_rank),
-        ]
-        
-        # Execute async, then wait
-        reqs = dist.batch_isend_irecv(ops)
-        for req in reqs:
-            req.wait()
-
-        recv_len = recv_len.item()
-        return tensor_recv, recv_len
-    
     @staticmethod
-    def _pad_to_block(t, target_len, dim=2):
-        pad_len = target_len - t.shape[dim]
-        if pad_len <= 0:
-            return t
-        pad_shape = list(t.shape)
-        pad_shape[dim] = pad_len
-        pad = torch.zeros(*pad_shape, dtype=t.dtype, device=t.device)
-        return torch.cat([t, pad], dim=dim)
+    def _sum_pass(
+        q: Tensor,
+        k: Tensor,
+        v: Tensor,
+        mask: Optional[Tensor],
+        q_start: int, # global start index for queries in q
+        num_valid_tokens: int,   # number of queries in q for this rank's block
+        max_score: Tensor,
+        strategy: RingAttentionStrategy,
+        scale: float,
+        accum_dtype: torch.dtype,
+        causal: bool,
+    ) -> Tuple[Tensor, Tensor]:
+        batch_size, nheads, _, _ = q.shape
+        emb_v_per_head = v.shape[-1]
+        numerator = torch.zeros((batch_size, nheads, num_valid_tokens, emb_v_per_head), device=q.device, dtype=accum_dtype)
+        denomminator = torch.zeros((batch_size, nheads, num_valid_tokens, 1), device=q.device, dtype=accum_dtype)
+        query_global_indices = torch.arange(q_start, q_start + num_valid_tokens, device=q.device)
+        q_fp32 = q.to(accum_dtype)
+        k_fp32 = k.to(accum_dtype)
+        v_fp32 = v.to(accum_dtype)
+        
+        log_min_exp_threshold = math.log(torch.finfo(accum_dtype).tiny) + 1.0
+        log_max_exp_threshold = math.log(torch.finfo(accum_dtype).max) - 1.0
 
+        for i in range(strategy.world_size):
+            source_rank = (strategy.rank - i) % strategy.world_size
+            block_offset_for_source_rank = source_rank * strategy.block_size
+            k_len_current_block = k_fp32.shape[2]
+            if num_valid_tokens and k_len_current_block:
+                key_block_global_indices = torch.arange(block_offset_for_source_rank, block_offset_for_source_rank + k_len_current_block, device=q.device)
+                current_attention_mask_slice = (mask[..., q_start:q_start+num_valid_tokens, block_offset_for_source_rank:block_offset_for_source_rank+k_len_current_block]
+                        if mask is not None else None)
+                current_scores = RingAttentionKernel._attn_scores(q_fp32, k_fp32, query_global_indices, key_block_global_indices, scale, current_attention_mask_slice, causal)
+                score_delta = torch.where(torch.isneginf(max_score), float("-inf"), current_scores - max_score)
+                exp_scores = torch.exp(score_delta.clamp(min=log_min_exp_threshold, max=log_max_exp_threshold))
+                # exp_scores = exp_scores.masked_fill(torch.isneginf(max_score), 0.0) # This line is likely redundant
+                numerator += torch.matmul(exp_scores, v_fp32.narrow(2, 0, k_len_current_block))
+                denomminator += exp_scores.sum(dim=-1, keepdim=True)
+            
+            # no need for last round communication
+            if i < strategy.world_size - 1:
+
+                # ring attention communication -- shift kvs
+                k_fp32, _ = strategy._ring_shift_tensor(k_fp32, k_len_current_block)
+                v_fp32, _ = strategy._ring_shift_tensor(v_fp32, k_len_current_block)
+
+        return numerator, denomminator
+    
