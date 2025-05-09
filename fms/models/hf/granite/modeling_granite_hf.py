@@ -94,7 +94,7 @@ class HFAdaptedGraniteHeadless(HFDecoderModelArchitecture):
 
         # Add more cached rope freqs if over cached number
         max_expected_len = input_ids.shape[1] + torch.max(position_ids)
-        if max_expected_len > self.decoder.model.rot_emb.max_seq_len:
+        if max_expected_len > self.decoder.model.rot_emb.rope_scaling.orig_max_seq_len:
             self.decoder.model.rot_emb.compute_freqs_cis(
                 input_ids.device, max_expected_len
             )
@@ -109,7 +109,9 @@ class HFAdaptedGraniteHeadless(HFDecoderModelArchitecture):
         }
 
 
-class HFAdaptedGraniteForCausalLM(HFAdaptedGraniteHeadless, LMHeadModelLMHeadMixin):
+class HFAdaptedGraniteForCausalLM(LMHeadModelLMHeadMixin, HFAdaptedGraniteHeadless):
+    _keys_to_ignore_on_load_missing = [r"lm_head.weight"]
+    _tied_weights_keys = ["embedding.weight", "lm_head.weight"]
 
     def __init__(self, config: HFAdaptedGraniteConfig, *args, **kwargs):
         super().__init__(config=config, bias=False, *args, **kwargs)
