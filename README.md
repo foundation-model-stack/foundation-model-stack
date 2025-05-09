@@ -34,6 +34,24 @@ cd tests/distributed
 USE_SEQUENCE_PARALLELISM=true torchrun --nproc-per-node=2 test_tp_sp_cpu.py
 ```
 
+### Multi-GPU Environment (Insomnia Cluster)
+
+- Check available modules
+```bash
+module avail
+```
+- Load required module (e.g., Anaconda)
+```bash
+module load anaconda
+```
+- Submit the SLURM job script (e.g., test_tp_sp_distributed_cluster.sh)
+```bash
+sbatch test_tp_sp_distributed_cluster.sh
+```
+- Monitor job status
+```bash
+squeue -u <your_uni>
+```
 > **Note**  
 > Ensure all environment dependencies from the original IBM FMS repository are properly set up beforehand.
 
