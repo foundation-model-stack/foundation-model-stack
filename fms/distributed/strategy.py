@@ -163,8 +163,19 @@ class UniformModelParallelStrategy(DistributedStrategy):
 
 
 def generate_layer_plan(block: nn.Module, use_sequence_parallelism: bool = False) -> dict[str, Any]:
+    """
+    Generates a tensor parallelism plan for each submodule in a transformer block.
+
+    Args:
+        block (nn.Module): The transformer block to analyze.
+        use_sequence_parallelism (bool): Whether to apply sequence parallelism to eligible layers.
+
+    Returns:
+        dict[str, Any]: A mapping from submodule names to parallelism strategies.
+    """
     tp_plan = {}
 
+    # Regex patterns to match module names for colwise and rowwise parallelism
     colwise_patterns = [
         r"attn\.in_proj\.qkv_fused",
         r"attn\.in_proj\.(query|key|value)",
@@ -177,16 +188,20 @@ def generate_layer_plan(block: nn.Module, use_sequence_parallelism: bool = False
         r"ff_sub_layer\.w2",
     ]
 
+    # Add PrepareModuleInput for attention and feedforward blocks to align input layout
     if use_sequence_parallelism:
         tp_plan["attn"] = PrepareModuleInput(
-            input_layouts=(Shard(1),),
-            desired_input_layouts=(Replicate(),),
+            input_layouts=(Shard(1),),              # Input is sharded along sequence dim
+            desired_input_layouts=(Replicate(),),   # Module expects fully replicated input
         )
         tp_plan["ff_sub_layer"] = PrepareModuleInput(
             input_layouts=(Shard(1),),
             desired_input_layouts=(Replicate(),),
         )
+
+    # Recursively traverse all named submodules, including custom wrappers, within the transformer block
     for name, module in block.named_modules():
+        # Apply SequenceParallel to LayerNorm and Dropout layers when enabled
         if use_sequence_parallelism and isinstance(module, (nn.LayerNorm, nn.Dropout, LayerNormParameterized)):
             tp_plan[name] = SequenceParallel()
         elif isinstance(module, nn.Linear):
@@ -197,13 +212,13 @@ def generate_layer_plan(block: nn.Module, use_sequence_parallelism: bool = False
             for pattern in rowwise_patterns:
                 if re.fullmatch(pattern, name):
                     if use_sequence_parallelism:
-                        tp_plan[name] = RowwiseParallel(output_layouts=Shard(1))
+                        tp_plan[name] = RowwiseParallel(output_layouts=Shard(1))  # Output is sharded
                     else:
                         tp_plan[name] = RowwiseParallel()
                     break
 
-    print()
     return tp_plan
+
 
 class TensorParallelStrategy(DistributedStrategy):
     def __init__(self, group=None, from_meta=False):
@@ -233,7 +248,7 @@ class TensorParallelStrategy(DistributedStrategy):
             else:
                 if (self.use_sequence_parallelism):
                     tp_plan = {
-                        "shared.emb": RowwiseParallel(input_layouts=Replicate(), output_layouts=Shard(1)),
+                        "shared.emb": RowwiseParallel(input_layouts=Replicate(), output_layouts=Shard(1)), # Output is sharded
                     }
                 else:
                     tp_plan = {
