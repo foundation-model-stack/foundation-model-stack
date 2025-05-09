@@ -244,6 +244,10 @@ class RotaryEmbedding(PositionEncoder):
 
     def compute_freqs_cis(self, device, max_seq_len=2048):
         alpha = self.rope_scaling.get_alpha(max_seq_len)
+
+        if device == torch.device("meta"):
+            return alpha
+
         dev_idx = device.index
 
         if dev_idx not in self.cached_freqs:
