@@ -116,6 +116,7 @@ class GraniteBlock(nn.Module):
         use_cache=False,
         is_causal_mask=False,
         attn_algorithm=None,
+        custom_attention_op=None,
     ):
         # if the cache is not empty, we need to get the kv cache for self and cross attention
         self_attn_past_key_value = past_key_value_state
@@ -132,6 +133,7 @@ class GraniteBlock(nn.Module):
             use_cache=use_cache,
             is_self=True,
             is_causal_mask=is_causal_mask,
+            custom_attention_op=custom_attention_op,
         )
         cache = None
         if use_cache:
@@ -272,6 +274,7 @@ class GraniteHeadless(nn.Module):
         past_key_value_states=None,
         use_cache=False,
         attn_algorithm=None,
+        custom_attention_op=None,
     ):
         # Embed the given vocabulary indices using the given attention mask, with pre-/post-norm and dropout as specified
         # x_in: batch_size x seq_len
@@ -313,6 +316,7 @@ class GraniteHeadless(nn.Module):
                 use_cache=use_cache,
                 is_causal_mask=is_causal_mask,
                 attn_algorithm=attn_algorithm,
+                custom_attention_op=custom_attention_op,
             )
 
             if use_cache:
@@ -384,9 +388,20 @@ class Granite(nn.Module):
         use_cache: bool = False,
         only_last_token: bool = False,
         attn_algorithm: Optional[str] = None,
+        custom_attention_op=None,
     ):
+        if position_ids is not None:
+            assert x.shape[0] == position_ids.shape[0]
+            assert x.shape[1] == position_ids.shape[1]
+
         output, cache = self.base_model(
-            x, mask, position_ids, past_key_value_states, use_cache, attn_algorithm
+            x,
+            mask,
+            position_ids,
+            past_key_value_states,
+            use_cache,
+            attn_algorithm,
+            custom_attention_op=custom_attention_op,
         )
 
         if only_last_token:
@@ -585,3 +600,13 @@ serialization.register_adapter(
     "hf",
     ["hf_to_fms_names", "hf_to_fms_rope", "hf_gptq_fusion_check", "weight_fusion"],
 )
+
+# if slot_mapping is not None:
+#     assert x.shape[0] == slot_mapping.shape[0]
+#     assert x.shape[1] == slot_mapping.shape[1]
+# if block_table is not None:
+#     assert x.shape[0] == block_table.shape[0]
+# if partial_page_tkv_mask is not None:
+#     assert x.shape[0] == partial_page_tkv_mask.shape[0]
+# if left_padded_prompt_mask is not None:
+#     assert x.shape[0] == left_padded_prompt_mask.shape[0]

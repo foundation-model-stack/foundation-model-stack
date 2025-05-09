@@ -1,4 +1,5 @@
 import abc
+import math
 from typing import Any, Mapping, Optional, Tuple
 
 import torch
@@ -21,6 +22,21 @@ from fms.modules.linear import (
 from fms.modules.positions import PositionEncoder
 from fms.modules.tp import TPModule
 
+from torch.library import custom_op
+
+class AttentionOp:
+
+    def is_prefill(self) -> bool:
+        """True if op is prefill, otherwise decode"""
+        pass
+
+    def store(self, keys: torch.Tensor, values: torch.Tensor, key_cache: torch.Tensor, value_cache: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Store keys/values into the key_cache and value_cache and return the (key_cache, value_cache)"""
+        pass
+
+    def compute(self, query: torch.Tensor, key_cache: torch.Tensor, value_cache: torch.Tensor):
+        """Compute the decode step for attention given the query, key_cache, and value_cache"""
+        pass
 
 class QKV(nn.Module, metaclass=abc.ABCMeta):
     """Simple module for applying qkv in attention"""
@@ -335,6 +351,7 @@ class MultiHeadAttention(nn.Module):
         use_cache=False,
         is_self=True,
         is_causal_mask=False,
+        custom_attention_op=None,
     ):
         """
         past_key_value_state: tuple
@@ -380,91 +397,102 @@ class MultiHeadAttention(nn.Module):
                     queries, keys, position_ids, past_key_value_state, use_cache
                 )
 
-        queries = queries.transpose(2, 1)  # / (self.emb_kq_per_head**(1/4))
-        keys = keys.transpose(2, 1)  # / (self.emb_kq_per_head**(1/4))
-        values = values.transpose(2, 1)  # compatible with QK.T
+        if use_cache and custom_attention_op:
+            past_key_value_state = custom_attention_op.store(keys, values, past_key_value_state[0], past_key_value_state[1])
 
-        # if you want to use caching and past_key_value_state is not None meaning you have values in your cache
-        if (
-            use_cache
-            and past_key_value_state is not None
-            and past_key_value_state[0].numel() > 0
-        ):
-            if is_self:
-                keys = torch.cat((past_key_value_state[0], keys), dim=2)
-                values = torch.cat((past_key_value_state[1], values), dim=2)
+        if use_cache and custom_attention_op and not custom_attention_op.is_prefill():
+            attn = custom_attention_op.compute(queries, past_key_value_state[0], past_key_value_state[1])
+        else:
+            queries = queries.transpose(2, 1)  # / (self.emb_kq_per_head**(1/4))
+            keys = keys.transpose(2, 1)  # / (self.emb_kq_per_head**(1/4))
+            values = values.transpose(2, 1)  # compatible with QK.T
+
+            # if you want to use caching and past_key_value_state is not None meaning you have values in your cache
+            if (
+                use_cache
+                and not custom_attention_op
+                and past_key_value_state is not None
+                and past_key_value_state[0].numel() > 0
+            ):
+                if is_self:
+                    keys = torch.cat((past_key_value_state[0], keys), dim=2)
+                    values = torch.cat((past_key_value_state[1], values), dim=2)
+                else:
+                    keys = past_key_value_state[0]
+                    values = past_key_value_state[1]
+
+            # Merge rel pos bias and mask into single float mask
+            if mask is not None:
+                # Our expected mask format is bs x q_len x k_len, so to make it broadcastable
+                # we need to create the nheads dimension
+                while len(mask.size()) != 4:  # expects bs (x nheads) x q_len x kv_len
+                    mask = mask.unsqueeze(1)
+
+            if self.position_encoder is not None:
+                attn_mask: Optional[Tensor] = self.position_encoder.adjusted_mask(
+                    mask, queries, keys, past_key_value_state, use_cache
+                )
             else:
-                keys = past_key_value_state[0]
-                values = past_key_value_state[1]
+                attn_mask = mask
 
-        # Merge rel pos bias and mask into single float mask
-        if mask is not None:
-            # Our expected mask format is bs x q_len x k_len, so to make it broadcastable
-            # we need to create the nheads dimension
-            while len(mask.size()) != 4:  # expects bs (x nheads) x q_len x kv_len
-                mask = mask.unsqueeze(1)
+            # Expand kv so black-box attn will work
+            expansion = self.nheads // self.kvheads
+            # k/v: b h l d
+            if expansion != 1:
+                keys_e = (
+                    keys.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
+                )
+                values_e = (
+                    values.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
+                )
+            else:
+                keys_e = keys
+                values_e = values
 
-        if self.position_encoder is not None:
-            attn_mask: Optional[Tensor] = self.position_encoder.adjusted_mask(
-                mask, queries, keys, past_key_value_state, use_cache
+            if attn_algorithm:
+                # Pick which fused attn kernels will run.
+                use_flash = attn_algorithm == "flash"
+                use_mem_efficient = attn_algorithm == "mem"
+                use_math = attn_algorithm == "math"
+
+                torch.backends.cuda.enable_flash_sdp(use_flash)
+                torch.backends.cuda.enable_mem_efficient_sdp(use_mem_efficient)
+                torch.backends.cuda.enable_math_sdp(use_math)
+
+            if attn_mask is not None and attn_mask.dtype != torch.bool:
+                attn_mask = attn_mask.to(dtype=queries.dtype)
+
+            attn = F.scaled_dot_product_attention(
+                queries,
+                keys_e,
+                values_e,
+                attn_mask=attn_mask,
+                dropout_p=self.p_dropout if self.training else 0.0,
+                is_causal=is_causal_mask,
+                scale=self.scale_factor,
             )
-        else:
-            attn_mask = mask
 
-        # Expand kv so black-box attn will work
-        expansion = self.nheads // self.kvheads
-        # k/v: b h l d
-        if expansion != 1:
-            keys_e = keys.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
-            values_e = (
-                values.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
-            )
-        else:
-            keys_e = keys
-            values_e = values
+            if attn_algorithm:
+                torch.backends.cuda.enable_flash_sdp(self.previous_flash)
+                torch.backends.cuda.enable_mem_efficient_sdp(
+                    self.previous_mem_efficient
+                )
+                torch.backends.cuda.enable_math_sdp(self.previous_math)
 
-        if attn_algorithm:
-            # Pick which fused attn kernels will run.
-            use_flash = attn_algorithm == "flash"
-            use_mem_efficient = attn_algorithm == "mem"
-            use_math = attn_algorithm == "math"
-
-            torch.backends.cuda.enable_flash_sdp(use_flash)
-            torch.backends.cuda.enable_mem_efficient_sdp(use_mem_efficient)
-            torch.backends.cuda.enable_math_sdp(use_math)
-
-        if attn_mask is not None and attn_mask.dtype != torch.bool:
-            attn_mask = attn_mask.to(dtype=queries.dtype)
-
-        attn = F.scaled_dot_product_attention(
-            queries,
-            keys_e,
-            values_e,
-            attn_mask=attn_mask,
-            dropout_p=self.p_dropout if self.training else 0.0,
-            is_causal=is_causal_mask,
-            scale=self.scale_factor,
-        )
-
-        if attn_algorithm:
-            torch.backends.cuda.enable_flash_sdp(self.previous_flash)
-            torch.backends.cuda.enable_mem_efficient_sdp(self.previous_mem_efficient)
-            torch.backends.cuda.enable_math_sdp(self.previous_math)
-
-        # attn: bs x seq_len x nheads*emb_v_per_head
-        # attn: b x h x qlen x ds
-        # attn after permute: b x qlen x h x ds
-        # b x qlen x (d)
-        attn = (
-            attn.transpose(2, 1)
-            .contiguous()
-            .view(batch_size, q_len, self.nheads * self.emb_v_per_head)
-        )
+            # attn: bs x seq_len x nheads*emb_v_per_head
+            # attn: b x h x qlen x ds
+            # attn after permute: b x qlen x h x ds
+            # b x qlen x (d)
+            attn = attn.transpose(2, 1).contiguous()
+        attn = attn.view(batch_size, q_len, self.nheads * self.emb_v_per_head)
         out = self.dense(attn)
 
         # if use_cache=True, we return the hidden_state as well as the kv cache
         if use_cache:
-            return out, (keys, values)
+            if custom_attention_op:
+                return out, past_key_value_state
+            else:
+                return out, (keys, values)
         else:
             return out
 
@@ -633,6 +661,10 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
         use_cache=False,
         is_self=True,
         is_causal_mask=False,
+        partial_page_tkv_mask=None,
+        left_padded_prompt_mask=None,
+        block_table=None,
+        slot_mapping=None,
     ):
         """
         Check MultiHeadAttention for up-to-date arguments and docs
@@ -652,6 +684,10 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
             use_cache,
             is_self,
             is_causal_mask,
+            partial_page_tkv_mask,
+            left_padded_prompt_mask,
+            block_table,
+            slot_mapping,
         )
 
         # if use_cache=True, we return the hidden_state as well as the kv cache.

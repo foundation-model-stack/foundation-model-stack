@@ -3,6 +3,7 @@ import itertools
 import os
 import random
 
+from fms.modules.paged import prepare_model_inputs_hook
 import numpy as np
 import torch
 import torch._inductor.config
@@ -250,6 +251,7 @@ def infer(use_cache, do_sample):
         do_sample=do_sample,
         max_seq_len=max_seq_len,
         extra_kwargs=padding_kwargs,
+        # prepare_model_inputs_hook=prepare_model_inputs_hook(model)
     )
     if len(result.shape) == 1:
         result = result.unsqueeze(0)
