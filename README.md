@@ -39,8 +39,96 @@ USE_SEQUENCE_PARALLELISM=true torchrun --nproc-per-node=2 test_tp_sp_cpu.py
 
 ## Results & Observations
 
+### Model Configuration
+
+- Model: LLaMA
+- Layers: 32 on GPU, 2 on CPU
+- Number of Attention Heads: 32
+- Sequence Lengths Tested: 256, 512, 1024
+
+### GPU Test Environment (L40)
+
+- Hardware: 2× NVIDIA L40 GPUs
+- GPU Memory: 48 GB per GPU
+- Architecture: Ada Lovelace
+- Compute Capability: 8.9
+- Distributed Backend: NCCL
+- SLURM Job Settings:
+  - `--gres=gpu:l40:2`
+  - `--ntasks=2`
+  - `--cpus-per-task=4`
+  - `--mem=32G`
+  - `--time=00:20:00`
+
+### GPU Benchmark Results (L40)
+
+#### Execution Time vs Sequence Length
+
+![Execution Time (GPU - L40)](./assets/execution_time_vs_seq_length_gpu_l40.png)
+
+| Sequence Length | TP Latency (s) | SP Latency (s) |
+|------------------|----------------|----------------|
+| 256              | 0.14           | 0.22           |
+| 512              | 0.41           | 0.42           |
+| 1024             | 0.63           | 0.61           |
+
+- Tensor Parallelism (TP) performs better at short sequence lengths due to reduced communication overhead.
+- Sequence Parallelism (SP) scales more efficiently with longer sequences.
+
+#### Memory Allocated vs Sequence Length
+
+![Memory Usage (GPU - L40)](./assets/memory_usage_vs_seq_length_gpu_l40.png)
+
+| Sequence Length | TP Memory (GB) | SP Memory (GB) |
+|------------------|----------------|----------------|
+| 256              | 13.83          | 13.82          |
+| 512              | 14.00          | 13.90          |
+| 1024             | 14.16          | 14.03          |
+
+- SP consistently consumes less memory than TP across all tested sequence lengths.
+- The difference is more noticeable at higher sequence lengths.
+
+  ### CPU Test Environment
+
+- Processor: Intel(R) Xeon(R) Platinum 8460Y+
+- Total Physical Cores: 80
+- Logical Cores (Threads): 160
+- Threads per Core: 2
+- NUMA Sockets: 2
+- Total System RAM: 539.81 GB
+
+### CPU Benchmark Results
+
+#### Execution Time vs Sequence Length
+
+![Execution Time (CPU)](./assets/execution_time_vs_seq_length_cpu.png)
+
+| Sequence Length | TP Time (s) | SP Time (s) |
+|------------------|-------------|-------------|
+| 256              | 16.77       | 10.25       |
+| 512              | 34.10       | 19.50       |
+| 1024             | 66.40       | 40.22       |
+
+- Sequence Parallelism (SP) significantly outperforms Tensor Parallelism (TP) in CPU settings.
+- The relative performance gain increases with sequence length due to reduced synchronization overhead in SP.
+
+#### Memory Usage vs Sequence Length
+
+![Memory Usage (CPU)](./assets/memory_usage_vs_seq_length_cpu.png)
+
+| Sequence Length | TP Memory (GB) | SP Memory (GB) |
+|------------------|----------------|----------------|
+| 256              | 2.43           | 2.27           |
+| 512              | 2.49           | 2.36           |
+| 1024             | 2.66           | 2.63           |
+
+- Memory usage remains comparable across both approaches.
+- SP consistently consumes slightly less memory across all evaluated sequence lengths.
+
+
 ## Weights & Biases
 
+* [wandb.ai/team9_hpml-columbia-university](https://wandb.ai/team9_hpml-columbia-university) - All training runs, benchmarks, and SP+TP experiments are tracked on our public Weights & Biases project board:
 
 # ORIGINAL README - IBM Foundation Model Stack
 
@@ -165,3 +253,5 @@ This library is used by [three](https://github.com/foundation-model-stack/founda
 
 * Huggingface TGI: https://github.com/huggingface/text-generation-inference
 * IBM TGIS: https://github.com/IBM/text-generation-inference
+* Megatron-LM: Reducing Activation Recomputation in Large Transformer Models – https://arxiv.org/abs/2205.05198
+* FlexSP: Accelerating Large Language Model Training via Flexible Sequence Parallelism – https://arxiv.org/abs/2412.01523
