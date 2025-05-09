@@ -19,6 +19,8 @@ from fms.utils.generation import generate, pad_input_ids
 # CUBLAS_WORKSPACE_CONFIG=:4096:8 srun -N 1 --gres=gpu:1 python scripts/inference.py --model_path=~/models/7B-F/ --tokenizer=~/models/tokenizer.model --compile --deterministic
 # Example usage of 13B model on 2 GPUs with Tensor Parallel:
 # srun -N 1 --gres=gpu:2 torchrun --nproc_per_node=2 scripts/inference.py --model_path=~/models/13B-F --tokenizer=~/models/tokenizer.model --distributed
+# Example usage with Ring Attention:
+# srun -N 1 --gres=gpu:2 torchrun --nproc_per_node=2 scripts/inference.py --model_path=~/models/7B-F/ --tokenizer=~/models/tokenizer.model --distributed --distributed_strategy=ring
 
 parser = argparse.ArgumentParser(
     description="Script to run inference on a causal model"
@@ -54,6 +56,7 @@ parser.add_argument(
 )
 parser.add_argument(
     "--no_use_cache",
+    dest="use_cache", # Store True by default, action stores False
     action="store_false",
     help="Disable the kv-cache (on by default)",
 )
@@ -90,6 +93,13 @@ parser.add_argument(
     "--distributed",
     action="store_true",
     help="This is a distributed job (multiple instances run with RANK+WORLD_SIZE)",
+)
+parser.add_argument(
+    "--distributed_strategy",
+    type=str,
+    default=None,
+    choices=["tp", "mp", "fsdp", "hsdp", "ddp", "ring"], # Added 'ring'
+    help="The distributed strategy to use. If None, will attempt to guess based on --distributed and device count.",
 )
 parser.add_argument(
     "--batch_input",
@@ -135,13 +145,17 @@ if args.distributed:
     dist.init_process_group()
 
 print("loading model")
-if args.distributed:
-    distr_param = "tp"
-else:
-    if torch.cuda.device_count() > 1 and world_size == 1:
-        distr_param = "mp"
-    else:
-        distr_param = None
+
+# Determine the distributed strategy
+distr_strategy = args.distributed_strategy # Get from command line first
+
+# If not provided via command line, try to infer
+if distr_strategy is None:
+    if args.distributed:
+        distr_strategy = "tp"  # Default to TP if --distributed is set and no strategy specified
+    elif torch.cuda.device_count() > 1 and world_size == 1:
+        distr_strategy = "mp"  # Default to MP on single node multi-GPU if not distributed
+    # Note: 'ring' is not inferred automatically, must be specified.
 
 model = get_model(
     args.architecture,
@@ -149,9 +163,11 @@ model = get_model(
     model_path=args.model_path,
     device_type=args.device_type,
     source=args.model_source,
-    distributed_strategy=distr_param,
-    group=dist.group.WORLD,
+    distributed_strategy=distr_strategy,
+    # Pass group only if distributed is initialized
+    group=dist.group.WORLD if args.distributed else None,
     fused_weights=not args.unfuse_weights,
+    data_type=default_dtype # Pass parsed dtype
 )
 
 tokenizer = tokenizers.get_tokenizer(args.tokenizer)
@@ -242,6 +258,10 @@ def infer(use_cache, do_sample):
     else:
         # without ntk scaling, extending the seq length too far gives bogus results.
         max_seq_len = model.config.max_expected_seq_len
+
+    # Pass padding_kwargs if they exist
+    current_extra_kwargs = padding_kwargs if padding_kwargs else {}
+
     result = generate(
         model,
         ids,
@@ -249,7 +269,7 @@ def infer(use_cache, do_sample):
         use_cache=use_cache,
         do_sample=do_sample,
         max_seq_len=max_seq_len,
-        extra_kwargs=padding_kwargs,
+        extra_kwargs=current_extra_kwargs,
     )
     if len(result.shape) == 1:
         result = result.unsqueeze(0)
@@ -260,8 +280,12 @@ def infer(use_cache, do_sample):
 
 print("generating output", local_rank)
 do_sample = [False]
-use_cache = [
-    args.no_use_cache
-]  # True/False are identical with greedy iff `torch.use_deterministic_algorithms(True)`
-for sample, cache in itertools.product(do_sample, use_cache):
+use_cache_settings = [args.use_cache] # Use the argument value directly
+
+for sample, cache in itertools.product(do_sample, use_cache_settings):
+    # RingAttention currently does not support use_cache, skip if necessary
+    if distr_strategy == 'ring' and cache:
+        if local_rank == 0:
+            print("Skipping use_cache=True with RingAttention strategy as it is not supported.")
+        continue
     infer(cache, sample)

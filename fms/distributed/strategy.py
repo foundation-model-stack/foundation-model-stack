@@ -1,10 +1,12 @@
 import os
 from abc import abstractmethod
-from typing import List
+from typing import List, Optional, Tuple
 
 import torch
+from torch import Tensor, nn
 import torch.distributed
-from torch import nn
+import torch.distributed as dist # Keep this for P2POp if not already imported
+from torch.distributed import P2POp
 
 from fms.utils import tp_wrapping
 
@@ -159,3 +161,134 @@ class TensorParallelStrategy(DistributedStrategy):
 
     def _distribute_layer(self, block: nn.Module, layer: int) -> nn.Module:
         return tp_wrapping.apply_tp(block, self.group)
+
+class RingAttentionStrategy(DistributedStrategy):
+    def __init__(
+        self,
+        block_size: int = 2048,
+        group: Optional[dist.ProcessGroup] = None,
+        from_meta: bool = False
+    ):
+        super().__init__(from_meta)
+        self.block_size = block_size
+        if torch.distributed.is_available() and torch.distributed.is_initialized():
+            self.group = group
+            self.rank = torch.distributed.get_rank(group=self.group)
+            self.world_size = torch.distributed.get_world_size(group=self.group)
+        else:
+            self.group = None
+            self.rank = 0
+            self.world_size = 1
+            print(
+                "[INFO] RingAttentionStrategy: torch.distributed not initialized,"
+                " defaulting to world_size=1, rank=0."
+            )
+        self._original_seq_len: Optional[int] = None
+        self._local_valid_len: Optional[int] = None
+
+    def _pad_to_block_size(
+        self, tensor: torch.Tensor, dim: int = 1
+    ) -> torch.Tensor:
+        length = tensor.size(dim)
+        if length == self.block_size:
+            return tensor
+        pad_shape = list(tensor.shape)
+        pad_shape[dim] = self.block_size - length
+        padding = torch.zeros(*pad_shape, dtype=tensor.dtype, device=tensor.device)
+        return torch.cat([tensor, padding], dim=dim)
+
+    def _distribute_module(
+        self, module: nn.Module, final_layers: bool = False
+    ) -> nn.Module:
+        return module
+
+    def _distribute_layer(
+        self, block: nn.Module, layer: int
+    ) -> nn.Module:
+        return block
+
+    def shard_input(
+        self, x: torch.Tensor
+    ) -> torch.Tensor:
+        seq_len = x.size(1)
+        self._original_seq_len = seq_len
+
+        if self.world_size == 1:
+            self._local_valid_len = seq_len
+            return x
+        start = self.rank * self.block_size
+        end = min(start + self.block_size, seq_len)
+        self._local_valid_len = max(0, end - start)
+        if self._local_valid_len > 0:
+            return x.narrow(1, start, self._local_valid_len)
+        shp = list(x.shape)
+        shp[1] = 0
+        return torch.empty(*shp, dtype=x.dtype, device=x.device)
+
+    def _ring_shift_tensor(
+        self,
+        tensor: torch.Tensor,
+        valid_seq_len: int
+    ) -> Tuple[torch.Tensor, int]:
+        if self.world_size == 1:
+            if valid_seq_len == 0:
+                empty_shape = list(tensor.shape)
+                empty_shape[2] = 0
+                return torch.empty(*empty_shape, dtype=tensor.dtype, device=tensor.device), 0
+            idx = [slice(None)] * tensor.ndim
+            idx[2] = slice(0, valid_seq_len)
+            return tensor[tuple(idx)].clone(), valid_seq_len
+
+        send_to = (self.rank + 1) % self.world_size
+        recv_from = (self.rank - 1 + self.world_size) % self.world_size
+        seq_dim = 2
+
+        if valid_seq_len == 0:
+            empty_shape = list(tensor.shape)
+            empty_shape[seq_dim] = 0
+            to_send = torch.empty(*empty_shape, dtype=tensor.dtype, device=tensor.device)
+        else:
+            idx = [slice(None)] * tensor.ndim
+            idx[seq_dim] = slice(0, valid_seq_len)
+            to_send = tensor[tuple(idx)]
+
+        padded = self._pad_to_block_size(to_send, dim=seq_dim).contiguous()
+        recv_buf = torch.empty_like(padded)
+        recv_len = torch.empty(1, dtype=torch.int32, device=tensor.device)
+        send_len = torch.tensor([valid_seq_len], dtype=torch.int32, device=tensor.device)
+
+        ops = [
+            P2POp(dist.isend, send_len, peer=send_to),
+            P2POp(dist.irecv, recv_len, peer=recv_from),
+            P2POp(dist.isend, padded, peer=send_to),
+            P2POp(dist.irecv, recv_buf, peer=recv_from)
+        ]
+        reqs = dist.batch_isend_irecv(ops)
+        for req in reqs:
+            req.wait()
+
+        new_len = recv_len.item()
+        assert 0 <= new_len <= self.block_size
+        idx2 = [slice(None)] * recv_buf.ndim
+        idx2[seq_dim] = slice(0, new_len)
+        return recv_buf[tuple(idx2)].contiguous(), new_len
+
+    def get_local_valid_len(self) -> int:
+        assert self._local_valid_len is not None
+        return self._local_valid_len
+
+    def gather_tensor(
+        self, tensor: torch.Tensor, dim: int = 1
+    ) -> torch.Tensor:
+        if self.world_size == 1:
+            return tensor
+        t = tensor.contiguous()
+        if t.size(dim) != self.block_size:
+            t = self._pad_to_block_size(t, dim)
+        gathered = [torch.empty_like(t) for _ in range(self.world_size)]
+        torch.distributed.all_gather(gathered, t, group=self.group)
+        result = torch.cat(gathered, dim=dim)
+        if dim == 1:
+            assert self._original_seq_len is not None
+            result = result.narrow(dim, 0, self._original_seq_len)
+        return result
