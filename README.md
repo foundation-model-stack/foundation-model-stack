@@ -1,4 +1,48 @@
-# Foundation Model Stack
+# HPML Project - Extending Tensor Parallelism for IBM FMS: Sequence Parallelism
+Team: Maria Surani (ms7019), Ryan Ghosh (rg3681), Sibi Marappan (sm5726)
+
+## Project Description
+This project extends a strategy for distributed model processing by combining Sequence Parallelism (SP) with Tensor Parallelism (TP).
+Our approach integrates SP into normalization layers and adjusts the input/output layouts to remain compatible with linear layers parallelized either row-wise or column-wise.
+
+Additionally, we automated the generation of parallelization plans using regex pattern matching, replacing the manual, hardcoded layer name specification previously used.
+
+We built two test scripts to benchmark performance using metrics such as latency and memory usage, across both CPU and GPU environments.
+
+## Code Structure
+```
+/fms/distributed/strategy/
+│
+├── TensorParallelStrategy  class   # Now reads an ENV variable to toggle SP
+├── generate_layer_plan             # Automates TP/SP plan using regex; replaces manual naming
+├── _distribute_module              # Modified embedding row-wise output layout (sharded across dim=1)
+├── _distribute_layer, _distribute_module       # Cleaned up repetitive logic
+
+/tests/distributed/
+│
+├── test_tp_sp_cpu.py               # Gloo backend - CPU test
+├── test_tp_sp_distributed_cluster.py  # Multi-GPU distributed test
+├── test_tp_sp_distributed_cluster.sh  # Insomnia cluster job submission script
+```
+
+## Example Usage
+
+To run the CPU-based test script with 2 parallel processes using sequence parallelism enabled:
+
+```bash
+cd tests/distributed
+USE_SEQUENCE_PARALLELISM=true torchrun --nproc-per-node=2 test_tp_sp_cpu.py
+```
+
+> **Note**  
+> Ensure all environment dependencies from the original IBM FMS repository are properly set up beforehand.
+
+## Results & Observations
+
+## Weights & Biases
+
+
+# ORIGINAL README - IBM Foundation Model Stack
 
 Foundation Model Stack is a collection of components for development, inference, training, and tuning of foundation models leveraging PyTorch native components. For inference optimizations we aim to support PyTorch compile, accelerated transformers, and tensor parallelism. At training time we aim to support FSDP, accelerated transformers, and PyTorch compile. To enable these optimizations, we will provide reimplementations of several popular model architectures starting with Llama and GPT-BigCode. 
 
