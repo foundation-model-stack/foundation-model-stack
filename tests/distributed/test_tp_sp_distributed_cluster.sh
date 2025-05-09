@@ -12,7 +12,7 @@
 #SBATCH --error=distributed_test_logs/sp_test_%j.err
 #SBATCH --export=ALL
 
-cd ~/foundation-model-stack
+cd ~/tests/distributed
 
 echo "== $(hostname) =="
 echo "name, index, uuid"
@@ -26,4 +26,4 @@ gpu_uuid=$(nvidia-smi --query-gpu=uuid --format=csv,noheader -i $gpu_index)
 echo "Task $SLURM_PROCID running on $(hostname), GPU: $gpu_index, $gpu_name, $gpu_uuid"
 
 # Run the script
-USE_SEQUENCE_PARALLELISM=true torchrun --nproc-per-node=2 test_distributed_cluster.py
+USE_SEQUENCE_PARALLELISM=true torchrun --nproc-per-node=2 test_tp_sp_distributed_cluster.py
