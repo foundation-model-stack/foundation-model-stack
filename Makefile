@@ -235,39 +235,6 @@ SEQ_LEN ?= 4096
 BATCH_SIZE ?= 1
 TOKENIZER ?= $(HOME)/llama_weights/tokenizer.model
 
-# --------------------------------------------------------------------
-# LaTeX targets  (final_project/report.tex → final_project/report.pdf)
-# --------------------------------------------------------------------
-REPORT_DIR := final_project
-REPORT_TEX := $(REPORT_DIR)/report.tex
-REPORT_PDF := $(REPORT_DIR)/report.pdf
-
-.PHONY: report report-clean
-
-# Build the PDF (prefers latexmk; falls back to two pdflatex passes)
-report: $(REPORT_PDF)
-
-$(REPORT_PDF): $(REPORT_TEX)
-	cp ../profile_memory_default_plot.png final_project/profile_memory_default_plot.png || cp profile_memory_default_plot.png final_project/profile_memory_default_plot.png || true
-	cp ../profile_memory_paged_plot.png final_project/profile_memory_paged_plot.png || cp profile_memory_paged_plot.png final_project/profile_memory_paged_plot.png || true
-ifeq ($(shell command -v latexmk 2>/dev/null),)
-	@echo "latexmk not found – falling back to pdflatex (running twice)…"
-	cd $(REPORT_DIR) && pdflatex -interaction=nonstopmode $(notdir $(REPORT_TEX)) >/dev/null
-	cd $(REPORT_DIR) && pdflatex -interaction=nonstopmode $(notdir $(REPORT_TEX)) >/dev/null
-else
-	cd $(REPORT_DIR) && latexmk -pdf -interaction=nonstopmode $(notdir $(REPORT_TEX))
-endif
-	@echo "✔  PDF generated at $(REPORT_PDF)"
-
-# Remove auxiliary files (and the PDF when doing a full clean)
-report-clean:
-ifeq ($(shell command -v latexmk 2>/dev/null),)
-	cd $(REPORT_DIR) && rm -f *.aux *.log *.out *.toc *.lof *.lot *.fls *.fdb_latexmk
-else
-	cd $(REPORT_DIR) && latexmk -C
-endif
-	rm -f $(REPORT_PDF)
-
 bench-attention-runtime: deps $(TOKENIZER_FILE)
 	@echo "Running attention runtime benchmark (default attention)…"
 	CUDA_VISIBLE_DEVICES=0 $(VENV_DIR)/bin/python scripts/benchmark_attention_runtime.py \
