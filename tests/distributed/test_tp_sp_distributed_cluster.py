@@ -195,7 +195,7 @@ if __name__ == "__main__":
     tp_times, tp_mem_allocated, tp_mem_reserved = run_tensor_parallel_benchmark()
 
     seq_length = [256, 512, 1024]
-    output_dir = "distributed_tests_plots"
+    output_dir = "assets"
     os.makedirs(output_dir, exist_ok=True)
 
     # Plot: Execution time
@@ -207,7 +207,7 @@ if __name__ == "__main__":
     plt.ylabel('Execution Time (s)')
     plt.legend()
     plt.grid(True)
-    plt.savefig(os.path.join(output_dir, 'execution_time_vs_seq_length.png'))
+    plt.savefig(os.path.join(output_dir, 'execution_time_vs_seq_length_gpu_l40.png'))
     plt.close()
 
     # Plot: Memory allocated
@@ -219,7 +219,7 @@ if __name__ == "__main__":
     plt.ylabel('Memory Allocated (GB)')
     plt.legend()
     plt.grid(True)
-    plt.savefig(os.path.join(output_dir, 'memory_allocated_vs_seq_length.png'))
+    plt.savefig(os.path.join(output_dir, 'memory_allocated_vs_seq_length_gpu_l40.png'))
     plt.close()
 
     # Plot: Memory reserved
@@ -231,5 +231,5 @@ if __name__ == "__main__":
     plt.ylabel('Memory Reserved (GB)')
     plt.legend()
     plt.grid(True)
-    plt.savefig(os.path.join(output_dir, 'memory_reserved_vs_seq_length.png'))
+    plt.savefig(os.path.join(output_dir, 'memory_reserved_vs_seq_length_gpu_l40.png'))
     plt.close()
