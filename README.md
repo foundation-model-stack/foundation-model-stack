@@ -74,8 +74,8 @@ squeue -u <your_uni>
 - SLURM Job Settings:
   - `--gres=gpu:l40:2`
   - `--ntasks=2`
-  - `--cpus-per-task=4`
-  - `--mem=32G`
+  - `--cpus-per-task=24`
+  - `--mem=192G`
   - `--time=00:20:00`
 
 ### GPU Benchmark Results (L40)
@@ -95,14 +95,21 @@ squeue -u <your_uni>
 
 #### Memory Allocated vs Sequence Length
 
-![Memory Usage (GPU - L40)](./assets/memory_usage_vs_seq_length_gpu_l40.png)
+![Memory Allocated (GPU - L40)](./assets/memory_allocated_vs_seq_length_gpu_l40.png)
 
 | Sequence Length | TP Memory (GB) | SP Memory (GB) |
 |------------------|----------------|----------------|
-| 256              | 13.83          | 13.82          |
-| 512              | 14.00          | 13.90          |
-| 1024             | 14.16          | 14.03          |
+| 256              | 27.40          | 13.66          |
+| 512              | 27.64          | 13.90          |
+| 1024             | 28.05          | 14.31          |
 
+![Memory Reserved (GPU - L40)](./assets/memory_reserved_vs_seq_length_gpu_l40.png)
+
+| Sequence Length | TP Memory (GB) | SP Memory (GB) |
+|------------------|----------------|----------------|
+| 256              | 30.65          | 15.41          |
+| 512              | 30.78          | 15.54          |
+| 1024             | 33.56          | 18.31          |
 - SP consistently consumes less memory than TP across all tested sequence lengths.
 - The difference is more noticeable at higher sequence lengths.
 
