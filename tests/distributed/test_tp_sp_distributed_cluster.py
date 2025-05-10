@@ -21,15 +21,18 @@ def setup_distributed():
     os.environ['MASTER_ADDR'] = os.environ.get('MASTER_ADDR', 'localhost')
     os.environ['MASTER_PORT'] = os.environ.get('MASTER_PORT', '29501')
 
-    wandb.init(project="fms-tp-sp", config={
-        "model": "LLaMA",
-        "nlayers": 32,
-        "strategy": "TensorParallel",
-        "vocab_size": 32000,
-        "sequence_length": 16,
-        "batch_size": 2,
-    })
-    print(f"[Rank {rank}] WandB initialized")
+    try:
+        wandb.init(project="fms-tp-sp", config={
+            "model": "LLaMA",
+            "nlayers": 32,
+            "strategy": "TensorParallel",
+            "vocab_size": 32000,
+            "sequence_length": 16,
+            "batch_size": 2,
+        })
+        print(f"[Rank {rank}] WandB initialized")
+    except Exception as e:
+        print(f"[Rank {rank}] WandB initialization failed: {e}")
 
     # Initialize the process group
     if not dist.is_initialized():
