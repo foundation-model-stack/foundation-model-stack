@@ -12,3 +12,7 @@ fms.egg-info
 .mypy_cache
 ibm_fms.egg-info/
 wandb/
+final_project/report.log
+final_project/report.fls
+final_project/report.fdb_latexmk
+final_project/report.aux
