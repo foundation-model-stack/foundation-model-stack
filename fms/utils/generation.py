@@ -68,7 +68,7 @@ def pad_input_ids(
     if is_causal_mask:
         mask = mask.tril()
     mask = torch.where(mask.logical_not(), -torch.inf, 0.0)
-    
+
     padding_kwargs["mask"] = mask
     # FIXME: this method should be per attn type (for now default it)
 
@@ -82,7 +82,7 @@ def __update_padding_kwargs(
     use_cache: bool, model_specific_kwargs: MutableMapping[str, Any]
 ) -> MutableMapping[str, Any]:
     """Generic function to prepare any model specific keyword arguments"""
-    
+
     # update the attn_kwargs
     attn_kwargs = model_specific_kwargs.get("attn_kwargs", None)
     if attn_kwargs is not None:

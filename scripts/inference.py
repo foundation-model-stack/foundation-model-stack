@@ -245,7 +245,9 @@ def infer(use_cache, do_sample):
         max_seq_len = model.config.max_expected_seq_len
 
     if padding_kwargs is not None:
-        padding_kwargs["attn_kwargs"] = SDPAAttentionKwargs(mask=padding_kwargs["mask"], is_causal_mask=padding_kwargs["mask"] is None)
+        padding_kwargs["attn_kwargs"] = SDPAAttentionKwargs(
+            mask=padding_kwargs["mask"], is_causal_mask=padding_kwargs["mask"] is None
+        )
 
     result = generate(
         model,

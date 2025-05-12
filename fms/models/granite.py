@@ -9,7 +9,11 @@ import torch.nn as nn
 
 from fms import models
 from fms.distributed.strategy import DistributedStrategy, NoOpStrategy
-from fms.modules.attention import AttentionKwargs, MultiHeadAttention, SDPAAttentionKwargs
+from fms.modules.attention import (
+    AttentionKwargs,
+    MultiHeadAttention,
+    SDPAAttentionKwargs,
+)
 from fms.modules.feedforward import GatedLinearUnit
 from fms.modules.layernorm import LayerNormParameterized
 from fms.modules.linear import get_linear_type
@@ -113,7 +117,7 @@ class GraniteBlock(nn.Module):
         position_ids=None,
         past_key_value_state=None,
         use_cache=False,
-        attn_kwargs:Optional[AttentionKwargs]=None,
+        attn_kwargs: Optional[AttentionKwargs] = None,
     ):
         # if the cache is not empty, we need to get the kv cache for self and cross attention
         self_attn_past_key_value = past_key_value_state
@@ -284,7 +288,9 @@ class GraniteHeadless(nn.Module):
 
         if attn_kwargs is None:
             # if mask is none, we need to specify causal mask
-            attn_kwargs = SDPAAttentionKwargs.create(is_causal_mask=not (use_cache and klen != 1 and qlen == 1))
+            attn_kwargs = SDPAAttentionKwargs.create(
+                is_causal_mask=not (use_cache and klen != 1 and qlen == 1)
+            )
 
         x_in = self.embedding(x_in)
         x_in = x_in * self.config.embedding_multiplier
@@ -368,7 +374,7 @@ class Granite(nn.Module):
         past_key_value_states: Optional[Tuple[torch.FloatTensor,]] = None,
         use_cache: bool = False,
         only_last_token: bool = False,
-        attn_kwargs: Optional[AttentionKwargs]=None,
+        attn_kwargs: Optional[AttentionKwargs] = None,
         **_,
     ):
         if position_ids is not None:

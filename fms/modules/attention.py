@@ -28,23 +28,35 @@ from torch.library import custom_op
 __type_factory_map: dict[str, dict[str, callable]] = {}
 
 
-# FIXME: add adjusted_mask for alibi as part of attn_compute_dict        
-def register_attention_op(attn_type: str, store_op: callable, compute_op: callable, is_prefill_op: Optional[callable] = None, compute_decode_op: Optional[callable] = None) -> None:
+# FIXME: add adjusted_mask for alibi as part of attn_compute_dict
+def register_attention_op(
+    attn_type: str,
+    store_op: callable,
+    compute_op: callable,
+    is_prefill_op: Optional[callable] = None,
+    compute_decode_op: Optional[callable] = None,
+) -> None:
     if attn_type in __type_factory_map:
         raise KeyError(
             f"Module mapping of attention type `{attn_type}` already registered"
         )
+    if compute_decode_op is None:
+        compute_decode_op = compute_op
+
     compute_dict = {
         "store": store_op,
         "is_prefill": (lambda _: True) if is_prefill_op is None else is_prefill_op,
         "compute_prefill": compute_op,
-        "compute_decoder": compute_op if compute_decode_op is None else compute_decode_op
+        "compute_decoder": compute_decode_op,
     }
     __type_factory_map[attn_type] = compute_dict
+
+
 @dataclass
 class AttentionKwargs:
     def update(self) -> "AttentionKwargs":
         pass
+
 
 @dataclass
 class SDPAAttentionKwargs(AttentionKwargs):
@@ -70,21 +82,41 @@ class SDPAAttentionKwargs(AttentionKwargs):
                 torch._dynamo.mark_dynamic(mask, 2)
         else:
             mask = None
-        return SDPAAttentionKwargs(mask=mask, attn_algorithm=self.attn_algorithm, is_causal_mask=False)
+        return SDPAAttentionKwargs(
+            mask=mask, attn_algorithm=self.attn_algorithm, is_causal_mask=False
+        )
 
-def __sdpa_store_op(keys: torch.Tensor, values: torch.Tensor, key_cache: Optional[torch.Tensor], value_cache: Optional[torch.Tensor], **_):
+
+def _sdpa_store_op(
+    keys: torch.Tensor,
+    values: torch.Tensor,
+    key_cache: Optional[torch.Tensor],
+    value_cache: Optional[torch.Tensor],
+    **_,
+):
     keys = keys.transpose(2, 1)  # / (self.emb_kq_per_head**(1/4))
     values = values.transpose(2, 1)  # compatible with QK.T
 
     if key_cache is not None and value_cache[0].numel() > 0:
         return (
             torch.cat((key_cache, keys), dim=2),
-            torch.cat((value_cache, values), dim=2)
+            torch.cat((value_cache, values), dim=2),
         )
     else:
         return (keys, values)
 
-def __sdpa_compute_op(query: torch.Tensor, key_cache: torch.Tensor, value_cache: torch.Tensor, nheads: int, kvheads: int, p_dropout: float, scale_factor: float, attn_kwargs: SDPAAttentionKwargs, **_):
+
+def _sdpa_compute_op(
+    query: torch.Tensor,
+    key_cache: torch.Tensor,
+    value_cache: torch.Tensor,
+    nheads: int,
+    kvheads: int,
+    p_dropout: float,
+    scale_factor: float,
+    attn_kwargs: SDPAAttentionKwargs,
+    **_,
+):
     queries = query.transpose(2, 1)
     mask = attn_kwargs.mask  # / (self.emb_kq_per_head**(1/4))
 
@@ -99,9 +131,7 @@ def __sdpa_compute_op(query: torch.Tensor, key_cache: torch.Tensor, value_cache:
     expansion = nheads // kvheads
     # k/v: b h l d
     if expansion != 1:
-        keys_e = (
-            key_cache.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
-        )
+        keys_e = key_cache.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
         values_e = (
             value_cache.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
         )
@@ -112,9 +142,7 @@ def __sdpa_compute_op(query: torch.Tensor, key_cache: torch.Tensor, value_cache:
     attn_algorithm = attn_kwargs.attn_algorithm
     if attn_algorithm:
         previous_flash: bool = torch.backends.cuda.flash_sdp_enabled()
-        previous_mem_efficient: bool = (
-            torch.backends.cuda.mem_efficient_sdp_enabled()
-        )
+        previous_mem_efficient: bool = torch.backends.cuda.mem_efficient_sdp_enabled()
         previous_math: bool = torch.backends.cuda.math_sdp_enabled()
         # Pick which fused attn kernels will run.
         use_flash = attn_algorithm == "flash"
@@ -140,9 +168,7 @@ def __sdpa_compute_op(query: torch.Tensor, key_cache: torch.Tensor, value_cache:
 
     if attn_algorithm:
         torch.backends.cuda.enable_flash_sdp(previous_flash)
-        torch.backends.cuda.enable_mem_efficient_sdp(
-            previous_mem_efficient
-        )
+        torch.backends.cuda.enable_mem_efficient_sdp(previous_mem_efficient)
         torch.backends.cuda.enable_math_sdp(previous_math)
 
     # attn: bs x seq_len x nheads*emb_v_per_head
@@ -152,15 +178,18 @@ def __sdpa_compute_op(query: torch.Tensor, key_cache: torch.Tensor, value_cache:
     attn = attn.transpose(2, 1).contiguous()
     return attn
 
-register_attention_op("sdpa", __sdpa_store_op, __sdpa_compute_op)
+
+register_attention_op("sdpa", _sdpa_store_op, _sdpa_compute_op)
+
 
 def get_attention_type(attn_kwargs: AttentionKwargs) -> dict[str, callable]:
     attn_type = attn_kwargs.attn_name
     if attn_kwargs.attn_name not in __type_factory_map:
         # we can add sdpa default here
         raise KeyError("")
-    
+
     return __type_factory_map[attn_type]
+
 
 class QKV(nn.Module, metaclass=abc.ABCMeta):
     """Simple module for applying qkv in attention"""
@@ -471,7 +500,7 @@ class MultiHeadAttention(nn.Module):
         position_ids=None,
         past_key_value_state: Optional[Tuple[Tensor, Tensor]] = None,
         use_cache=False,
-        attn_kwargs: Optional[AttentionKwargs]=None,
+        attn_kwargs: Optional[AttentionKwargs] = None,
     ):
         """
         past_key_value_state: tuple
@@ -512,7 +541,7 @@ class MultiHeadAttention(nn.Module):
             queries, keys = self.position_encoder.adjusted_qk(
                 queries, keys, position_ids, past_key_value_state, use_cache
             )
-        
+
         attn_compute_dict = get_attention_type(attn_kwargs)
 
         if use_cache:
@@ -520,12 +549,36 @@ class MultiHeadAttention(nn.Module):
             if past_key_value_state is None:
                 past_key_value_state = (None, None)
 
-            keys, values = attn_compute_dict["store"](keys, values, past_key_value_state[0], past_key_value_state[1], attn_kwargs=attn_kwargs)
+            keys, values = attn_compute_dict["store"](
+                keys,
+                values,
+                past_key_value_state[0],
+                past_key_value_state[1],
+                attn_kwargs=attn_kwargs,
+            )
 
         if attn_compute_dict["is_prefill"](attn_kwargs):
-            attn = attn_compute_dict["compute_prefill"](queries, keys, values, self.nheads, self.kvheads, self.p_dropout, self.scale_factor, attn_kwargs=attn_kwargs)
+            attn = attn_compute_dict["compute_prefill"](
+                queries,
+                keys,
+                values,
+                self.nheads,
+                self.kvheads,
+                self.p_dropout,
+                self.scale_factor,
+                attn_kwargs=attn_kwargs,
+            )
         else:
-            attn = attn_compute_dict["compute_decode"](queries, keys, values, self.nheads, self.kvheads, self.p_dropout, self.scale_factor, attn_kwargs=attn_kwargs)
+            attn = attn_compute_dict["compute_decode"](
+                queries,
+                keys,
+                values,
+                self.nheads,
+                self.kvheads,
+                self.p_dropout,
+                self.scale_factor,
+                attn_kwargs=attn_kwargs,
+            )
 
         attn = attn.view(batch_size, q_len, self.nheads * self.emb_v_per_head)
         out = self.dense(attn)
@@ -697,7 +750,7 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
         position_ids=None,
         past_key_value_state: Optional[Tuple[Tensor, Tensor]] = None,
         use_cache=False,
-        attn_kwargs: Optional[AttentionKwargs]=None,
+        attn_kwargs: Optional[AttentionKwargs] = None,
     ):
         """
         Check MultiHeadAttention for up-to-date arguments and docs
@@ -713,7 +766,7 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
             position_ids,
             past_key_value_state,
             use_cache,
-            attn_kwargs
+            attn_kwargs,
         )
 
         # if use_cache=True, we return the hidden_state as well as the kv cache.
