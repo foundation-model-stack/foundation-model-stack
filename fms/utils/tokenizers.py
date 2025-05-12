@@ -141,6 +141,12 @@ class _HFTokenizer(BaseTokenizer):
     def vocab_size(self):
         return self.tokenizer.get_vocab_size()
 
+    def encode(self, text, add_special_tokens=False):
+        if add_special_tokens is True:
+            return  [self.tokenizer.bos_token_id] + self.tokenizer.convert_tokens_to_ids(self.tokenizer.tokenize(text))
+        else:
+            return self.tokenizer.convert_tokens_to_ids(self.tokenizer.tokenize(text))
+
 
 def get_tokenizer(name: str, style: Optional[str] = None) -> BaseTokenizer:
     """
