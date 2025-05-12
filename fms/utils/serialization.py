@@ -629,7 +629,15 @@ def _load_partial_state_dict(
                     )
                 )
                 unused_keys_tp = tp_module.load_weights(tensor_values)
-        except:  # noqa: E722
+        except Exception as e:
+            # capture error specific to shape mismatch and halt the processing
+            if "shape" in str(e) or "size" in str(e):
+                raise ValueError(
+                    "Shape mismatch encountered while copying a tensor from the provided "
+                    "checkpoint into the model.\nIf running a quantized model, it may "
+                    "mean that the quantization setup used to train the checkpoint does "
+                    "not match the one used to instantiate the model."
+                ) from e
             if unused_keys_tp:
                 unused_keys.update(unused_keys_tp)
             else:

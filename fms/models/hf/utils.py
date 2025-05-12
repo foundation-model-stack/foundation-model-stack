@@ -157,6 +157,14 @@ def _infer_model_configuration(
         config_params["multiple_of"] = 1
         config_params["emb_dim"] = config.hidden_size
         config_params["max_expected_seq_len"] = config.max_position_embeddings
+        # New in Llama 3
+        rope_theta = getattr(config, "rope_theta", None)
+        if rope_theta is not None:
+            config_params["rope_theta"] = rope_theta
+        # New in Llama 3.1
+        rope_scaling = getattr(config, "rope_scaling", None)
+        if rope_scaling is not None:
+            config_params["rope_scaling"] = rope_scaling
     elif architecture == "GPTBigCodeForCausalLM":
         inner_dim = config.n_inner
         architecture = "gpt_bigcode"
@@ -207,6 +215,17 @@ def _infer_model_configuration(
         config_params["attention_multiplier"] = config.attention_multiplier
         config_params["logits_scaling"] = config.logits_scaling
         config_params["embedding_multiplier"] = config.embedding_multiplier
+    elif architecture == "MistralForCausalLM":
+        inner_dim = config.intermediate_size
+        architecture = "mistral"
+        config_params["activation_fn"] = config.hidden_act
+        config_params["emb_dim"] = config.hidden_size
+        config_params["max_expected_seq_len"] = config.max_position_embeddings
+        config_params["kvheads"] = config.num_key_value_heads
+        config_params["p_dropout"] = config.attention_dropout
+        config_params["norm_eps"] = config.rms_norm_eps
+        config_params["rope_base"] = config.rope_theta
+        config_params["sliding_window"] = config.sliding_window
     elif architecture == "BambaForCausalLM":
         inner_dim = config.intermediate_size
         architecture = "bamba"

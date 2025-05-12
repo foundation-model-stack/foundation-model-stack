@@ -161,10 +161,12 @@ class MixtralHeadless(nn.Module):
         embedding = nn.Embedding(self.config.src_vocab_size, self.config.dim)
         self.embedding = self.distributed_strategy.distribute_module(embedding)
 
+        rope_scaling = {"rope_type": "ntk" if self.config.ntk_scaling else "regular"}
+
         self.rot_emb = RotaryEmbedding(
             dim=self.config.dim // self.config.nheads,
             ratio=self.config.rope_base,
-            ntk_scaling=self.config.ntk_scaling,
+            scaling=rope_scaling,
             max_seq_len=self.config.max_expected_seq_len,
         )
 

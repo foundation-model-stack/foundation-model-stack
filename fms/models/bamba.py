@@ -198,9 +198,11 @@ class BambaHeadless(nn.Module):
 
         self.embedding = nn.Embedding(self.config.src_vocab_size, self.config.emb_dim)
 
+        rope_scaling = {"rope_type": "ntk" if self.config.ntk_scaling else "regular"}
+
         self.rot_emb = RotaryEmbedding(
             dim=self.config.emb_dim // self.config.nheads,
-            ntk_scaling=self.config.ntk_scaling,
+            scaling=rope_scaling,
             max_seq_len=self.config.max_expected_seq_len,
             ratio=self.config.rope_theta,
             partial_rope=0.5,

@@ -94,7 +94,7 @@ class HFAdaptedMixtralHeadless(HFDecoderModelArchitecture):
 
         # Add more cached rope freqs if over cached number
         max_expected_len = input_ids.shape[1] + torch.max(position_ids)
-        if max_expected_len > self.decoder.model.rot_emb.max_seq_len:
+        if max_expected_len > self.decoder.model.rot_emb.rope_scaling.orig_max_seq_len:
             self.decoder.model.rot_emb.compute_freqs_cis(
                 input_ids.device, max_expected_len
             )
