@@ -3,7 +3,7 @@ import itertools
 import os
 import random
 
-from fms.modules.paged import prepare_model_inputs_hook
+from fms.modules.attention import SDPAAttentionKwargs
 import numpy as np
 import torch
 import torch._inductor.config
@@ -243,6 +243,10 @@ def infer(use_cache, do_sample):
     else:
         # without ntk scaling, extending the seq length too far gives bogus results.
         max_seq_len = model.config.max_expected_seq_len
+
+    if padding_kwargs is not None:
+        padding_kwargs["attn_kwargs"] = SDPAAttentionKwargs(mask=padding_kwargs["mask"], is_causal_mask=padding_kwargs["mask"] is None)
+
     result = generate(
         model,
         ids,
@@ -251,7 +255,6 @@ def infer(use_cache, do_sample):
         do_sample=do_sample,
         max_seq_len=max_seq_len,
         extra_kwargs=padding_kwargs,
-        # prepare_model_inputs_hook=prepare_model_inputs_hook(model)
     )
     if len(result.shape) == 1:
         result = result.unsqueeze(0)
