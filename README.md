@@ -1,85 +1,33 @@
-# HPML Project - Extending Tensor Parallelism for IBM FMS: Sequence Parallelism
-Team: Maria Surani (ms7019), Ryan Ghosh (rg3681), Sibi Marappan (sm5726)
+# HPML Project: Extending Tensor Parallelism for IBM FMS: Sequence Parallelism 
 
-## Project Description
-This project extends a strategy for distributed model processing by combining Sequence Parallelism (SP) with Tensor Parallelism (TP).
-Our approach integrates SP into normalization layers and adjusts the input/output layouts to remain compatible with linear layers parallelized either row-wise or column-wise.
+## Team Information
+- **Team Name**: IBM Projects Team 9
+- **Members**:
+  - Maria Surani (ms7019)
+  - Ryan Ghosh (rg3681)
+  - Sibi Marappan (sm5726)
 
-Additionally, we automated the generation of parallelization plans using regex pattern matching, replacing the manual, hardcoded layer name specification previously used.
+---
 
-We built two test scripts to benchmark performance using metrics such as latency and memory usage, across both CPU and GPU environments.
+## 1. Problem Statement
+This project extends the IBM Foundation Model Stack (FMS) to support both Tensor Parallelism (TP) and Sequence Parallelism (SP) in distributed model inference. While TP enables parameter sharding across GPUs, it does not partition the sequence dimension, which leads to memory inefficiency at long sequence lengths. We address this by integrating SP into normalization layers, optimizing layout transitions, and enabling support for non-divisible and short sequence lengths.
 
-## Code Structure
-```
-/fms/distributed/strategy/
-│
-├── TensorParallelStrategy  class   # Now reads an ENV variable to toggle SP
-├── generate_layer_plan             # Automates TP/SP plan using regex; replaces manual naming
-├── _distribute_module              # Modified embedding row-wise output layout (sharded across dim=1)
-├── _distribute_layer, _distribute_module       # Cleaned up repetitive logic
+---
 
-/tests/distributed/
-│
-├── test_tp_sp_cpu.py               # Gloo backend - CPU test
-├── test_tp_sp_distributed_cluster.py  # Multi-GPU distributed test
-├── test_tp_sp_distributed_cluster.sh  # Insomnia cluster job submission script
-```
+## 2. Model Description
+- **Model**: LLaMA-7B
+- **Framework**: PyTorch with IBM FMS extensions
+- **Parallelism**: Tensor Parallelism (Columnwise and Rowwise) + Sequence Parallelism (LayerNorm)
+- **Custom Changes**:
+  - Automated regex-based TP/SP layer plan generation
+  - Patched layout metadata using `output_layouts=Shard(1)`
+  - Added `PrepareModuleInput` to reduce redundant collectives
+  - Support for uneven and mixed-length sequence batches
 
-## Example Usage
+---
 
-To run the CPU-based test script with 2 parallel processes using sequence parallelism enabled:
-
-```bash
-cd tests/distributed
-USE_SEQUENCE_PARALLELISM=true torchrun --nproc-per-node=2 test_tp_sp_cpu.py
-```
-
-### Multi-GPU Environment (Insomnia Cluster)
-
-- Check available modules
-```bash
-module avail
-```
-- Load required module (e.g., Anaconda)
-```bash
-module load anaconda
-```
-- Submit the SLURM job script (e.g., test_tp_sp_distributed_cluster.sh)
-```bash
-sbatch test_tp_sp_distributed_cluster.sh
-```
-- Monitor job status
-```bash
-squeue -u <your_uni>
-```
-> **Note**  
-> Ensure all environment dependencies from the original IBM FMS repository are properly set up beforehand.
-
-## Results & Observations
-
-### Model Configuration
-
-- Model: LLaMA
-- Layers: 32 on GPU, 2 on CPU
-- Number of Attention Heads: 32
-- Sequence Lengths Tested: 256, 512, 1024
-
-### GPU Test Environment (L40)
-
-- Hardware: 2× NVIDIA L40 GPUs
-- GPU Memory: 48 GB per GPU
-- Architecture: Ada Lovelace
-- Compute Capability: 8.9
-- Distributed Backend: NCCL
-- SLURM Job Settings:
-  - `--gres=gpu:l40:2`
-  - `--ntasks=2`
-  - `--cpus-per-task=24`
-  - `--mem=192G`
-  - `--time=00:20:00`
-
+## 3. Final Results Summary
 ### GPU Benchmark Results (L40)
-
 #### Execution Time vs Sequence Length
 
 ![Execution Time (GPU - L40)](./assets/execution_time_vs_seq_length_gpu_l40.png)
@@ -113,7 +61,7 @@ squeue -u <your_uni>
 - SP consistently consumes less memory than TP across all tested sequence lengths.
 - The difference is more noticeable at higher sequence lengths.
 
-  ### CPU Test Environment
+### CPU Test Environment
 
 - Processor: Intel(R) Xeon(R) Platinum 8460Y+
 - Total Physical Cores: 80
@@ -150,10 +98,87 @@ squeue -u <your_uni>
 - Memory usage remains comparable across both approaches.
 - SP consistently consumes slightly less memory across all evaluated sequence lengths.
 
+## 4. Reproducibility Instructions
+### A. Requirements
 
-## Weights & Biases
+The original IBM FMS repository recommends running this on Python 3.11 and CUDA 12.
+Install dependencies:
 
-* [wandb.ai/team9_hpml-columbia-university](https://wandb.ai/team9_hpml-columbia-university) - All training runs, benchmarks, and SP+TP experiments are tracked on our public Weights & Biases project board:
+```
+pip install ibm-fms
+```
+
+### B. Wandb
+
+* [wandb.ai/team9_hpml-columbia-university/fms-tp-sp](https://wandb.ai/team9_hpml-columbia-university/fms-tp-sp) - All training runs, benchmarks, and SP+TP experiments are tracked on our public Weights & Biases project board.
+
+### C. To run inference with TP + SP
+
+```bash
+cd tests/distributed
+USE_SEQUENCE_PARALLELISM=true torchrun --nproc-per-node=2 test_tp_sp_cpu.py
+```
+
+### D. Evaluation
+**Multi-GPU Environment (Insomnia Cluster)**
+
+- Check available modules
+```bash
+module avail
+```
+- Load required module (e.g., Anaconda)
+```bash
+module load anaconda
+```
+- Submit the SLURM job script (e.g., test_tp_sp_distributed_cluster.sh)
+```bash
+sbatch test_tp_sp_distributed_cluster.sh
+```
+- Monitor job status
+```bash
+squeue -u <your_uni>
+```
+> **Note**  
+> Ensure all environment dependencies from the original IBM FMS repository are properly set up beforehand.
+
+### E. Quickstart: Minimum Reproducible Result
+
+
+## 5. Notes 
+### Code Structure
+```
+/fms/distributed/strategy/
+│
+├── TensorParallelStrategy  class   # Now reads an ENV variable to toggle SP
+├── generate_layer_plan             # Automates TP/SP plan using regex; replaces manual naming
+├── _distribute_module              # Modified embedding row-wise output layout (sharded across dim=1)
+├── _distribute_layer, _distribute_module       # Cleaned up repetitive logic
+
+/tests/distributed/
+│
+├── test_tp_sp_cpu.py               # Gloo backend - CPU test
+├── test_tp_sp_distributed_cluster.py  # Multi-GPU distributed test
+├── test_tp_sp_distributed_cluster.sh  # Insomnia cluster job submission script
+
+/fms/models/llama.py L205  
+Fixed a silent bug inherited from the previous team — added the `model` parameter to enable the strategy to correctly apply row-wise parallelization and shard the output as intended.
+```
+
+### GPU Test Environment (L40)
+
+- Hardware: 2× NVIDIA L40 GPUs
+- GPU Memory: 48 GB per GPU
+- Architecture: Ada Lovelace
+- Compute Capability: 8.9
+- Distributed Backend: NCCL
+- SLURM Job Settings:
+  - `--gres=gpu:l40:2`
+  - `--ntasks=2`
+  - `--cpus-per-task=24`
+  - `--mem=192G`
+  - `--time=00:20:00`
+
+
 
 # ORIGINAL README - IBM Foundation Model Stack
 
