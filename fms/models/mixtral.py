@@ -11,7 +11,11 @@ from fms.distributed.strategy import (
     DistributedStrategy,
     NoOpStrategy,
 )
-from fms.modules.attention import AttentionKwargs, MultiHeadAttention, SDPAAttentionKwargs
+from fms.modules.attention import (
+    AttentionKwargs,
+    MultiHeadAttention,
+    SDPAAttentionKwargs,
+)
 from fms.modules.feedforward import MOEFeedForward
 from fms.modules.head import LinearClassificationHead
 from fms.modules.layernorm import LayerNormParameterized
@@ -331,7 +335,7 @@ class Mixtral(nn.Module):
         **_,
     ):
         output, cache = self.base_model(
-            x, 
+            x,
             position_ids,
             past_key_value_states,
             use_cache,

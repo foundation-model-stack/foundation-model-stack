@@ -13,7 +13,11 @@ from fms.distributed.strategy import (
     NoOpStrategy,
 )
 
-from fms.modules.attention import AttentionKwargs, MultiHeadAttention, SDPAAttentionKwargs
+from fms.modules.attention import (
+    AttentionKwargs,
+    MultiHeadAttention,
+    SDPAAttentionKwargs,
+)
 from fms.modules.feedforward import GatedLinearUnit
 from fms.modules.layernorm import LayerNormParameterized
 from fms.modules.positions import RotaryEmbedding
@@ -412,7 +416,7 @@ class Mistral(nn.Module):
         **_,
     ):
         output, cache = self.base_model(
-            x, 
+            x,
             position_ids,
             past_key_value_states,
             use_cache,

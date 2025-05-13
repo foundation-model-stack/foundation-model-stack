@@ -9,7 +9,11 @@ import torch.nn as nn
 
 from fms import models
 from fms.distributed.strategy import DistributedStrategy, NoOpStrategy
-from fms.modules.attention import AttentionKwargs, MultiHeadAttention, SDPAAttentionKwargs
+from fms.modules.attention import (
+    AttentionKwargs,
+    MultiHeadAttention,
+    SDPAAttentionKwargs,
+)
 from fms.modules.feedforward import GatedLinearUnit
 from fms.modules.layernorm import LayerNormParameterized
 from fms.modules.positions import RotaryEmbedding
@@ -435,7 +439,7 @@ class Bamba(nn.Module):
         **_,
     ):
         output, cache = self.base_model(
-            x, 
+            x,
             position_ids,
             past_key_value_states,
             use_cache,

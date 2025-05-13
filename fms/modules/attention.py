@@ -150,11 +150,11 @@ def _sdpa_compute_op(
     #     sdpa_kernels.append(SDPBackend.EFFICIENT_ATTENTION)
     # else:
     #     raise ValueError(f"invalid attn_algorithm given: {attn_kwargs.attn_algorithm}")
-    
+
     attn_mask = mask
     if attn_mask is not None and attn_mask.dtype != torch.bool:
         attn_mask = attn_mask.to(dtype=queries.dtype)
-    
+
     # with sdpa_kernel(sdpa_kernels):
 
     attn = F.scaled_dot_product_attention(

@@ -10,7 +10,11 @@ from torch import nn
 
 from fms import models
 from fms.distributed.strategy import DistributedStrategy, NoOpStrategy
-from fms.modules.attention import AttentionKwargs, MultiHeadAttention, SDPAAttentionKwargs
+from fms.modules.attention import (
+    AttentionKwargs,
+    MultiHeadAttention,
+    SDPAAttentionKwargs,
+)
 from fms.modules.feedforward import FeedForwardBlock
 from fms.modules.head import MLPClassificationHead
 from fms.utils import serialization
@@ -182,10 +186,8 @@ class RoBERTaHeadless(nn.Module):
             pad_id: int = self.config.pad_id
             is_pad = x == pad_id
             mask = is_pad.unsqueeze(-1) == is_pad.unsqueeze(-2)
-            attn_kwargs = SDPAAttentionKwargs(
-                is_causal_mask=False, mask=mask
-            )
-        
+            attn_kwargs = SDPAAttentionKwargs(is_causal_mask=False, mask=mask)
+
         x_emb = self.embedding(x)
 
         # if pad_id exists

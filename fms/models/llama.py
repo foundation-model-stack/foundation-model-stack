@@ -12,7 +12,11 @@ from fms.distributed.strategy import (
     NoOpStrategy,
     TensorParallelStrategy,
 )
-from fms.modules.attention import AttentionKwargs, MultiHeadAttention, SDPAAttentionKwargs
+from fms.modules.attention import (
+    AttentionKwargs,
+    MultiHeadAttention,
+    SDPAAttentionKwargs,
+)
 from fms.modules.embedding import WordEmbedding
 from fms.modules.feedforward import GatedLinearUnit
 from fms.modules.layernorm import LayerNormParameterized
@@ -395,7 +399,7 @@ class LLaMA(nn.Module):
         **_,
     ):
         output, cache = self._helper(
-            x, 
+            x,
             position_ids,
             past_key_value_states,
             use_cache,

@@ -36,7 +36,10 @@ class HFAdaptedMixtralDecoder(HFDecoder):
             position_ids=position_ids,
             past_key_value_states=past_key_values,
             use_cache=use_cache,
-            attn_kwargs=SDPAAttentionKwargs(mask=attention_mask, attn_algorithm=attn_algorithm,)
+            attn_kwargs=SDPAAttentionKwargs(
+                mask=attention_mask,
+                attn_algorithm=attn_algorithm,
+            ),
         )
 
         present_key_values = None

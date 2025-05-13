@@ -1,6 +1,6 @@
 from typing import Optional, Tuple
 
-from fms.modules.attention import SDPAAttentionKwargs
+from fms.modules.attention import AttentionKwargs, SDPAAttentionKwargs
 import torch
 import torch.nn as nn
 from transformers import PretrainedConfig
@@ -28,18 +28,19 @@ class HFAdaptedLLaMADecoder(HFDecoder):
         position_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[Tuple[torch.Tensor]] = None,
         use_cache: Optional[bool] = None,
-        attn_algorithm: Optional[
-            str
-        ] = None,  # this can be passed in from top most forward
+        attn_kwargs: Optional[AttentionKwargs] = None,
         *args,
         **kwargs,
     ) -> BaseModelOutputWithPastAndCrossAttentions:
+        if attn_kwargs is None:
+            attn_kwargs = SDPAAttentionKwargs(mask=attention_mask)
+
         output = self.model._helper(
             x_in=input_ids,
             position_ids=position_ids,
             past_key_value_states=past_key_values,
             use_cache=use_cache,
-            attn_kwargs=SDPAAttentionKwargs(mask=attention_mask, attn_algorithm=attn_algorithm,)
+            attn_kwargs=attn_kwargs,
         )
 
         present_key_values = None
