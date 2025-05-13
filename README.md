@@ -130,10 +130,17 @@ module avail
 ```bash
 module load anaconda
 ```
-- Submit the SLURM job script (e.g., test_tp_sp_distributed_cluster.sh)
-```bash
-sbatch test_tp_sp_distributed_cluster.sh
-```
+- Submit the SLURM job script:
+  
+    - For **Multi-GPU distributed test**:  
+        ```bash
+          sbatch test_tp_sp_distributed_cluster.sh
+        ``` 
+    - For **CPU test**:
+        ```bash
+        sbatch test_tp_sp_cluster_cpu.sh
+        ```
+      
 - Monitor job status
 ```bash
 squeue -u <your_uni>
@@ -149,19 +156,22 @@ squeue -u <your_uni>
 ```
 /fms/distributed/strategy/
 │
-├── TensorParallelStrategy  class   # Now reads an ENV variable to toggle SP
-├── generate_layer_plan             # Automates TP/SP plan using regex; replaces manual naming
-├── _distribute_module              # Modified embedding row-wise output layout (sharded across dim=1)
+├── TensorParallelStrategy           # Now reads an ENV variable to toggle SP
+├── generate_layer_plan              # Automates TP/SP plan using regex; replaces manual naming
+├── _distribute_module               # Modified embedding row-wise output layout (sharded across dim=1)
 ├── _distribute_layer, _distribute_module       # Cleaned up repetitive logic
 
 /tests/distributed/
 │
-├── test_tp_sp_cpu.py               # Gloo backend - CPU test
-├── test_tp_sp_distributed_cluster.py  # Multi-GPU distributed test
-├── test_tp_sp_distributed_cluster.sh  # Insomnia cluster job submission script
+├── test_tp_sp_cpu.py                  # Gloo backend - unit test for TP on CPU
+├── test_tp_sp_distributed_cluster.py  # Multi-GPU distributed test (TP + SP)
+├── test_tp_sp_distributed_cluster.sh  # Insomnia cluster SLURM job for GPU runs
+├── test_tp_sp_cluster_cpu.py          # CPU test (TP vs SP) with plotting
+├── test_tp_sp_cluster_cpu.sh          # Insomnia cluster SLURM job for CPU runs
 
-/fms/models/llama.py L205  
+/fms/models/llama.py  (L205)  
 Fixed a silent bug inherited from the previous team — added the `model` parameter to enable the strategy to correctly apply row-wise parallelization and shard the output as intended.
+
 ```
 
 ### GPU Test Environment (L40)
