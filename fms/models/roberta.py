@@ -10,7 +10,7 @@ from torch import nn
 
 from fms import models
 from fms.distributed.strategy import DistributedStrategy, NoOpStrategy
-from fms.modules.attention import MultiHeadAttention
+from fms.modules.attention import AttentionKwargs, MultiHeadAttention, SDPAAttentionKwargs
 from fms.modules.feedforward import FeedForwardBlock
 from fms.modules.head import MLPClassificationHead
 from fms.utils import serialization
@@ -84,18 +84,14 @@ class RoBERTaBlock(nn.Module):
         self,
         x: torch.Tensor,
         *,
-        mask: Optional[torch.Tensor] = None,
-        attn_algorithm: Optional[str] = None,
+        attn_kwargs: Optional[AttentionKwargs] = None,
     ):
         # first we do MHA
         residual = x
         # self attention
         x = self.attn(
             q=x,
-            mask=mask,
-            attn_algorithm=attn_algorithm,
-            is_self=True,
-            is_causal_mask=False,
+            attn_kwargs=attn_kwargs,
         )
 
         if self.config.p_dropout != 0:
@@ -176,18 +172,20 @@ class RoBERTaHeadless(nn.Module):
     def forward(
         self,
         x: torch.Tensor,
-        mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.Tensor] = None,
         token_type_ids: Optional[torch.Tensor] = None,
-        attn_algorithm: Optional[str] = None,
+        attn_kwargs: Optional[AttentionKwargs] = None,
+        **_,
     ):
-        if mask is None:
-            if x is None:
-                raise ValueError("cannot create a mask when x is None")
+        if attn_kwargs is None:
+            # if mask is none, we need to specify causal mask
             pad_id: int = self.config.pad_id
             is_pad = x == pad_id
             mask = is_pad.unsqueeze(-1) == is_pad.unsqueeze(-2)
-
+            attn_kwargs = SDPAAttentionKwargs(
+                is_causal_mask=False, mask=mask
+            )
+        
         x_emb = self.embedding(x)
 
         # if pad_id exists
@@ -231,7 +229,7 @@ class RoBERTaHeadless(nn.Module):
 
         # layers
         for layer in self.layers:
-            x = layer(x, mask=mask, attn_algorithm=attn_algorithm)
+            x = layer(x, attn_kwargs=attn_kwargs)
 
         return x
 
@@ -276,18 +274,17 @@ class RoBERTa(nn.Module):
     def forward(
         self,
         x: torch.Tensor,
-        mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.Tensor] = None,
         token_type_ids: Optional[torch.Tensor] = None,
-        attn_algorithm: Optional[str] = None,
+        attn_kwargs: Optional[AttentionKwargs] = None,
+        **_,
     ):
         # run through the encoder layers
         x = self.base_model(
             x,
-            mask=mask,
             position_ids=position_ids,
             token_type_ids=token_type_ids,
-            attn_algorithm=attn_algorithm,
+            attn_kwargs=attn_kwargs,
         )
 
         # run through classification head and project to vocab space
@@ -362,18 +359,17 @@ class RoBERTaForQuestionAnswering(nn.Module):
     def forward(
         self,
         x: torch.Tensor,
-        mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.Tensor] = None,
         token_type_ids: Optional[torch.Tensor] = None,
-        attn_algorithm: Optional[str] = None,
+        attn_kwargs: Optional[AttentionKwargs] = None,
+        **_,
     ):
         # run through the encoder layers
         x = self.base_model(
             x,
-            mask=mask,
             position_ids=position_ids,
             token_type_ids=token_type_ids,
-            attn_algorithm=attn_algorithm,
+            attn_kwargs=attn_kwargs,
         )
 
         # run head and process outputs

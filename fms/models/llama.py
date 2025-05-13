@@ -12,7 +12,7 @@ from fms.distributed.strategy import (
     NoOpStrategy,
     TensorParallelStrategy,
 )
-from fms.modules.attention import MultiHeadAttention
+from fms.modules.attention import AttentionKwargs, MultiHeadAttention, SDPAAttentionKwargs
 from fms.modules.embedding import WordEmbedding
 from fms.modules.feedforward import GatedLinearUnit
 from fms.modules.layernorm import LayerNormParameterized
@@ -115,12 +115,10 @@ class LLaMABlock(nn.Module):
         self,
         x,
         *,
-        mask=None,
         position_ids=None,
         past_key_value_state=None,
         use_cache=False,
-        is_causal_mask=False,
-        attn_algorithm=None,
+        attn_kwargs: Optional[AttentionKwargs] = None,
     ):
         # if the cache is not empty, we need to get the kv cache for self and cross attention
         self_attn_past_key_value = past_key_value_state
@@ -134,13 +132,10 @@ class LLaMABlock(nn.Module):
         x = self.ln(x)
         x = self.attn(
             q=x,
-            mask=mask,
             position_ids=position_ids,
-            attn_algorithm=attn_algorithm,
             past_key_value_state=self_attn_past_key_value,
             use_cache=use_cache,
-            is_self=True,
-            is_causal_mask=is_causal_mask,
+            attn_kwargs=attn_kwargs,
         )
         cache = None
         if use_cache:
@@ -335,11 +330,11 @@ class LLaMA(nn.Module):
     def _helper(
         self,
         x_in,
-        mask=None,
         position_ids=None,
         past_key_value_states=None,
         use_cache=False,
-        attn_algorithm=None,
+        attn_kwargs: Optional[AttentionKwargs] = None,
+        **_,
     ):
         # Embed the given vocabulary indices using the given attention mask, with pre-/post-norm and dropout as specified
         # x_in: batch_size x seq_len
@@ -355,16 +350,11 @@ class LLaMA(nn.Module):
         if use_cache and past_key_value_states[0] is not None:
             klen += past_key_value_states[0][0].size(-2)
 
-        # if mask is none, we need to specify causal mask
-        if mask is None:
-            # we are caching and can assume all 1s in the mask
-            if use_cache and klen != 1 and qlen == 1:
-                # b x h x qlen x kvlen
-                is_causal_mask = False
-            else:
-                is_causal_mask = True
-        else:
-            is_causal_mask = False
+        if attn_kwargs is None:
+            # if mask is none, we need to specify causal mask
+            attn_kwargs = SDPAAttentionKwargs(
+                is_causal_mask=not (use_cache and klen != 1 and qlen == 1)
+            )
 
         x_in = self.shared(x_in)
 
@@ -374,12 +364,10 @@ class LLaMA(nn.Module):
         for i, layer in enumerate(self.layers):
             output = layer(
                 x=x_in,
-                mask=mask,
                 position_ids=position_ids,
                 past_key_value_state=past_key_value_states[i],
                 use_cache=use_cache,
-                is_causal_mask=is_causal_mask,
-                attn_algorithm=attn_algorithm,
+                attn_kwargs=attn_kwargs,
             )
 
             if use_cache:
@@ -399,15 +387,19 @@ class LLaMA(nn.Module):
     def forward(
         self,
         x: torch.Tensor,
-        mask: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.Tensor] = None,
-        past_key_value_states: Optional[List[Tuple[torch.Tensor, torch.Tensor]]] = None,
+        position_ids: Optional[torch.LongTensor] = None,
+        past_key_value_states: Optional[Tuple[torch.FloatTensor,]] = None,
         use_cache: bool = False,
         only_last_token: bool = False,
-        attn_algorithm: Optional[str] = None,
+        attn_kwargs: Optional[AttentionKwargs] = None,
+        **_,
     ):
         output, cache = self._helper(
-            x, mask, position_ids, past_key_value_states, use_cache, attn_algorithm
+            x, 
+            position_ids,
+            past_key_value_states,
+            use_cache,
+            attn_kwargs=attn_kwargs,
         )
 
         if only_last_token:

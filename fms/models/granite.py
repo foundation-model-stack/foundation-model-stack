@@ -288,7 +288,7 @@ class GraniteHeadless(nn.Module):
 
         if attn_kwargs is None:
             # if mask is none, we need to specify causal mask
-            attn_kwargs = SDPAAttentionKwargs.create(
+            attn_kwargs = SDPAAttentionKwargs(
                 is_causal_mask=not (use_cache and klen != 1 and qlen == 1)
             )
 

@@ -8,6 +8,7 @@ import torch.distributed
 from torch import Tensor, nn
 from torch.distributed.distributed_c10d import ProcessGroup
 from torch.nn import functional as F
+from torch.nn.attention import SDPBackend, sdpa_kernel
 
 from fms import distributed
 from fms.distributed.tensorparallel import (
@@ -94,10 +95,11 @@ def _sdpa_store_op(
     value_cache: Optional[torch.Tensor],
     **_,
 ):
+    # This should probably be in sdpa compute, but more efficient here
     keys = keys.transpose(2, 1)  # / (self.emb_kq_per_head**(1/4))
     values = values.transpose(2, 1)  # compatible with QK.T
 
-    if key_cache is not None and value_cache[0].numel() > 0:
+    if key_cache is not None and value_cache.numel() > 0:
         return (
             torch.cat((key_cache, keys), dim=2),
             torch.cat((value_cache, values), dim=2),
@@ -139,22 +141,21 @@ def _sdpa_compute_op(
         keys_e = key_cache
         values_e = value_cache
 
-    attn_algorithm = attn_kwargs.attn_algorithm
-    if attn_algorithm:
-        previous_flash: bool = torch.backends.cuda.flash_sdp_enabled()
-        previous_mem_efficient: bool = torch.backends.cuda.mem_efficient_sdp_enabled()
-        previous_math: bool = torch.backends.cuda.math_sdp_enabled()
-        # Pick which fused attn kernels will run.
-        use_flash = attn_algorithm == "flash"
-        use_mem_efficient = attn_algorithm == "mem"
-        use_math = attn_algorithm == "math"
-
-        torch.backends.cuda.enable_flash_sdp(use_flash)
-        torch.backends.cuda.enable_mem_efficient_sdp(use_mem_efficient)
-        torch.backends.cuda.enable_math_sdp(use_math)
+    # sdpa_kernels = []
+    # if attn_kwargs.attn_algorithm is None or attn_kwargs.attn_algorithm == "math":
+    #     sdpa_kernels.append(SDPBackend.MATH)
+    # elif attn_kwargs.attn_algorithm == "flash":
+    #     sdpa_kernels.append(SDPBackend.FLASH_ATTENTION)
+    # elif attn_kwargs.attn_algorithm == "mem":
+    #     sdpa_kernels.append(SDPBackend.EFFICIENT_ATTENTION)
+    # else:
+    #     raise ValueError(f"invalid attn_algorithm given: {attn_kwargs.attn_algorithm}")
+    
     attn_mask = mask
     if attn_mask is not None and attn_mask.dtype != torch.bool:
         attn_mask = attn_mask.to(dtype=queries.dtype)
+    
+    # with sdpa_kernel(sdpa_kernels):
 
     attn = F.scaled_dot_product_attention(
         queries,
@@ -165,11 +166,6 @@ def _sdpa_compute_op(
         is_causal=attn_kwargs.is_causal_mask,
         scale=scale_factor,
     )
-
-    if attn_algorithm:
-        torch.backends.cuda.enable_flash_sdp(previous_flash)
-        torch.backends.cuda.enable_mem_efficient_sdp(previous_mem_efficient)
-        torch.backends.cuda.enable_math_sdp(previous_math)
 
     # attn: bs x seq_len x nheads*emb_v_per_head
     # attn: b x h x qlen x ds
@@ -544,18 +540,17 @@ class MultiHeadAttention(nn.Module):
 
         attn_compute_dict = get_attention_type(attn_kwargs)
 
-        if use_cache:
-            # FIXME: adding this to get in right format, but probably should have better default
-            if past_key_value_state is None:
-                past_key_value_state = (None, None)
+        # this can occur during prefill or use_cache=False
+        if past_key_value_state is None:
+            past_key_value_state = (None, None)
 
-            keys, values = attn_compute_dict["store"](
-                keys,
-                values,
-                past_key_value_state[0],
-                past_key_value_state[1],
-                attn_kwargs=attn_kwargs,
-            )
+        keys, values = attn_compute_dict["store"](
+            keys,
+            values,
+            past_key_value_state[0],
+            past_key_value_state[1],
+            attn_kwargs=attn_kwargs,
+        )
 
         if attn_compute_dict["is_prefill"](attn_kwargs):
             attn = attn_compute_dict["compute_prefill"](

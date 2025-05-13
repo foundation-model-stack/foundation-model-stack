@@ -7,7 +7,7 @@ import torch.nn as nn
 
 from fms import models
 from fms.distributed.strategy import DistributedStrategy, NoOpStrategy
-from fms.modules.attention import MultiHeadAttention
+from fms.modules.attention import AttentionKwargs, MultiHeadAttention, SDPAAttentionKwargs
 from fms.modules.feedforward import FeedForwardBlock
 from fms.utils import serialization
 from fms.utils.activation import str_to_activation
@@ -72,12 +72,10 @@ class GPTBigCodeBlock(nn.Module):
         self,
         x: torch.Tensor,
         *,
-        mask: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.Tensor] = None,
-        past_key_value_state: Optional[Tuple[torch.Tensor,]] = None,
-        use_cache: bool = False,
-        is_causal_mask: bool = False,
-        attn_algorithm: Optional[str] = None,
+        position_ids=None,
+        past_key_value_state=None,
+        use_cache=False,
+        attn_kwargs: Optional[AttentionKwargs] = None,
     ):
         self_attn_past_key_value = past_key_value_state
 
@@ -87,13 +85,10 @@ class GPTBigCodeBlock(nn.Module):
         # self attention
         x = self.attn(
             q=x,
-            mask=mask,
             position_ids=position_ids,
-            attn_algorithm=attn_algorithm,
             past_key_value_state=self_attn_past_key_value,
             use_cache=use_cache,
-            is_self=True,
-            is_causal_mask=is_causal_mask,
+            attn_kwargs=attn_kwargs,
         )
 
         cache = None
@@ -173,13 +168,11 @@ class GPTBigCodeHeadless(nn.Module):
     def forward(
         self,
         x: torch.LongTensor,
-        mask: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.LongTensor] = None,
-        past_key_value_states: Optional[
-            List[Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]
-        ] = None,
-        use_cache: bool = False,
-        attn_algorithm: Optional[str] = None,
+        position_ids=None,
+        past_key_value_states=None,
+        use_cache=False,
+        attn_kwargs: Optional[AttentionKwargs] = None,
+        **_,
     ):
         # Embed the given vocabulary indices using the given attention mask, with pre-/post-norm and dropout as specified
         # x_in: batch_size x seq_len
@@ -200,20 +193,11 @@ class GPTBigCodeHeadless(nn.Module):
         ):
             klen += past_key_value_states[0][0].size(-2)
 
-        # if mask is none, we need to compute mask
-        is_causal_mask = False
-        if mask is None:
-            if x is None:
-                raise ValueError("cannot create a mask when x is None")
-            # we are caching and can assume all 1s in the mask
-            if use_cache and klen != 1 and qlen == 1:
-                # b x h x qlen x kvlen
-                mask = torch.ones(qlen, klen, dtype=torch.bool, device=x.device)
-            else:
-                pad_id: int = self.config.pad_id
-                is_pad: torch.Tensor = x == pad_id
-                mask = is_pad.unsqueeze(-1) == is_pad.unsqueeze(-2)
-                mask = mask.tril(diagonal=0)
+        if attn_kwargs is None:
+            # if mask is none, we need to specify causal mask
+            attn_kwargs = SDPAAttentionKwargs(
+                is_causal_mask=not (use_cache and klen != 1 and qlen == 1)
+            )
 
         x_emb = self.embedding(x)
 
@@ -250,11 +234,10 @@ class GPTBigCodeHeadless(nn.Module):
         for i, layer in enumerate(self.layers):
             output = layer(
                 x=x,
-                mask=mask,
-                is_causal_mask=is_causal_mask,
+                position_ids=position_ids,
                 past_key_value_state=past_key_value_states[i],
                 use_cache=use_cache,
-                attn_algorithm=attn_algorithm,
+                attn_kwargs=attn_kwargs,
             )
 
             if use_cache:
@@ -331,20 +314,19 @@ class GPTBigCode(nn.Module):
     def forward(
         self,
         x: torch.Tensor,
-        mask: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.Tensor] = None,
-        past_key_value_states: Optional[List[Tuple[torch.Tensor, torch.Tensor]]] = None,
+        position_ids: Optional[torch.LongTensor] = None,
+        past_key_value_states: Optional[Tuple[torch.FloatTensor,]] = None,
         use_cache: bool = False,
         only_last_token: bool = False,
-        attn_algorithm: Optional[str] = None,
+        attn_kwargs: Optional[AttentionKwargs] = None,
+        **_,
     ):
         output, cache = self.base_model(
             x,
-            mask,
-            position_ids=position_ids,
-            past_key_value_states=past_key_value_states,
-            use_cache=use_cache,
-            attn_algorithm=attn_algorithm,
+            position_ids,
+            past_key_value_states,
+            use_cache,
+            attn_kwargs=attn_kwargs,
         )
 
         if only_last_token:

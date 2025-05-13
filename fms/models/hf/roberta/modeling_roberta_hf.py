@@ -1,5 +1,6 @@
 from typing import Optional
 
+from fms.modules.attention import SDPAAttentionKwargs
 import torch
 import torch.nn as nn
 from transformers import PretrainedConfig
@@ -104,7 +105,7 @@ class HFAdaptedRoBERTaEncoder(HFEncoder):
     ) -> BaseModelOutputWithPastAndCrossAttentions:
         return BaseModelOutputWithPastAndCrossAttentions(
             last_hidden_state=self.model(
-                x=input_ids, mask=attention_mask, position_ids=position_ids
+                x=input_ids, position_ids=position_ids, attn_kwargs=SDPAAttentionKwargs(mask=attention_mask)
             )
         )
 

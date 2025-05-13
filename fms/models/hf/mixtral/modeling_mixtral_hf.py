@@ -1,5 +1,6 @@
 from typing import Optional, Tuple
 
+from fms.modules.attention import SDPAAttentionKwargs
 import torch
 import torch.nn as nn
 from transformers import PretrainedConfig
@@ -32,11 +33,10 @@ class HFAdaptedMixtralDecoder(HFDecoder):
     ) -> BaseModelOutputWithPastAndCrossAttentions:
         output = self.model(
             x=input_ids,
-            mask=attention_mask,
             position_ids=position_ids,
             past_key_value_states=past_key_values,
             use_cache=use_cache,
-            attn_algorithm=attn_algorithm,
+            attn_kwargs=SDPAAttentionKwargs(mask=attention_mask, attn_algorithm=attn_algorithm,)
         )
 
         present_key_values = None
