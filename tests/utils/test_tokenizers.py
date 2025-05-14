@@ -122,11 +122,16 @@ def test_single_token():
         78,
     ]
 
+
 def test_encode():
-    models = ["meta-llama/Llama-2-7b-hf", "ibm-granite/granite-3.0-8b-base"]
+    models = ["EleutherAI/gpt-neox-20b", "ibm-granite/granite-3.0-8b-base"]
     for model in models:
         hf_tokenizer = AutoTokenizer.from_pretrained(model)
         fms_tokenizer = get_tokenizer(model, style="hf")
         text = "Hello, how are you today?"
-        assert hf_tokenizer.encode(text, add_special_tokens=False) == fms_tokenizer.encode(text, add_special_tokens=False)
-        assert hf_tokenizer.encode(text, add_special_tokens=True) == fms_tokenizer.encode(text, add_special_tokens=True)
+        assert hf_tokenizer.encode(
+            text, add_special_tokens=False
+        ) == fms_tokenizer.encode(text, add_special_tokens=False)
+        assert hf_tokenizer.encode(
+            text, add_special_tokens=True
+        ) == fms_tokenizer.encode(text, add_special_tokens=True)

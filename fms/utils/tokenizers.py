@@ -133,7 +133,11 @@ class _HFTokenizer(BaseTokenizer):
         self.bos_token = self.tokenizer.bos_token
         self.eos_token = self.tokenizer.eos_token
 
-    def batch_decode(self, sequences: Union[List[int], List[List[int]]], skip_special_tokens: bool = False):
+    def batch_decode(
+        self,
+        sequences: Union[List[int], List[List[int]]],
+        skip_special_tokens: bool = False,
+    ):
         return self.tokenizer.batch_decode(sequences, skip_special_tokens)
 
     def tokenize(self, text: str):
@@ -152,8 +156,13 @@ class _HFTokenizer(BaseTokenizer):
         return self.tokenizer.get_vocab_size()
 
     def encode(self, text, add_special_tokens=False):
-        if add_special_tokens is True and self.tokenizer.bos_token_id != self.tokenizer.eos_token_id:
-            return  [self.tokenizer.bos_token_id] + self.tokenizer.convert_tokens_to_ids(self.tokenizer.tokenize(text))
+        if (
+            add_special_tokens is True
+            and self.tokenizer.bos_token_id != self.tokenizer.eos_token_id
+        ):
+            return [self.tokenizer.bos_token_id] + self.tokenizer.convert_tokens_to_ids(
+                self.tokenizer.tokenize(text)
+            )
         else:
             return self.tokenizer.convert_tokens_to_ids(self.tokenizer.tokenize(text))
 
