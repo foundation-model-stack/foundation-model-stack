@@ -149,7 +149,7 @@ class BambaBlock(nn.Module):
                 past_key_value_state=past_key_value_state,
                 use_cache=use_cache,
                 cache_position=cache_position,
-                attn_kwargs=attn_kwargs,
+                mask=getattr(attn_kwargs, "mask", None),
             )
         else:
             x = self.attn(
