@@ -1,6 +1,6 @@
 import functools
 from dataclasses import dataclass
-from typing import Any, List, Mapping, Optional, Tuple
+from typing import Any, List, Mapping, Optional, Tuple, Unpack
 
 import torch
 import torch.nn as nn
@@ -79,7 +79,7 @@ class GPTBigCodeBlock(nn.Module):
         position_ids=None,
         past_key_value_state=None,
         use_cache=False,
-        attn_kwargs: Optional[AttentionKwargs] = None,
+        **attn_kwargs: Unpack[AttentionKwargs],
     ):
         self_attn_past_key_value = past_key_value_state
 
@@ -92,7 +92,7 @@ class GPTBigCodeBlock(nn.Module):
             position_ids=position_ids,
             past_key_value_state=self_attn_past_key_value,
             use_cache=use_cache,
-            attn_kwargs=attn_kwargs,
+            **attn_kwargs,
         )
 
         cache = None
@@ -175,8 +175,7 @@ class GPTBigCodeHeadless(nn.Module):
         position_ids=None,
         past_key_value_states=None,
         use_cache=False,
-        attn_kwargs: Optional[AttentionKwargs] = None,
-        **_,
+        **attn_kwargs: Unpack[AttentionKwargs],
     ):
         # Embed the given vocabulary indices using the given attention mask, with pre-/post-norm and dropout as specified
         # x_in: batch_size x seq_len
@@ -197,24 +196,25 @@ class GPTBigCodeHeadless(nn.Module):
         ):
             klen += past_key_value_states[0][0].size(-2)
 
-        if attn_kwargs is None or attn_kwargs.mask is None:
-            if x is None:
-                raise ValueError("cannot create a mask when x is None")
+        # FIXME: remove this and use what we are doing for llama, check expectation
+        # if attn_kwargs is None or attn_kwargs.mask is None:
+        #     if x is None:
+        #         raise ValueError("cannot create a mask when x is None")
 
-            # we are caching and can assume all 1s in the mask
-            if use_cache and klen != 1 and qlen == 1:
-                # b x h x qlen x kvlen
-                mask = torch.ones(qlen, klen, dtype=torch.bool, device=x.device)
-            else:
-                pad_id: int = self.config.pad_id
-                is_pad: torch.Tensor = x == pad_id
-                mask = is_pad.unsqueeze(-1) == is_pad.unsqueeze(-2)
-                mask = mask.tril(diagonal=0)
+        #     # we are caching and can assume all 1s in the mask
+        #     if use_cache and klen != 1 and qlen == 1:
+        #         # b x h x qlen x kvlen
+        #         mask = torch.ones(qlen, klen, dtype=torch.bool, device=x.device)
+        #     else:
+        #         pad_id: int = self.config.pad_id
+        #         is_pad: torch.Tensor = x == pad_id
+        #         mask = is_pad.unsqueeze(-1) == is_pad.unsqueeze(-2)
+        #         mask = mask.tril(diagonal=0)
 
-            attn_algorithm = None if attn_kwargs is None else attn_kwargs.attn_algorithm
-            attn_kwargs = SDPAAttentionKwargs(
-                is_causal_mask=False, mask=mask, attn_algorithm=attn_algorithm
-            )
+        #     attn_algorithm = None if attn_kwargs is None else attn_kwargs.attn_algorithm
+        #     attn_kwargs = SDPAAttentionKwargs(
+        #         is_causal_mask=False, mask=mask, attn_algorithm=attn_algorithm
+        #     )
 
         x_emb = self.embedding(x)
 
@@ -254,7 +254,7 @@ class GPTBigCodeHeadless(nn.Module):
                 position_ids=position_ids,
                 past_key_value_state=past_key_value_states[i],
                 use_cache=use_cache,
-                attn_kwargs=attn_kwargs,
+                **attn_kwargs,
             )
 
             if use_cache:
@@ -335,15 +335,14 @@ class GPTBigCode(nn.Module):
         past_key_value_states: Optional[Tuple[torch.FloatTensor,]] = None,
         use_cache: bool = False,
         only_last_token: bool = False,
-        attn_kwargs: Optional[AttentionKwargs] = None,
-        **_,
+        **attn_kwargs: Unpack[AttentionKwargs],
     ):
         output, cache = self.base_model(
             x,
             position_ids,
             past_key_value_states,
             use_cache,
-            attn_kwargs=attn_kwargs,
+            **attn_kwargs,
         )
 
         if only_last_token:

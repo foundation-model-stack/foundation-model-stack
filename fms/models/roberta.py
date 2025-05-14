@@ -3,7 +3,7 @@ import logging
 import math
 import re
 from dataclasses import dataclass
-from typing import Any, Mapping, Optional
+from typing import Any, Mapping, Optional, Unpack
 
 import torch
 from torch import nn
@@ -87,15 +87,14 @@ class RoBERTaBlock(nn.Module):
     def forward(
         self,
         x: torch.Tensor,
-        *,
-        attn_kwargs: Optional[AttentionKwargs] = None,
+        **attn_kwargs: Unpack[AttentionKwargs],
     ):
         # first we do MHA
         residual = x
         # self attention
         x = self.attn(
             q=x,
-            attn_kwargs=attn_kwargs,
+            **attn_kwargs,
         )
 
         if self.config.p_dropout != 0:
@@ -178,16 +177,9 @@ class RoBERTaHeadless(nn.Module):
         x: torch.Tensor,
         position_ids: Optional[torch.Tensor] = None,
         token_type_ids: Optional[torch.Tensor] = None,
-        attn_kwargs: Optional[AttentionKwargs] = None,
-        **_,
+        **attn_kwargs: Unpack[SDPAAttentionKwargs],
     ):
-        if attn_kwargs is None or attn_kwargs.mask is None:
-            # if mask is none, we need to specify causal mask
-            pad_id: int = self.config.pad_id
-            is_pad = x == pad_id
-            mask = is_pad.unsqueeze(-1) == is_pad.unsqueeze(-2)
-            attn_algorithm = None if attn_kwargs is None else attn_kwargs.attn_algorithm
-            attn_kwargs = SDPAAttentionKwargs(is_causal_mask=False, mask=mask, attn_algorithm=attn_algorithm)
+        attn_kwargs["attn_name"] = attn_kwargs.get("attn_name", "sdpa_bidirectional")
 
         x_emb = self.embedding(x)
 
@@ -232,7 +224,7 @@ class RoBERTaHeadless(nn.Module):
 
         # layers
         for layer in self.layers:
-            x = layer(x, attn_kwargs=attn_kwargs)
+            x = layer(x, **attn_kwargs)
 
         return x
 
@@ -279,15 +271,14 @@ class RoBERTa(nn.Module):
         x: torch.Tensor,
         position_ids: Optional[torch.Tensor] = None,
         token_type_ids: Optional[torch.Tensor] = None,
-        attn_kwargs: Optional[AttentionKwargs] = None,
-        **_,
+        **attn_kwargs: Unpack[AttentionKwargs],
     ):
         # run through the encoder layers
         x = self.base_model(
             x,
             position_ids=position_ids,
             token_type_ids=token_type_ids,
-            attn_kwargs=attn_kwargs,
+            **attn_kwargs,
         )
 
         # run through classification head and project to vocab space
@@ -364,15 +355,14 @@ class RoBERTaForQuestionAnswering(nn.Module):
         x: torch.Tensor,
         position_ids: Optional[torch.Tensor] = None,
         token_type_ids: Optional[torch.Tensor] = None,
-        attn_kwargs: Optional[AttentionKwargs] = None,
-        **_,
+        **attn_kwargs: Unpack[AttentionKwargs]
     ):
         # run through the encoder layers
         x = self.base_model(
             x,
             position_ids=position_ids,
             token_type_ids=token_type_ids,
-            attn_kwargs=attn_kwargs,
+            **attn_kwargs,
         )
 
         # run head and process outputs

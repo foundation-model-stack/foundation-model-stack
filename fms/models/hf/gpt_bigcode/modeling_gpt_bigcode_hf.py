@@ -27,19 +27,18 @@ class HFAdaptedGPTBigCodeDecoder(HFDecoder):
         position_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[Tuple[torch.Tensor]] = None,
         use_cache: Optional[bool] = None,
-        attn_kwargs: Optional[AttentionKwargs] = None,
         *args,
         **kwargs,
     ) -> BaseModelOutputWithPastAndCrossAttentions:
-        if attn_kwargs is None and attention_mask is not None:
-            attn_kwargs = SDPAAttentionKwargs(mask=attention_mask, is_causal_mask=False)
+        if kwargs.get("mask", None) is None:
+            kwargs["mask"] = attention_mask
 
         output, cache = self.model(
             x=input_ids,
             position_ids=position_ids,
             past_key_value_states=past_key_values,
             use_cache=use_cache,
-            attn_kwargs=attn_kwargs,
+            **kwargs,
         )
 
         return BaseModelOutputWithPastAndCrossAttentions(

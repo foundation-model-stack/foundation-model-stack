@@ -1,7 +1,8 @@
 import abc
 from dataclasses import dataclass
+import functools
 import math
-from typing import Any, Mapping, Optional, Tuple, TypedDict
+from typing import Any, Callable, Mapping, NotRequired, Optional, Tuple, TypedDict, Unpack
 
 import torch
 import torch.distributed
@@ -26,17 +27,17 @@ from fms.modules.tp import TPModule
 
 from torch.library import custom_op
 
-__type_factory_map: dict[str, dict[str, callable]] = {}
+__type_factory_map: dict[str, dict[str, Callable]] = {}
 
 
 # FIXME: add adjusted_mask for alibi as part of attn_compute_dict
 # FIXME: add update kwargs as part of attn_compute_dict
 def register_attention_op(
     attn_type: str,
-    store_op: callable,
-    compute_op: callable,
-    is_prefill_op: Optional[callable] = None,
-    compute_decode_op: Optional[callable] = None,
+    store_op: Callable,
+    compute_op: Callable,
+    is_prefill_op: Optional[Callable] = None,
+    compute_decode_op: Optional[Callable] = None,
 ) -> None:
     if attn_type in __type_factory_map:
         raise KeyError(
@@ -47,46 +48,20 @@ def register_attention_op(
 
     compute_dict = {
         "store": store_op,
-        "is_prefill": (lambda _: True) if is_prefill_op is None else is_prefill_op,
+        "is_prefill": (lambda **_: True) if is_prefill_op is None else is_prefill_op,
         "compute_prefill": compute_op,
         "compute_decoder": compute_decode_op,
     }
     __type_factory_map[attn_type] = compute_dict
 
 
-@dataclass
-class AttentionKwargs:
-    def update(self) -> "AttentionKwargs":
-        pass
+class AttentionKwargs(TypedDict, total=False):
+    attn_name: str
 
-
-@dataclass
 class SDPAAttentionKwargs(AttentionKwargs):
-    attn_name: str = "sdpa"
-    mask: Optional[torch.tensor] = None
-    attn_algorithm: Optional[str] = None
-    is_causal_mask: bool = False
-
-    def update(self) -> "SDPAAttentionKwargs":
-        if self.mask is not None:
-            mask = self.mask
-            # get the last row of the 3d mask
-            mask = mask[:, -1:, :]
-            # extend the mask one slot
-            mask = torch.cat(
-                (
-                    mask,
-                    torch.zeros(mask.size(0), 1, 1, device=mask.device),
-                ),
-                dim=2,
-            )
-            if torch._dynamo.config.dynamic_shapes:
-                torch._dynamo.mark_dynamic(mask, 2)
-        else:
-            mask = None
-        return SDPAAttentionKwargs(
-            mask=mask, attn_algorithm=self.attn_algorithm, is_causal_mask=False
-        )
+    mask: NotRequired[torch.Tensor]
+    attn_algorithm: NotRequired[str]
+    is_causal_mask: bool
 
 
 def _sdpa_store_op(
@@ -94,12 +69,12 @@ def _sdpa_store_op(
     values: torch.Tensor,
     key_cache: Optional[torch.Tensor],
     value_cache: Optional[torch.Tensor],
-    **_,
+    **attn_kwargs: Unpack[SDPAAttentionKwargs],
 ):
     keys = keys.transpose(2, 1)
     values = values.transpose(2, 1)
 
-    if key_cache is not None and value_cache.numel() > 0:
+    if key_cache is not None and value_cache is not None and value_cache.numel() > 0:
         return (
             torch.cat((key_cache, keys), dim=2),
             torch.cat((value_cache, values), dim=2),
@@ -107,6 +82,24 @@ def _sdpa_store_op(
     else:
         return (keys, values)
 
+def _sdpa_update_kwargs(**kwargs: Unpack[SDPAAttentionKwargs]) -> SDPAAttentionKwargs:
+    if kwargs["mask"] is not None:
+        # get the last row of the 3d mask
+        mask = kwargs["mask"][:, -1:, :]
+        # extend the mask one slot
+        mask = torch.cat(
+            (
+                mask,
+                torch.zeros(mask.size(0), 1, 1, device=mask.device),
+            ),
+            dim=2,
+        )
+        if torch._dynamo.config.dynamic_shapes:
+            torch._dynamo.mark_dynamic(mask, 2)
+    else:
+        mask = None
+    kwargs["mask"] = mask
+    return kwargs
 
 def _sdpa_compute_op(
     query: torch.Tensor,
@@ -116,8 +109,7 @@ def _sdpa_compute_op(
     kvheads: int,
     p_dropout: float,
     scale_factor: float,
-    attn_kwargs: SDPAAttentionKwargs,
-    **_,
+    **attn_kwargs: Unpack[SDPAAttentionKwargs],
 ):
     queries = query.transpose(2, 1)
 
@@ -125,7 +117,7 @@ def _sdpa_compute_op(
     if key_cache.shape[1] != kvheads and key_cache.shape[2] == kvheads:
         key_cache = key_cache.transpose(2, 1)
         value_cache = value_cache.transpose(2, 1)
-    mask = attn_kwargs.mask  # / (self.emb_kq_per_head**(1/4))
+    mask = attn_kwargs.get("mask", None)
 
     # Merge rel pos bias and mask into single float mask
     if mask is not None:
@@ -162,6 +154,7 @@ def _sdpa_compute_op(
         attn_mask = attn_mask.to(dtype=queries.dtype)
 
     # with sdpa_kernel(sdpa_kernels):
+    is_causal = attn_kwargs.get("is_causal_mask", mask is None and not (key_cache.shape[2] != 1 and queries.shape[2] == 1))
 
     attn = F.scaled_dot_product_attention(
         queries,
@@ -169,7 +162,7 @@ def _sdpa_compute_op(
         values_e,
         attn_mask=attn_mask,
         dropout_p=p_dropout,
-        is_causal=attn_kwargs.is_causal_mask,
+        is_causal=is_causal,
         scale=scale_factor,
     )
 
@@ -181,16 +174,17 @@ def _sdpa_compute_op(
     return attn
 
 
-register_attention_op("sdpa", _sdpa_store_op, _sdpa_compute_op)
+register_attention_op("sdpa_causal", _sdpa_store_op, _sdpa_compute_op)
+register_attention_op("sdpa_bidirectional", _sdpa_store_op, functools.partial(_sdpa_compute_op, is_causal_mask=False))
 
 
-def get_attention_type(attn_kwargs: AttentionKwargs) -> dict[str, callable]:
-    attn_type = attn_kwargs.attn_name
-    if attn_kwargs.attn_name not in __type_factory_map:
+def get_attention_type(**attn_kwargs: Unpack[AttentionKwargs]) -> dict[str, Callable]:
+    attn_name = attn_kwargs.get("attn_name", "sdpa_causal")
+    if attn_name not in __type_factory_map:
         # we can add sdpa default here
         raise KeyError("")
 
-    return __type_factory_map[attn_type]
+    return __type_factory_map[attn_name]
 
 
 class QKV(nn.Module, metaclass=abc.ABCMeta):
@@ -500,9 +494,9 @@ class MultiHeadAttention(nn.Module):
         k: Optional[torch.Tensor] = None,
         v: Optional[torch.Tensor] = None,
         position_ids=None,
-        past_key_value_state: Optional[Tuple[Tensor, Tensor]] = None,
+        past_key_value_state: Optional[Tuple[Tensor | None, Tensor | None]] = None,
         use_cache=False,
-        attn_kwargs: Optional[AttentionKwargs] = None,
+        **attn_kwargs: Unpack[AttentionKwargs]
     ):
         """
         past_key_value_state: tuple
@@ -544,7 +538,7 @@ class MultiHeadAttention(nn.Module):
                 queries, keys, position_ids, past_key_value_state, use_cache
             )
 
-        attn_compute_dict = get_attention_type(attn_kwargs)
+        attn_compute_dict = get_attention_type(**attn_kwargs)
 
         # FIXME: change names to k_cache and v_cache
         if use_cache:
@@ -556,10 +550,10 @@ class MultiHeadAttention(nn.Module):
                 values,
                 past_key_value_state[0],
                 past_key_value_state[1],
-                attn_kwargs=attn_kwargs,
+                **attn_kwargs
             )
 
-        if attn_compute_dict["is_prefill"](attn_kwargs):
+        if attn_compute_dict["is_prefill"](**attn_kwargs):
             attn = attn_compute_dict["compute_prefill"](
                 queries,
                 keys,
@@ -568,7 +562,7 @@ class MultiHeadAttention(nn.Module):
                 self.kvheads,
                 self.p_dropout if self.training else 0.0,
                 self.scale_factor,
-                attn_kwargs=attn_kwargs,
+                **attn_kwargs
             )
         else:
             attn = attn_compute_dict["compute_decode"](
@@ -579,7 +573,7 @@ class MultiHeadAttention(nn.Module):
                 self.kvheads,
                 self.p_dropout if self.training else 0.0,
                 self.scale_factor,
-                attn_kwargs=attn_kwargs,
+                **attn_kwargs
             )
 
         attn = attn.view(batch_size, q_len, self.nheads * self.emb_v_per_head)
@@ -750,9 +744,9 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
         k: Optional[torch.Tensor] = None,
         v: Optional[torch.Tensor] = None,
         position_ids=None,
-        past_key_value_state: Optional[Tuple[Tensor, Tensor]] = None,
+        past_key_value_state: Optional[Tuple[Tensor | None, Tensor | None]] = None,
         use_cache=False,
-        attn_kwargs: Optional[AttentionKwargs] = None,
+        **attn_kwargs: Unpack[AttentionKwargs],
     ):
         """
         Check MultiHeadAttention for up-to-date arguments and docs
@@ -768,7 +762,7 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
             position_ids,
             past_key_value_state,
             use_cache,
-            attn_kwargs,
+            **attn_kwargs,
         )
 
         # if use_cache=True, we return the hidden_state as well as the kv cache.

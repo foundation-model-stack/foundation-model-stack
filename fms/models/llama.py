@@ -1,7 +1,7 @@
 import logging
 import re
 from dataclasses import dataclass, field
-from typing import Any, List, Mapping, Optional, Tuple
+from typing import Any, Mapping, Optional, Tuple, Unpack
 
 import torch
 import torch.nn as nn
@@ -15,7 +15,6 @@ from fms.distributed.strategy import (
 from fms.modules.attention import (
     AttentionKwargs,
     MultiHeadAttention,
-    SDPAAttentionKwargs,
 )
 from fms.modules.embedding import WordEmbedding
 from fms.modules.feedforward import GatedLinearUnit
@@ -122,7 +121,7 @@ class LLaMABlock(nn.Module):
         position_ids=None,
         past_key_value_state=None,
         use_cache=False,
-        attn_kwargs: Optional[AttentionKwargs] = None,
+        **attn_kwargs: Unpack[AttentionKwargs]
     ):
         # if the cache is not empty, we need to get the kv cache for self and cross attention
         self_attn_past_key_value = past_key_value_state
@@ -139,7 +138,7 @@ class LLaMABlock(nn.Module):
             position_ids=position_ids,
             past_key_value_state=self_attn_past_key_value,
             use_cache=use_cache,
-            attn_kwargs=attn_kwargs,
+            **attn_kwargs
         )
         cache = None
         if use_cache:
@@ -337,8 +336,7 @@ class LLaMA(nn.Module):
         position_ids=None,
         past_key_value_states=None,
         use_cache=False,
-        attn_kwargs: Optional[AttentionKwargs] = None,
-        **_,
+        **attn_kwargs: Unpack[AttentionKwargs]
     ):
         # Embed the given vocabulary indices using the given attention mask, with pre-/post-norm and dropout as specified
         # x_in: batch_size x seq_len
@@ -346,20 +344,6 @@ class LLaMA(nn.Module):
         # bias: nheads x seq_len x seq_len
         if past_key_value_states is None or len(past_key_value_states) == 0:
             past_key_value_states = [None for _ in range(len(self.layers))]
-
-        qlen = x_in.size(1)
-        klen = x_in.size(1)
-
-        # if we are using the cache, the key length needs to be extended with the past keys length
-        if use_cache and past_key_value_states[0] is not None:
-            klen += past_key_value_states[0][0].size(-2)
-
-        if attn_kwargs is None:
-            # if mask is none, we need to specify causal mask
-            attn_kwargs = SDPAAttentionKwargs(
-                is_causal_mask=not (use_cache and klen != 1 and qlen == 1)
-            )
-
         x_in = self.shared(x_in)
 
         # this is the output cache for all the decoder layers
@@ -371,7 +355,7 @@ class LLaMA(nn.Module):
                 position_ids=position_ids,
                 past_key_value_state=past_key_value_states[i],
                 use_cache=use_cache,
-                attn_kwargs=attn_kwargs,
+                **attn_kwargs
             )
 
             if use_cache:
@@ -395,15 +379,14 @@ class LLaMA(nn.Module):
         past_key_value_states: Optional[Tuple[torch.FloatTensor,]] = None,
         use_cache: bool = False,
         only_last_token: bool = False,
-        attn_kwargs: Optional[AttentionKwargs] = None,
-        **_,
+        **attn_kwargs: Unpack[AttentionKwargs]
     ):
         output, cache = self._helper(
             x,
             position_ids,
             past_key_value_states,
             use_cache,
-            attn_kwargs=attn_kwargs,
+            **attn_kwargs
         )
 
         if only_last_token:

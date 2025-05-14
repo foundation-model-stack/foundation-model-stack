@@ -243,12 +243,6 @@ def infer(use_cache, do_sample):
     else:
         # without ntk scaling, extending the seq length too far gives bogus results.
         max_seq_len = model.config.max_expected_seq_len
-
-    if padding_kwargs is not None:
-        padding_kwargs["attn_kwargs"] = SDPAAttentionKwargs(
-            mask=padding_kwargs["mask"], is_causal_mask=padding_kwargs["mask"] is None
-        )
-
     result = generate(
         model,
         ids,
