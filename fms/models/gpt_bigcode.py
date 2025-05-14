@@ -197,10 +197,23 @@ class GPTBigCodeHeadless(nn.Module):
         ):
             klen += past_key_value_states[0][0].size(-2)
 
-        if attn_kwargs is None:
-            # if mask is none, we need to specify causal mask
+        if attn_kwargs is None or attn_kwargs.mask is None:
+            if x is None:
+                raise ValueError("cannot create a mask when x is None")
+
+            # we are caching and can assume all 1s in the mask
+            if use_cache and klen != 1 and qlen == 1:
+                # b x h x qlen x kvlen
+                mask = torch.ones(qlen, klen, dtype=torch.bool, device=x.device)
+            else:
+                pad_id: int = self.config.pad_id
+                is_pad: torch.Tensor = x == pad_id
+                mask = is_pad.unsqueeze(-1) == is_pad.unsqueeze(-2)
+                mask = mask.tril(diagonal=0)
+
+            attn_algorithm = None if attn_kwargs is None else attn_kwargs.attn_algorithm
             attn_kwargs = SDPAAttentionKwargs(
-                is_causal_mask=not (use_cache and klen != 1 and qlen == 1)
+                is_causal_mask=False, mask=mask, attn_algorithm=attn_algorithm
             )
 
         x_emb = self.embedding(x)

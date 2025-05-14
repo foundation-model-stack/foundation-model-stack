@@ -186,7 +186,8 @@ class RoBERTaHeadless(nn.Module):
             pad_id: int = self.config.pad_id
             is_pad = x == pad_id
             mask = is_pad.unsqueeze(-1) == is_pad.unsqueeze(-2)
-            attn_kwargs = SDPAAttentionKwargs(is_causal_mask=False, mask=mask)
+            attn_algorithm = None if attn_kwargs is None else attn_kwargs.attn_algorithm
+            attn_kwargs = SDPAAttentionKwargs(is_causal_mask=False, mask=mask, attn_algorithm=attn_algorithm)
 
         x_emb = self.embedding(x)
 
