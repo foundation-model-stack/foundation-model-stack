@@ -32,8 +32,8 @@ class HFAdaptedLLaMADecoder(HFDecoder):
         *args,
         **kwargs,
     ) -> BaseModelOutputWithPastAndCrossAttentions:
-        if attn_kwargs is None:
-            attn_kwargs = SDPAAttentionKwargs(mask=attention_mask)
+        if attn_kwargs is None and attention_mask is not None:
+            attn_kwargs = SDPAAttentionKwargs(mask=attention_mask, is_causal_mask=False)
 
         output = self.model._helper(
             x_in=input_ids,

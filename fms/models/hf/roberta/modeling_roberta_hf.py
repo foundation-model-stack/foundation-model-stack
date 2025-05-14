@@ -104,8 +104,9 @@ class HFAdaptedRoBERTaEncoder(HFEncoder):
         *args,
         **kwargs,
     ) -> BaseModelOutputWithPastAndCrossAttentions:
-        if attn_kwargs is None:
+        if attn_kwargs is None and attention_mask is not None:
             attn_kwargs = SDPAAttentionKwargs(mask=attention_mask, is_causal_mask=False)
+
         return BaseModelOutputWithPastAndCrossAttentions(
             last_hidden_state=self.model(
                 x=input_ids, position_ids=position_ids, attn_kwargs=attn_kwargs
