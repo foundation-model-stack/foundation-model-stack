@@ -126,7 +126,12 @@ class _HFTokenizer(BaseTokenizer):
         self.tokenizer = AutoTokenizer.from_pretrained(name)
         super().__init__(self.tokenizer.bos_token_id, self.tokenizer.eos_token_id)
         self.padding_side = self.tokenizer.padding_side
+        self.pad_token = self.tokenizer.pad_token
         self.pad_token_id = self.tokenizer.pad_token_id
+        self.unk_token = self.tokenizer.unk_token
+        self.unk_token_id = self.tokenizer.unk_token_id
+        self.bos_token = self.tokenizer.bos_token
+        self.eos_token = self.tokenizer.eos_token
 
     def batch_decode(self, sequences: Union[List[int], List[List[int]]], skip_special_tokens: bool = False):
         return self.tokenizer.batch_decode(sequences, skip_special_tokens)
