@@ -20,7 +20,7 @@ def setup_distributed():
 
     os.environ['MASTER_ADDR'] = os.environ.get('MASTER_ADDR', 'localhost')
     os.environ['MASTER_PORT'] = os.environ.get('MASTER_PORT', '29501')
-    os.environ["WANDB_API_KEY"] = "1b80de13ae8a9d78812516c11ee97a4c83010793"
+    # os.environ["WANDB_API_KEY"] = "Add you WanDB API Key"
 
     # Only rank 0 should log to Weights & Biases
     if rank == 0:
