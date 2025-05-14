@@ -181,7 +181,7 @@ class RoBERTaHeadless(nn.Module):
         attn_kwargs: Optional[AttentionKwargs] = None,
         **_,
     ):
-        if attn_kwargs is None:
+        if attn_kwargs is None or attn_kwargs.mask is None:
             # if mask is none, we need to specify causal mask
             pad_id: int = self.config.pad_id
             is_pad = x == pad_id

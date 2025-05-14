@@ -30,6 +30,7 @@ __type_factory_map: dict[str, dict[str, callable]] = {}
 
 
 # FIXME: add adjusted_mask for alibi as part of attn_compute_dict
+# FIXME: add update kwargs as part of attn_compute_dict
 def register_attention_op(
     attn_type: str,
     store_op: callable,
@@ -95,9 +96,8 @@ def _sdpa_store_op(
     value_cache: Optional[torch.Tensor],
     **_,
 ):
-    # This should probably be in sdpa compute, but more efficient here
-    keys = keys.transpose(2, 1)  # / (self.emb_kq_per_head**(1/4))
-    values = values.transpose(2, 1)  # compatible with QK.T
+    keys = keys.transpose(2, 1)
+    values = values.transpose(2, 1)
 
     if key_cache is not None and value_cache.numel() > 0:
         return (
@@ -120,6 +120,11 @@ def _sdpa_compute_op(
     **_,
 ):
     queries = query.transpose(2, 1)
+
+    # no longer transposing prior to store, so need to check this in case of no cache
+    if key_cache.shape[1] != kvheads and key_cache.shape[2] == kvheads:
+        key_cache = key_cache.transpose(2, 1)
+        value_cache = value_cache.transpose(2, 1)
     mask = attn_kwargs.mask  # / (self.emb_kq_per_head**(1/4))
 
     # Merge rel pos bias and mask into single float mask
@@ -141,6 +146,7 @@ def _sdpa_compute_op(
         keys_e = key_cache
         values_e = value_cache
 
+    # FIXME: Make these global
     # sdpa_kernels = []
     # if attn_kwargs.attn_algorithm is None or attn_kwargs.attn_algorithm == "math":
     #     sdpa_kernels.append(SDPBackend.MATH)
@@ -540,17 +546,18 @@ class MultiHeadAttention(nn.Module):
 
         attn_compute_dict = get_attention_type(attn_kwargs)
 
-        # this can occur during prefill or use_cache=False
-        if past_key_value_state is None:
-            past_key_value_state = (None, None)
+        # FIXME: change names to k_cache and v_cache
+        if use_cache:
+            if past_key_value_state is None:
+                past_key_value_state = (None, None)
 
-        keys, values = attn_compute_dict["store"](
-            keys,
-            values,
-            past_key_value_state[0],
-            past_key_value_state[1],
-            attn_kwargs=attn_kwargs,
-        )
+            keys, values = attn_compute_dict["store"](
+                keys,
+                values,
+                past_key_value_state[0],
+                past_key_value_state[1],
+                attn_kwargs=attn_kwargs,
+            )
 
         if attn_compute_dict["is_prefill"](attn_kwargs):
             attn = attn_compute_dict["compute_prefill"](
@@ -559,7 +566,7 @@ class MultiHeadAttention(nn.Module):
                 values,
                 self.nheads,
                 self.kvheads,
-                self.p_dropout,
+                self.p_dropout if self.training else 0.0,
                 self.scale_factor,
                 attn_kwargs=attn_kwargs,
             )
@@ -570,7 +577,7 @@ class MultiHeadAttention(nn.Module):
                 values,
                 self.nheads,
                 self.kvheads,
-                self.p_dropout,
+                self.p_dropout if self.training else 0.0,
                 self.scale_factor,
                 attn_kwargs=attn_kwargs,
             )
