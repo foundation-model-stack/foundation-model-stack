@@ -605,6 +605,7 @@ class MultiHeadAttention(nn.Module):
         out = self.dense(attn)
 
         # if use_cache=True, we return the hidden_state as well as the kv cache
+        # FIXME: We want to check what cache should be returned, in case of paged we should be always returning the paged kv-cache
         if use_cache:
             return out, (keys, values)
         else:
