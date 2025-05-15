@@ -178,12 +178,46 @@ def __aiu_paged_compute_op(
     )
 
 
+def __aiu_paged_validate_attn_kwargs_op(
+    input_ids: torch.Tensor,
+    position_ids: torch.Tensor,
+    past_key_value_states: Optional[List[Tuple[torch.Tensor, torch.Tensor]]] = None,
+    **attn_kwargs: Unpack[AIUPagedAttentionKwargs],
+):
+    assert input_ids.shape[0] == position_ids.shape[0]
+    assert input_ids.shape[1] == position_ids.shape[1]
+
+    assert input_ids.shape[0] == attn_kwargs["slot_mapping"].shape[0]
+    assert input_ids.shape[1] == attn_kwargs["slot_mapping"].shape[1]
+
+    block_table = attn_kwargs.get("block_table", None)
+    if block_table is not None:
+        assert input_ids.shape[0] == block_table.shape[0]
+    current_tkv_mask = attn_kwargs.get("current_tkv_mask", None)
+    if current_tkv_mask is not None:
+        assert input_ids.shape[0] == current_tkv_mask.shape[0]
+    left_padded_prompt_mask = attn_kwargs.get("left_padded_prompt_mask", None)
+    if left_padded_prompt_mask is not None:
+        assert input_ids.shape[0] == left_padded_prompt_mask.shape[0]
+
+    if past_key_value_states is not None:
+        for k, v in past_key_value_states:
+            # assert that for each layer, k and v have the same number of blocks
+            assert k.shape[0] == v.shape[0]
+
+            # assert that for a given layer, it has the same number of blocks as any other layer
+            for i in range(len(past_key_value_states)):
+                assert k.shape[0] == past_key_value_states[i][0].shape[0]
+                assert v.shape[0] == past_key_value_states[i][1].shape[0]
+
+
 register_attention_op(
     "aiu_paged_attn",
     __aiu_paged_store_op,
     _sdpa_compute_op,
     is_prefill_op=lambda **attn_kwargs: attn_kwargs.get("block_table", None) is None,
     compute_decode_op=__aiu_paged_compute_op,
+    validate_attn_kwargs_op=__aiu_paged_validate_attn_kwargs_op,
 )
 
 
