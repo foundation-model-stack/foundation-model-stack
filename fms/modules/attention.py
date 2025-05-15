@@ -107,7 +107,7 @@ def _sdpa_compute_op(
     nheads: int,
     kvheads: int,
     p_dropout: float,
-    scale_factor: float,
+    scale_factor: Optional[float],
     **attn_kwargs: Unpack[SDPAAttentionKwargs],
 ):
     queries = query.transpose(2, 1)
