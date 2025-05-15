@@ -126,4 +126,3 @@ class HFAdaptedGraniteForCausalLM(LMHeadModelLMHeadMixin, HFAdaptedGraniteHeadle
             embedding=model.base_model.embedding,
             lm_head=model.head,
         )
-

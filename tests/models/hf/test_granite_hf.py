@@ -46,7 +46,9 @@ class GraniteHFFixtures(ModelFixtureMixin, HFConfigFixtureMixin, HFModelFixtureM
         )
 
     @pytest.fixture(scope="class", autouse=True)
-    def oss_hf_model(self, fms_hf_model: HFAdaptedGraniteForCausalLM) -> PreTrainedModel:
+    def oss_hf_model(
+        self, fms_hf_model: HFAdaptedGraniteForCausalLM
+    ) -> PreTrainedModel:
         return convert_to_hf(fms_hf_model)
 
 
@@ -71,4 +73,3 @@ class TestGraniteHF(
     _hf_specific_params = ["eos_token_id", "bos_token_id"]
     # implementation of abstract property _get_hf_signature_params
     _get_hf_signature_params = ["input_ids", "labels"]
-

@@ -6,7 +6,10 @@ from fms.models.hf.gpt_bigcode import HFAdaptedGPTBigCodeForCausalLM
 from fms.models.hf.gpt_bigcode.modeling_gpt_bigcode_hf import (
     HFAdaptedGPTBigCodeHeadless,
 )
-from fms.models.hf.granite.modeling_granite_hf import HFAdaptedGraniteForCausalLM, HFAdaptedGraniteHeadless
+from fms.models.hf.granite.modeling_granite_hf import (
+    HFAdaptedGraniteForCausalLM,
+    HFAdaptedGraniteHeadless,
+)
 from fms.models.hf.llama import HFAdaptedLLaMAForCausalLM
 from fms.models.hf.llama.modeling_llama_hf import HFAdaptedLLaMAHeadless
 from fms.models.hf.mixtral.modeling_mixtral_hf import (
