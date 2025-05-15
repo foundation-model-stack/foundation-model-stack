@@ -40,13 +40,13 @@ __type_factory_map: dict[str, dict[str, Callable]] = {}
 
 
 # FIXME: add adjusted_mask for alibi as part of attn_compute_dict
-# FIXME: add update kwargs as part of attn_compute_dict
 def register_attention_op(
     attn_type: str,
     store_op: Callable,
     compute_op: Callable,
     is_prefill_op: Optional[Callable] = None,
     compute_decode_op: Optional[Callable] = None,
+    update_attn_kwargs_op: Optional[Callable] = None,
 ) -> None:
     if attn_type in __type_factory_map:
         raise KeyError(
@@ -60,6 +60,9 @@ def register_attention_op(
         "is_prefill": (lambda **_: True) if is_prefill_op is None else is_prefill_op,
         "compute_prefill": compute_op,
         "compute_decoder": compute_decode_op,
+        "update_attn_kwargs": (lambda **attn_kwargs: attn_kwargs)
+        if update_attn_kwargs_op is None
+        else update_attn_kwargs_op,
     }
     __type_factory_map[attn_type] = compute_dict
 
@@ -91,26 +94,6 @@ def _sdpa_store_op(
         )
     else:
         return (keys, values)
-
-
-def _sdpa_update_kwargs(**kwargs: Unpack[SDPAAttentionKwargs]) -> SDPAAttentionKwargs:
-    if kwargs["mask"] is not None:
-        # get the last row of the 3d mask
-        mask = kwargs["mask"][:, -1:, :]
-        # extend the mask one slot
-        mask = torch.cat(
-            (
-                mask,
-                torch.zeros(mask.size(0), 1, 1, device=mask.device),
-            ),
-            dim=2,
-        )
-        if torch._dynamo.config.dynamic_shapes:
-            torch._dynamo.mark_dynamic(mask, 2)
-    else:
-        mask = None
-    kwargs["mask"] = mask
-    return kwargs
 
 
 def _sdpa_compute_op(
@@ -193,7 +176,32 @@ def _sdpa_compute_op(
     return attn
 
 
-register_attention_op("sdpa_causal", _sdpa_store_op, _sdpa_compute_op)
+def _sdpa_update_attn_kwargs(**attn_kwargs: Unpack[SDPAAttentionKwargs]):
+    mask = attn_kwargs.get("mask", None)
+    if mask is not None:
+        # get the last row of the 3d mask
+        mask = mask[:, -1:, :]
+        # extend the mask one slot
+        mask = torch.cat(
+            (
+                mask,
+                torch.zeros(mask.size(0), 1, 1, device=mask.device),
+            ),
+            dim=2,
+        )
+        if torch._dynamo.config.dynamic_shapes:
+            torch._dynamo.mark_dynamic(mask, 2)
+
+        attn_kwargs["mask"] = mask
+    return attn_kwargs
+
+
+register_attention_op(
+    "sdpa_causal",
+    _sdpa_store_op,
+    _sdpa_compute_op,
+    update_attn_kwargs_op=_sdpa_update_attn_kwargs,
+)
 register_attention_op(
     "sdpa_bidirectional",
     _sdpa_store_op,

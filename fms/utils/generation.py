@@ -2,6 +2,7 @@ import logging
 import time
 from typing import Any, Callable, Iterable, List, MutableMapping, Optional, Tuple, Union
 
+from fms.modules.attention import get_attention_type
 import torch
 import torch.nn.functional as F
 
@@ -83,21 +84,10 @@ def __update_padding_kwargs(
 ) -> MutableMapping[str, Any]:
     """Generic function to prepare any model specific keyword arguments"""
     # extend the attention mask
-    mask = model_specific_kwargs.get("mask", None)
-    if mask is not None:
-        # get the last row of the 3d mask
-        mask = mask[:, -1:, :]
-        # extend the mask one slot
-        mask = torch.cat(
-            (
-                mask,
-                torch.zeros(mask.size(0), 1, 1, device=mask.device),
-            ),
-            dim=2,
-        )
-        model_specific_kwargs["mask"] = mask
-        if torch._dynamo.config.dynamic_shapes:
-            torch._dynamo.mark_dynamic(mask, 2)
+    attn_op = get_attention_type(**model_specific_kwargs)
+
+    if "update_attn_kwargs" in attn_op:
+        model_specific_kwargs = attn_op["update_attn_kwargs"](**model_specific_kwargs)
 
     # extend the position_ids
     position_ids = model_specific_kwargs.get("position_ids", None)
