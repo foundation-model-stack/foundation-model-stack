@@ -10,6 +10,7 @@ from fms.testing.comparison import (
 )
 
 
+@pytest.mark.slow
 def test_granite_8b_equivalence():
     """Tests granite equivalence with a known implementation. Takes approximately 8:38 on an mbp with M1 chip"""
     from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
