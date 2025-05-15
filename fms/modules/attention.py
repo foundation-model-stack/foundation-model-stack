@@ -88,12 +88,16 @@ def _sdpa_store_op(
     values = values.transpose(2, 1)
 
     if key_cache is not None and value_cache is not None and value_cache.numel() > 0:
+        key_cache_result = torch.cat((key_cache, keys), dim=2)
+        value_cache_result = torch.cat((value_cache, values), dim=2)
         return (
-            torch.cat((key_cache, keys), dim=2),
-            torch.cat((value_cache, values), dim=2),
+            key_cache_result,
+            value_cache_result,
+            key_cache_result,
+            value_cache_result,
         )
     else:
-        return (keys, values)
+        return (keys, values, keys, values)
 
 
 def _sdpa_compute_op(
@@ -570,7 +574,7 @@ class MultiHeadAttention(nn.Module):
             if past_key_value_state is None:
                 past_key_value_state = (None, None)
 
-            keys, values = attn_compute_dict["store"](
+            keys, values, key_result, values_result = attn_compute_dict["store"](
                 keys,
                 values,
                 past_key_value_state[0],
@@ -607,7 +611,7 @@ class MultiHeadAttention(nn.Module):
         # if use_cache=True, we return the hidden_state as well as the kv cache
         # FIXME: We want to check what cache should be returned, in case of paged we should be always returning the paged kv-cache
         if use_cache:
-            return out, (keys, values)
+            return out, (key_result, values_result)
         else:
             return out
 
