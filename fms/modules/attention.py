@@ -59,7 +59,7 @@ def register_attention_op(
         "store": store_op,
         "is_prefill": (lambda **_: True) if is_prefill_op is None else is_prefill_op,
         "compute_prefill": compute_op,
-        "compute_decoder": compute_decode_op,
+        "compute_decode": compute_decode_op,
         "update_attn_kwargs": (lambda **attn_kwargs: attn_kwargs)
         if update_attn_kwargs_op is None
         else update_attn_kwargs_op,
