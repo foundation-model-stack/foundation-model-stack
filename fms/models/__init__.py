@@ -16,6 +16,7 @@ from torch.distributed.fsdp import MixedPrecision, ShardingStrategy
 
 from fms import distributed
 from fms.distributed.strategy import (
+    RingAttentionStrategy,
     TensorParallelStrategy,
     UniformModelParallelStrategy,
 )
@@ -321,7 +322,7 @@ def get_model(
                 the variant will refer to the hf model_id_or_path.
     model_path: the path to the state_dict of weights. If None, don't load.
     device_type: where to load the model
-    distributed_strategy: None, 'fsdp', 'hsdp', 'tp', or 'mp'.
+    distributed_strategy: None, 'fsdp', 'hsdp', 'tp', or 'mp', 'ring'.
     checkpoint_sharding: how the checkpoint files are sharded: None, 'tp',
                 'fsdp', or 'layer'. If None, guess based on files.
     source: If the weights in the state dict didn't come from an FMS model,
@@ -374,6 +375,10 @@ def get_model(
             initial_device = torch.device("cpu")
     elif distributed_strategy == "mp":
         initial_device = torch.device("cpu")
+    elif distributed_strategy == "ring":
+        print("using RingAttentionStrategy")
+        extra_args["distributed_strategy"] = RingAttentionStrategy(group=group)
+        initial_device = device
     else:
         initial_device = device
 
