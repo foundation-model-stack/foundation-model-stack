@@ -3,7 +3,6 @@ import itertools
 import os
 import random
 
-from fms.modules.attention import SDPAAttentionKwargs
 import numpy as np
 import torch
 import torch._inductor.config

@@ -355,7 +355,7 @@ class RoBERTaForQuestionAnswering(nn.Module):
         x: torch.Tensor,
         position_ids: Optional[torch.Tensor] = None,
         token_type_ids: Optional[torch.Tensor] = None,
-        **attn_kwargs: Unpack[AttentionKwargs]
+        **attn_kwargs: Unpack[AttentionKwargs],
     ):
         # run through the encoder layers
         x = self.base_model(

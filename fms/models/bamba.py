@@ -2,7 +2,7 @@ import dataclasses
 import logging
 import math
 import re
-from typing import Any, List, Mapping, Optional, Tuple
+from typing import Any, List, Mapping, Optional, Tuple, Unpack
 
 import torch
 import torch.nn as nn
@@ -12,7 +12,6 @@ from fms.distributed.strategy import DistributedStrategy, NoOpStrategy
 from fms.modules.attention import (
     AttentionKwargs,
     MultiHeadAttention,
-    SDPAAttentionKwargs,
 )
 from fms.modules.feedforward import GatedLinearUnit
 from fms.modules.layernorm import LayerNormParameterized
@@ -136,8 +135,8 @@ class BambaBlock(nn.Module):
         position_ids=None,
         past_key_value_state=None,
         use_cache=False,
-        attn_kwargs: Optional[AttentionKwargs] = None,
         cache_position=None,
+        **attn_kwargs: Unpack[AttentionKwargs],
     ):
         seqlen_offset = x.shape[1]
         residual = x
@@ -149,7 +148,7 @@ class BambaBlock(nn.Module):
                 past_key_value_state=past_key_value_state,
                 use_cache=use_cache,
                 cache_position=cache_position,
-                mask=getattr(attn_kwargs, "mask", None),
+                mask=attn_kwargs.get("mask", None),
             )
         else:
             x = self.attn(
@@ -157,7 +156,7 @@ class BambaBlock(nn.Module):
                 position_ids=position_ids,
                 past_key_value_state=past_key_value_state,
                 use_cache=use_cache,
-                attn_kwargs=attn_kwargs,
+                **attn_kwargs,
             )
 
         cache = None
@@ -180,8 +179,8 @@ class BambaBlock(nn.Module):
         x = x + residual
         if use_cache:
             if self.is_mamba_layer:
-                cache.seqlen_offset += seqlen_offset
-                cache.has_previous_state = True
+                cache.seqlen_offset += seqlen_offset  # type: ignore
+                cache.has_previous_state = True  # type: ignore
 
             return x, cache
         else:
@@ -299,8 +298,7 @@ class BambaHeadless(nn.Module):
         position_ids=None,
         past_key_value_states=None,
         use_cache=False,
-        attn_kwargs: Optional[AttentionKwargs] = None,
-        **_,
+        **attn_kwargs: Unpack[AttentionKwargs],
     ):
         # Embed the given vocabulary indices using the given attention mask, with pre-/post-norm and dropout as specified
         # x_in: batch_size x seq_len
@@ -330,19 +328,12 @@ class BambaHeadless(nn.Module):
             else:
                 past_key_value_states = [None for _ in range(len(self.layers))]
 
-        qlen = x_in.size(1)
         klen = x_in.size(1)
 
         # if we are using the cache, the key length needs to be extended with the past keys length
         if self.attn_layer_ind != -1:
             if use_cache and past_key_value_states[self.attn_layer_ind] is not None:
                 klen += past_key_value_states[self.attn_layer_ind][0].size(-2)
-
-        if attn_kwargs is None:
-            # if mask is none, we need to specify causal mask
-            attn_kwargs = SDPAAttentionKwargs(
-                is_causal_mask=not (use_cache and klen != 1 and qlen == 1)
-            )
 
         x_in = self.embedding(x_in)
 
@@ -362,8 +353,8 @@ class BambaHeadless(nn.Module):
                 position_ids=position_ids,
                 past_key_value_state=past_key_value_states[i],
                 use_cache=use_cache,
-                attn_kwargs=attn_kwargs,
                 cache_position=cache_position,
+                **attn_kwargs,
             )
 
             if use_cache:
@@ -435,15 +426,14 @@ class Bamba(nn.Module):
         ] = None,
         use_cache: bool = False,
         only_last_token: bool = False,
-        attn_kwargs: Optional[AttentionKwargs] = None,
-        **_,
+        **attn_kwargs: Unpack[AttentionKwargs],
     ):
         output, cache = self.base_model(
             x,
             position_ids,
             past_key_value_states,
             use_cache,
-            attn_kwargs=attn_kwargs,
+            **attn_kwargs,
         )
 
         if only_last_token:

@@ -1,6 +1,6 @@
-from typing import Optional
+from typing import Optional, Unpack
 
-from fms.modules.attention import AttentionKwargs, SDPAAttentionKwargs
+from fms.modules.attention import SDPAAttentionKwargs
 import torch
 import torch.nn as nn
 from transformers import PretrainedConfig
@@ -100,16 +100,15 @@ class HFAdaptedRoBERTaEncoder(HFEncoder):
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         position_ids: Optional[torch.LongTensor] = None,
-        attn_kwargs: Optional[AttentionKwargs] = None,
         *args,
-        **kwargs,
+        **kwargs: Unpack[SDPAAttentionKwargs],
     ) -> BaseModelOutputWithPastAndCrossAttentions:
         if kwargs.get("mask", None) is None:
             kwargs["mask"] = attention_mask
-        
+
         return BaseModelOutputWithPastAndCrossAttentions(
             last_hidden_state=self.model(
-                x=input_ids, position_ids=position_ids, attn_kwargs=attn_kwargs
+                x=input_ids, position_ids=position_ids, **kwargs
             )
         )
 

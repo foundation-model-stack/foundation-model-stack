@@ -1,6 +1,5 @@
 from typing import Optional, Tuple
 
-from fms.modules.attention import AttentionKwargs, SDPAAttentionKwargs
 import torch
 import torch.nn as nn
 from transformers import PretrainedConfig

@@ -1,6 +1,6 @@
 from typing import Optional, Tuple, Unpack
 
-from fms.modules.attention import AttentionKwargs, SDPAAttentionKwargs
+from fms.modules.attention import SDPAAttentionKwargs
 import torch
 import torch.nn as nn
 from transformers import PretrainedConfig
@@ -39,7 +39,7 @@ class HFAdaptedLLaMADecoder(HFDecoder):
             position_ids=position_ids,
             past_key_value_states=past_key_values,
             use_cache=use_cache,
-            **kwargs
+            **kwargs,
         )
 
         present_key_values = None

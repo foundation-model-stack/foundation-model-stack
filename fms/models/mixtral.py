@@ -1,7 +1,7 @@
 import math
 import re
 from dataclasses import dataclass
-from typing import Any, List, Mapping, MutableMapping, Optional, Tuple
+from typing import Any, Mapping, MutableMapping, Optional, Tuple, Unpack
 
 import torch
 import torch.nn as nn
@@ -14,7 +14,6 @@ from fms.distributed.strategy import (
 from fms.modules.attention import (
     AttentionKwargs,
     MultiHeadAttention,
-    SDPAAttentionKwargs,
 )
 from fms.modules.feedforward import MOEFeedForward
 from fms.modules.head import LinearClassificationHead
@@ -99,7 +98,7 @@ class MixtralBlock(nn.Module):
         position_ids=None,
         past_key_value_state=None,
         use_cache=False,
-        attn_kwargs: Optional[AttentionKwargs] = None,
+        **attn_kwargs: Unpack[AttentionKwargs],
     ):
         # if the cache is not empty, we need to get the kv cache for self and cross attention
         self_attn_past_key_value = past_key_value_state
@@ -114,7 +113,7 @@ class MixtralBlock(nn.Module):
             position_ids=position_ids,
             past_key_value_state=self_attn_past_key_value,
             use_cache=use_cache,
-            attn_kwargs=attn_kwargs,
+            **attn_kwargs,
         )
         cache = None
         if use_cache:
@@ -228,8 +227,7 @@ class MixtralHeadless(nn.Module):
         position_ids=None,
         past_key_value_states=None,
         use_cache=False,
-        attn_kwargs: Optional[AttentionKwargs] = None,
-        **_,
+        **attn_kwargs: Unpack[AttentionKwargs],
     ):
         # Embed the given vocabulary indices using the given attention mask, with pre-/post-norm and dropout as specified
         # x: batch_size x seq_len
@@ -239,19 +237,6 @@ class MixtralHeadless(nn.Module):
             past_key_value_states = [
                 (torch.empty(0), torch.empty(0)) for _ in range(len(self.layers))
             ]
-
-        qlen = x.size(1)
-        klen = x.size(1)
-
-        # if we are using the cache, the key length needs to be extended with the past keys length
-        if use_cache and past_key_value_states[0][0].numel() > 0:
-            klen += past_key_value_states[0][0].size(1)
-
-        if attn_kwargs is None:
-            # if mask is none, we need to specify causal mask
-            attn_kwargs = SDPAAttentionKwargs(
-                is_causal_mask=not (use_cache and klen != 1 and qlen == 1)
-            )
 
         x = self.embedding(x)
 
@@ -264,7 +249,7 @@ class MixtralHeadless(nn.Module):
                 position_ids=position_ids,
                 past_key_value_state=past_key_value_states[i],
                 use_cache=use_cache,
-                attn_kwargs=attn_kwargs,
+                **attn_kwargs,
             )
 
             if use_cache:
@@ -331,15 +316,10 @@ class Mixtral(nn.Module):
         past_key_value_states: Optional[Tuple[torch.FloatTensor,]] = None,
         use_cache: bool = False,
         only_last_token: bool = False,
-        attn_kwargs: Optional[AttentionKwargs] = None,
-        **_,
+        **attn_kwargs: Unpack[AttentionKwargs],
     ):
         output, cache = self.base_model(
-            x,
-            position_ids,
-            past_key_value_states,
-            use_cache,
-            attn_kwargs=attn_kwargs,
+            x, position_ids, past_key_value_states, use_cache, **attn_kwargs
         )
 
         if only_last_token:

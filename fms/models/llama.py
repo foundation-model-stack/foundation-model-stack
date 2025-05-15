@@ -121,7 +121,7 @@ class LLaMABlock(nn.Module):
         position_ids=None,
         past_key_value_state=None,
         use_cache=False,
-        **attn_kwargs: Unpack[AttentionKwargs]
+        **attn_kwargs: Unpack[AttentionKwargs],
     ):
         # if the cache is not empty, we need to get the kv cache for self and cross attention
         self_attn_past_key_value = past_key_value_state
@@ -138,7 +138,7 @@ class LLaMABlock(nn.Module):
             position_ids=position_ids,
             past_key_value_state=self_attn_past_key_value,
             use_cache=use_cache,
-            **attn_kwargs
+            **attn_kwargs,
         )
         cache = None
         if use_cache:
@@ -336,7 +336,7 @@ class LLaMA(nn.Module):
         position_ids=None,
         past_key_value_states=None,
         use_cache=False,
-        **attn_kwargs: Unpack[AttentionKwargs]
+        **attn_kwargs: Unpack[AttentionKwargs],
     ):
         # Embed the given vocabulary indices using the given attention mask, with pre-/post-norm and dropout as specified
         # x_in: batch_size x seq_len
@@ -355,7 +355,7 @@ class LLaMA(nn.Module):
                 position_ids=position_ids,
                 past_key_value_state=past_key_value_states[i],
                 use_cache=use_cache,
-                **attn_kwargs
+                **attn_kwargs,
             )
 
             if use_cache:
@@ -379,14 +379,10 @@ class LLaMA(nn.Module):
         past_key_value_states: Optional[Tuple[torch.FloatTensor,]] = None,
         use_cache: bool = False,
         only_last_token: bool = False,
-        **attn_kwargs: Unpack[AttentionKwargs]
+        **attn_kwargs: Unpack[AttentionKwargs],
     ):
         output, cache = self._helper(
-            x,
-            position_ids,
-            past_key_value_states,
-            use_cache,
-            **attn_kwargs
+            x, position_ids, past_key_value_states, use_cache, **attn_kwargs
         )
 
         if only_last_token:

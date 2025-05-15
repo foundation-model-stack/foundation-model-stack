@@ -1,15 +1,21 @@
 import abc
-from dataclasses import dataclass
 import functools
-import math
-from typing import Any, Callable, Mapping, NotRequired, Optional, Tuple, TypedDict, Unpack
+from typing import (
+    Any,
+    Callable,
+    Mapping,
+    NotRequired,
+    Optional,
+    Tuple,
+    TypedDict,
+    Unpack,
+)
 
 import torch
 import torch.distributed
 from torch import Tensor, nn
 from torch.distributed.distributed_c10d import ProcessGroup
 from torch.nn import functional as F
-from torch.nn.attention import SDPBackend, sdpa_kernel
 
 from fms import distributed
 from fms.distributed.tensorparallel import (
@@ -25,7 +31,10 @@ from fms.modules.linear import (
 from fms.modules.positions import PositionEncoder
 from fms.modules.tp import TPModule
 
-from torch.library import custom_op
+__sdpa_previous_flash: bool = torch.backends.cuda.flash_sdp_enabled()
+__sdpa_previous_mem_efficient: bool = torch.backends.cuda.mem_efficient_sdp_enabled()
+__sdpa_previous_math: bool = torch.backends.cuda.math_sdp_enabled()
+
 
 __type_factory_map: dict[str, dict[str, Callable]] = {}
 
@@ -58,6 +67,7 @@ def register_attention_op(
 class AttentionKwargs(TypedDict, total=False):
     attn_name: str
 
+
 class SDPAAttentionKwargs(AttentionKwargs):
     mask: NotRequired[torch.Tensor]
     attn_algorithm: NotRequired[str]
@@ -82,6 +92,7 @@ def _sdpa_store_op(
     else:
         return (keys, values)
 
+
 def _sdpa_update_kwargs(**kwargs: Unpack[SDPAAttentionKwargs]) -> SDPAAttentionKwargs:
     if kwargs["mask"] is not None:
         # get the last row of the 3d mask
@@ -100,6 +111,7 @@ def _sdpa_update_kwargs(**kwargs: Unpack[SDPAAttentionKwargs]) -> SDPAAttentionK
         mask = None
     kwargs["mask"] = mask
     return kwargs
+
 
 def _sdpa_compute_op(
     query: torch.Tensor,
@@ -138,23 +150,25 @@ def _sdpa_compute_op(
         keys_e = key_cache
         values_e = value_cache
 
-    # FIXME: Make these global
-    # sdpa_kernels = []
-    # if attn_kwargs.attn_algorithm is None or attn_kwargs.attn_algorithm == "math":
-    #     sdpa_kernels.append(SDPBackend.MATH)
-    # elif attn_kwargs.attn_algorithm == "flash":
-    #     sdpa_kernels.append(SDPBackend.FLASH_ATTENTION)
-    # elif attn_kwargs.attn_algorithm == "mem":
-    #     sdpa_kernels.append(SDPBackend.EFFICIENT_ATTENTION)
-    # else:
-    #     raise ValueError(f"invalid attn_algorithm given: {attn_kwargs.attn_algorithm}")
+    attn_algorithm = attn_kwargs.get("attn_algorithm", None)
+    if attn_algorithm:
+        # Pick which fused attn kernels will run.
+        use_flash = attn_algorithm == "flash"
+        use_mem_efficient = attn_algorithm == "mem"
+        use_math = attn_algorithm == "math"
+
+        torch.backends.cuda.enable_flash_sdp(use_flash)
+        torch.backends.cuda.enable_mem_efficient_sdp(use_mem_efficient)
+        torch.backends.cuda.enable_math_sdp(use_math)
 
     attn_mask = mask
     if attn_mask is not None and attn_mask.dtype != torch.bool:
         attn_mask = attn_mask.to(dtype=queries.dtype)
 
-    # with sdpa_kernel(sdpa_kernels):
-    is_causal = attn_kwargs.get("is_causal_mask", mask is None and not (key_cache.shape[2] != 1 and queries.shape[2] == 1))
+    is_causal = attn_kwargs.get(
+        "is_causal_mask",
+        mask is None and not (key_cache.shape[2] != 1 and queries.shape[2] == 1),
+    )
 
     attn = F.scaled_dot_product_attention(
         queries,
@@ -166,6 +180,11 @@ def _sdpa_compute_op(
         scale=scale_factor,
     )
 
+    if attn_algorithm:
+        torch.backends.cuda.enable_flash_sdp(__sdpa_previous_flash)
+        torch.backends.cuda.enable_mem_efficient_sdp(__sdpa_previous_mem_efficient)
+        torch.backends.cuda.enable_math_sdp(__sdpa_previous_math)
+
     # attn: bs x seq_len x nheads*emb_v_per_head
     # attn: b x h x qlen x ds
     # attn after permute: b x qlen x h x ds
@@ -175,7 +194,11 @@ def _sdpa_compute_op(
 
 
 register_attention_op("sdpa_causal", _sdpa_store_op, _sdpa_compute_op)
-register_attention_op("sdpa_bidirectional", _sdpa_store_op, functools.partial(_sdpa_compute_op, is_causal_mask=False))
+register_attention_op(
+    "sdpa_bidirectional",
+    _sdpa_store_op,
+    functools.partial(_sdpa_compute_op, is_causal_mask=False),
+)
 
 
 def get_attention_type(**attn_kwargs: Unpack[AttentionKwargs]) -> dict[str, Callable]:
@@ -469,12 +492,6 @@ class MultiHeadAttention(nn.Module):
         if self.p_dropout:
             self.attn_dropout = nn.Dropout(self.p_dropout)
         self.position_encoder = position_encoder
-        # Avoiding graph breaks
-        self.previous_flash: bool = torch.backends.cuda.flash_sdp_enabled()
-        self.previous_mem_efficient: bool = (
-            torch.backends.cuda.mem_efficient_sdp_enabled()
-        )
-        self.previous_math: bool = torch.backends.cuda.math_sdp_enabled()
 
     def reset_parameters(self):
         for m in self.modules():
@@ -496,7 +513,7 @@ class MultiHeadAttention(nn.Module):
         position_ids=None,
         past_key_value_state: Optional[Tuple[Tensor | None, Tensor | None]] = None,
         use_cache=False,
-        **attn_kwargs: Unpack[AttentionKwargs]
+        **attn_kwargs: Unpack[AttentionKwargs],
     ):
         """
         past_key_value_state: tuple
@@ -550,7 +567,7 @@ class MultiHeadAttention(nn.Module):
                 values,
                 past_key_value_state[0],
                 past_key_value_state[1],
-                **attn_kwargs
+                **attn_kwargs,
             )
 
         if attn_compute_dict["is_prefill"](**attn_kwargs):
@@ -562,7 +579,7 @@ class MultiHeadAttention(nn.Module):
                 self.kvheads,
                 self.p_dropout if self.training else 0.0,
                 self.scale_factor,
-                **attn_kwargs
+                **attn_kwargs,
             )
         else:
             attn = attn_compute_dict["compute_decode"](
@@ -573,7 +590,7 @@ class MultiHeadAttention(nn.Module):
                 self.kvheads,
                 self.p_dropout if self.training else 0.0,
                 self.scale_factor,
-                **attn_kwargs
+                **attn_kwargs,
             )
 
         attn = attn.view(batch_size, q_len, self.nheads * self.emb_v_per_head)

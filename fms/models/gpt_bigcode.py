@@ -10,7 +10,6 @@ from fms.distributed.strategy import DistributedStrategy, NoOpStrategy
 from fms.modules.attention import (
     AttentionKwargs,
     MultiHeadAttention,
-    SDPAAttentionKwargs,
 )
 from fms.modules.feedforward import FeedForwardBlock
 from fms.utils import serialization
@@ -182,39 +181,8 @@ class GPTBigCodeHeadless(nn.Module):
         # mask: batch_size x seq_len x seq_len
         # bias: nheads x seq_len x seq_len
 
-        qlen = x.size(1)
-        klen = x.size(1)
-
         if past_key_value_states is None or len(past_key_value_states) == 0:
             past_key_value_states = [None for _ in range(len(self.layers))]
-
-        # if we are using the cache, the key length needs to be extended with the past keys length
-        if (
-            use_cache
-            and past_key_value_states is not None
-            and past_key_value_states[0] is not None
-        ):
-            klen += past_key_value_states[0][0].size(-2)
-
-        # FIXME: remove this and use what we are doing for llama, check expectation
-        # if attn_kwargs is None or attn_kwargs.mask is None:
-        #     if x is None:
-        #         raise ValueError("cannot create a mask when x is None")
-
-        #     # we are caching and can assume all 1s in the mask
-        #     if use_cache and klen != 1 and qlen == 1:
-        #         # b x h x qlen x kvlen
-        #         mask = torch.ones(qlen, klen, dtype=torch.bool, device=x.device)
-        #     else:
-        #         pad_id: int = self.config.pad_id
-        #         is_pad: torch.Tensor = x == pad_id
-        #         mask = is_pad.unsqueeze(-1) == is_pad.unsqueeze(-2)
-        #         mask = mask.tril(diagonal=0)
-
-        #     attn_algorithm = None if attn_kwargs is None else attn_kwargs.attn_algorithm
-        #     attn_kwargs = SDPAAttentionKwargs(
-        #         is_causal_mask=False, mask=mask, attn_algorithm=attn_algorithm
-        #     )
 
         x_emb = self.embedding(x)
 
