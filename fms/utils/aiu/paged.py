@@ -137,7 +137,7 @@ def __aiu_paged_store_op(
     values: torch.Tensor,
     key_cache: Optional[torch.Tensor],
     value_cache: Optional[torch.Tensor],
-    **attn_kwargs: Unpack[AIUPagedAttentionKwargs],
+    **attn_kwargs,
 ):
     result_key_cache, result_value_cache = torch.ops.aiu.paged_attn_store(
         keys, values, key_cache, value_cache, attn_kwargs["slot_mapping"]
@@ -163,7 +163,7 @@ def __aiu_paged_compute_op(
     kvheads: int,
     p_dropout: float,
     scale_factor: Optional[float],
-    **attn_kwargs: Unpack[AIUPagedAttentionKwargs],
+    **attn_kwargs,
 ):
     if scale_factor is None:
         scale_factor = 1 / math.sqrt(query.shape[-1])

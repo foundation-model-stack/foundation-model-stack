@@ -312,6 +312,7 @@ class GPTBigCode(nn.Module):
             past_key_value_states=past_key_value_states,
             **attn_kwargs,
         )
+
         output, cache = self.base_model(
             x,
             position_ids,
