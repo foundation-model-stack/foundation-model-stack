@@ -243,7 +243,6 @@ class ModelConsistencyTestSuite(ModelFixtureMixin, SignatureFixtureMixin):
     """All tests related to model consistency will be part of this test suite"""
 
     @property
-    @abc.abstractmethod
     def _get_signature_input_ids(self) -> Optional[torch.Tensor]:
         """the value to pass into inp in get_signature function for this model
 
@@ -279,7 +278,6 @@ class ModelConsistencyTestSuite(ModelFixtureMixin, SignatureFixtureMixin):
         pass
 
     @property
-    @abc.abstractmethod
     def _get_signature_optional_params(self) -> Optional[dict[str, torch.Tensor]]:
         """the value to pass into optional_params in get_signature function for this model
 
@@ -353,7 +351,9 @@ class ModelConsistencyTestSuite(ModelFixtureMixin, SignatureFixtureMixin):
         unfused_model = apply_unfuse_weights(model)
         unfused_signature = get_signature(
             unfused_model,
+            inp=self._get_signature_input_ids,
             params=self._get_signature_params,
+            optional_params=self._get_signature_optional_params,
             logits_getter_fn=self._get_signature_logits_getter_fn,
         )
 

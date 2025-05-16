@@ -29,6 +29,8 @@ class HFAdaptedLLaMAConfig(PretrainedConfig):
         activation_fn: str = "swish",
         p_dropout: float = 0.0,
         max_expected_seq_len: int = 2048,
+        rope_theta: float = 10000.0,
+        rope_scaling: dict = {},
         use_cache: bool = True,
         eos_token_id: int = 2,
         bos_token_id: int = 1,
@@ -46,6 +48,8 @@ class HFAdaptedLLaMAConfig(PretrainedConfig):
         self.activation_fn = activation_fn
         self.p_dropout = p_dropout
         self.max_expected_seq_len = max_expected_seq_len
+        self.rope_theta = rope_theta
+        self.rope_scaling = rope_scaling
         self.use_cache = use_cache
         super().__init__(
             pad_token_id=pad_token_id,
