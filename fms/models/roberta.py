@@ -179,6 +179,8 @@ class RoBERTaHeadless(nn.Module):
         token_type_ids: Optional[torch.Tensor] = None,
         **attn_kwargs: Unpack[SDPAAttentionKwargs],
     ):
+        # We will need this as a default as this will make the assumption that is_causal_mask=False (will not create a causal mask in sdpa)
+        # If this was not provided, if attn_name is not given and no mask is given, we will end up with a causal mask
         attn_kwargs["attn_name"] = attn_kwargs.get("attn_name", "sdpa_bidirectional")
 
         x_emb = self.embedding(x)

@@ -39,15 +39,101 @@ __sdpa_previous_math: bool = torch.backends.cuda.math_sdp_enabled()
 __type_factory_map: dict[str, dict[str, Callable]] = {}
 
 
-# FIXME: add adjusted_mask for alibi as part of attn_compute_dict
+"""
+query: torch.Tensor,
+    key_cache: torch.Tensor,
+    value_cache: torch.Tensor,
+    nheads: int,
+    kvheads: int,
+    p_dropout: float,
+    scale_factor: float,
+    **attn_kwargs: Unpack[SDPAAttentionKwargs],
+"""
+
+
+class AttentionKwargs(TypedDict, total=False):
+    """
+    The attention kwargs to be passed to fms model forward.
+
+    attn_name: str
+        this is the name corresponding to the attention op registered in register_attention_op
+    """
+
+    attn_name: str
+
+
+# TODO: add adjusted_mask for alibi as part of attn_compute_dict
 def register_attention_op(
     attn_type: str,
-    store_op: Callable,
-    compute_op: Callable,
-    is_prefill_op: Optional[Callable] = None,
-    compute_decode_op: Optional[Callable] = None,
-    update_attn_kwargs_op: Optional[Callable] = None,
+    store_op: Callable[
+        [
+            torch.Tensor,
+            torch.Tensor,
+            Optional[torch.Tensor],
+            Optional[torch.Tensor],
+            Unpack[AttentionKwargs],
+        ],
+        Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
+    ],
+    compute_op: Callable[
+        [
+            torch.Tensor,
+            torch.Tensor,
+            torch.Tensor,
+            int,
+            int,
+            float,
+            float,
+            Unpack[AttentionKwargs],
+        ],
+        torch.Tensor,
+    ],
+    is_prefill_op: Optional[Callable[[Unpack[AttentionKwargs]], bool]] = None,
+    compute_decode_op: Optional[
+        Callable[
+            [
+                torch.Tensor,
+                torch.Tensor,
+                torch.Tensor,
+                int,
+                int,
+                float,
+                float,
+                Unpack[AttentionKwargs],
+            ],
+            torch.Tensor,
+        ]
+    ] = None,
+    update_attn_kwargs_op: Optional[
+        Callable[[Unpack[AttentionKwargs]], AttentionKwargs]
+    ] = None,
 ) -> None:
+    """Register a custom attention operation to be used within MultiHeadAttention. This method also provides the ability to register other useful constructs related to the attention type.
+
+    Args:
+        attn_type: str
+            the name for the attention_op. This should correspond directly to the AttentionKwargs implementation
+        store_op: Callable[[torch.Tensor, torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor], Unpack["AttentionKwargs"]], Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]]
+            This function has the following contract (keys, values, key_cache, value_cache, **attn_kwargs) -> (keys_compute, values_compute, keys_return, values_return). The intention
+            of this function is to provide a method of storing the keys in the key_cache and the values in the value_cache. The return of this method will include what keys/values to compute
+            on as well as what keys/values to return from MultiHeadAttention. Note: Reason for keeping these separate is that in some cases the keys to compute will be different than those
+            that are to be returned from MultiHeadAttention. For example, in Paged Attention, we may use sdpa as prefill (utilitizing the initial computed keys/values), but the returned cache
+            should be the larger cache that we stored to.
+        compute_op: Callable[[torch.Tensor, torch.Tensor, torch.Tensor, int, int, float, float, Unpack["AttentionKwargs"]], torch.Tensor]
+            This function has the following contract (query, key_cache, value_cache, nheads, kvheads, p_dropout, scale_factor, **attn_kwargs) -> (attn_output) --
+            query - b x qlen x h x ds, attn_output - b x qlen x h x ds. The intention of this function is perform attention computation. Note: the kv-cache may be very different in shape
+            depending on the type of attention
+        is_prefill_op: Optional[Callable[[Unpack["AttentionKwargs"]], bool]]
+            This function has the following contract (**attn_kwargs) -> bool. The intention of this function is to denote given the attention kwargs whether prefill or decode is being performed.
+            If prefill is being performed, the compute_op will be called, otherwise the compute_decode_op will be called. If set to None, this funcion will always return True.
+        compute_decode_op: Callable[[torch.Tensor, torch.Tensor, torch.Tensor, int, int, float, float, Unpack["AttentionKwargs"]], torch.Tensor]
+            This function has the following contract (query, key_cache, value_cache, nheads, kvheads, p_dropout, scale_factor, **attn_kwargs) -> (attn_output) --
+            query - b x qlen x h x ds, attn_output - b x qlen x h x ds. The intention of this function to provide a separate attention computation for decode. If this is set to something other than
+            compute_op, is_prefill_op should also be provided. If set to None, this will default to the compute_op. Note: the kv-cache may be very different in shape depending on the type of attention
+        update_attn_kwargs_op: Optional[Callable[[Unpack["AttentionKwargs"]], "AttentionKwargs"]]
+            This function has the following contract (**attn_kwargs) -> updated_attn_kwargs. The intention of this function is to act as a helper to update the attn_kwargs between each step within a
+            generation loop. If set to None, will return the attn_kwargs with no changes.
+    """
     if attn_type in __type_factory_map:
         raise KeyError(
             f"Module mapping of attention type `{attn_type}` already registered"
@@ -67,10 +153,6 @@ def register_attention_op(
     __type_factory_map[attn_type] = compute_dict
 
 
-class AttentionKwargs(TypedDict, total=False):
-    attn_name: str
-
-
 class SDPAAttentionKwargs(AttentionKwargs):
     mask: NotRequired[torch.Tensor]
     attn_algorithm: NotRequired[str]
@@ -82,8 +164,8 @@ def _sdpa_store_op(
     values: torch.Tensor,
     key_cache: Optional[torch.Tensor],
     value_cache: Optional[torch.Tensor],
-    **attn_kwargs: Unpack[SDPAAttentionKwargs],
-):
+    **attn_kwargs,
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     keys = keys.transpose(2, 1)
     values = values.transpose(2, 1)
 
@@ -107,9 +189,9 @@ def _sdpa_compute_op(
     nheads: int,
     kvheads: int,
     p_dropout: float,
-    scale_factor: float,
-    **attn_kwargs: Unpack[SDPAAttentionKwargs],
-):
+    scale_factor: Optional[float],
+    **attn_kwargs,
+) -> torch.Tensor:
     queries = query.transpose(2, 1)
 
     # no longer transposing prior to store, so need to check this in case of no cache
@@ -118,7 +200,7 @@ def _sdpa_compute_op(
         value_cache = value_cache.transpose(2, 1)
     mask = attn_kwargs.get("mask", None)
 
-    # Merge rel pos bias and mask into single float mask
+    # TODO: Once we add alibi support, merge rel pos bias and mask into single float mask
     if mask is not None:
         # Our expected mask format is bs x q_len x k_len, so to make it broadcastable
         # we need to create the nheads dimension
@@ -157,6 +239,7 @@ def _sdpa_compute_op(
         mask is None and not (key_cache.shape[2] != 1 and queries.shape[2] == 1),
     )
 
+    # TODO: when updating to 2.7, use enable_gqa and stop using keys_e and values_e
     attn = F.scaled_dot_product_attention(
         queries,
         keys_e,
@@ -180,7 +263,8 @@ def _sdpa_compute_op(
     return attn
 
 
-def _sdpa_update_attn_kwargs(**attn_kwargs: Unpack[SDPAAttentionKwargs]):
+def _sdpa_update_attn_kwargs(**attn_kwargs):
+    # this is updating the mask for decoding
     mask = attn_kwargs.get("mask", None)
     if mask is not None:
         # get the last row of the 3d mask
@@ -569,24 +653,27 @@ class MultiHeadAttention(nn.Module):
 
         attn_compute_dict = get_attention_type(**attn_kwargs)
 
-        # FIXME: change names to k_cache and v_cache
         if use_cache:
             if past_key_value_state is None:
                 past_key_value_state = (None, None)
 
-            keys, values, key_result, values_result = attn_compute_dict["store"](
-                keys,
-                values,
-                past_key_value_state[0],
-                past_key_value_state[1],
-                **attn_kwargs,
+            keys_compute, values_compute, keys_return, values_return = (
+                attn_compute_dict["store"](
+                    keys,
+                    values,
+                    past_key_value_state[0],
+                    past_key_value_state[1],
+                    **attn_kwargs,
+                )
             )
+        else:
+            keys_compute, values_compute = keys, values
 
         if attn_compute_dict["is_prefill"](**attn_kwargs):
             attn = attn_compute_dict["compute_prefill"](
                 queries,
-                keys,
-                values,
+                keys_compute,
+                values_compute,
                 self.nheads,
                 self.kvheads,
                 self.p_dropout if self.training else 0.0,
@@ -596,8 +683,8 @@ class MultiHeadAttention(nn.Module):
         else:
             attn = attn_compute_dict["compute_decode"](
                 queries,
-                keys,
-                values,
+                keys_compute,
+                values_compute,
                 self.nheads,
                 self.kvheads,
                 self.p_dropout if self.training else 0.0,
@@ -609,9 +696,8 @@ class MultiHeadAttention(nn.Module):
         out = self.dense(attn)
 
         # if use_cache=True, we return the hidden_state as well as the kv cache
-        # FIXME: We want to check what cache should be returned, in case of paged we should be always returning the paged kv-cache
         if use_cache:
-            return out, (key_result, values_result)
+            return out, (keys_return, values_return)
         else:
             return out
 
