@@ -47,6 +47,7 @@ def register_attention_op(
     is_prefill_op: Optional[Callable] = None,
     compute_decode_op: Optional[Callable] = None,
     update_attn_kwargs_op: Optional[Callable] = None,
+    validate_attn_kwargs_op: Optional[Callable] = None,
 ) -> None:
     if attn_type in __type_factory_map:
         raise KeyError(
@@ -63,6 +64,9 @@ def register_attention_op(
         "update_attn_kwargs": (lambda **attn_kwargs: attn_kwargs)
         if update_attn_kwargs_op is None
         else update_attn_kwargs_op,
+        "validate_attn_kwargs": (lambda **_: None)
+        if validate_attn_kwargs_op is None
+        else validate_attn_kwargs_op,
     }
     __type_factory_map[attn_type] = compute_dict
 
@@ -107,7 +111,7 @@ def _sdpa_compute_op(
     nheads: int,
     kvheads: int,
     p_dropout: float,
-    scale_factor: float,
+    scale_factor: Optional[float],
     **attn_kwargs: Unpack[SDPAAttentionKwargs],
 ):
     queries = query.transpose(2, 1)

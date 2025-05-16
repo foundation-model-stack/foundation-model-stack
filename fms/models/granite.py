@@ -12,6 +12,7 @@ from fms.distributed.strategy import DistributedStrategy, NoOpStrategy
 from fms.modules.attention import (
     AttentionKwargs,
     MultiHeadAttention,
+    get_attention_type,
 )
 from fms.modules.feedforward import GatedLinearUnit
 from fms.modules.layernorm import LayerNormParameterized
@@ -361,9 +362,12 @@ class Granite(nn.Module):
         only_last_token: bool = False,
         **attn_kwargs: Unpack[AttentionKwargs],
     ):
-        if position_ids is not None:
-            assert x.shape[0] == position_ids.shape[0]
-            assert x.shape[1] == position_ids.shape[1]
+        get_attention_type(**attn_kwargs)["validate_attn_kwargs"](
+            input_ids=x,
+            position_ids=position_ids,
+            past_key_value_states=past_key_value_states,
+            **attn_kwargs,
+        )
 
         output, cache = self.base_model(
             x,
