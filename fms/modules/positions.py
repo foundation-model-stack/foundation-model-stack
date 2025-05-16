@@ -28,7 +28,7 @@ class PositionEncoder:
         q: torch.Tensor,
         k: torch.Tensor,
         position_ids: Optional[torch.LongTensor],
-        past_kv_state: Optional[Tuple[torch.Tensor, torch.Tensor]],
+        past_kv_state: Optional[Tuple[torch.Tensor | None, torch.Tensor | None]],
         use_cache=False,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         return q, k
@@ -294,7 +294,7 @@ class RotaryEmbedding(PositionEncoder):
         q: torch.Tensor,
         k: torch.Tensor,
         position_ids: Optional[torch.Tensor] = None,
-        past_kv_state: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
+        past_kv_state: Optional[Tuple[torch.Tensor | None, torch.Tensor | None]] = None,
         use_cache=False,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
@@ -319,7 +319,12 @@ class RotaryEmbedding(PositionEncoder):
             position_ids = torch.arange(
                 0, seq_len, dtype=torch.long, device=q.device
             ).repeat(k.size(0), 1)
-            if use_cache and past_kv_state is not None and past_kv_state[0].numel() > 0:
+            if (
+                use_cache
+                and past_kv_state is not None
+                and past_kv_state[0] is not None
+                and past_kv_state[0].numel() > 0
+            ):
                 position_ids += past_kv_state[0].size(2)
 
         if self.partial_rope != 1.0:
