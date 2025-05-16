@@ -47,7 +47,7 @@ class HFAdaptedGPTBigCodeDecoder(HFDecoder):
 
 
 class HFAdaptedGPTBigCodeHeadless(HFDecoderModelArchitecture):
-    """This is the Adapter for the base granite architecture"""
+    """This is the Adapter for the base gpt_bigcode architecture"""
 
     # attributes required by HF
     config_class = HFAdaptedGPTBigCodeConfig
