@@ -6,6 +6,10 @@ from fms.models.hf.gpt_bigcode import HFAdaptedGPTBigCodeForCausalLM
 from fms.models.hf.gpt_bigcode.modeling_gpt_bigcode_hf import (
     HFAdaptedGPTBigCodeHeadless,
 )
+from fms.models.hf.granite.modeling_granite_hf import (
+    HFAdaptedGraniteForCausalLM,
+    HFAdaptedGraniteHeadless,
+)
 from fms.models.hf.llama import HFAdaptedLLaMAForCausalLM
 from fms.models.hf.llama.modeling_llama_hf import HFAdaptedLLaMAHeadless
 from fms.models.hf.mixtral.modeling_mixtral_hf import (
@@ -18,6 +22,7 @@ from fms.models.hf.roberta.modeling_roberta_hf import (
 )
 from fms.models.hf.utils import register_fms_models
 from fms.models.llama import LLaMA
+from fms.models.granite import Granite, GraniteHeadless
 from fms.models.mixtral import Mixtral, MixtralHeadless
 from fms.models.roberta import RoBERTa, RoBERTaHeadless
 
@@ -27,6 +32,8 @@ mapping from an FMS model to its equivalent HF-Adapted model
 """
 _fms_to_hf_adapt_map = {
     LLaMA: HFAdaptedLLaMAForCausalLM,
+    Granite: HFAdaptedGraniteForCausalLM,
+    GraniteHeadless: HFAdaptedGraniteHeadless,
     GPTBigCode: HFAdaptedGPTBigCodeForCausalLM,
     GPTBigCodeHeadless: HFAdaptedGPTBigCodeHeadless,
     RoBERTa: HFAdaptedRoBERTaForMaskedLM,
@@ -36,20 +43,22 @@ _fms_to_hf_adapt_map = {
 }
 
 """
-list of all headless base HF-Adapted models used in registration 
+list of all headless base HF-Adapted models used in registration
 """
 _headless_models = [
     HFAdaptedGPTBigCodeHeadless,
+    HFAdaptedGraniteHeadless,
     HFAdaptedLLaMAHeadless,
     HFAdaptedRoBERTaHeadless,
     HFAdaptedMixtralHeadless,
 ]
 
 """
-list of all causal-lm HF-Adapted models used in registration 
+list of all causal-lm HF-Adapted models used in registration
 """
 _causal_lm_models = [
     HFAdaptedGPTBigCodeForCausalLM,
+    HFAdaptedGraniteForCausalLM,
     HFAdaptedLLaMAForCausalLM,
     HFAdaptedMixtralForCausalLM,
 ]
