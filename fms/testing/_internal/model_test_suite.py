@@ -351,7 +351,9 @@ class ModelConsistencyTestSuite(ModelFixtureMixin, SignatureFixtureMixin):
         unfused_model = apply_unfuse_weights(model)
         unfused_signature = get_signature(
             unfused_model,
+            inp=self._get_signature_input_ids,
             params=self._get_signature_params,
+            optional_params=self._get_signature_optional_params,
             logits_getter_fn=self._get_signature_logits_getter_fn,
         )
 
