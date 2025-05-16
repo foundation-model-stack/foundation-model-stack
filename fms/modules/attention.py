@@ -39,18 +39,6 @@ __sdpa_previous_math: bool = torch.backends.cuda.math_sdp_enabled()
 __type_factory_map: dict[str, dict[str, Callable]] = {}
 
 
-"""
-query: torch.Tensor,
-    key_cache: torch.Tensor,
-    value_cache: torch.Tensor,
-    nheads: int,
-    kvheads: int,
-    p_dropout: float,
-    scale_factor: float,
-    **attn_kwargs: Unpack[SDPAAttentionKwargs],
-"""
-
-
 class AttentionKwargs(TypedDict, total=False):
     """
     The attention kwargs to be passed to fms model forward.
@@ -107,6 +95,7 @@ def register_attention_op(
     update_attn_kwargs_op: Optional[
         Callable[[Unpack[AttentionKwargs]], AttentionKwargs]
     ] = None,
+    validate_attn_kwargs_op: Optional[Callable] = None,
 ) -> None:
     """Register a custom attention operation to be used within MultiHeadAttention. This method also provides the ability to register other useful constructs related to the attention type.
 
@@ -149,6 +138,9 @@ def register_attention_op(
         "update_attn_kwargs": (lambda **attn_kwargs: attn_kwargs)
         if update_attn_kwargs_op is None
         else update_attn_kwargs_op,
+        "validate_attn_kwargs": (lambda **_: None)
+        if validate_attn_kwargs_op is None
+        else validate_attn_kwargs_op,
     }
     __type_factory_map[attn_type] = compute_dict
 
