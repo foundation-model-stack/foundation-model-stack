@@ -418,6 +418,10 @@ def generate(
                 torch._dynamo.mark_dynamic(mask_i, 2)
                 torch._dynamo.mark_dynamic(mask_i, 3)
 
+                for k_i, v_i in current_kv_cache:
+                    torch._dynamo.mark_dynamic(k_i, 0)
+                    torch._dynamo.mark_dynamic(v_i, 0)
+
                 only_last_token = kwargs.get("only_last_token", False)
 
                 output, current_kv_cache = model(
@@ -452,6 +456,10 @@ def generate(
             torch._dynamo.mark_dynamic(kwargs["block_table"], 1)
             torch._dynamo.mark_static(kwargs["slot_mapping"], 1)  # always 1
             torch._dynamo.mark_static(kwargs["position_ids"], 1)  # always 1
+
+            for k_i, v_i in kwargs["past_key_value_states"]:
+                torch._dynamo.mark_dynamic(k_i, 0)
+                torch._dynamo.mark_dynamic(v_i, 0)
 
             output = model(input_ids, **kwargs)
         if use_cache:
