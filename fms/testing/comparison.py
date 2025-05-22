@@ -1,5 +1,4 @@
 import dataclasses
-import inspect
 from typing import Callable, Dict, List, Optional, Union
 
 import numpy as np
@@ -74,19 +73,6 @@ def get_signature(
 
         if not optional_params:
             optional_params = {}
-
-        all_forward_params = inspect.signature(model.forward).parameters
-        params_to_ignore = []
-        for k, v in optional_params.items():
-            if k in all_forward_params:
-                optional_params[k] = v
-            else:
-                params_to_ignore.append(k)
-
-        if len(params_to_ignore) != 0:
-            print(
-                f"the following params were ignored as they did not exist in the forward function: {params_to_ignore}"
-            )
 
         if isinstance(params, list):
             inps = {p: inp for p in params}
