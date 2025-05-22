@@ -110,6 +110,7 @@ def mask_2d_to_3d_bidirectional(
 def _infer_model_configuration(
     model_id_or_path: str | os.PathLike,
     download_weights: bool = True,
+    model_kwargs=None,
 ) -> Dict[str, Any]:
     # if the path does not exist, download it from huggingface and get the local path
     if not os.path.exists(model_id_or_path):
@@ -133,11 +134,15 @@ def _infer_model_configuration(
             allow_patterns = ["config.json"]
             ignore_patterns = None
 
+        cache_dir = os.environ.get("HF_HOME", None)
+        if cache_dir:
+            cache_dir = cache_dir + "/hub"
+
         model_path = snapshot_download(
             repo_id=str(model_id_or_path),
             ignore_patterns=ignore_patterns,
             allow_patterns=allow_patterns,
-            cache_dir=os.environ.get("HF_HOME", None),
+            cache_dir=cache_dir,
         )
     else:
         model_path = str(model_id_or_path)
@@ -277,7 +282,11 @@ def _infer_model_configuration(
                     "lm_head": "head",
                 }
 
-                def fp8_linear_type(name):
+                attn_name = None
+                if model_kwargs:
+                    attn_name = model_kwargs.get("attn_name", None)
+
+                def fp8_linear_type(name: str) -> str:
                     for ignored_layer in quant_config["ignore"]:
                         fms_ign_layer = translations[ignored_layer]
                         if name in fms_ign_layer:
@@ -290,6 +299,24 @@ def _infer_model_configuration(
                             return "fp8"
                     return "torch_linear"
 
+                def fp8_output_dtype(name):
+                    if attn_name and "fp8" in attn_name:
+                        if "query" in name:
+                            return None
+                        if "key" in name:
+                            return None
+                        if "value" in name:
+                            return torch.float8_e4m3fn
+                        if "dense" in name:
+                            return None
+                        if "w1" in name:
+                            return None
+                        if "w2" in name:
+                            return None
+                        if "wg" in name:
+                            return None
+                    return None
+
                 config_params["linear_config"] = {
                     "linear_type": fp8_linear_type,
                     "input_activations": quant_config["config_groups"]["group_0"][
@@ -299,6 +326,7 @@ def _infer_model_configuration(
                         "output_activations"
                     ],
                     "weights": quant_config["config_groups"]["group_0"]["weights"],
+                    "output_dtype": fp8_output_dtype,
                 }
 
     return config_params

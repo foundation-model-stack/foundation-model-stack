@@ -102,6 +102,12 @@ parser.add_argument(
     help="Pad inputs to a minimum specified length. If any prompt is larger than the specified length, padding will be determined by the largest prompt",
     default=0,
 )
+parser.add_argument(
+    "--attn_name",
+    type=str,
+    help="Type of attention to use",
+    default="sdpa_causal",
+)
 parser.add_argument("--context_file", type=str, default=None, help="File to summarize")
 
 args = parser.parse_args()
@@ -158,6 +164,8 @@ tokenizer = tokenizers.get_tokenizer(args.tokenizer)
 model.eval()
 torch.set_grad_enabled(False)
 print("loading complete on rank", local_rank)
+
+print(model)
 
 if args.compile:
     print("compiling model")
@@ -228,6 +236,7 @@ def print_result(result):
 
 
 def infer(use_cache, do_sample):
+    global padding_kwargs
     # With greedy generation (do_sample=False) we _should_ always get the same results.
     # There is currently a bug in start_pos for batched rotary embeddings that can lead
     # varying results for the same prompt.
@@ -242,6 +251,9 @@ def infer(use_cache, do_sample):
     else:
         # without ntk scaling, extending the seq length too far gives bogus results.
         max_seq_len = model.config.max_expected_seq_len
+    if padding_kwargs is None:
+        padding_kwargs = {}
+    padding_kwargs["attn_name"] = args.attn_name
     result = generate(
         model,
         ids,
