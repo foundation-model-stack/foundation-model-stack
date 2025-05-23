@@ -363,6 +363,9 @@ class FP8Linear(torch.nn.Module):
             preprocess_scale,
             preprocess_data,
         )
+        from torchao.dtypes.floatx.float8_layout import (
+            Float8MMConfig,
+        )
 
         qweight: AffineQuantizedTensor = self.construct_qweight_structure()
         if self.linear_config["input_activations"] is not None:
@@ -382,8 +385,6 @@ class FP8Linear(torch.nn.Module):
             qx = _input_activation_quant_func_fp8(x, **input_quant_kwargs)
 
             # Copied from torchao _linear_fp8_act_fp8_weight_impl (with changes to support fp8 out)
-            scaled_mm_config = qweight._layout.mm_config
-            assert scaled_mm_config is not None
             out_shape = get_out_shape(qx.shape, qweight.shape)
 
             # Weight tensor preprocessing
@@ -405,7 +406,7 @@ class FP8Linear(torch.nn.Module):
                 input_scale = preprocess_scale(input_scale, qx.shape)
 
             # Preprocess data
-            inpt_data, w_data = preprocess_data(inpt_data, w_data.T, scaled_mm_config)
+            inpt_data, w_data = preprocess_data(inpt_data, w_data.T, Float8MMConfig(use_fast_accum=True))
 
             # Perform the computation
             output_dtype = self.output_dtype if self.output_dtype else qx.dtype
@@ -416,7 +417,7 @@ class FP8Linear(torch.nn.Module):
                 w_scale,
                 output_dtype=output_dtype,
                 bias=getattr(self, "bias", None),
-                use_fast_accum=scaled_mm_config.use_fast_accum,
+                use_fast_accum=True,
             ).reshape(out_shape)
         else:
             out = torch.nn.functional.linear(
