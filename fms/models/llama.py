@@ -372,6 +372,12 @@ class LLaMA(nn.Module):
 
         return dec_out, present_key_value_states
 
+    def tie_weights(self):
+        """
+        When HF api calls tie_weights, we can ignore for now because we use self.shared
+        """
+        pass
+
     def forward(
         self,
         x: torch.Tensor,
