@@ -157,11 +157,16 @@ class GraniteBlock(nn.Module):
 class GraniteHeadless(nn.Module):
     def __init__(
         self,
-        config: GraniteConfig,
+        config: Optional[GraniteConfig] = None,
         distributed_strategy: DistributedStrategy = NoOpStrategy,
+        **kwargs,
     ):
         super(GraniteHeadless, self).__init__()
-        self.config = config
+        if config is not None:
+            self.config = config
+        else:
+            self.config = GraniteConfig()
+        self.config = self.config.updated(**kwargs)
         self.distributed_strategy = distributed_strategy
 
         self.width = self.config.emb_dim
