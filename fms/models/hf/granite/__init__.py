@@ -36,7 +36,7 @@ def convert_to_hf(
             rms_norm_eps=hf_config.norm_eps,
             bos_token_id=hf_config.bos_token_id,
             eos_token_id=hf_config.eos_token_id,
-            rope_theta=hf_config.rope_base,
+            rope_theta=hf_config.rope_theta,
             attention_dropout=hf_config.p_dropout,
         )
     )
@@ -76,8 +76,6 @@ def convert_to_hf(
             )
             oss_hf_layer.mlp.gate_proj.weight.copy_(wg)
             oss_hf_layer.mlp.up_proj.weight.copy_(w1)
-            oss_hf_layer.mlp.down_proj.weight.copy_(fms_hf_layer.ff_sub_layer.w2.weight)
-
             oss_hf_layer.mlp.down_proj.weight.copy_(fms_hf_layer.ff_sub_layer.w2.weight)
 
             # layer norm
