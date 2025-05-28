@@ -165,8 +165,6 @@ model.eval()
 torch.set_grad_enabled(False)
 print("loading complete on rank", local_rank)
 
-print(model)
-
 if args.compile:
     print("compiling model")
     # compiling can make first inference pass slow

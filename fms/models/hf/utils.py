@@ -107,6 +107,80 @@ def mask_2d_to_3d_bidirectional(
     return mask_encoder.unsqueeze(1) == mask_decoder.unsqueeze(2)
 
 
+def _infer_quantization_config(
+    quant_config: dict,
+    model_kwargs: Optional[dict],
+) -> Optional[dict]:
+    # There's many quantization packages compatible with HF
+    # We initially focus on llm-compressor as it is the one used in FMS-MO
+
+    # llm-compressor saves its checkpoints with quant_method = compressed-tensors
+    # quantization_status tells us whether the model has already been quantized
+    #   We only support loading already quantized models (compressed status)
+    if (
+        quant_config["quant_method"] == "compressed-tensors"
+        and quant_config["quantization_status"] == "compressed"
+    ):
+        # FP8 quantization will have FP8 weights
+        # We assume a single quantization group (group_0), to follow fms-mo checkpoints
+        # num_bits and type tells us "float" with "8" bits, aka FP8
+        if (
+            quant_config["config_groups"]["group_0"]["weights"]["type"] == "float"
+            and quant_config["config_groups"]["group_0"]["weights"]["num_bits"] == 8
+        ):
+            attn_name = None
+            if model_kwargs:
+                attn_name = model_kwargs.get("attn_name", None)
+
+            # This is used by get_linear to decide whether a linear layer
+            # will be quantized or not inside the model
+            def fp8_linear_type(name: str) -> str:
+                # We need to translate HF names to FMS names
+                translations = {
+                    "lm_head": "head",
+                }
+                for ignored_layer in quant_config["ignore"]:
+                    assert isinstance(ignored_layer, str)
+                    fms_ign_layer = translations.get(ignored_layer, ignored_layer)
+                    if name in fms_ign_layer:
+                        return "torch_linear"
+                for pattern in quant_config["config_groups"]["group_0"]["targets"]:
+                    # Special case from llm-compressor that covers all linear layers
+                    # not in the ignore pattern
+                    assert isinstance(pattern, str)
+                    if pattern == "Linear":
+                        return "fp8"
+                    if name in translations.get(pattern, pattern):
+                        return "fp8"
+                return "torch_linear"
+
+            # FP8 matmuls can return in multiple dtypes if using pytorch's API
+            # (_scaled_mm), which we do. Depending on the attention implementation,
+            # we might want the return dtype to be the default model dtype
+            # (usually BF16) or FP8. Our FP8 linear layer implementation supports
+            # this choice, through the "output_dtype" function
+            def fp8_output_dtype(name):
+                if attn_name and "fp8" in attn_name:
+                    # For FP8 attention, only value needs to be returned
+                    # in FP8, as query and key will go through RoPE first
+                    if "value" in name:
+                        return torch.float8_e4m3fn
+                return None
+
+            return {
+                "linear_type": fp8_linear_type,
+                "input_activations": quant_config["config_groups"]["group_0"][
+                    "input_activations"
+                ],
+                "output_activations": quant_config["config_groups"]["group_0"][
+                    "output_activations"
+                ],
+                "weights": quant_config["config_groups"]["group_0"]["weights"],
+                "output_dtype": fp8_output_dtype,
+            }
+    return None
+
+
 def _infer_model_configuration(
     model_id_or_path: str | os.PathLike,
     download_weights: bool = True,
@@ -268,66 +342,9 @@ def _infer_model_configuration(
     ## infer quantization parameters
     quant_config = getattr(config, "quantization_config", None)
     if quant_config is not None:
-        # from llm-compressor
-        if (
-            quant_config["quant_method"] == "compressed-tensors"
-            and quant_config["quantization_status"] == "compressed"
-        ):
-            # if FP8
-            if (
-                quant_config["config_groups"]["group_0"]["weights"]["type"] == "float"
-                and quant_config["config_groups"]["group_0"]["weights"]["num_bits"] == 8
-            ):
-                translations = {
-                    "lm_head": "head",
-                }
-
-                attn_name = None
-                if model_kwargs:
-                    attn_name = model_kwargs.get("attn_name", None)
-
-                def fp8_linear_type(name: str) -> str:
-                    for ignored_layer in quant_config["ignore"]:
-                        fms_ign_layer = translations[ignored_layer]
-                        if name in fms_ign_layer:
-                            return "torch_linear"
-                    for pattern in quant_config["config_groups"]["group_0"]["targets"]:
-                        # Special case that covers all linear layers
-                        if pattern == "Linear":
-                            return "fp8"
-                        if name in pattern:
-                            return "fp8"
-                    return "torch_linear"
-
-                def fp8_output_dtype(name):
-                    if attn_name and "fp8" in attn_name:
-                        if "query" in name:
-                            return None
-                        if "key" in name:
-                            return None
-                        if "value" in name:
-                            return torch.float8_e4m3fn
-                        if "dense" in name:
-                            return None
-                        if "w1" in name:
-                            return None
-                        if "w2" in name:
-                            return None
-                        if "wg" in name:
-                            return None
-                    return None
-
-                config_params["linear_config"] = {
-                    "linear_type": fp8_linear_type,
-                    "input_activations": quant_config["config_groups"]["group_0"][
-                        "input_activations"
-                    ],
-                    "output_activations": quant_config["config_groups"]["group_0"][
-                        "output_activations"
-                    ],
-                    "weights": quant_config["config_groups"]["group_0"]["weights"],
-                    "output_dtype": fp8_output_dtype,
-                }
+        linear_config = _infer_quantization_config(quant_config, model_kwargs)
+        if linear_config:
+            config_params["linear_config"] = linear_config
 
     return config_params
 

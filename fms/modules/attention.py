@@ -1,6 +1,5 @@
 import abc
 import functools
-import math
 from typing import (
     Any,
     Callable,
@@ -264,113 +263,6 @@ def _sdpa_compute_op(
     return attn
 
 
-class MathFP8AttentionKwargs(AttentionKwargs):
-    mask: NotRequired[torch.Tensor]
-    is_causal_mask: bool
-
-
-def _math_fp8_store_op(
-    keys: torch.Tensor,
-    values: torch.Tensor,
-    key_cache: Optional[torch.Tensor],
-    value_cache: Optional[torch.Tensor],
-    **attn_kwargs,
-) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-    # keys comes from rope, so not yet fp8 (assume scale=1)
-    keys = keys.transpose(2, 1).to(torch.float8_e4m3fn)
-    values = values.transpose(2, 1)
-
-    if key_cache is not None and value_cache is not None and value_cache.numel() > 0:
-        key_cache_result = torch.cat((key_cache, keys), dim=2)
-        value_cache_result = torch.cat((value_cache, values), dim=2)
-        return (
-            key_cache_result,
-            value_cache_result,
-            key_cache_result,
-            value_cache_result,
-        )
-    else:
-        return (keys, values, keys, values)
-
-
-# TODO: Doens't quite work yet, more discussion needed
-def _math_fp8_compute_op(
-    query: torch.Tensor,
-    key_cache: torch.Tensor,
-    value_cache: torch.Tensor,
-    nheads: int,
-    kvheads: int,
-    p_dropout: float,
-    scale_factor: Optional[float],
-    **attn_kwargs,
-) -> torch.Tensor:
-    # queries comes from rope, so not yet fp8 (assume scale=1)
-    orig_dtype = query.dtype
-    query = query.transpose(2, 1).to(torch.float8_e4m3fn)
-
-    # no longer transposing prior to store, so need to check this in case of no cache
-    if key_cache.shape[1] != kvheads and key_cache.shape[2] == kvheads:
-        key_cache = key_cache.transpose(2, 1).to(
-            torch.float8_e4m3fn
-        )  # might not have been converted
-        value_cache = value_cache.transpose(2, 1)
-
-    mask = attn_kwargs.get("mask", None)
-    if mask is not None:
-        # Our expected mask format is bs x q_len x k_len, so to make it broadcastable
-        # we need to create the nheads dimension
-        while len(mask.size()) != 4:  # expects bs (x nheads) x q_len x kv_len
-            mask = mask.unsqueeze(1)
-
-    L, S = query.size(-2), key_cache.size(-2)
-    scale_factor = (
-        1 / math.sqrt(query.size(-1)) if scale_factor is None else scale_factor
-    )
-    attn_bias = torch.zeros(L, S, dtype=query.dtype, device=query.device)
-    if attn_kwargs.get("is_causal_mask", False):
-        assert mask is None
-        temp_mask = torch.ones(L, S, dtype=torch.bool).tril(diagonal=0)
-        attn_bias.masked_fill_(temp_mask.logical_not(), float("-inf"))
-        attn_bias.to(torch.float32)
-
-    if mask is not None:
-        if mask.dtype == torch.bool:
-            attn_bias.masked_fill_(mask.logical_not(), float("-inf"))
-        else:
-            attn_bias = mask + attn_bias
-
-    expansion = nheads // kvheads
-    if expansion > 1:
-        key_cache = key_cache.repeat_interleave(
-            query.size(-3) // key_cache.size(-3), -3
-        )
-        value_cache = value_cache.repeat_interleave(
-            query.size(-3) // key_cache.size(-3), -3
-        )
-
-    scale = torch.ones((1,), dtype=torch.float32, device=query.device)
-    print(query.shape, query.dtype)
-    attn_weight = (
-        torch._scaled_mm(
-            query,
-            key_cache.transpose(-2, -1),
-            scale,
-            scale,
-            out_dtype=torch.float32,
-            use_fast_accum=True,
-        )
-        * scale_factor
-    )
-    attn_weight += attn_bias
-    attn_weight = torch.softmax(attn_weight, dim=-1)
-    attn_weight = torch.dropout(attn_weight, p_dropout, train=True)
-    # Do matmul in fp32 for now?
-    attn = attn_weight @ value_cache.to(orig_dtype)
-
-    attn = attn.to(orig_dtype).transpose(2, 1).contiguous()
-    return attn
-
-
 def _sdpa_update_attn_kwargs(**attn_kwargs):
     # this is updating the mask for decoding
     mask = attn_kwargs.get("mask", None)
@@ -402,11 +294,6 @@ register_attention_op(
     "sdpa_bidirectional",
     _sdpa_store_op,
     functools.partial(_sdpa_compute_op, is_causal_mask=False),
-)
-register_attention_op(
-    "math_fp8",
-    _math_fp8_store_op,
-    _math_fp8_compute_op,
 )
 
 

@@ -1,5 +1,6 @@
+import copy
 from dataclasses import dataclass
-from typing import Any, Callable, MutableMapping, Optional
+from typing import Any, Callable, Mapping, Optional
 from importlib.util import find_spec
 
 import torch
@@ -50,7 +51,7 @@ def get_all_linear_type_to_sharding_maps() -> dict[str, Callable]:
 
 
 def get_linear_type(
-    linear_config: Optional[MutableMapping[str, Any]], module_name: Optional[str] = None
+    linear_config: Optional[Mapping[str, Any]], module_name: Optional[str] = None
 ) -> str:
     """Parse linear configuration mapping to extract selected linear type from
     `linear_config['linear_type']`.
@@ -90,17 +91,17 @@ def get_linear_type(
                 "the callable set up in linear_config['linear_type']. Function failed "
                 f"receiving module_name={module_name}. Check linear_type function."
             )
-    if isinstance(linear_type, str):
+    elif isinstance(linear_type, str):
         linear_type_str = linear_type.lower()
         if linear_type_str not in __type_factory_map:
             raise ValueError(
                 f"Unsupported linear_type `{linear_type_str}` in linear_config."
             )
-    if linear_type_str:
-        return linear_type_str
-    raise ValueError(
-        "linear_type must be either a supported string or a module-selection function."
-    )
+    else:
+        raise ValueError(
+            "linear_type must be either a supported string or a module-selection function."
+        )
+    return linear_type_str
 
 
 class UninitializedLinear(UninitializedModule):
@@ -121,7 +122,7 @@ def get_linear(
     in_features: int,
     out_features: int,
     bias: bool,
-    linear_config: Optional[MutableMapping[str, Any]] = None,
+    linear_config: Optional[Mapping[str, Any]] = None,
     module_name: Optional[str] = None,
 ) -> nn.Module:
     """Return linear module or module factory function of selected type.
@@ -143,15 +144,16 @@ def get_linear(
 
     linear_type = get_linear_type(linear_config, module_name)
 
-    if linear_config is None:
-        linear_config = {}
-    linear_config["module_name"] = module_name
+    extended_linear_config: dict = {}
+    if linear_config is not None:
+        extended_linear_config.update(**linear_config)
+    extended_linear_config["module_name"] = module_name
 
     if linear_type in __type_factory_map:
         if linear_type == "torch_linear":
             return __type_factory_map[linear_type](in_features, out_features, bias)
         return __type_factory_map[linear_type](
-            in_features, out_features, bias, linear_config
+            in_features, out_features, bias, extended_linear_config
         )
     raise KeyError(f"Unsupported linear type `{linear_type}`")
 
@@ -265,7 +267,7 @@ class FP8Linear(torch.nn.Module):
         in_features: int,
         out_features: int,
         bias: bool,
-        linear_config: MutableMapping[str, Any],
+        linear_config: Mapping[str, Any],
     ):
         super().__init__()
 
@@ -287,7 +289,6 @@ class FP8Linear(torch.nn.Module):
             "We only support pre-quantized weights for now"
         )
 
-        # For torchao, tihs needs to call to_affine_quantized_floatx_static
         self.weight = torch.nn.Parameter(
             torch.zeros(out_features, in_features, dtype=torch.float8_e4m3fn),
             requires_grad=False,
@@ -306,31 +307,31 @@ class FP8Linear(torch.nn.Module):
         if self.has_bias:
             self.bias = torch.nn.Parameter(torch.zeros((out_features,)))
 
-        # If this is true, then we need to call to_weight_tensor_with_linear_activation_quantization_metadata
         if (
             self.linear_config["input_activations"] is not None
             and not self.linear_config["input_activations"]["dynamic"]
         ):
-            scale_shape = (
+            input_scale_shape = (
                 (1,)
                 if self.linear_config["input_activations"]["strategy"] == "tensor"
                 else (out_features, 1)
             )
             self.input_scale = torch.nn.Parameter(
-                torch.ones(scale_shape), requires_grad=False
+                torch.ones(input_scale_shape), requires_grad=False
             )
 
-    def construct_qweight_structure(self):
-        from torchao.quantization.granularity import PerTensor, PerRow
-        from torchao.quantization.observer import get_block_size
-        from torchao.quantization.quant_primitives import ZeroPointDomain
-        from torchao.dtypes.affine_quantized_tensor import AffineQuantizedTensor
-        from torchao.dtypes.floatx.float8_layout import (
+    def _construct_qweight_structure(self):
+        from torchao.quantization.granularity import PerTensor, PerRow  # type: ignore
+        from torchao.quantization.observer import get_block_size  # type: ignore
+        from torchao.quantization.quant_primitives import ZeroPointDomain  # type: ignore
+        from torchao.dtypes.affine_quantized_tensor import AffineQuantizedTensor  # type: ignore
+        from torchao.dtypes.floatx.float8_layout import (  # type: ignore
             Float8AQTTensorImpl,
             Float8Layout,
             Float8MMConfig,
         )
 
+        # Construct the torchao machinery for the fp8 matmul
         weight_granularity = (
             PerTensor()
             if self.linear_config["weights"]["strategy"] == "tensor"
@@ -351,21 +352,25 @@ class FP8Linear(torch.nn.Module):
         )
 
     def forward(self, x):
-        from torchao.quantization.granularity import PerTensor, PerRow
-        from torchao.quantization.quant_api import _input_activation_quant_func_fp8
-        from torchao.dtypes.utils import get_out_shape
-        from torchao.dtypes.affine_quantized_tensor import AffineQuantizedTensor
-        from torchao.float8.inference import (
+        from torchao.quantization.granularity import PerTensor, PerRow  # type: ignore
+        from torchao.quantization.quant_api import _input_activation_quant_func_fp8  # type: ignore
+        from torchao.dtypes.utils import get_out_shape  # type: ignore
+        from torchao.dtypes.affine_quantized_tensor import AffineQuantizedTensor  # type: ignore
+        from torchao.float8.inference import (  # type: ignore
             _is_rowwise_scaled,
             addmm_float8_unwrapped_inference,
         )
-        from torchao.dtypes.floatx.float8_layout import (
+        from torchao.dtypes.floatx.float8_layout import (  # type: ignore
+            Float8MMConfig,
             preprocess_scale,
             preprocess_data,
         )
 
-        qweight: AffineQuantizedTensor = self.construct_qweight_structure()
+        # fp8 weight tensor for torchao
+        qweight: AffineQuantizedTensor = self._construct_qweight_structure()
+
         if self.linear_config["input_activations"] is not None:
+            # activations are also fp8, quantize as required by model
             act_granularity = (
                 PerTensor()
                 if self.linear_config["input_activations"]["strategy"] == "tensor"
@@ -382,8 +387,7 @@ class FP8Linear(torch.nn.Module):
             qx = _input_activation_quant_func_fp8(x, **input_quant_kwargs)
 
             # Copied from torchao _linear_fp8_act_fp8_weight_impl (with changes to support fp8 out)
-            scaled_mm_config = qweight._layout.mm_config
-            assert scaled_mm_config is not None
+            scaled_mm_config = Float8MMConfig(use_fast_accum=True)
             out_shape = get_out_shape(qx.shape, qweight.shape)
 
             # Weight tensor preprocessing
@@ -419,6 +423,7 @@ class FP8Linear(torch.nn.Module):
                 use_fast_accum=scaled_mm_config.use_fast_accum,
             ).reshape(out_shape)
         else:
+            # activations not quantized, dequant fp8 weight and do regular matmul
             out = torch.nn.functional.linear(
                 x, qweight.dequantize(), self.bias if self.has_bias else None
             )
@@ -436,7 +441,7 @@ def get_fp8_linear(
     in_features: int,
     out_features: int,
     bias: bool,
-    linear_config: MutableMapping[str, Any],
+    linear_config: Mapping[str, Any],
 ):
     if not find_spec("torchao"):
         raise ModuleNotFoundError("You need to install torchao for FP8 support in FMS!")
@@ -454,8 +459,8 @@ def shard_fp8_linear(
     sharding  | param          | shard | dim |
     ----------+----------------+-------+-----|
     colwise   | weight         |   Y   |  0  |
-              | weight_scale   |  Y/?  |  0  |
-              | input_scale    |  Y/?  |  0  |
+              | weight_scale   |   N   |  -  |
+              | input_scale    |   N   |  -  |
               | bias           |   Y   |  0  |
     ----------+----------------+-------+-----|
     rowwise   | weight         |   Y   |  1  |
@@ -469,6 +474,8 @@ def shard_fp8_linear(
         weight_strategy = getattr(linear_mod, "linear_config")["input_activations"][
             "strategy"
         ]
+        # Scales are per-row or per-tensor
+        # Only sharding needed when row parallel and per-row
         shard_scales = weight_strategy != "tensor" and module_info.sharding_dim == 1
         params: dict[str, LinearParameterShardingInfo] = {
             "weight": LinearParameterShardingInfo(
