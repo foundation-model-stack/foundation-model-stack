@@ -341,14 +341,17 @@ def generate(
     random.seed(0)
     random.shuffle(block_numbers)
     left_padded_prompt_mask = (kwargs["position_ids"] == 0).sum(dim=1) - 1
+    # remove empty pages
+    left_padded_prompt_mask = left_padded_prompt_mask - (left_padded_prompt_mask // BLOCK_SIZE) * BLOCK_SIZE
     current_context_lengths = (kwargs["position_ids"] != 0).sum(dim=1) + 1
     current_tkv_mask = left_padded_prompt_mask + current_context_lengths
     slot_mapping = []
     block_table = []
-    for seq_i in input_ids:
+    # each sequence has the possibility of a different tkv, so loop over that
+    for seq_tkv in current_tkv_mask:
         block_table_i = []
         slot_mapping_i = []
-        for pos_i in range(seq_i.size(0)):
+        for pos_i in range(seq_tkv):
             if pos_i % BLOCK_SIZE == 0:
                 block_number = block_numbers.pop(0)
                 block_table_i.append(block_number)
@@ -357,7 +360,6 @@ def generate(
             slot_mapping_i.append(slot)
         slot_mapping.append(slot_mapping_i)
         block_table.append(block_table_i)
-    kwargs["slot_mapping"] = torch.tensor(slot_mapping, dtype=torch.int64)
     kwargs["current_tkv_mask"] = None
     kwargs["left_padded_prompt_mask"] = None
     kwargs["use_cache"] = use_cache
@@ -376,18 +378,21 @@ def generate(
         if i > 0:
             kwargs["mask"] = None
             kwargs["position_ids"] = kwargs["position_ids"][:, -1:] + 1
-            pos_i = result.size(1) - 1
-            if pos_i % BLOCK_SIZE == 0:
-                for block_table_i in block_table:
-                    block_number = block_numbers.pop(0)
-                    block_table_i.append(block_number)
-            block_offset = pos_i % BLOCK_SIZE
 
+            # we no longer have a global pos_i, each sequence has its own pos_i
             slot_mapping = []
-            for block_table_i in block_table:
-                slot = block_table_i[-1] * BLOCK_SIZE + block_offset
+            for seq_i, pos_i in enumerate(current_tkv_mask):
+                if pos_i % BLOCK_SIZE == 0:
+                    block_number = block_numbers.pop(0)
+                    block_table[seq_i].append(block_number)
+                
+                block_offset = pos_i % BLOCK_SIZE
+                slot = block_table[seq_i][-1] * BLOCK_SIZE + block_offset
                 slot_mapping.append([slot])
-            kwargs["block_table"] = torch.tensor(block_table, dtype=torch.int64)
+            
+            # right pad the block_table since each sequence has a different tkv and may require more blocks
+            max_block_table_len = int(max(len(b) for b in block_table))
+            kwargs["block_table"] = torch.tensor([b + ([0] * (max_block_table_len - len(b))) for b in block_table], dtype=torch.int64)
             kwargs["slot_mapping"] = torch.tensor(slot_mapping, dtype=torch.int64)
             current_tkv_mask = current_tkv_mask + 1
             kwargs["current_tkv_mask"] = current_tkv_mask
@@ -399,11 +404,12 @@ def generate(
 
             outputs_list = []
             current_kv_cache = kwargs["past_key_value_states"]
-            for seq_i in range(input_ids.size(0)):
-                input_ids_i = input_ids[seq_i].unsqueeze(0)
-                slot_mapping_i = kwargs["slot_mapping"][seq_i].unsqueeze(0)
-                position_ids_i = kwargs["position_ids"][seq_i].unsqueeze(0)
-                mask_i = kwargs["mask"][seq_i].unsqueeze(0)
+            for seq_i, current_tkv in enumerate(current_tkv_mask):
+                # remove extra pads from the input_ids, slot_mapping, position_ids, mask to account for empty pages
+                input_ids_i = input_ids[seq_i][-current_tkv:].unsqueeze(0)
+                slot_mapping_i = torch.tensor(slot_mapping[seq_i][-current_tkv:], dtype=torch.int64).unsqueeze(0)
+                position_ids_i = kwargs["position_ids"][seq_i][-current_tkv:].unsqueeze(0)
+                mask_i = kwargs["mask"][seq_i][:, -current_tkv:, -current_tkv:].unsqueeze(0)
 
                 # batch dynamic
                 torch._dynamo.mark_static(input_ids_i, 0)
