@@ -1,4 +1,3 @@
-import copy
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Optional
 from importlib.util import find_spec
@@ -364,9 +363,6 @@ class FP8Linear(torch.nn.Module):
             Float8MMConfig,
             preprocess_scale,
             preprocess_data,
-        )
-        from torchao.dtypes.floatx.float8_layout import (
-            Float8MMConfig,
         )
 
         # fp8 weight tensor for torchao
