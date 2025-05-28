@@ -365,6 +365,9 @@ class FP8Linear(torch.nn.Module):
             preprocess_scale,
             preprocess_data,
         )
+        from torchao.dtypes.floatx.float8_layout import (
+            Float8MMConfig,
+        )
 
         # fp8 weight tensor for torchao
         qweight: AffineQuantizedTensor = self._construct_qweight_structure()
