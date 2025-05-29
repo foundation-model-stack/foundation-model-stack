@@ -17,7 +17,7 @@ from fms.utils import serialization
 from fms.utils.activation import str_to_activation
 from fms.utils.config import ModelConfig
 
-#TODO: percolate ditributed_strategy, taking care of _no_split_modules from original transformers code
+# TODO: percolate ditributed_strategy, taking care of _no_split_modules from original transformers code
 
 logger = logging.getLogger(__name__)
 
@@ -32,13 +32,13 @@ _granite_3_2_2b_text_config = GraniteConfig(
     max_expected_seq_len=131072,
     rope_theta=300000.0,
     pad_id=0,
-    p_dropout=0.0,  
+    p_dropout=0.0,
     tie_heads=True,
     embedding_multiplier=12.0,
     logits_scaling=8.0,
     residual_multiplier=0.22,
     attention_multiplier=0.015625,
-    fused_weights=True
+    fused_weights=True,
 )
 
 _granite_3_2_2b_vision_config = SiglipVisionConfig(
@@ -48,39 +48,40 @@ _granite_3_2_2b_vision_config = SiglipVisionConfig(
     num_attention_heads=16,
     num_hidden_layers=27,
     patch_size=14,
-    fused_weights=True
+    fused_weights=True,
 )
 
 
 _granite_3_2_2b_grid = [
-    [384,384],
-    [384,768],
-    [384,1152],
-    [384,1536],
-    [384,1920],
-    [384,2304],
-    [384,2688],
-    [384,3072],
-    [384,3456],
-    [384,3840],
-    [768,384],
-    [768,768],
-    [768,1152],
-    [768,1536],
-    [768,1920],
-    [1152,384],
-    [1152,768],
-    [1152,1152],
-    [1536,384],
-    [1536,768],
-    [1920,384],
-    [1920,768],
-    [2304,384],
-    [2688,384],
-    [3072,384],
-    [3456,384],
-    [3840,384]
+    [384, 384],
+    [384, 768],
+    [384, 1152],
+    [384, 1536],
+    [384, 1920],
+    [384, 2304],
+    [384, 2688],
+    [384, 3072],
+    [384, 3456],
+    [384, 3840],
+    [768, 384],
+    [768, 768],
+    [768, 1152],
+    [768, 1536],
+    [768, 1920],
+    [1152, 384],
+    [1152, 768],
+    [1152, 1152],
+    [1536, 384],
+    [1536, 768],
+    [1920, 384],
+    [1920, 768],
+    [2304, 384],
+    [2688, 384],
+    [3072, 384],
+    [3456, 384],
+    [3840, 384],
 ]
+
 
 @dataclass
 class LlavaNextConfig(ModelConfig):
@@ -90,7 +91,7 @@ class LlavaNextConfig(ModelConfig):
     image_token_index: int = 49155
     projector_hidden_act: str = "gelu"
     vision_feature_select_strategy: str = "full"
-    vision_feature_layer = [-24,-20,-12,-1]
+    vision_feature_layer = [-24, -20, -12, -1]
     image_grid_pinpoints = _granite_3_2_2b_grid
     tie_word_embeddings: bool = True
     multimodal_projector_bias: bool = True
@@ -100,7 +101,11 @@ class LlavaNextConfig(ModelConfig):
 class LlavaNextMultiModalProjector(nn.Module):
     def __init__(self, config: LlavaNextConfig):
         super().__init__()
-        num_feature_layers = 1 if isinstance(config.vision_feature_layer, int) else len(config.vision_feature_layer)
+        num_feature_layers = (
+            1
+            if isinstance(config.vision_feature_layer, int)
+            else len(config.vision_feature_layer)
+        )
         self.linear_1 = nn.Linear(
             config.vision_config.hidden_size * num_feature_layers,
             config.text_config.emb_dim,
@@ -108,17 +113,19 @@ class LlavaNextMultiModalProjector(nn.Module):
         )
         self.act = str_to_activation(config.projector_hidden_act)
         self.linear_2 = nn.Linear(
-            config.text_config.emb_dim, config.text_config.emb_dim, bias=config.multimodal_projector_bias
+            config.text_config.emb_dim,
+            config.text_config.emb_dim,
+            bias=config.multimodal_projector_bias,
         )
         self.config = config
 
-    #NOTE: HF doesn't do this
+    # NOTE: HF doesn't do this
     def reset_parameters(self):
         nn.init.xavier_uniform_(self.linear_1.weight)
         nn.init.xavier_uniform_(self.linear_2.weight)
         if self.config.multimodal_projector_bias:
             nn.init.normal_(self.linear_1.bias, std=1e-6)
-            nn.init.normal_(self.linear_2.bias, std=1e-6)        
+            nn.init.normal_(self.linear_2.bias, std=1e-6)
 
     def forward(self, image_features):
         hidden_states = self.linear_1(image_features)
@@ -141,22 +148,28 @@ class LlavaNext(nn.Module):
         else:
             self.config = LlavaNextConfig()
         self.config = self.config.updated(**kwargs)
-        self.distributed_strategy = distributed_strategy        
+        self.distributed_strategy = distributed_strategy
 
         if not isinstance(self.config.vision_config, SiglipVisionConfig):
-            print("FMS implementation of LlavaNext currently supports only Siglip vision model")
+            print(
+                "FMS implementation of LlavaNext currently supports only Siglip vision model"
+            )
         if not isinstance(self.config.text_config, GraniteConfig):
-            print("FMS implementation of LlavaNext currently supports only Granite language model")
-        
+            print(
+                "FMS implementation of LlavaNext currently supports only Granite language model"
+            )
+
         # Only supporting granite text decoder encoder for now
         self.language_model = Granite(self.config.text_config)
 
         # Only supporting siglip vision encoder for now
         self.vision_tower = SiglipVision(self.config.vision_config)
-        
+
         self.multi_modal_projector = LlavaNextMultiModalProjector(config)
         embed_std = 1 / math.sqrt(config.text_config.emb_dim)
-        self.image_newline = nn.Parameter(torch.randn(config.text_config.emb_dim) * embed_std)
+        self.image_newline = nn.Parameter(
+            torch.randn(config.text_config.emb_dim) * embed_std
+        )
         self.vocab_size = config.text_config.src_vocab_size
 
     def reset_parameters(self):
@@ -190,9 +203,10 @@ class LlavaNext(nn.Module):
 
         return unpadded_tensor
 
-
     # TODO: fix graph break in the HF impl here
-    def select_best_resolution(self, original_size, possible_resolutions: list) -> tuple:
+    def select_best_resolution(
+        self, original_size, possible_resolutions: list
+    ) -> tuple:
         if not isinstance(original_size, (list, tuple)):
             original_size = original_size.tolist()
 
@@ -203,19 +217,24 @@ class LlavaNext(nn.Module):
 
         for height, width in possible_resolutions:
             scale = min(width / original_width, height / original_height)
-            downscaled_width, downscaled_height = int(original_width * scale), int(original_height * scale)
-            effective_resolution = min(downscaled_width * downscaled_height, original_width * original_height)
+            downscaled_width, downscaled_height = (
+                int(original_width * scale),
+                int(original_height * scale),
+            )
+            effective_resolution = min(
+                downscaled_width * downscaled_height, original_width * original_height
+            )
             wasted_resolution = (width * height) - effective_resolution
 
             if effective_resolution > max_effective_resolution or (
-                effective_resolution == max_effective_resolution and wasted_resolution < min_wasted_resolution
+                effective_resolution == max_effective_resolution
+                and wasted_resolution < min_wasted_resolution
             ):
                 max_effective_resolution = effective_resolution
                 min_wasted_resolution = wasted_resolution
                 best_fit = (height, width)
 
         return best_fit
-
 
     def image_size_to_num_patches(self, image_size, grid_pinpoints, patch_size: int):
         height, width = self.select_best_resolution(image_size, grid_pinpoints)
@@ -224,7 +243,6 @@ class LlavaNext(nn.Module):
             for j in range(0, width, patch_size):
                 num_patches += 1
         return num_patches
-
 
     # HF impl
     def get_image_features(
@@ -244,17 +262,27 @@ class LlavaNext(nn.Module):
 
         if pixel_values.dim() == 5:
             # stacked if input is (batch_size, num_patches, num_channels, height, width)
-            _pixel_values_list = [pix_val[:num_patch] for pix_val, num_patch in zip(pixel_values, image_num_patches)]
+            _pixel_values_list = [
+                pix_val[:num_patch]
+                for pix_val, num_patch in zip(pixel_values, image_num_patches)
+            ]
             pixel_values = torch.cat(_pixel_values_list, dim=0)
         elif pixel_values.dim() != 4:
             # otherwise has to be stacked from list of (num_patches, num_channels, height, width)
-            raise ValueError(f"pixel_values of shape {pixel_values.shape}, expect to be of 4 or 5 dimensions")
+            raise ValueError(
+                f"pixel_values of shape {pixel_values.shape}, expect to be of 4 or 5 dimensions"
+            )
 
-        _, _, image_features = self.vision_tower(pixel_values, output_hidden_states=True)
+        _, _, image_features = self.vision_tower(
+            pixel_values, output_hidden_states=True
+        )
         if isinstance(self.config.vision_feature_layer, int):
             selected_image_feature = image_features[self.config.vision_feature_layer]
         else:
-            hs_pool = [image_features[layer_idx] for layer_idx in self.config.vision_feature_layer]
+            hs_pool = [
+                image_features[layer_idx]
+                for layer_idx in self.config.vision_feature_layer
+            ]
             selected_image_feature = torch.cat(hs_pool, dim=-1)
 
         if self.config.vision_feature_select_strategy == "default":
@@ -264,7 +292,6 @@ class LlavaNext(nn.Module):
         image_features = torch.split(image_features, image_num_patches, dim=0)
         return image_features
 
-
     def pack_image_features(self, image_features, image_sizes, image_newline=None):
         new_image_features = []
 
@@ -272,13 +299,20 @@ class LlavaNext(nn.Module):
             if image_feature.shape[0] > 1:
                 base_image_feature = image_feature[0]
                 image_feature = image_feature[1:]
-                height = width = self.config.vision_config.image_size // self.config.vision_config.patch_size
-                
-                patch_height, patch_width = self.select_best_resolution(image_sizes[image_idx], self.config.image_grid_pinpoints)
+                height = width = (
+                    self.config.vision_config.image_size
+                    // self.config.vision_config.patch_size
+                )
+
+                patch_height, patch_width = self.select_best_resolution(
+                    image_sizes[image_idx], self.config.image_grid_pinpoints
+                )
                 num_patch_height = patch_height // self.config.vision_config.image_size
                 num_patch_width = patch_width // self.config.vision_config.image_size
 
-                image_feature = image_feature.view(num_patch_height, num_patch_width, height, width, -1)
+                image_feature = image_feature.view(
+                    num_patch_height, num_patch_width, height, width, -1
+                )
                 image_feature = image_feature.permute(4, 0, 2, 1, 3).contiguous()
                 image_feature = image_feature.flatten(1, 2).flatten(2, 3)
                 image_feature = self.unpad_image(image_feature, image_sizes[image_idx])
@@ -297,11 +331,12 @@ class LlavaNext(nn.Module):
             else:
                 image_feature = image_feature[0]
                 if image_newline is not None:
-                    image_feature = torch.cat((image_feature, image_newline[None].to(image_feature)), dim=0)
+                    image_feature = torch.cat(
+                        (image_feature, image_newline[None].to(image_feature)), dim=0
+                    )
             new_image_features.append(image_feature)
         image_features = torch.cat(new_image_features, dim=0)
         return image_features
-
 
     def forward(
         self,
@@ -329,12 +364,20 @@ class LlavaNext(nn.Module):
                 image_features,
                 image_sizes,
                 image_newline=self.image_newline,
-            )            
+            )
 
-            special_image_mask = (input_ids == self.config.image_token_index).unsqueeze(-1)
-            special_image_mask = special_image_mask.expand_as(inputs_embeds).to(inputs_embeds.device)
-            image_features = image_features.to(inputs_embeds.device, inputs_embeds.dtype)
-            inputs_embeds = inputs_embeds.masked_scatter(special_image_mask, image_features)
+            special_image_mask = (input_ids == self.config.image_token_index).unsqueeze(
+                -1
+            )
+            special_image_mask = special_image_mask.expand_as(inputs_embeds).to(
+                inputs_embeds.device
+            )
+            image_features = image_features.to(
+                inputs_embeds.device, inputs_embeds.dtype
+            )
+            inputs_embeds = inputs_embeds.masked_scatter(
+                special_image_mask, image_features
+            )
 
         outputs = self.language_model(
             inputs_embeds,
@@ -345,7 +388,7 @@ class LlavaNext(nn.Module):
             **attn_kwargs,
         )
 
-        return outputs       
+        return outputs
 
     def prepare_inputs_for_generation(
         self,
@@ -353,7 +396,7 @@ class LlavaNext(nn.Module):
         input_ids,
         kwargs,
     ):
-        if kwargs['use_cache'] and iteration > 0:
+        if kwargs["use_cache"] and iteration > 0:
             kwargs["pixel_values"] = None
             kwargs["image_sizes"] = None
         return input_ids, kwargs
@@ -363,24 +406,29 @@ _granite_vision_3_2_2b_config = LlavaNextConfig()
 
 _architecture_name = "llava_next"
 
+
 def _llava_next_factory_factory(config):
     def factory(**kwargs):
         return LlavaNext(config, **kwargs)
+
     return factory
 
+
 models.register_model(
-    _architecture_name, "granite_vision_3_2_2b", _llava_next_factory_factory(_granite_vision_3_2_2b_config)
+    _architecture_name,
+    "granite_vision_3_2_2b",
+    _llava_next_factory_factory(_granite_vision_3_2_2b_config),
 )
 
 
 def _weight_fusion(
-        input_sd: Mapping, model_config: Optional[LlavaNextConfig] = None, **kwargs
+    input_sd: Mapping, model_config: Optional[LlavaNextConfig] = None, **kwargs
 ):
     has_fused_weights = True
     if model_config:
         if not model_config.fused_weights:
             has_fused_weights = False
-    
+
     new_sd = input_sd
     if has_fused_weights:
         new_sd = serialization._mlp_glu_unfused_to_fused_adapter_step(
@@ -388,22 +436,26 @@ def _weight_fusion(
         )
     return new_sd
 
+
 def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]:
     replacements = [
-        #vision    
-        (r"vision_tower\.vision_model\.head","vision_tower.head"),
-        (r"vision_tower\.vision_model\.encoder","vision_tower.encoder"),
-        (r"vision_tower\.vision_model\.embeddings","vision_tower.embeddings"),
-        (r"vision_tower\.vision_model\.post_layernorm","vision_tower.post_layernorm"),
+        # vision
+        (r"vision_tower\.vision_model\.head", "vision_tower.head"),
+        (r"vision_tower\.vision_model\.encoder", "vision_tower.encoder"),
+        (r"vision_tower\.vision_model\.embeddings", "vision_tower.embeddings"),
+        (r"vision_tower\.vision_model\.post_layernorm", "vision_tower.post_layernorm"),
         (r"self_attn\.k_proj", "attn.in_proj.key"),
         (r"self_attn\.v_proj", "attn.in_proj.value"),
         (r"self_attn\.q_proj", "attn.in_proj.query"),
         (r"self_attn\.out_proj", "attn.dense"),
         (r"mlp\.fc1", "mlp.w1"),
         (r"mlp\.fc2", "mlp.w2"),
-        #language
+        # language
         (r"language_model\.lm_head\.weight", "language_model.head.weight"),
-        (r"language_model.model.embed_tokens.weight", "language_model.base_model.embedding.weight"),
+        (
+            r"language_model.model.embed_tokens.weight",
+            "language_model.base_model.embedding.weight",
+        ),
         (r"language_model.model.norm", "language_model.base_model.dec_norm"),
         (r"language_model.model.layers", "language_model.base_model.layers"),
         (r"self_attn\.o_proj", "attn.dense"),
@@ -411,8 +463,7 @@ def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]
         (r"mlp\.up_proj", "ff_sub_layer.w1"),
         (r"mlp\.down_proj", "ff_sub_layer.w2"),
         (r"input_layernorm", "ln"),
-        (r"post_attention_layernorm", "ff_ln"),        
-
+        (r"post_attention_layernorm", "ff_ln"),
     ]
     new_sd = {}
     for name, param in input_sd.items():
@@ -433,13 +484,16 @@ def _get_rope_params(linear_type: str) -> list[str]:
     else:  # torch.nn.Linear
         return ["weight", "bias"]
 
+
 # From Granite model
 def _hf_to_fms_rope(
-    input_sd: Mapping[str, Any], model_config: Optional[LlavaNextConfig] = None, **kwargs
+    input_sd: Mapping[str, Any],
+    model_config: Optional[LlavaNextConfig] = None,
+    **kwargs,
 ) -> Mapping[str, Any]:
     new_sd = {}
     model_config = model_config.text_config
-    
+
     if model_config:
         head_size = model_config.emb_dim // model_config.nheads
         linear_type_str = "torch_linear"
@@ -496,14 +550,16 @@ def _hf_to_fms_rope(
 
     return new_sd
 
-    
+
 serialization.register_adapter_step(_architecture_name, "weight_fusion", _weight_fusion)
 
 serialization.register_adapter_step(
     _architecture_name, "hf_to_fms_names", _hf_to_fms_names
 )
 
-serialization.register_adapter_step(_architecture_name, "hf_to_fms_rope", _hf_to_fms_rope)
+serialization.register_adapter_step(
+    _architecture_name, "hf_to_fms_rope", _hf_to_fms_rope
+)
 
 serialization.register_adapter(
     _architecture_name,
