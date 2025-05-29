@@ -273,6 +273,7 @@ class GraniteHeadless(nn.Module):
         position_ids=None,
         past_key_value_states=None,
         use_cache=False,
+        is_input_embedded=False,
         **attn_kwargs: Unpack[AttentionKwargs],
     ):
         # Embed the given vocabulary indices using the given attention mask, with pre-/post-norm and dropout as specified
@@ -282,7 +283,8 @@ class GraniteHeadless(nn.Module):
         if past_key_value_states is None or len(past_key_value_states) == 0:
             past_key_value_states = [None for _ in range(len(self.layers))]
 
-        x_in = self.embedding(x_in)
+        if not is_input_embedded:
+            x_in = self.embedding(x_in)
         x_in = x_in * self.config.embedding_multiplier
 
         # this is the output cache for all the decoder layers
@@ -364,6 +366,7 @@ class Granite(nn.Module):
         past_key_value_states: Optional[Tuple[torch.FloatTensor,]] = None,
         use_cache: bool = False,
         only_last_token: bool = False,
+        is_input_embedded: Optional[bool] = False,
         **attn_kwargs: Unpack[AttentionKwargs],
     ):
         if position_ids is not None:
@@ -375,6 +378,7 @@ class Granite(nn.Module):
             position_ids,
             past_key_value_states,
             use_cache,
+            is_input_embedded,
             **attn_kwargs,
         )
 
@@ -408,6 +412,25 @@ _8b_config = GraniteConfig(
     attention_multiplier=0.0078125,
 )
 
+_3_1_2b_config = GraniteConfig(
+    src_vocab_size=49155,
+    emb_dim=2048,
+    norm_eps=1e-5,
+    nheads=32,
+    kvheads=8,
+    nlayers=40,
+    hidden_grow_factor=8192 / 2048,
+    max_expected_seq_len=131072,
+    rope_theta=5000000.0,
+    pad_id=0,
+    p_dropout=0.0,
+    tie_heads=True,
+    embedding_multiplier=12.0,
+    logits_scaling=8.0,
+    residual_multiplier=0.22,
+    attention_multiplier=0.015625,
+)
+
 _architecture_name = "granite"
 
 
@@ -419,6 +442,9 @@ def _granite_factory_factory(config):
 
 
 models.register_model(_architecture_name, "8b", _granite_factory_factory(_8b_config))
+models.register_model(
+    _architecture_name, "3_1_2b", _granite_factory_factory(_3_1_2b_config)
+)
 
 
 def _weight_fusion(
