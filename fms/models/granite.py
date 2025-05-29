@@ -366,7 +366,7 @@ class Granite(nn.Module):
         past_key_value_states: Optional[Tuple[torch.FloatTensor,]] = None,
         use_cache: bool = False,
         only_last_token: bool = False,
-        is_input_embedded: Optional[bool] = False, 
+        is_input_embedded: Optional[bool] = False,
         **attn_kwargs: Unpack[AttentionKwargs],
     ):
         if position_ids is not None:
@@ -442,7 +442,9 @@ def _granite_factory_factory(config):
 
 
 models.register_model(_architecture_name, "8b", _granite_factory_factory(_8b_config))
-models.register_model(_architecture_name, "3_1_2b", _granite_factory_factory(_3_1_2b_config))
+models.register_model(
+    _architecture_name, "3_1_2b", _granite_factory_factory(_3_1_2b_config)
+)
 
 
 def _weight_fusion(

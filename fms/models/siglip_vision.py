@@ -299,11 +299,11 @@ class SiglipVision(nn.Module):
         last_hidden_state, hidden_states = self.encoder(
             inputs_embeds=hidden_states,
             output_hidden_states=output_hidden_states,
-            **attn_kwargs
+            **attn_kwargs,
         )
         last_hidden_state = self.post_layernorm(last_hidden_state)
         pooler_output = self.head(last_hidden_state) if self.use_head else None
-        
+
         if output_hidden_states:
             return last_hidden_state, pooler_output, hidden_states
 
@@ -347,10 +347,10 @@ def _weight_fusion(
 
 def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]:
     replacements = [
-        (r"vision_model\.head","head"),
-        (r"^vision_model\.encoder","encoder"),
-        (r"vision_model\.embeddings","embeddings"),
-        (r"vision_model\.post_layernorm","post_layernorm"),
+        (r"vision_model\.head", "head"),
+        (r"^vision_model\.encoder", "encoder"),
+        (r"vision_model\.embeddings", "embeddings"),
+        (r"vision_model\.post_layernorm", "post_layernorm"),
         (r"self_attn\.k_proj", "attn.in_proj.key"),
         (r"self_attn\.v_proj", "attn.in_proj.value"),
         (r"self_attn\.q_proj", "attn.in_proj.query"),
