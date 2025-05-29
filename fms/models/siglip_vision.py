@@ -2,7 +2,7 @@ import logging
 import math
 import re
 from dataclasses import dataclass
-from typing import Any, Mapping, Optional, Tuple
+from typing import Any, Mapping, Optional, Tuple, Unpack
 
 import torch
 import torch.nn as nn
@@ -10,7 +10,11 @@ import numpy as np
 
 from fms import models
 from fms.distributed.strategy import DistributedStrategy, NoOpStrategy
-from fms.modules.attention import MultiHeadAttention
+from fms.modules.attention import (
+    AttentionKwargs,
+    MultiHeadAttention,
+    SDPAAttentionKwargs,
+)
 from fms.modules.feedforward import FeedForwardBlock
 from fms.modules.layernorm import LayerNormParameterized
 from fms.utils import serialization
@@ -142,11 +146,13 @@ class SiglipEncoderLayer(nn.Module):
     def forward(
         self,
         hidden_states: torch.Tensor,
-        **kwargs,
+        **attn_kwargs: Unpack[SDPAAttentionKwargs],
     ) -> Tuple[torch.FloatTensor]:
+        attn_kwargs["attn_name"] = attn_kwargs.get("attn_name", "sdpa_bidirectional")
+
         residual = hidden_states
         hidden_states = self.layer_norm1(hidden_states)
-        hidden_states = self.attn(q=hidden_states)
+        hidden_states = self.attn(q=hidden_states, **attn_kwargs)
         hidden_states = residual + hidden_states
 
         residual = hidden_states
@@ -171,12 +177,13 @@ class SiglipEncoder(nn.Module):
         self,
         inputs_embeds,
         output_hidden_states=False,
+        **attn_kwargs: Unpack[AttentionKwargs],
     ):
         hidden_states = inputs_embeds
         encoder_states = (hidden_states,) if output_hidden_states else None
 
         for encoder_layer in self.layers:
-            hidden_states = encoder_layer(hidden_states)
+            hidden_states = encoder_layer(hidden_states, **attn_kwargs)
             if output_hidden_states:
                 encoder_states = encoder_states + (hidden_states,)
 
@@ -269,9 +276,10 @@ class SiglipVision(nn.Module):
         self,
         pixel_values,
         output_hidden_states=False,
+        **attn_kwargs: Unpack[AttentionKwargs],
     ):
         hidden_states = self.embeddings(pixel_values)
-        last_hidden_state, hidden_states = self.encoder(inputs_embeds=hidden_states, output_hidden_states=output_hidden_states)
+        last_hidden_state, hidden_states = self.encoder(inputs_embeds=hidden_states, output_hidden_states=output_hidden_states, **attn_kwargs)
         last_hidden_state = self.post_layernorm(last_hidden_state)
         pooler_output = self.head(last_hidden_state) if self.use_head else None
         
