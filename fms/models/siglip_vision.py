@@ -2,7 +2,7 @@ import logging
 import math
 import re
 from dataclasses import dataclass
-from typing import Any, Mapping, Optional, Tuple
+from typing import Any, Mapping, Optional, Tuple, Unpack
 
 import torch
 import torch.nn as nn
@@ -10,7 +10,11 @@ import numpy as np
 
 from fms import models
 from fms.distributed.strategy import DistributedStrategy, NoOpStrategy
-from fms.modules.attention import MultiHeadAttention
+from fms.modules.attention import (
+    AttentionKwargs,
+    MultiHeadAttention,
+    SDPAAttentionKwargs,
+)
 from fms.modules.feedforward import FeedForwardBlock
 from fms.modules.layernorm import LayerNormParameterized
 from fms.utils import serialization
@@ -141,11 +145,14 @@ class SiglipEncoderLayer(nn.Module):
     def forward(
         self,
         hidden_states: torch.Tensor,
-        **kwargs,
+        #**kwargs,
+        **attn_kwargs: Unpack[SDPAAttentionKwargs],
     ) -> Tuple[torch.FloatTensor]:
+        attn_kwargs["attn_name"] = attn_kwargs.get("attn_name", "sdpa_bidirectional")
+
         residual = hidden_states
         hidden_states = self.layer_norm1(hidden_states)
-        hidden_states = self.self_attn(q=hidden_states)
+        hidden_states = self.self_attn(q=hidden_states, **attn_kwargs)
         hidden_states = residual + hidden_states
 
         residual = hidden_states
@@ -169,10 +176,11 @@ class SiglipEncoder(nn.Module):
     def forward(
         self,
         inputs_embeds,
+        **attn_kwargs: Unpack[AttentionKwargs],
     ):
         hidden_states = inputs_embeds
         for encoder_layer in self.layers:
-            hidden_states = encoder_layer(hidden_states)
+            hidden_states = encoder_layer(hidden_states, **attn_kwargs)
         return hidden_states
 
 
@@ -261,9 +269,10 @@ class SiglipVision(nn.Module):
     def forward(
         self,
         pixel_values,
+        **attn_kwargs: Unpack[AttentionKwargs],
     ):
         hidden_states = self.embeddings(pixel_values)
-        hidden_states = self.encoder(inputs_embeds=hidden_states)
+        hidden_states = self.encoder(inputs_embeds=hidden_states, **attn_kwargs)
         hidden_states = self.post_layernorm(hidden_states)
         pooler_output = self.head(hidden_states) if self.use_head else None
         return hidden_states, pooler_output
