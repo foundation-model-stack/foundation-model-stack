@@ -2,7 +2,7 @@ import logging
 import math
 import re
 from dataclasses import dataclass
-from typing import Any, Mapping, Optional
+from typing import Any, Mapping, Optional, Unpack
 
 import torch
 import torch.nn as nn
@@ -11,6 +11,7 @@ from fms import models
 from fms.models.siglip_vision import SiglipVision, SiglipVisionConfig
 from fms.models.granite import Granite, GraniteConfig
 from fms.modules.linear import get_linear_type
+from fms.modules.attention import AttentionKwargs
 from fms.distributed.strategy import DistributedStrategy, NoOpStrategy
 from fms.utils import serialization
 from fms.utils.activation import str_to_activation
@@ -307,13 +308,11 @@ class LlavaNext(nn.Module):
         input_ids=None,
         pixel_values=None,
         image_sizes=None,
-        #attention_mask=None,
-        mask=None,
         position_ids=None,
         past_key_value_states=None,
         inputs_embeds=None,
         use_cache=False,
-        **lm_kwargs,
+        **attn_kwargs: Unpack[AttentionKwargs],
     ):
         assert input_ids is not None
 
@@ -339,12 +338,11 @@ class LlavaNext(nn.Module):
 
         outputs = self.language_model(
             inputs_embeds,
-            mask=mask,
             position_ids=position_ids,
             past_key_value_states=past_key_value_states,
             use_cache=use_cache,
             is_input_embedded=True,
-            **lm_kwargs,
+            **attn_kwargs,
         )
 
         return outputs       
