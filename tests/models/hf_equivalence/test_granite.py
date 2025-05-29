@@ -71,7 +71,6 @@ def test_granite_8b_equivalence():
         model=hf_model,
         tokenizer=tokenizer,
         use_cache=True,
-        num_beams=3,
         max_new_tokens=20,
     )
     generator_hf_fms = pipeline(
@@ -79,7 +78,6 @@ def test_granite_8b_equivalence():
         model=hf_model_fms,
         tokenizer=tokenizer,
         use_cache=True,
-        num_beams=3,
         max_new_tokens=20,
     )
     output_hf = generator_hf(prompt)
