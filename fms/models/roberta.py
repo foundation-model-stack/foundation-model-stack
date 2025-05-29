@@ -14,6 +14,7 @@ from fms.modules.attention import (
     AttentionKwargs,
     MultiHeadAttention,
     SDPAAttentionKwargs,
+    get_attention_type,
 )
 from fms.modules.feedforward import FeedForwardBlock
 from fms.modules.head import MLPClassificationHead
@@ -275,6 +276,9 @@ class RoBERTa(nn.Module):
         token_type_ids: Optional[torch.Tensor] = None,
         **attn_kwargs: Unpack[AttentionKwargs],
     ):
+        get_attention_type(**attn_kwargs)["validate_attn_kwargs"](
+            input_ids=x, position_ids=position_ids, **attn_kwargs
+        )
         # run through the encoder layers
         x = self.base_model(
             x,
@@ -359,6 +363,10 @@ class RoBERTaForQuestionAnswering(nn.Module):
         token_type_ids: Optional[torch.Tensor] = None,
         **attn_kwargs: Unpack[AttentionKwargs],
     ):
+        get_attention_type(**attn_kwargs)["validate_attn_kwargs"](
+            input_ids=x, position_ids=position_ids, **attn_kwargs
+        )
+
         # run through the encoder layers
         x = self.base_model(
             x,
