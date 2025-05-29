@@ -25,17 +25,17 @@ logger = logging.getLogger(__name__)
 @dataclass
 class SiglipVisionConfig(ModelConfig):
     # Default config yiels vision encoder of the google/siglip-base-patch16-224 model
-    hidden_size=768
-    intermediate_size=3072
-    num_hidden_layers=12
-    num_attention_heads=12
-    num_channels=3
-    image_size=224
-    patch_size=16
-    hidden_act="gelu-tanh"
-    layer_norm_eps=1e-6
-    attention_dropout=0.0
-    fused_weights=True
+    hidden_size: int = 768
+    intermediate_size: int = 3072
+    num_hidden_layers: int = 12
+    num_attention_heads: int = 12
+    num_channels: int = 3
+    image_size: int = 224
+    patch_size: int = 16
+    hidden_act: str = "gelu-tanh"
+    layer_norm_eps: float = 1e-6
+    attention_dropout: float = 0.0
+    fused_weights: bool = True
 
 
 class SiglipVisionEmbeddings(nn.Module):
@@ -102,7 +102,7 @@ class SiglipEncoderLayer(nn.Module):
             use_high_precision_pow=True
         )
 
-        self.self_attn = MultiHeadAttention(
+        self.attn = MultiHeadAttention(
             self.embed_dim,
             emb_kq,
             emb_v,
@@ -110,6 +110,7 @@ class SiglipEncoderLayer(nn.Module):
             kvheads,
             p_dropout=self.config.attention_dropout,
             use_bias=True,
+            fused=self.config.fused_weights,
             scale_factor=attn_scale_factor,
         )
 
@@ -123,7 +124,7 @@ class SiglipEncoderLayer(nn.Module):
 
         self.mlp = FeedForwardBlock(
             config.hidden_size,
-            hidden_grow_factor=config.intermediate_size // config.hidden_size,
+            hidden_grow_factor=config.intermediate_size / config.hidden_size,
             activation_fn=str_to_activation(config.hidden_act),    #NOTE: using nn.GELU as opposed to nn.functional.gelu() as in HF impl
             use_bias=True,
             p_dropout=self.config.attention_dropout,
@@ -145,7 +146,7 @@ class SiglipEncoderLayer(nn.Module):
     ) -> Tuple[torch.FloatTensor]:
         residual = hidden_states
         hidden_states = self.layer_norm1(hidden_states)
-        hidden_states = self.self_attn(q=hidden_states)
+        hidden_states = self.attn(q=hidden_states)
         hidden_states = residual + hidden_states
 
         residual = hidden_states
@@ -169,11 +170,17 @@ class SiglipEncoder(nn.Module):
     def forward(
         self,
         inputs_embeds,
+        output_hidden_states=False,
     ):
         hidden_states = inputs_embeds
+        encoder_states = (hidden_states,) if output_hidden_states else None
+
         for encoder_layer in self.layers:
             hidden_states = encoder_layer(hidden_states)
-        return hidden_states
+            if output_hidden_states:
+                encoder_states = encoder_states + (hidden_states,)
+
+        return hidden_states, encoder_states
 
 
 class SiglipMultiheadAttentionPoolingHead(nn.Module):
@@ -194,7 +201,7 @@ class SiglipMultiheadAttentionPoolingHead(nn.Module):
 
         self.mlp = FeedForwardBlock(
             config.hidden_size,
-            hidden_grow_factor=config.intermediate_size // config.hidden_size,
+            hidden_grow_factor=config.intermediate_size / config.hidden_size,
             activation_fn=str_to_activation(config.hidden_act),    #NOTE: using nn.GELU as opposed to nn.functional.gelu() as in HF impl
             use_bias=True,
             p_dropout=config.attention_dropout,
@@ -261,12 +268,17 @@ class SiglipVision(nn.Module):
     def forward(
         self,
         pixel_values,
+        output_hidden_states=False,
     ):
         hidden_states = self.embeddings(pixel_values)
-        hidden_states = self.encoder(inputs_embeds=hidden_states)
-        hidden_states = self.post_layernorm(hidden_states)
-        pooler_output = self.head(hidden_states) if self.use_head else None
-        return hidden_states, pooler_output
+        last_hidden_state, hidden_states = self.encoder(inputs_embeds=hidden_states, output_hidden_states=output_hidden_states)
+        last_hidden_state = self.post_layernorm(last_hidden_state)
+        pooler_output = self.head(last_hidden_state) if self.use_head else None
+        
+        if output_hidden_states:
+            return last_hidden_state, pooler_output, hidden_states
+
+        return last_hidden_state, pooler_output
 
 
 _siglip_base_patch16_224_config = SiglipVisionConfig()
@@ -304,10 +316,10 @@ def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]
         (r"^vision_model\.encoder","encoder"),
         (r"vision_model\.embeddings","embeddings"),
         (r"vision_model\.post_layernorm","post_layernorm"),
-        (r"self_attn\.k_proj", "self_attn.in_proj.key"),
-        (r"self_attn\.v_proj", "self_attn.in_proj.value"),
-        (r"self_attn\.q_proj", "self_attn.in_proj.query"),
-        (r"self_attn\.out_proj", "self_attn.dense"),
+        (r"self_attn\.k_proj", "attn.in_proj.key"),
+        (r"self_attn\.v_proj", "attn.in_proj.value"),
+        (r"self_attn\.q_proj", "attn.in_proj.query"),
+        (r"self_attn\.out_proj", "attn.dense"),
         (r"mlp\.fc1", "mlp.w1"),
         (r"mlp\.fc2", "mlp.w2"),
     ]
