@@ -260,7 +260,7 @@ def _infer_model_configuration(
         config_params["attention_dropout"] = config.attention_dropout
     else:
         raise ValueError(
-            "FMS model implementations currently only support LlamaForCausalLM, GPTBigCodeForCausalLM, MixtralForCausalLM, RobertaForMaskedLM and GraniteForCausalLM"
+            "FMS model implementations currently only support LlamaForCausalLM, GPTBigCodeForCausalLM, MixtralForCausalLM, RobertaForMaskedLM, GraniteForCausalLM and SiglipModel"
         )
 
     # infer common params
