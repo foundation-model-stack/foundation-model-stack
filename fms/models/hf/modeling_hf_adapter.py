@@ -6,7 +6,7 @@ from typing import Callable, Dict, Optional, Tuple, Union
 import torch
 from torch import nn
 from torch.nn.modules.loss import _Loss
-from transformers import PretrainedConfig, PreTrainedModel
+from transformers import PretrainedConfig, PreTrainedModel, GenerationMixin
 from transformers.modeling_outputs import (
     BaseModelOutput,
     BaseModelOutputWithPastAndCrossAttentions,
@@ -916,7 +916,7 @@ class _EncoderArchitectureMixin:
         )
 
 
-class HFDecoderModelArchitecture(HFModelArchitecture):
+class HFDecoderModelArchitecture(HFModelArchitecture, GenerationMixin):
     """
     A specific form of HFModelArchitecture which provides the logic for a decoder model architecture. This class handles
     tasks such as:

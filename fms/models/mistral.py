@@ -1,8 +1,8 @@
 import logging
 import math
 import re
-from dataclasses import dataclass
-from typing import Any, Mapping, Optional, Tuple
+from dataclasses import dataclass, field
+from typing import Any, Mapping, Optional, Tuple, Unpack
 
 import torch
 import torch.nn as nn
@@ -13,7 +13,10 @@ from fms.distributed.strategy import (
     NoOpStrategy,
 )
 
-from fms.modules.attention import MultiHeadAttention
+from fms.modules.attention import (
+    AttentionKwargs,
+    MultiHeadAttention,
+)
 from fms.modules.feedforward import GatedLinearUnit
 from fms.modules.layernorm import LayerNormParameterized
 from fms.modules.positions import RotaryEmbedding
@@ -82,6 +85,7 @@ class MistralConfig(ModelConfig):
     norm_eps: float = 1e-5
     sliding_window: int = 4000
     rope_base: float = 100_0000.0  # Same as rope_theta
+    rope_scaling: dict = field(default_factory=lambda: {})
     fused_weights: bool = True  # FMS Specific -- For CPU/GPU = T, AIU = F
     pad_id: int = -1  # borrowed from granite, we do need it
     linear_config: Optional[Mapping[str, Any]] = None  # To suppor quantization
@@ -150,32 +154,23 @@ class MistralBlock(nn.Module):
         self,
         x,
         *,
-        mask=None,
         position_ids=None,
         past_key_value_state=None,
         use_cache=False,
-        is_causal_mask=False,
-        attn_algorithm=None,
+        **attn_kwargs: Unpack[AttentionKwargs],
     ):
         # if the cache is not empty, we need to get the kv cache for self and cross attention
         self_attn_past_key_value = past_key_value_state
-        # if past_key_value_state is not None:
-        #     self_attn_past_key_value = past_key_value_state[:2]
-        # else:
-        #     self_attn_past_key_value = None
 
         # first we do MHA and Add&Norm
         residual = x
         x = self.ln(x)
         x = self.attn(
             q=x,
-            mask=mask,
             position_ids=position_ids,
-            attn_algorithm=attn_algorithm,
             past_key_value_state=self_attn_past_key_value,
             use_cache=use_cache,
-            is_self=True,
-            is_causal_mask=is_causal_mask,
+            **attn_kwargs,
         )
         cache = None
         if use_cache:
@@ -218,7 +213,7 @@ class MistralHeadless(nn.Module):
 
         self.rot_emb = RotaryEmbedding(
             dim=self.config.emb_dim // self.config.nheads,
-            ntk_scaling=False,
+            scaling=self.config.rope_scaling,
             max_seq_len=self.config.max_expected_seq_len,
             ratio=self.config.rope_base,
         )
@@ -305,11 +300,10 @@ class MistralHeadless(nn.Module):
     def forward(
         self,
         x_in,
-        mask=None,
         position_ids=None,
         past_key_value_states=None,
         use_cache=False,
-        attn_algorithm=None,
+        **attn_kwargs: Unpack[AttentionKwargs],
     ):
         # Embed the given vocabulary indices using the given attention mask, with pre-/post-norm and dropout as specified
         # x_in: batch_size x seq_len
@@ -317,24 +311,6 @@ class MistralHeadless(nn.Module):
         # bias: nheads x seq_len x seq_len
         if past_key_value_states is None or len(past_key_value_states) == 0:
             past_key_value_states = [None for _ in range(len(self.layers))]
-
-        qlen = x_in.size(1)
-        klen = x_in.size(1)
-
-        # if we are using the cache, the key length needs to be extended with the past keys length
-        if use_cache and past_key_value_states[0] is not None:
-            klen += past_key_value_states[0][0].size(-2)
-
-        # if mask is none, we need to specify causal mask
-        if mask is None:
-            # we are caching and can assume all 1s in the mask
-            if use_cache and klen != 1 and qlen == 1:
-                # b x h x qlen x kvlen
-                is_causal_mask = False
-            else:
-                is_causal_mask = True
-        else:
-            is_causal_mask = False
 
         x_in = self.embedding(x_in)
 
@@ -344,12 +320,10 @@ class MistralHeadless(nn.Module):
         for i, layer in enumerate(self.layers):
             output = layer(
                 x=x_in,
-                mask=mask,
                 position_ids=position_ids,
                 past_key_value_state=past_key_value_states[i],
                 use_cache=use_cache,
-                is_causal_mask=is_causal_mask,
-                attn_algorithm=attn_algorithm,
+                **attn_kwargs,
             )
 
             if use_cache:
@@ -415,15 +389,14 @@ class Mistral(nn.Module):
     def forward(
         self,
         x: torch.LongTensor,
-        mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_value_states: Optional[Tuple[torch.FloatTensor,]] = None,
         use_cache: bool = False,
         only_last_token: bool = False,
-        attn_algorithm: Optional[str] = None,
+        **attn_kwargs: Unpack[AttentionKwargs],
     ):
         output, cache = self.base_model(
-            x, mask, position_ids, past_key_value_states, use_cache, attn_algorithm
+            x, position_ids, past_key_value_states, use_cache, **attn_kwargs
         )
 
         if only_last_token:

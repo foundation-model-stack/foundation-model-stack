@@ -57,6 +57,7 @@ class TestRoBERTa(
 
     # x is the main parameter for this model which is the input tensor
     _get_signature_params = ["x"]
+    _get_signature_input_ids = torch.arange(1, 16, dtype=torch.int64).unsqueeze(0)
 
     def test_config_passed_to_model_and_updated(self, model, config):
         """test model constructor appropriately merges any passed kwargs into the config
@@ -138,6 +139,7 @@ class TestRoBERTaQuestionAnswering(
     # x is the main parameter for this model which is the input tensor
     # a default attention mask is generated when not provided
     _get_signature_params = ["x"]
+    _get_signature_input_ids = torch.arange(1, 16, dtype=torch.int64).unsqueeze(0)
 
     @staticmethod
     def _get_signature_logits_getter_fn(f_out) -> torch.Tensor:
