@@ -292,7 +292,7 @@ class SiglipVisionHeadless(nn.Module):
         last_hidden_state, hidden_states = self.encoder(
             inputs_embeds=hidden_states,
             output_hidden_states=output_hidden_states,
-            **attn_kwargs
+            **attn_kwargs,
         )
         last_hidden_state = self.post_layernorm(last_hidden_state)
         return last_hidden_state, hidden_states
