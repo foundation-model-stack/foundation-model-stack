@@ -491,12 +491,23 @@ def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]
         (r"input_layernorm", "ln"),
         (r"post_attention_layernorm", "ff_ln"),
     ]
+    unused_key_steps = [
+        r"^norm", 
+        r"^layers", 
+        r"output.weight", 
+        r"tok_embeddings.weight", 
+        r"attention\.wk", 
+        r"attention\.wv", 
+        r"attention\.wq", 
+        r"attention\.wo" 
+        ]
     new_sd = {}
     for name, param in input_sd.items():
         new_name = name
-        for pattern, repl in replacements:
-            new_name = re.sub(pattern, repl, new_name)
-        new_sd[new_name] = param
+        if not any(re.search(key_step, name) for key_step in unused_key_steps):
+            for pattern, repl in replacements:
+                new_name = re.sub(pattern, repl, new_name)
+            new_sd[new_name] = param
     return new_sd
 
 
