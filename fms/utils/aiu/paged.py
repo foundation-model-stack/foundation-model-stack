@@ -300,8 +300,8 @@ def generate(
 
     result = input_ids
     next_input = input_ids
-    NUM_BLOCKS = 100
     BLOCK_SIZE = 64
+    NUM_BLOCKS = 2 * max_seq_len // BLOCK_SIZE
     if hasattr(model, "head"):
         model_dtype = model.head.weight.dtype
     elif hasattr(model, "shared"):
