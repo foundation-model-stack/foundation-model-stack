@@ -300,8 +300,8 @@ def generate(
 
     result = input_ids
     next_input = input_ids
-    NUM_BLOCKS = 100
     BLOCK_SIZE = 64
+    NUM_BLOCKS = 2 * max_seq_len // BLOCK_SIZE
     if hasattr(model, "head"):
         model_dtype = model.head.weight.dtype
     elif hasattr(model, "shared"):
@@ -424,9 +424,9 @@ def generate(
                 torch._dynamo.mark_dynamic(mask_i, 2)
                 torch._dynamo.mark_dynamic(mask_i, 3)
 
-                for k_i, v_i in current_kv_cache:
-                    torch._dynamo.mark_dynamic(k_i, 0)
-                    torch._dynamo.mark_dynamic(v_i, 0)
+                # for k_i, v_i in current_kv_cache:
+                #     torch._dynamo.mark_dynamic(k_i, 0)
+                #     torch._dynamo.mark_dynamic(v_i, 0)
 
                 only_last_token = kwargs.get("only_last_token", False)
 
@@ -463,9 +463,9 @@ def generate(
             torch._dynamo.mark_static(kwargs["slot_mapping"], 1)  # always 1
             torch._dynamo.mark_static(kwargs["position_ids"], 1)  # always 1
 
-            for k_i, v_i in kwargs["past_key_value_states"]:
-                torch._dynamo.mark_dynamic(k_i, 0)
-                torch._dynamo.mark_dynamic(v_i, 0)
+            # for k_i, v_i in kwargs["past_key_value_states"]:
+            #     torch._dynamo.mark_dynamic(k_i, 0)
+            #     torch._dynamo.mark_dynamic(v_i, 0)
 
             output = model(input_ids, **kwargs)
         if use_cache:
