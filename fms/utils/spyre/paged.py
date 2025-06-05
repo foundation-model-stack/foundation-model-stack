@@ -14,7 +14,7 @@ from torch.library import custom_op
 import torch.nn.functional as F
 
 
-@custom_op("aiu::paged_attn_store", mutates_args=(), device_types="cpu")
+@custom_op("spyre::paged_attn_store", mutates_args=(), device_types="cpu")
 def paged_attn_store(
     key: torch.Tensor,
     value: torch.Tensor,
@@ -57,7 +57,7 @@ def ref_masked_attention(
     return out
 
 
-@custom_op("aiu::paged_attn_compute", mutates_args={}, device_types="cpu")
+@custom_op("spyre::paged_attn_compute", mutates_args={}, device_types="cpu")
 def paged_attn_compute(
     query: torch.Tensor,
     key_cache: torch.Tensor,
@@ -124,7 +124,7 @@ def paged_attn_compute_meta(
     return torch.zeros_like(query)
 
 
-class AIUPagedAttentionKwargs(AttentionKwargs):
+class SpyrePagedAttentionKwargs(AttentionKwargs):
     current_tkv_mask: Optional[torch.Tensor]
     left_padded_prompt_mask: Optional[torch.Tensor]
     block_table: Optional[torch.Tensor]
@@ -132,14 +132,14 @@ class AIUPagedAttentionKwargs(AttentionKwargs):
     mask: Optional[torch.Tensor]  # prefill mask
 
 
-def __aiu_paged_store_op(
+def __spyre_paged_store_op(
     keys: torch.Tensor,
     values: torch.Tensor,
     key_cache: Optional[torch.Tensor],
     value_cache: Optional[torch.Tensor],
     **attn_kwargs,
 ):
-    result_key_cache, result_value_cache = torch.ops.aiu.paged_attn_store(
+    result_key_cache, result_value_cache = torch.ops.spyre.paged_attn_store(
         keys, values, key_cache, value_cache, attn_kwargs["slot_mapping"]
     )
 
@@ -155,7 +155,7 @@ def __aiu_paged_store_op(
         )
 
 
-def __aiu_paged_compute_op(
+def __spyre_paged_compute_op(
     query: torch.Tensor,
     key_cache: torch.Tensor,
     value_cache: torch.Tensor,
@@ -167,7 +167,7 @@ def __aiu_paged_compute_op(
 ):
     if scale_factor is None:
         scale_factor = 1 / math.sqrt(query.shape[-1])
-    return torch.ops.aiu.paged_attn_compute(
+    return torch.ops.spyre.paged_attn_compute(
         query,
         key_cache,
         value_cache,
@@ -178,11 +178,11 @@ def __aiu_paged_compute_op(
     )
 
 
-def __aiu_paged_validate_attn_kwargs_op(
+def __spyre_paged_validate_attn_kwargs_op(
     input_ids: torch.Tensor,
     position_ids: torch.Tensor,
     past_key_value_states: Optional[List[Tuple[torch.Tensor, torch.Tensor]]] = None,
-    **attn_kwargs: Unpack[AIUPagedAttentionKwargs],
+    **attn_kwargs: Unpack[SpyrePagedAttentionKwargs],
 ):
     assert input_ids.shape[0] == position_ids.shape[0]
     assert input_ids.shape[1] == position_ids.shape[1]
@@ -212,12 +212,12 @@ def __aiu_paged_validate_attn_kwargs_op(
 
 
 register_attention_op(
-    "aiu_paged_attn",
-    __aiu_paged_store_op,
+    "spyre_paged_attn",
+    __spyre_paged_store_op,
     _sdpa_compute_op,
     is_prefill_op=lambda **attn_kwargs: attn_kwargs.get("block_table", None) is None,
-    compute_decode_op=__aiu_paged_compute_op,
-    validate_attn_kwargs_op=__aiu_paged_validate_attn_kwargs_op,
+    compute_decode_op=__spyre_paged_compute_op,
+    validate_attn_kwargs_op=__spyre_paged_validate_attn_kwargs_op,
 )
 
 
@@ -328,7 +328,7 @@ def generate(
 
     kvheads = kvheads // tensor_parallel_size if kvheads > 1 else kvheads
     head_size = model.config.emb_dim // nheads
-    kwargs["attn_name"] = "aiu_paged_attn"
+    kwargs["attn_name"] = "spyre_paged_attn"
     kwargs["past_key_value_states"] = [
         (
             torch.zeros(NUM_BLOCKS, BLOCK_SIZE, kvheads, head_size, dtype=model_dtype),
