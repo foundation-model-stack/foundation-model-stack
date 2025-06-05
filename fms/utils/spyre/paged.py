@@ -112,7 +112,7 @@ def generate(
 
     kvheads = kvheads // tensor_parallel_size if kvheads > 1 else kvheads
     head_size = model.config.emb_dim // nheads
-    # kwargs["attn_name"] = "aiu_paged_attn"
+    # kwargs["attn_name"] = "spyre_paged_attn"
     kwargs["past_key_value_states"] = [
         (
             torch.zeros(NUM_BLOCKS, BLOCK_SIZE, kvheads, head_size, dtype=model_dtype),

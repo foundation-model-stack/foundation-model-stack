@@ -25,7 +25,7 @@ from fms.modules.tp import TPModule
 from torch.library import custom_op
 
 
-@custom_op("aiu::paged_attn_store", mutates_args=(), device_types="cpu")
+@custom_op("spyre::paged_attn_store", mutates_args=(), device_types="cpu")
 def paged_attn_store(
     key: torch.Tensor,
     value: torch.Tensor,
@@ -69,7 +69,7 @@ def ref_masked_attention(
     return out
 
 
-@custom_op("aiu::paged_attn_compute", mutates_args={}, device_types="cpu")
+@custom_op("spyre::paged_attn_compute", mutates_args={}, device_types="cpu")
 def paged_attn_compute(
     query: torch.Tensor,
     key_cache: torch.Tensor,
@@ -502,7 +502,7 @@ class MultiHeadAttention(nn.Module):
         # key_cache: torch.Tensor,
         # value_cache: torch.Tensor,
         # slot_mapping: torch.Tensor
-        past_key_value_state = torch.ops.aiu.paged_attn_store(
+        past_key_value_state = torch.ops.spyre.paged_attn_store(
             keys, values, past_key_value_state[0], past_key_value_state[1], slot_mapping
         )
 
@@ -514,7 +514,7 @@ class MultiHeadAttention(nn.Module):
             # current_tkv_mask: torch.Tensor,
             # left_padded_prompt_mask: torch.Tensor,
             # block_table: torch.Tensor,
-            attn = torch.ops.aiu.paged_attn_compute(
+            attn = torch.ops.spyre.paged_attn_compute(
                 queries,
                 past_key_value_state[0],
                 past_key_value_state[1],
