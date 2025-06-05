@@ -137,7 +137,7 @@ def test_batched_heterogeneous():
 
 
 def test_paged_equivalence():
-    from fms.utils.aiu.paged import generate as paged_generate
+    from fms.utils.spyre.paged import generate as paged_generate
 
     torch.manual_seed(0)
     with torch.no_grad():
