@@ -3,6 +3,7 @@ import tempfile
 
 import pytest
 import sentencepiece as spm
+from transformers import AutoTokenizer
 
 from fms.utils.tokenizers import get_tokenizer
 
@@ -120,3 +121,17 @@ def test_single_token():
         75,
         78,
     ]
+
+
+def test_encode():
+    models = ["EleutherAI/gpt-neox-20b", "ibm-granite/granite-3.0-8b-base"]
+    for model in models:
+        hf_tokenizer = AutoTokenizer.from_pretrained(model)
+        fms_tokenizer = get_tokenizer(model, style="hf")
+        text = "Hello, how are you today?"
+        assert hf_tokenizer.encode(
+            text, add_special_tokens=False
+        ) == fms_tokenizer.encode(text, add_special_tokens=False)
+        assert hf_tokenizer.encode(
+            text, add_special_tokens=True
+        ) == fms_tokenizer.encode(text, add_special_tokens=True)

@@ -125,6 +125,20 @@ class _HFTokenizer(BaseTokenizer):
 
         self.tokenizer = AutoTokenizer.from_pretrained(name)
         super().__init__(self.tokenizer.bos_token_id, self.tokenizer.eos_token_id)
+        self.padding_side = self.tokenizer.padding_side
+        self.pad_token = self.tokenizer.pad_token
+        self.pad_token_id = self.tokenizer.pad_token_id
+        self.unk_token = self.tokenizer.unk_token
+        self.unk_token_id = self.tokenizer.unk_token_id
+        self.bos_token = self.tokenizer.bos_token
+        self.eos_token = self.tokenizer.eos_token
+
+    def batch_decode(
+        self,
+        sequences: Union[List[int], List[List[int]]],
+        skip_special_tokens: bool = False,
+    ):
+        return self.tokenizer.batch_decode(sequences, skip_special_tokens)
 
     def tokenize(self, text: str):
         return self.tokenizer.tokenize(text)
@@ -140,6 +154,17 @@ class _HFTokenizer(BaseTokenizer):
 
     def vocab_size(self):
         return self.tokenizer.get_vocab_size()
+
+    def encode(self, text, add_special_tokens=False):
+        if (
+            add_special_tokens is True
+            and self.tokenizer.bos_token_id != self.tokenizer.eos_token_id
+        ):
+            return [self.tokenizer.bos_token_id] + self.tokenizer.convert_tokens_to_ids(
+                self.tokenizer.tokenize(text)
+            )
+        else:
+            return self.tokenizer.convert_tokens_to_ids(self.tokenizer.tokenize(text))
 
 
 def get_tokenizer(name: str, style: Optional[str] = None) -> BaseTokenizer:
