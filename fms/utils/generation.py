@@ -244,6 +244,8 @@ def generate(
         times: List[float] = []
         start_time = time.time()
 
+    eos_reached: bool = False
+
     for i in range(max_new_tokens):
         input_ids = next_input[:, -max_seq_len:]
 
@@ -298,7 +300,7 @@ def generate(
         if eos_token_id is not None:
             eos_found = torch.logical_or(eos_found, next_val == eos_token_id)
             if torch.sum(eos_found) == input_ids.shape[0]:
-                break
+                eos_reached = True
 
         if use_cache:
             next_input = next_val
@@ -311,6 +313,9 @@ def generate(
             current_token_time = time.time() - start_time
             times.append(current_token_time)
             start_time = time.time()
+
+        if eos_reached:
+            break
 
     if timing == "e2e":
         if input_ids.device.type == "cuda":
