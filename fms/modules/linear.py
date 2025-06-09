@@ -343,7 +343,7 @@ class FP8Linear(torch.nn.Module):
                 torch.ones(input_scale_shape), requires_grad=False
             )
 
-    def _construct_qweight_structure(self) -> AffineQuantizedTensor:
+    def _construct_qweight_structure(self) -> "AffineQuantizedTensor":
         # Construct the torchao machinery for the fp8 matmul
         weight_granularity = (
             PerTensor()
