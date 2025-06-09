@@ -301,7 +301,7 @@ def get_attention_type(**attn_kwargs: Unpack[AttentionKwargs]) -> dict[str, Call
     attn_name = attn_kwargs.get("attn_name", "sdpa_causal")
     if attn_name not in __type_factory_map:
         # we can add sdpa default here
-        raise KeyError(f"The attenton {attn_name} is not registered")
+        raise KeyError(f"The attention {attn_name} is not registered")
 
     return __type_factory_map[attn_name]
 

@@ -208,15 +208,10 @@ def _infer_model_configuration(
             allow_patterns = ["config.json"]
             ignore_patterns = None
 
-        cache_dir = os.environ.get("HF_HOME", None)
-        if cache_dir:
-            cache_dir = cache_dir + "/hub"
-
         model_path = snapshot_download(
             repo_id=str(model_id_or_path),
             ignore_patterns=ignore_patterns,
             allow_patterns=allow_patterns,
-            cache_dir=cache_dir,
         )
     else:
         model_path = str(model_id_or_path)

@@ -155,6 +155,7 @@ model = get_model(
     model_path=args.model_path,
     device_type=args.device_type,
     source=args.model_source,
+    data_type=default_dtype,
     distributed_strategy=distr_param,
     group=dist.group.WORLD,
     fused_weights=not args.unfuse_weights,

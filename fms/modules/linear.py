@@ -463,8 +463,8 @@ def shard_fp8_linear(
               | bias           |   Y   |  0  |
     ----------+----------------+-------+-----|
     rowwise   | weight         |   Y   |  1  |
-              | weight_scale   |  Y/?  |  0  |
-              | input_scale    |  Y/?  |  0  |
+              | weight_scale   |  Y/N  | 0/- |
+              | input_scale    |  Y/N  | 0/- |
               | bias           |   0   |  -  |
     """
     param_sharding_info: dict[str, dict[str, LinearParameterShardingInfo]] = {}

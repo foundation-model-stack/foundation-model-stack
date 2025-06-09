@@ -566,6 +566,8 @@ def _hf_fp8_llama_check(
         if model_config.linear_config:
             linear_type = model_config.linear_config["linear_type"]
             if callable(linear_type):
+                # Calling this with "any" guarantees "fp8" to be returned
+                # when loading an HF fp8 checkpoint, and never in any other condition
                 linear_type = get_linear_type(model_config.linear_config, "any")
 
     if "fp8" in linear_type and has_fused_weights:
@@ -579,6 +581,8 @@ def _hf_fp8_llama_check(
 serialization.register_adapter_step(
     "llama", "hf_gptq_fusion_check", _hf_gptq_llama_check
 )
+
+serialization.register_adapter_step("llama", "hf_fp8_llama_check", _hf_fp8_llama_check)
 
 
 def _meta_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]:
@@ -660,6 +664,9 @@ def _hf_to_fms_rope(
         head_size = 128  # Good default for most models
 
     for name, param in input_sd.items():
+        # Some checkpoints have weights in different precisions, which can have
+        # auxiliary tensors (see _get_rope_params e.g. gptq, fp8).
+        # Thus, we need to get rope_params per parameter.
         linear_type_str = "torch_linear"
         if model_config and model_config.linear_config:
             linear_type_str = get_linear_type(
@@ -715,7 +722,13 @@ serialization.register_adapter("llama", "meta", ["meta_to_fms_names", "weight_fu
 serialization.register_adapter(
     "llama",
     "hf",
-    ["hf_to_fms_names", "hf_to_fms_rope", "hf_gptq_fusion_check", "weight_fusion"],
+    [
+        "hf_to_fms_names",
+        "hf_to_fms_rope",
+        "hf_gptq_fusion_check",
+        "hf_fp8_llama_check",
+        "weight_fusion",
+    ],
 )
 serialization.register_adapter(
     "llama",
