@@ -256,6 +256,30 @@ register_linear_type_to_module_map("torch_linear", nn.Linear)
 register_linear_type_to_sharding_map("torch_linear", shard_torch_linear)
 
 
+### FP8 linear layers
+if find_spec("torchao"):
+    TORCHAO_INSTALLED = True
+    from torchao.dtypes.affine_quantized_tensor import AffineQuantizedTensor  # type: ignore
+    from torchao.dtypes.floatx.float8_layout import (  # type: ignore
+        Float8AQTTensorImpl,
+        Float8Layout,
+        Float8MMConfig,
+        preprocess_scale,
+        preprocess_data,
+    )
+    from torchao.dtypes.utils import get_out_shape  # type: ignore
+    from torchao.float8.inference import (  # type: ignore
+        _is_rowwise_scaled,
+        addmm_float8_unwrapped_inference,
+    )
+    from torchao.quantization.granularity import PerTensor, PerRow  # type: ignore
+    from torchao.quantization.observer import get_block_size  # type: ignore
+    from torchao.quantization.quant_api import _input_activation_quant_func_fp8  # type: ignore
+    from torchao.quantization.quant_primitives import ZeroPointDomain  # type: ignore
+else:
+    TORCHAO_INSTALLED = False
+
+
 class FP8Linear(torch.nn.Module):
     """
     Class that handles FP8 weights loading and internally uses torchao to do the matmuls.
@@ -319,17 +343,7 @@ class FP8Linear(torch.nn.Module):
                 torch.ones(input_scale_shape), requires_grad=False
             )
 
-    def _construct_qweight_structure(self):
-        from torchao.quantization.granularity import PerTensor, PerRow  # type: ignore
-        from torchao.quantization.observer import get_block_size  # type: ignore
-        from torchao.quantization.quant_primitives import ZeroPointDomain  # type: ignore
-        from torchao.dtypes.affine_quantized_tensor import AffineQuantizedTensor  # type: ignore
-        from torchao.dtypes.floatx.float8_layout import (  # type: ignore
-            Float8AQTTensorImpl,
-            Float8Layout,
-            Float8MMConfig,
-        )
-
+    def _construct_qweight_structure(self) -> AffineQuantizedTensor:
         # Construct the torchao machinery for the fp8 matmul
         weight_granularity = (
             PerTensor()
@@ -350,21 +364,7 @@ class FP8Linear(torch.nn.Module):
             dtype=self.weight_scale.dtype,
         )
 
-    def forward(self, x):
-        from torchao.quantization.granularity import PerTensor, PerRow  # type: ignore
-        from torchao.quantization.quant_api import _input_activation_quant_func_fp8  # type: ignore
-        from torchao.dtypes.utils import get_out_shape  # type: ignore
-        from torchao.dtypes.affine_quantized_tensor import AffineQuantizedTensor  # type: ignore
-        from torchao.float8.inference import (  # type: ignore
-            _is_rowwise_scaled,
-            addmm_float8_unwrapped_inference,
-        )
-        from torchao.dtypes.floatx.float8_layout import (  # type: ignore
-            Float8MMConfig,
-            preprocess_scale,
-            preprocess_data,
-        )
-
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         # fp8 weight tensor for torchao
         qweight: AffineQuantizedTensor = self._construct_qweight_structure()
 
@@ -442,7 +442,7 @@ def get_fp8_linear(
     bias: bool,
     linear_config: Mapping[str, Any],
 ):
-    if not find_spec("torchao"):
+    if not TORCHAO_INSTALLED:
         raise ModuleNotFoundError("You need to install torchao for FP8 support in FMS!")
 
     return FP8Linear(in_features, out_features, bias, linear_config)
