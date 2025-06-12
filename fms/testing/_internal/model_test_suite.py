@@ -290,7 +290,7 @@ class ModelConsistencyTestSuite(ModelFixtureMixin, SignatureFixtureMixin):
         Optional[dict[str, torch.Tensor]]
             the dictionary of optional params to pass to the model
         """
-        return None
+        return {}
 
     def test_model_output(self, model, signature, model_id, capture_expectation):
         """test consistency of model output with signature"""
