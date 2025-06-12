@@ -115,7 +115,6 @@ def __maybe_infer_model_variant(
         extra_kwargs = _infer_model_configuration(
             model_path_or_variant,
             download_weights=is_hf_pretrained and variant is not None,  # type: ignore[arg-type]
-            model_kwargs=kwargs,
         )
         architecture = extra_kwargs.pop("architecture")
         variant = extra_kwargs.pop("variant")

@@ -109,7 +109,6 @@ def mask_2d_to_3d_bidirectional(
 
 def _infer_quantization_config(
     quant_config: dict,
-    model_kwargs: Optional[dict],
 ) -> Optional[dict]:
     # There's many quantization packages compatible with HF
     # We initially focus on llm-compressor as it is the one used in FMS-MO
@@ -128,10 +127,6 @@ def _infer_quantization_config(
             quant_config["config_groups"]["group_0"]["weights"]["type"] == "float"
             and quant_config["config_groups"]["group_0"]["weights"]["num_bits"] == 8
         ):
-            attn_name = None
-            if model_kwargs:
-                attn_name = model_kwargs.get("attn_name", None)
-
             # This is used by get_linear to decide whether a linear layer
             # will be quantized or not inside the model
             def fp8_linear_type(name: str) -> str:
@@ -159,11 +154,11 @@ def _infer_quantization_config(
             # we might want the return dtype to be the default model dtype
             # (usually BF16) or FP8. Our FP8 linear layer implementation supports
             # this choice, through the "output_dtype" function
-            def fp8_output_dtype(name):
+            def fp8_output_dtype(attn_name, layer_name):
                 if attn_name and "fp8" in attn_name:
                     # For FP8 attention, only value needs to be returned
                     # in FP8, as query and key will go through RoPE first
-                    if "value" in name:
+                    if "value" in layer_name:
                         return torch.float8_e4m3fn
                 return None
 
@@ -184,7 +179,6 @@ def _infer_quantization_config(
 def _infer_model_configuration(
     model_id_or_path: str | os.PathLike,
     download_weights: bool = True,
-    model_kwargs=None,
 ) -> Dict[str, Any]:
     # if the path does not exist, download it from huggingface and get the local path
     if not os.path.exists(model_id_or_path):
@@ -339,7 +333,7 @@ def _infer_model_configuration(
     ## infer quantization parameters
     quant_config = getattr(config, "quantization_config", None)
     if quant_config is not None:
-        linear_config = _infer_quantization_config(quant_config, model_kwargs)
+        linear_config = _infer_quantization_config(quant_config)
         if linear_config:
             config_params["linear_config"] = linear_config
 
