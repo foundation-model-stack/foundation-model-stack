@@ -2,7 +2,7 @@ import logging
 import math
 import re
 from dataclasses import dataclass
-from typing import Any, Mapping, Optional, Tuple, Unpack
+from typing import Any, Mapping, Optional, Unpack
 
 import torch
 import torch.nn as nn
@@ -29,17 +29,18 @@ logger = logging.getLogger(__name__)
 @dataclass
 class SiglipVisionConfig(ModelConfig):
     # Default config yiels vision encoder of the google/siglip-base-patch16-224 model
-    hidden_size = 768
-    intermediate_size = 3072
-    num_hidden_layers = 12
-    num_attention_heads = 12
-    num_channels = 3
-    image_size = 224
-    patch_size = 16
-    hidden_act = "gelu-tanh"
-    layer_norm_eps = 1e-6
-    attention_dropout = 0.0
-    fused_weights = True
+    hidden_size: int = 768
+    intermediate_size: int = 3072
+    num_hidden_layers: int = 12
+    num_attention_heads: int = 12
+    num_channels: int = 3
+    image_size: int = 224
+    patch_size: int = 16
+    hidden_act: str = "gelu-tanh"
+    layer_norm_eps: float = 1e-6
+    attention_dropout: float = 0.0
+    fused_weights: bool = True
+    device: str = 'cuda'
 
 
 class SiglipVisionEmbeddings(nn.Module):
@@ -61,12 +62,10 @@ class SiglipVisionEmbeddings(nn.Module):
         self.num_patches = (self.image_size // self.patch_size) ** 2
         self.num_positions = self.num_patches
         self.position_embedding = nn.Embedding(self.num_positions, self.embed_dim)
-        # self.position_ids = torch.arange(self.num_positions).expand((1, -1))
-        # TODO: need to figure out device here, otherwise 'meta'
-        self.position_ids = torch.arange(self.num_positions, device="cuda").expand(
+        self.position_ids = torch.arange(self.num_positions, device=config.device).expand(
             (1, -1)
         )
-        # self.register_buffer("position_ids", torch.arange(self.num_positions).expand((1, -1)), persistent=False)
+        #self.register_buffer("position_ids", torch.arange(self.num_positions).expand((1, -1)), persistent=False)
 
     def reset_parameters(self):
         nn.init.normal_(
@@ -153,9 +152,8 @@ class SiglipEncoderLayer(nn.Module):
     def forward(
         self,
         hidden_states: torch.Tensor,
-        # **kwargs,
         **attn_kwargs: Unpack[SDPAAttentionKwargs],
-    ) -> Tuple[torch.FloatTensor]:
+    ):
         attn_kwargs["attn_name"] = attn_kwargs.get("attn_name", "sdpa_bidirectional")
 
         residual = hidden_states
@@ -244,7 +242,7 @@ class SiglipMultiheadAttentionPoolingHead(nn.Module):
 class SiglipVision(nn.Module):
     def __init__(
         self,
-        config: SiglipVisionConfig = None,
+        config: Optional[SiglipVisionConfig] = None,
         distributed_strategy: DistributedStrategy = NoOpStrategy,
         **kwargs,
     ):
@@ -256,20 +254,20 @@ class SiglipVision(nn.Module):
         self.config = self.config.updated(**kwargs)
 
         self.distributed_strategy = distributed_strategy
-        self.embeddings = SiglipVisionEmbeddings(config)
-        self.encoder = SiglipEncoder(config)
+        self.embeddings = SiglipVisionEmbeddings(self.config)
+        self.encoder = SiglipEncoder(self.config)
         self.post_layernorm = LayerNormParameterized(
-            config.hidden_size,
+            self.config.hidden_size,
             elementwise_shift=True,
             use_mean=True,
-            eps=config.layer_norm_eps,
+            eps=self.config.layer_norm_eps,
             use_high_precision_pow=True,
         )
         self.use_head = (
-            True if not hasattr(config, "vision_use_head") else config.vision_use_head
+            True if not hasattr(self.config, "vision_use_head") else self.config.vision_use_head
         )
         if self.use_head:
-            self.head = SiglipMultiheadAttentionPoolingHead(config)
+            self.head = SiglipMultiheadAttentionPoolingHead(self.config)
 
     @classmethod
     def from_config(cls, config: SiglipVisionConfig) -> "SiglipVision":
