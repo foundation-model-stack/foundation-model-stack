@@ -3,6 +3,7 @@ import functools
 from typing import (
     Any,
     Callable,
+    List,
     Mapping,
     NotRequired,
     Optional,
@@ -95,7 +96,17 @@ def register_attention_op(
     update_attn_kwargs_op: Optional[
         Callable[[Unpack[AttentionKwargs]], AttentionKwargs]
     ] = None,
-    validate_attn_kwargs_op: Optional[Callable] = None,
+    validate_attn_kwargs_op: Optional[
+        Callable[
+            [
+                torch.Tensor,
+                torch.Tensor,
+                Optional[List[Tuple[torch.Tensor, torch.Tensor]]],
+                Unpack["AttentionKwargs"],
+            ],
+            None,
+        ]
+    ] = None,
 ) -> None:
     """Register a custom attention operation to be used within MultiHeadAttention. This method also provides the ability to register other useful constructs related to the attention type.
 
@@ -122,6 +133,9 @@ def register_attention_op(
         update_attn_kwargs_op: Optional[Callable[[Unpack["AttentionKwargs"]], "AttentionKwargs"]]
             This function has the following contract (**attn_kwargs) -> updated_attn_kwargs. The intention of this function is to act as a helper to update the attn_kwargs between each step within a
             generation loop. If set to None, will return the attn_kwargs with no changes.
+        validate_attn_kwargs_op: Optional[Callable[[torch.Tensor, torch.Tensor, Optional[List[Tuple[torch.Tensor, torch.Tensor]]], Unpack["AttentionKwargs"]], None]]
+            This function has the following contract (input_ids, position_ids, past_key_value_states, **attn_kwargs) -> None. The intention of this function is do further validation against the
+            attn_kwargs for a given forward pass. If set to None, this function will perform no extra validation.
     """
     if attn_type in __type_factory_map:
         raise KeyError(

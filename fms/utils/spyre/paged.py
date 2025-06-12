@@ -1,7 +1,7 @@
 import math
 import random
 import time
-from typing import Any, Callable, List, MutableMapping, Optional, Tuple, Union, Unpack
+from typing import Any, Callable, List, MutableMapping, Optional, Tuple, Union
 
 from fms.modules.attention import (
     AttentionKwargs,
@@ -43,18 +43,6 @@ def paged_attn_store_meta(
     slot_mapping: torch.Tensor,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     return key_cache, value_cache
-
-
-def ref_masked_attention(
-    query: torch.Tensor,
-    key: torch.Tensor,
-    value: torch.Tensor,
-    scale: float,
-) -> torch.Tensor:
-    attn_weights = scale * torch.einsum("qhd,khd->hqk", query, key).float()
-    attn_weights = torch.softmax(attn_weights, dim=-1).to(value.dtype)
-    out = torch.einsum("hqk,khd->qhd", attn_weights, value)
-    return out
 
 
 @custom_op("spyre::paged_attn_compute", mutates_args={}, device_types="cpu")
@@ -105,7 +93,14 @@ def paged_attn_compute(
                 values, num_query_heads // num_kv_heads, dim=1
             )
 
-        out = ref_masked_attention(q, keys, values, scale)
+        out = F.scaled_dot_product_attention(
+            q.transpose(0, 1).unsqueeze(0),  # format for sdpa
+            keys.transpose(0, 1).unsqueeze(0),  # format for sdpa
+            values.transpose(0, 1).unsqueeze(0),  # format for sdpa
+            is_causal=False,  # decode assumes no causal mask
+            scale=scale,
+        )
+
         out = out.view(num_query_heads, head_size)
         output[i].copy_(out, non_blocking=True)
     return output
@@ -182,8 +177,11 @@ def __spyre_paged_validate_attn_kwargs_op(
     input_ids: torch.Tensor,
     position_ids: torch.Tensor,
     past_key_value_states: Optional[List[Tuple[torch.Tensor, torch.Tensor]]] = None,
-    **attn_kwargs: Unpack[SpyrePagedAttentionKwargs],
+    **attn_kwargs,
 ):
+    """
+    Validating the SpyrePagedAttentionKwargs for proper shapes as this will assist in getting the correct symbolic shapes during trace
+    """
     assert input_ids.shape[0] == position_ids.shape[0]
     assert input_ids.shape[1] == position_ids.shape[1]
 
