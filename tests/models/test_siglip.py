@@ -37,7 +37,7 @@ class SiglipFixtures(ConfigFixtureMixin, ModelFixtureMixin):
             layer_norm_eps=1e-6,
             attention_dropout=0.0,
             fused_weights=True,
-            device='cpu',
+            device="cpu",
         )
 
 
@@ -53,9 +53,11 @@ class TestSiglip(
 
     # x is the main parameter for this model which is the input tensor
     _get_signature_params = ["x"]
-    pixel_values = [[[torch.arange(0,1,1/224).tolist() for _ in range(224)] for _ in range(3)]]
-    pixel_values = torch.tensor(pixel_values)   #shape [1, 3, 224, 224]
-    _get_signature_optional_params = {'pixel_values':pixel_values}
+    pixel_values = [
+        [[torch.arange(0, 1, 1 / 224).tolist() for _ in range(224)] for _ in range(3)]
+    ]
+    pixel_values = torch.tensor(pixel_values)  # shape [1, 3, 224, 224]
+    _get_signature_optional_params = {"pixel_values": pixel_values}
     _get_signature_logits_getter_fn = get_last_hidden_state
 
     def test_config_passed_to_model_and_updated(self, model, config):

@@ -40,7 +40,7 @@ class SiglipVisionConfig(ModelConfig):
     layer_norm_eps: float = 1e-6
     attention_dropout: float = 0.0
     fused_weights: bool = True
-    device: str = 'cuda'
+    device: str = "cuda"
 
 
 class SiglipVisionEmbeddings(nn.Module):
@@ -62,10 +62,10 @@ class SiglipVisionEmbeddings(nn.Module):
         self.num_patches = (self.image_size // self.patch_size) ** 2
         self.num_positions = self.num_patches
         self.position_embedding = nn.Embedding(self.num_positions, self.embed_dim)
-        self.position_ids = torch.arange(self.num_positions, device=config.device).expand(
-            (1, -1)
-        )
-        #self.register_buffer("position_ids", torch.arange(self.num_positions).expand((1, -1)), persistent=False)
+        self.position_ids = torch.arange(
+            self.num_positions, device=config.device
+        ).expand((1, -1))
+        # self.register_buffer("position_ids", torch.arange(self.num_positions).expand((1, -1)), persistent=False)
 
     def reset_parameters(self):
         nn.init.normal_(
@@ -264,7 +264,9 @@ class SiglipVision(nn.Module):
             use_high_precision_pow=True,
         )
         self.use_head = (
-            True if not hasattr(self.config, "vision_use_head") else self.config.vision_use_head
+            True
+            if not hasattr(self.config, "vision_use_head")
+            else self.config.vision_use_head
         )
         if self.use_head:
             self.head = SiglipMultiheadAttentionPoolingHead(self.config)
