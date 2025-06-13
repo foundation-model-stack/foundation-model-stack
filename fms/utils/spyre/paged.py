@@ -178,7 +178,7 @@ def __spyre_paged_validate_attn_kwargs_op(
     **attn_kwargs,
 ):
     """
-    Validating the SpyrePagedAttentionKwargs for proper shapes as this will assist in getting the correct symbolic shapes during trace
+    Validating the SpyrePagedAttentionKwargs for proper shapes as this will reduce the number of symbolic shapes to the minimum needed set
     """
     assert input_ids.shape[0] == position_ids.shape[0]
     assert input_ids.shape[1] == position_ids.shape[1]
