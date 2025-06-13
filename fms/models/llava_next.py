@@ -1,7 +1,7 @@
 import logging
 import math
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Mapping, Optional, Unpack
 
 import torch
@@ -86,13 +86,17 @@ _granite_3_2_2b_grid = [
 @dataclass
 class LlavaNextConfig(ModelConfig):
     # Defaults to Granite-vision-3.2-2b
-    vision_config = _granite_3_2_2b_vision_config
-    text_config = _granite_3_2_2b_text_config
+    vision_config: SiglipVisionConfig = field(
+        default_factory=lambda: _granite_3_2_2b_vision_config
+    )
+    text_config: GraniteConfig = field(
+        default_factory=lambda: _granite_3_2_2b_text_config
+    )
     image_token_index: int = 49155
     projector_hidden_act: str = "gelu"
     vision_feature_select_strategy: str = "full"
-    vision_feature_layer = [-24, -20, -12, -1]
-    image_grid_pinpoints = _granite_3_2_2b_grid
+    vision_feature_layer: list = field(default_factory=lambda: [-24, -20, -12, -1])
+    image_grid_pinpoints: list = field(default_factory=lambda: _granite_3_2_2b_grid)
     tie_word_embeddings: bool = True
     multimodal_projector_bias: bool = True
     fused_weights: bool = True
@@ -137,7 +141,7 @@ class LlavaNextMultiModalProjector(nn.Module):
 class LlavaNext(nn.Module):
     def __init__(
         self,
-        config: LlavaNextConfig = None,
+        config: Optional[LlavaNextConfig] = None,
         distributed_strategy: DistributedStrategy = NoOpStrategy,
         **kwargs,
     ):
@@ -165,12 +169,19 @@ class LlavaNext(nn.Module):
         # Only supporting siglip vision encoder for now
         self.vision_tower = SiglipVision(self.config.vision_config)
 
-        self.multi_modal_projector = LlavaNextMultiModalProjector(config)
-        embed_std = 1 / math.sqrt(config.text_config.emb_dim)
+        self.multi_modal_projector = LlavaNextMultiModalProjector(self.config)
+        embed_std = 1 / math.sqrt(self.config.text_config.emb_dim)
         self.image_newline = nn.Parameter(
-            torch.randn(config.text_config.emb_dim) * embed_std
+            torch.randn(self.config.text_config.emb_dim) * embed_std
         )
-        self.vocab_size = config.text_config.src_vocab_size
+        self.vocab_size = self.config.text_config.src_vocab_size
+
+    @classmethod
+    def from_config(cls, config: LlavaNextConfig) -> "LlavaNext":
+        return cls(config)
+
+    def get_config(self) -> LlavaNextConfig:
+        return self.config
 
     def reset_parameters(self):
         nn.init.xavier_uniform_(self.image_newline.data)
@@ -204,9 +215,7 @@ class LlavaNext(nn.Module):
         return unpadded_tensor
 
     # TODO: fix graph break in the HF impl here
-    def select_best_resolution(
-        self, original_size, possible_resolutions: list
-    ) -> tuple:
+    def select_best_resolution(self, original_size, possible_resolutions: list):
         if not isinstance(original_size, (list, tuple)):
             original_size = original_size.tolist()
 
@@ -247,7 +256,7 @@ class LlavaNext(nn.Module):
     # HF impl
     def get_image_features(
         self,
-        pixel_values: torch.FloatTensor,
+        pixel_values: torch.Tensor,
         image_sizes: torch.Tensor,
     ):
         # ! infer image_num_patches from image_sizes
@@ -349,8 +358,11 @@ class LlavaNext(nn.Module):
         use_cache=False,
         **attn_kwargs: Unpack[AttentionKwargs],
     ):
-        assert input_ids is not None
+        if input_ids is None and inputs_embeds is None:
+            # input_ids and inputs_embeds can't both be None
+            return None
 
+        # input_embeds supersedes input_ids
         if inputs_embeds is None:
             inputs_embeds = self.language_model.base_model.embedding(input_ids)
 
@@ -488,11 +500,12 @@ def _get_rope_params(linear_type: str) -> list[str]:
 # From Granite model
 def _hf_to_fms_rope(
     input_sd: Mapping[str, Any],
-    model_config: Optional[LlavaNextConfig] = None,
+    model_config=None,
     **kwargs,
 ) -> Mapping[str, Any]:
     new_sd = {}
-    model_config = model_config.text_config
+    if model_config:
+        model_config = model_config.text_config
 
     if model_config:
         head_size = model_config.emb_dim // model_config.nheads
