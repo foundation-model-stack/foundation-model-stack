@@ -193,7 +193,7 @@ class SiglipEncoder(nn.Module):
         **attn_kwargs: Unpack[AttentionKwargs],
     ):
         hidden_states = inputs_embeds
-        encoder_states = (hidden_states,) if output_hidden_states else None
+        encoder_states = (hidden_states,) if output_hidden_states else ()
 
         for encoder_layer in self.layers:
             hidden_states = encoder_layer(hidden_states, **attn_kwargs)
