@@ -62,7 +62,9 @@ class TestSiglip(
 
     def test_config_passed_to_model_and_updated(self, model, config):
         """test model constructor appropriately merges any passed kwargs into the config without mutating the original config"""
-        model = type(model)(config=config, num_hidden_layers=config.num_hidden_layers + 1)
+        model = type(model)(
+            config=config, num_hidden_layers=config.num_hidden_layers + 1
+        )
         # check not same reference
         assert model.get_config() is not config
 
