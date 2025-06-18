@@ -228,8 +228,8 @@ class ModelCompileTestSuite(ModelFixtureMixin):
             assert cnt.frame_count == 0
 
             optional_params = self._get_signature_optional_params
-            # default attn_algorithm won't compile on CPU
-            # TODO: add non-mmath attn_algorithm when we have GPUs to run unit tests
+            # default attn_algorithm won't compile on CPU for older pytorch versions
+            # TODO: add non-math attn_algorithm when we have GPUs to run unit tests
             optional_params.update({"attn_algorithm": "math"})
 
             get_signature(
