@@ -51,7 +51,7 @@ class HFAdaptedLLaMADecoder(HFDecoder):
 
 
 class HFAdaptedLLaMAHeadless(HFDecoderModelArchitecture):
-    """This is the Adapter for the base granite architecture"""
+    """This is the Adapter for the base llama architecture"""
 
     # attributes required by HF
     config_class = HFAdaptedLLaMAConfig
