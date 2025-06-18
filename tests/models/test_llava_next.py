@@ -36,8 +36,8 @@ _vision_config = SiglipVisionConfig(
     hidden_size=16,
     image_size=384,
     intermediate_size=64,
-    num_attention_heads=8,
-    num_hidden_layers=8,
+    nheads=8,
+    nlayers=8,
     patch_size=14,
     fused_weights=True,
     device="cpu",
@@ -95,7 +95,6 @@ class LlavaNextFixtures(ConfigFixtureMixin, ModelFixtureMixin):
             vision_feature_select_strategy="full",
             vision_feature_layer=[-4, -2],
             image_grid_pinpoints=_image_grid,
-            tie_word_embeddings=True,
             multimodal_projector_bias=True,
             fused_weights=True,
         )
