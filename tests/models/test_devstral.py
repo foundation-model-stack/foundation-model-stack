@@ -28,7 +28,7 @@ class DevstralFixtures(ConfigFixtureMixin, ModelFixtureMixin):
         return MistralConfig(
             src_vocab_size=384,
             emb_dim=16,
-            head_dim= 2, # emb_dim // nheads 
+            head_dim=2,  # emb_dim // nheads
             norm_eps=1e-05,
             nheads=8,
             kvheads=2,
@@ -78,7 +78,7 @@ class DevstralGPTQFixtures(ModelFixtureMixin):
         return Mistral(
             src_vocab_size=384,
             emb_dim=64,
-            head_dim= 2,
+            head_dim=2,
             norm_eps=1e-05,
             nheads=32,
             kvheads=8,
