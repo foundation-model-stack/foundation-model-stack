@@ -251,7 +251,7 @@ class _TekkenTokenizer(BaseTokenizer):
             )
 
     def encode(
-        self, text: str, add_special_tokens: Optional[bool] = False
+        self, text: str, add_special_tokens: bool = False
     ) -> List[int]:
         """Encode a string into a list of token ids.
 
@@ -267,7 +267,7 @@ class _TekkenTokenizer(BaseTokenizer):
     def decode(
         self,
         token_ids: List[int],
-        special_token_policy: Optional[SpecialTokenPolicy] = None,
+        stp: SpecialTokenPolicy = SpecialTokenPolicy.IGNORE,
     ) -> str:
         """Decode a list of token ids into a string.
 
@@ -281,7 +281,7 @@ class _TekkenTokenizer(BaseTokenizer):
         Returns:
             str: Decoded text string
         """
-        return self.tokenizer.decode(token_ids, special_token_policy)
+        return self.tokenizer.decode(token_ids, stp)
 
     def tokenize(self, text: str) -> List[str]:
         """
@@ -318,6 +318,7 @@ class _TekkenTokenizer(BaseTokenizer):
             raise RuntimeError(
                 f"Misrtral tokenizer error: convert_tokens_to_ids() must be used in tandum with tokenize() Error: {type(e).__name__} occurred: {e}"
             )
+        return [0]
 
     def convert_ids_to_tokens(self, ids) -> List[str]:
         """
