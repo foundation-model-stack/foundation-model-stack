@@ -264,9 +264,8 @@ def _infer_model_configuration(
         )
 
     # infer common params
-    config_params["src_vocab_size"] = (
-        config.vocab_size if hasattr(config, "vocab_size") else None
-    )
+    if hasattr(config, "vocab_size"):
+        config_params["src_vocab_size"] = config.vocab_size
     config_params["nheads"] = config.num_attention_heads
     config_params["nlayers"] = config.num_hidden_layers
     config_params["hidden_grow_factor"] = inner_dim / config.hidden_size

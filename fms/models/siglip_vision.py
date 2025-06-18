@@ -13,7 +13,6 @@ from fms.distributed.strategy import DistributedStrategy, NoOpStrategy
 from fms.modules.attention import (
     AttentionKwargs,
     MultiHeadAttention,
-    SDPAAttentionKwargs,
 )
 from fms.modules.feedforward import FeedForwardBlock
 from fms.modules.layernorm import LayerNormParameterized
@@ -28,17 +27,18 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class SiglipVisionConfig(ModelConfig):
-    # Default config yiels vision encoder of the google/siglip-base-patch16-224 model
+    # Default config yields vision encoder of the google/siglip-base-patch16-224 model
     hidden_size: int = 768
     intermediate_size: int = 3072
-    num_hidden_layers: int = 12
-    num_attention_heads: int = 12
+    nlayers: int = 12
+    nheads: int = 12
     num_channels: int = 3
     image_size: int = 224
     patch_size: int = 16
     hidden_act: str = "gelu-tanh"
     layer_norm_eps: float = 1e-6
     attention_dropout: float = 0.0
+    linear_config: Optional[Mapping[str, Any]] = None
     fused_weights: bool = True
     device: str = "cuda"
 
@@ -79,7 +79,7 @@ class SiglipVisionEmbeddings(nn.Module):
         variance = 1.0 / fan_in
         nn.init.trunc_normal_(tensor, std=math.sqrt(variance))
 
-    # NOTE: Does not support interpolation of position encodings
+    # NOTE: Does not support interpolation of position encodings-- not used by granite-vision
     def forward(self, pixel_values: torch.FloatTensor) -> torch.Tensor:
         _, _, height, width = pixel_values.shape
         target_dtype = self.patch_embedding.weight.dtype
@@ -96,11 +96,11 @@ class SiglipEncoderLayer(nn.Module):
         super().__init__()
         self.config = config
         self.embed_dim = config.hidden_size
-        head_dim = self.embed_dim // self.config.num_attention_heads
+        head_dim = self.embed_dim // self.config.nheads
         emb_kq = head_dim
         emb_v = head_dim
-        nheads = self.config.num_attention_heads
-        kvheads = self.config.num_attention_heads
+        nheads = self.config.nheads
+        kvheads = self.config.nheads
         attn_scale_factor = head_dim**-0.5
 
         self.layer_norm1 = LayerNormParameterized(
@@ -119,6 +119,7 @@ class SiglipEncoderLayer(nn.Module):
             kvheads,
             p_dropout=self.config.attention_dropout,
             use_bias=True,
+            linear_config=self.config.linear_config,
             scale_factor=attn_scale_factor,
         )
 
@@ -137,6 +138,7 @@ class SiglipEncoderLayer(nn.Module):
                 config.hidden_act
             ),  # NOTE: using nn.GELU as opposed to nn.functional.gelu() as in HF impl
             use_bias=True,
+            linear_config=self.config.linear_config,
             p_dropout=self.config.attention_dropout,
         )
 
@@ -152,7 +154,7 @@ class SiglipEncoderLayer(nn.Module):
     def forward(
         self,
         hidden_states: torch.Tensor,
-        **attn_kwargs: Unpack[SDPAAttentionKwargs],
+        **attn_kwargs: Unpack[AttentionKwargs],
     ):
         attn_kwargs["attn_name"] = attn_kwargs.get("attn_name", "sdpa_bidirectional")
 
@@ -174,7 +176,7 @@ class SiglipEncoder(nn.Module):
         super().__init__()
         self.config = config
         self.layers = nn.ModuleList(
-            [SiglipEncoderLayer(config) for _ in range(config.num_hidden_layers)]
+            [SiglipEncoderLayer(config) for _ in range(config.nlayers)]
         )
 
     def reset_parameters(self):
@@ -199,7 +201,7 @@ class SiglipMultiheadAttentionPoolingHead(nn.Module):
 
         # HF implementation uses PT MHA here, as opposed to SiglipAttnention as in the SiglipEncoderLayer
         self.attention = torch.nn.MultiheadAttention(
-            config.hidden_size, config.num_attention_heads, batch_first=True
+            config.hidden_size, config.nheads, batch_first=True
         )
 
         self.layernorm = LayerNormParameterized(
@@ -239,6 +241,46 @@ class SiglipMultiheadAttentionPoolingHead(nn.Module):
         return hidden_state[:, 0]
 
 
+class SiglipVisionHeadless(nn.Module):
+    def __init__(
+        self,
+        config: Optional[SiglipVisionConfig] = None,
+        distributed_strategy: DistributedStrategy = NoOpStrategy,
+        **kwargs,
+    ):
+        super(SiglipVisionHeadless, self).__init__()
+        if config is not None:
+            self.config = config
+        else:
+            self.config = SiglipVisionConfig()
+        self.config = self.config.updated(**kwargs)
+        self.distributed_strategy = distributed_strategy
+
+        self.embeddings = SiglipVisionEmbeddings(self.config)
+        self.encoder = SiglipEncoder(self.config)
+        self.post_layernorm = LayerNormParameterized(
+            self.config.hidden_size,
+            elementwise_shift=True,
+            use_mean=True,
+            eps=self.config.layer_norm_eps,
+            use_high_precision_pow=True,
+        )
+
+    def reset_parameters(self):
+        for m in self.modules():
+            m.reset_parameters()
+
+    def forward(
+        self,
+        pixel_values,
+        **attn_kwargs: Unpack[AttentionKwargs],
+    ):
+        hidden_states = self.embeddings(pixel_values)
+        hidden_states = self.encoder(inputs_embeds=hidden_states, **attn_kwargs)
+        hidden_states = self.post_layernorm(hidden_states)
+        return hidden_states
+
+
 class SiglipVision(nn.Module):
     def __init__(
         self,
@@ -252,17 +294,10 @@ class SiglipVision(nn.Module):
         else:
             self.config = SiglipVisionConfig()
         self.config = self.config.updated(**kwargs)
-
         self.distributed_strategy = distributed_strategy
-        self.embeddings = SiglipVisionEmbeddings(self.config)
-        self.encoder = SiglipEncoder(self.config)
-        self.post_layernorm = LayerNormParameterized(
-            self.config.hidden_size,
-            elementwise_shift=True,
-            use_mean=True,
-            eps=self.config.layer_norm_eps,
-            use_high_precision_pow=True,
-        )
+
+        self.base_model = SiglipVisionHeadless(self.config, self.distributed_strategy)
+
         self.use_head = (
             True
             if not hasattr(self.config, "vision_use_head")
@@ -279,17 +314,16 @@ class SiglipVision(nn.Module):
         return self.config
 
     def reset_parameters(self):
-        for m in self.modules():
-            m.reset_parameters()
+        if self.use_head:
+            self.head.reset_parameters()
+        self.base_model.reset_parameters()
 
     def forward(
         self,
         pixel_values,
         **attn_kwargs: Unpack[AttentionKwargs],
     ):
-        hidden_states = self.embeddings(pixel_values)
-        hidden_states = self.encoder(inputs_embeds=hidden_states, **attn_kwargs)
-        hidden_states = self.post_layernorm(hidden_states)
+        hidden_states = self.base_model(pixel_values, **attn_kwargs)
         pooler_output = self.head(hidden_states) if self.use_head else None
         return hidden_states, pooler_output
 
@@ -332,9 +366,9 @@ def _weight_fusion(
 def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]:
     replacements = [
         (r"vision_model\.head", "head"),
-        (r"^vision_model\.encoder", "encoder"),
-        (r"vision_model\.embeddings", "embeddings"),
-        (r"vision_model\.post_layernorm", "post_layernorm"),
+        (r"^vision_model\.encoder", "base_model.encoder"),
+        (r"vision_model\.embeddings", "base_model.embeddings"),
+        (r"vision_model\.post_layernorm", "base_model.post_layernorm"),
         (r"self_attn\.k_proj", "self_attn.in_proj.key"),
         (r"self_attn\.v_proj", "self_attn.in_proj.value"),
         (r"self_attn\.q_proj", "self_attn.in_proj.query"),

@@ -28,8 +28,8 @@ class SiglipFixtures(ConfigFixtureMixin, ModelFixtureMixin):
         return SiglipVisionConfig(
             hidden_size=16,
             intermediate_size=64,
-            num_hidden_layers=8,
-            num_attention_heads=8,
+            nlayers=8,
+            nheads=8,
             num_channels=3,
             image_size=224,
             patch_size=16,
@@ -62,10 +62,10 @@ class TestSiglip(
 
     def test_config_passed_to_model_and_updated(self, model, config):
         """test model constructor appropriately merges any passed kwargs into the config without mutating the original config"""
-        model = type(model)(config=config, pad_id=config.num_hidden_layers + 1)
+        model = type(model)(config=config, nlayers=config.nlayers + 1)
         # check not same reference
         assert model.get_config() is not config
 
-        # modify pad_id to the new value expected and check equivalence
-        config.pad_id = config.num_hidden_layers + 1
+        # modify nlayers to the new value expected and check equivalence
+        config.nlayers = config.nlayers + 1
         assert model.get_config().as_dict() == config.as_dict()
