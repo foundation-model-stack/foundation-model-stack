@@ -250,9 +250,7 @@ class _TekkenTokenizer(BaseTokenizer):
                 f"Tekkenizer Error: Could not find the tekken.json at model_path {self.model_path}"
             )
 
-    def encode(
-        self, text: str, add_special_tokens: bool = False
-    ) -> List[int]:
+    def encode(self, text: str, add_special_tokens: bool = False) -> List[int]:
         """Encode a string into a list of token ids.
 
         Args:
