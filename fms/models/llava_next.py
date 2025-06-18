@@ -45,8 +45,8 @@ _granite_3_2_2b_vision_config = SiglipVisionConfig(
     hidden_size=1152,
     image_size=384,
     intermediate_size=4304,
-    num_attention_heads=16,
-    num_hidden_layers=27,
+    nheads=16,
+    nlayers=27,
     patch_size=14,
     fused_weights=True,
 )
@@ -97,7 +97,6 @@ class LlavaNextConfig(ModelConfig):
     vision_feature_select_strategy: str = "full"
     vision_feature_layer: list = field(default_factory=lambda: [-24, -20, -12, -1])
     image_grid_pinpoints: list = field(default_factory=lambda: _granite_3_2_2b_grid)
-    tie_word_embeddings: bool = True
     multimodal_projector_bias: bool = True
     fused_weights: bool = True
 
@@ -123,7 +122,7 @@ class LlavaNextMultiModalProjector(nn.Module):
         )
         self.config = config
 
-    # NOTE: HF doesn't do this
+    # NOTE: HF doesn't do weight initialization for LlavaNextMultiModalProjector
     def reset_parameters(self):
         nn.init.xavier_uniform_(self.linear_1.weight)
         nn.init.xavier_uniform_(self.linear_2.weight)
@@ -359,8 +358,7 @@ class LlavaNext(nn.Module):
         **attn_kwargs: Unpack[AttentionKwargs],
     ):
         if input_ids is None and inputs_embeds is None:
-            # input_ids and inputs_embeds can't both be None
-            return None
+            raise ValueError("input_ids and inputs_embeds can't both be None")
 
         # input_embeds supersedes input_ids
         if inputs_embeds is None:
@@ -453,9 +451,15 @@ def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]
     replacements = [
         # vision
         (r"vision_tower\.vision_model\.head", "vision_tower.head"),
-        (r"vision_tower\.vision_model\.encoder", "vision_tower.encoder"),
-        (r"vision_tower\.vision_model\.embeddings", "vision_tower.embeddings"),
-        (r"vision_tower\.vision_model\.post_layernorm", "vision_tower.post_layernorm"),
+        (r"vision_tower\.vision_model\.encoder", "vision_tower.base_model.encoder"),
+        (
+            r"vision_tower\.vision_model\.embeddings",
+            "vision_tower.base_model.embeddings",
+        ),
+        (
+            r"vision_tower\.vision_model\.post_layernorm",
+            "vision_tower.base_model.post_layernorm",
+        ),
         (r"self_attn\.k_proj", "attn.in_proj.key"),
         (r"self_attn\.v_proj", "attn.in_proj.value"),
         (r"self_attn\.q_proj", "attn.in_proj.query"),
