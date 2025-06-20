@@ -2,6 +2,7 @@ import pytest
 import torch
 
 from fms.models.llama import LLaMA, LLaMAConfig
+from fms.modules import UninitializedModule
 from fms.testing._internal.model_test_suite import (
     ConfigFixtureMixin,
     ModelCompileTestSuite,
@@ -236,3 +237,119 @@ class TestLlama31(ModelConsistencyTestSuite, ModelCompileTestSuite, LLaMA31Fixtu
 
     # x is the main parameter for this model which is the input tensor
     _get_signature_params = ["x"]
+
+
+def fp8_linear_type(name: str) -> str:
+    if "head" in name:
+        return "torch_linear"
+    return "fp8"
+
+
+def fp8_output_dtype(attn_name, layer_name):
+    if attn_name and "fp8" in attn_name:
+        if "value" in layer_name:
+            return torch.float8_e4m3fn
+    return None
+
+
+class LLaMA31FP8Fixtures(ModelFixtureMixin):
+    """
+    Base LLaMA 3.1-3.3 FP8 Fixtures that can be re-used for other purposes
+
+    This will include the config and model signatures
+    """
+
+    @pytest.fixture(scope="class", autouse=True)
+    def uninitialized_model(self):
+        torch.set_default_dtype(torch.bfloat16)
+        with torch.device("cuda"):
+            model = LLaMA(
+                src_vocab_size=381,
+                emb_dim=16,
+                norm_eps=1e-05,
+                nheads=4,
+                kvheads=2,
+                nlayers=2,
+                pad_id=0,
+                hidden_grow_factor=4,
+                multiple_of=2,
+                activation_fn="swish",
+                p_dropout=0.0,
+                max_expected_seq_len=131072,
+                rope_theta=500000.0,
+                rope_scaling={
+                    "factor": 8.0,
+                    "low_freq_factor": 1.0,
+                    "high_freq_factor": 4.0,
+                    "original_max_position_embeddings": 8192,
+                    "rope_type": "llama3",
+                },
+                linear_config={
+                    "linear_type": fp8_linear_type,
+                    "input_activations": {
+                        "actorder": None,
+                        "block_structure": None,
+                        "dynamic": True,
+                        "group_size": None,
+                        "num_bits": 8,
+                        "observer": None,
+                        "observer_kwargs": {},
+                        "strategy": "token",
+                        "symmetric": True,
+                        "type": "float",
+                    },
+                    "output_activations": None,
+                    "weights": {
+                        "actorder": None,
+                        "block_structure": None,
+                        "dynamic": False,
+                        "group_size": None,
+                        "num_bits": 8,
+                        "observer": "minmax",
+                        "observer_kwargs": {},
+                        "strategy": "channel",
+                        "symmetric": True,
+                        "type": "float",
+                    },
+                    "output_dtype": fp8_output_dtype,
+                },
+            )
+
+            # Required for FP8 linear modules
+            for name, module in model.named_modules():
+                if isinstance(module, UninitializedModule):
+                    fqn_list = name.split(".")
+                    parent_name = ".".join(fqn_list[:-1])
+                    setattr(
+                        model.get_submodule(parent_name),
+                        fqn_list[-1],
+                        module.initialize(name),
+                    )
+        torch.set_default_dtype(torch.float32)
+        return model
+
+    def _maybe_get_initialized_parameter(self, key, parameter):
+        if parameter.dtype == torch.float8_e4m3fn:
+            return torch.randn_like(parameter, dtype=torch.float32).to(
+                torch.float8_e4m3fn
+            )
+        return None
+
+
+@pytest.mark.skipif(
+    not torch.cuda.is_available()
+    or (torch.cuda.is_available() and torch.cuda.get_device_capability() < (8, 9)),
+    reason="FP8 is only available on GPUs with device level 8.9 or higher",
+)
+class TestLlama31FP8(
+    ModelConsistencyTestSuite, ModelCompileTestSuite, LLaMA31FP8Fixtures
+):
+    """
+    Test LLaMA 3.1 FP8 model consistency
+    """
+
+    # x is the main parameter for this model which is the input tensor
+    _get_signature_params = ["x"]
+
+    def test_model_unfused(self, model, signature):
+        pytest.skip("weight unfuse is not defined for FP8")

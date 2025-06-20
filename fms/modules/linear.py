@@ -252,7 +252,14 @@ def shard_torch_linear(
     return unused_keys
 
 
-register_linear_type_to_module_map("torch_linear", nn.Linear)
+# This class lets us pass arbitrary kwargs to nn.Linear without it failing
+# This is used by some quantized linear methods
+class FmsLinear(nn.Linear):
+    def forward(self, input: torch.Tensor, **kwargs):
+        return super().forward(input)
+
+
+register_linear_type_to_module_map("torch_linear", FmsLinear)
 register_linear_type_to_sharding_map("torch_linear", shard_torch_linear)
 
 
@@ -362,7 +369,9 @@ class FP8Linear(torch.nn.Module):
             dtype=self.weight_scale.dtype,
         )
 
-    def forward(self, x: torch.Tensor, attn_name: Optional[str] = None, **kwargs) -> torch.Tensor:
+    def forward(
+        self, x: torch.Tensor, attn_name: Optional[str] = None, **kwargs
+    ) -> torch.Tensor:
         # fp8 weight tensor for torchao
         qweight: AffineQuantizedTensor = self._construct_qweight_structure()
 
@@ -410,7 +419,9 @@ class FP8Linear(torch.nn.Module):
 
             # Perform the computation
             if self.output_dtype_fn:
-                output_dtype = self.output_dtype_fn(attn_name, self.linear_config["module_name"])
+                output_dtype = self.output_dtype_fn(
+                    attn_name, self.linear_config["module_name"]
+                )
             output_dtype = output_dtype if output_dtype else qx.dtype
             return addmm_float8_unwrapped_inference(
                 inpt_data,

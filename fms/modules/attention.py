@@ -332,7 +332,11 @@ class QKV(nn.Module, metaclass=abc.ABCMeta):
 
     @abc.abstractmethod
     def forward(
-        self, q: torch.Tensor, k: Optional[torch.Tensor], v: Optional[torch.Tensor], **attn_kwargs: Unpack[AttentionKwargs]
+        self,
+        q: torch.Tensor,
+        k: Optional[torch.Tensor],
+        v: Optional[torch.Tensor],
+        **attn_kwargs: Unpack[AttentionKwargs],
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """applies query/key/value transformations on q, k, v inputs respectively and returns the resulting values
 
@@ -417,7 +421,11 @@ class UnfusedQKV(QKV):
                     m.bias.data.zero_()
 
     def forward(
-        self, q: torch.Tensor, k: Optional[torch.Tensor], v: Optional[torch.Tensor], **attn_kwargs: Unpack[AttentionKwargs]
+        self,
+        q: torch.Tensor,
+        k: Optional[torch.Tensor],
+        v: Optional[torch.Tensor],
+        **attn_kwargs: Unpack[AttentionKwargs],
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         if k is None and v is None:
             k = q
@@ -504,7 +512,11 @@ class FusedQKV(QKV):
             self.qkv_fused.bias.data.zero_()
 
     def forward(
-        self, q: torch.Tensor, k: Optional[torch.Tensor], v: Optional[torch.Tensor], **attn_kwargs: Unpack[AttentionKwargs]
+        self,
+        q: torch.Tensor,
+        k: Optional[torch.Tensor],
+        v: Optional[torch.Tensor],
+        **attn_kwargs: Unpack[AttentionKwargs],
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         if (k is None and v is None) or (k is q and v is q):
             qkv = q
