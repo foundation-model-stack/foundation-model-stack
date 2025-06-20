@@ -15,6 +15,7 @@ from fms.distributed.strategy import (
 from fms.modules.attention import (
     AttentionKwargs,
     MultiHeadAttention,
+    get_attention_type,
 )
 from fms.modules.embedding import WordEmbedding
 from fms.modules.feedforward import GatedLinearUnit
@@ -382,6 +383,12 @@ class LLaMA(nn.Module):
         only_last_token: bool = False,
         **attn_kwargs: Unpack[AttentionKwargs],
     ):
+        get_attention_type(**attn_kwargs)["validate_attn_kwargs"](
+            input_ids=x,
+            position_ids=position_ids,
+            past_key_value_states=past_key_value_states,
+            **attn_kwargs,
+        )
         output, cache = self._helper(
             x, position_ids, past_key_value_states, use_cache, **attn_kwargs
         )
