@@ -51,28 +51,18 @@ def pad_input_ids(
 
         # Setting this to 0, however if 0 is the eos, we will end up truncating the output if using truncate_after_eos
         # once this workflow works for nested tensor, this can probably be removed
-        if padding_side == "left":
-            padded_input_ids_list.append(torch.cat((pads, input_ids_i)))
-        elif padding_side == "right":
-            padded_input_ids_list.append(torch.cat((input_ids_i, pads)))
-        else:
-            raise NotImplementedError("padding_side must be 'right' or left'")
-
-        # computing this as it's lightweight but could potentially be skipped
-        if padding_side == "left":
-            mask_list.append(torch.cat((pads.bool(), non_pads)))
-        elif padding_side == "right":
-            mask_list.append(torch.cat((non_pads, pads.bool())))
-        else:
-            raise NotImplementedError("padding_side must be 'right' or left'")
 
         pos_ids_pads = pads
         pos_ids_seq = torch.arange(
             0, seq_len, dtype=torch.long, device=input_ids_i.device
         )
         if padding_side == "left":
+            padded_input_ids_list.append(torch.cat((pads, input_ids_i)))
+            mask_list.append(torch.cat((pads.bool(), non_pads)))
             position_ids_list.append(torch.cat((pos_ids_pads, pos_ids_seq)))
         elif padding_side == "right":
+            padded_input_ids_list.append(torch.cat((input_ids_i, pads)))
+            mask_list.append(torch.cat((non_pads, pads.bool())))
             position_ids_list.append(torch.cat((pos_ids_seq, pos_ids_pads)))
         else:
             raise NotImplementedError("padding_side must be 'right' or left'")
