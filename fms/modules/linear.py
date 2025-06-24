@@ -259,11 +259,11 @@ register_linear_type_to_sharding_map("torch_linear", shard_torch_linear)
 ### FP8 linear layers
 if find_spec("torchao"):
     TORCHAO_INSTALLED = True
-    from torchao.dtypes.affine_quantized_tensor import (
+    from torchao.dtypes.affine_quantized_tensor import (  # type: ignore
         AffineQuantizedTensor,
         to_affine_quantized_floatx,
         to_affine_quantized_floatx_static,
-    )  # type: ignore
+    )
     from torchao.dtypes.floatx.float8_layout import (  # type: ignore
         Float8AQTTensorImpl,
         Float8Layout,
