@@ -259,7 +259,11 @@ register_linear_type_to_sharding_map("torch_linear", shard_torch_linear)
 ### FP8 linear layers
 if find_spec("torchao"):
     TORCHAO_INSTALLED = True
-    from torchao.dtypes.affine_quantized_tensor import AffineQuantizedTensor  # type: ignore
+    from torchao.dtypes.affine_quantized_tensor import (
+        AffineQuantizedTensor,
+        to_affine_quantized_floatx,
+        to_affine_quantized_floatx_static,
+    )  # type: ignore
     from torchao.dtypes.floatx.float8_layout import (  # type: ignore
         Float8AQTTensorImpl,
         Float8Layout,
@@ -340,6 +344,38 @@ class FP8Linear(torch.nn.Module):
                 torch.ones(input_scale_shape), requires_grad=False
             )
 
+    def _input_activation_quant_func_fp8(
+        self,
+        x: torch.Tensor,
+        activation_granularity,
+        activation_dtype: torch.dtype,
+        scale: Optional[torch.Tensor] = None,
+    ):
+        """This function is used to quantize the input activation tensor for an aqt_float variant. If scale
+        is not provided it will be dynamically calculate the scales otherwise it will use the provided scale.
+        """
+        block_size = get_block_size(x.shape, activation_granularity)
+        if scale is None:
+            activation = to_affine_quantized_floatx(
+                input_float=x,
+                block_size=block_size,
+                target_dtype=activation_dtype,
+                scale_dtype=torch.float32,
+                _layout=Float8Layout(mm_config=None),  # Config is stored on weight
+            )
+        else:
+            assert isinstance(activation_granularity, PerTensor), (
+                "Static quantization only supports PerTensor granularity"
+            )
+            activation = to_affine_quantized_floatx_static(
+                input_float=x,
+                block_size=block_size,
+                scale=scale,
+                target_dtype=activation_dtype,
+                _layout=Float8Layout(mm_config=None),  # Config is stored on weight
+            )
+        return activation
+
     def _construct_qweight_structure(self) -> "AffineQuantizedTensor":
         # Construct the torchao machinery for the fp8 matmul
         weight_granularity = (
@@ -380,7 +416,7 @@ class FP8Linear(torch.nn.Module):
                 input_quant_kwargs["scale"] = self.input_scale.squeeze().to(
                     torch.float32
                 )
-            qx = _input_activation_quant_func_fp8(x, **input_quant_kwargs)
+            qx = self._input_activation_quant_func_fp8(x, **input_quant_kwargs)
 
             # Copied from torchao _linear_fp8_act_fp8_weight_impl (with changes to support fp8 out)
             scaled_mm_config = Float8MMConfig(use_fast_accum=True)
