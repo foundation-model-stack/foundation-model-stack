@@ -342,7 +342,6 @@ class QKV(nn.Module, metaclass=abc.ABCMeta):
         q: torch.Tensor,
         k: Optional[torch.Tensor],
         v: Optional[torch.Tensor],
-        **attn_kwargs: Unpack[AttentionKwargs],
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """applies query/key/value transformations on q, k, v inputs respectively and returns the resulting values
 
@@ -431,7 +430,6 @@ class UnfusedQKV(QKV):
         q: torch.Tensor,
         k: Optional[torch.Tensor],
         v: Optional[torch.Tensor],
-        **attn_kwargs: Unpack[AttentionKwargs],
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         if k is None and v is None:
             k = q
@@ -442,9 +440,9 @@ class UnfusedQKV(QKV):
             )
 
         # b x h x qlen x ds
-        queries = self.query(q, **attn_kwargs)
-        keys = self.key(k, **attn_kwargs)
-        values = self.value(v, **attn_kwargs)
+        queries = self.query(q)
+        keys = self.key(k)
+        values = self.value(v)
         return queries, keys, values
 
 
@@ -522,13 +520,12 @@ class FusedQKV(QKV):
         q: torch.Tensor,
         k: Optional[torch.Tensor],
         v: Optional[torch.Tensor],
-        **attn_kwargs: Unpack[AttentionKwargs],
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         if (k is None and v is None) or (k is q and v is q):
             qkv = q
         else:
             raise ValueError("q, k, and v must be the same or k and v must be None")
-        return self.qkv_fused(qkv, **attn_kwargs).split(self.splits, dim=-1)
+        return self.qkv_fused(qkv).split(self.splits, dim=-1)
 
 
 class MultiHeadAttention(nn.Module):
@@ -656,7 +653,7 @@ class MultiHeadAttention(nn.Module):
         # b x kvlen x h x ds
         # b x h x kvlen x ds
         # todo: Cross attention (This always is true for now)
-        q_out, k_out, v_out = self.in_proj(q, k, v, **attn_kwargs)
+        q_out, k_out, v_out = self.in_proj(q, k, v)
 
         # note: transposes will be moved in a later PR to fix dis-contiguous tensor issues
         queries = q_out.view(batch_size, q_len, self.nheads, self.emb_kq_per_head)

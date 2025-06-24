@@ -245,13 +245,6 @@ def fp8_linear_type(name: str) -> str:
     return "fp8"
 
 
-def fp8_output_dtype(attn_name, layer_name):
-    if attn_name and "fp8" in attn_name:
-        if "value" in layer_name:
-            return torch.float8_e4m3fn
-    return None
-
-
 class LLaMA31FP8Fixtures(ModelFixtureMixin):
     """
     Base LLaMA 3.1-3.3 FP8 Fixtures that can be re-used for other purposes
@@ -311,7 +304,6 @@ class LLaMA31FP8Fixtures(ModelFixtureMixin):
                         "symmetric": True,
                         "type": "float",
                     },
-                    "output_dtype": fp8_output_dtype,
                 },
             )
 

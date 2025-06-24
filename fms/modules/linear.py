@@ -252,14 +252,7 @@ def shard_torch_linear(
     return unused_keys
 
 
-# This class lets us pass arbitrary kwargs to nn.Linear without it failing
-# This is used by some quantized linear methods
-class FmsLinear(nn.Linear):
-    def forward(self, input: torch.Tensor, **kwargs):
-        return super().forward(input)
-
-
-register_linear_type_to_module_map("torch_linear", FmsLinear)
+register_linear_type_to_module_map("torch_linear", nn.Linear)
 register_linear_type_to_sharding_map("torch_linear", shard_torch_linear)
 
 
@@ -305,7 +298,6 @@ class FP8Linear(torch.nn.Module):
         self.out_features = out_features
         self.has_bias = bias
         self.linear_config = linear_config
-        self.output_dtype_fn = self.linear_config["output_dtype"]
 
         assert self.linear_config["weights"] is not None, (
             "Weights must always be quantized for FP8Linear"
@@ -369,9 +361,7 @@ class FP8Linear(torch.nn.Module):
             dtype=self.weight_scale.dtype,
         )
 
-    def forward(
-        self, x: torch.Tensor, attn_name: Optional[str] = None, **kwargs
-    ) -> torch.Tensor:
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         # fp8 weight tensor for torchao
         qweight: AffineQuantizedTensor = self._construct_qweight_structure()
 
@@ -418,17 +408,12 @@ class FP8Linear(torch.nn.Module):
             inpt_data, w_data = preprocess_data(inpt_data, w_data.T, scaled_mm_config)
 
             # Perform the computation
-            if self.output_dtype_fn:
-                output_dtype = self.output_dtype_fn(
-                    attn_name, self.linear_config["module_name"]
-                )
-            output_dtype = output_dtype if output_dtype else qx.dtype
             return addmm_float8_unwrapped_inference(
                 inpt_data,
                 input_scale,
                 w_data,
                 w_scale,
-                output_dtype=output_dtype,
+                output_dtype=qx.dtype,
                 bias=getattr(self, "bias", None),
                 use_fast_accum=scaled_mm_config.use_fast_accum,
             ).reshape(out_shape)

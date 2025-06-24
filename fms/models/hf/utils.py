@@ -149,19 +149,6 @@ def _infer_quantization_config(
                         return "fp8"
                 return "torch_linear"
 
-            # FP8 matmuls can return in multiple dtypes if using pytorch's API
-            # (_scaled_mm), which we do. Depending on the attention implementation,
-            # we might want the return dtype to be the default model dtype
-            # (usually BF16) or FP8. Our FP8 linear layer implementation supports
-            # this choice, through the "output_dtype" function
-            def fp8_output_dtype(attn_name, layer_name):
-                if attn_name and "fp8" in attn_name:
-                    # For FP8 attention, only value needs to be returned
-                    # in FP8, as query and key will go through RoPE first
-                    if "value" in layer_name:
-                        return torch.float8_e4m3fn
-                return None
-
             return {
                 "linear_type": fp8_linear_type,
                 "input_activations": quant_config["config_groups"]["group_0"][
@@ -171,7 +158,6 @@ def _infer_quantization_config(
                     "output_activations"
                 ],
                 "weights": quant_config["config_groups"]["group_0"]["weights"],
-                "output_dtype": fp8_output_dtype,
             }
     return None
 
