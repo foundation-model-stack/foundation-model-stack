@@ -278,7 +278,6 @@ if find_spec("torchao"):
     )
     from torchao.quantization.granularity import PerTensor, PerRow  # type: ignore
     from torchao.quantization.observer import get_block_size  # type: ignore
-    from torchao.quantization.quant_api import _input_activation_quant_func_fp8  # type: ignore
     from torchao.quantization.quant_primitives import ZeroPointDomain  # type: ignore
 else:
     TORCHAO_INSTALLED = False
