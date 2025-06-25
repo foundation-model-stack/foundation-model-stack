@@ -38,7 +38,7 @@ class GPTBigCodeConfig(ModelConfig):
         None  # pass as {"linear_type": str, <other kwargs>}
     )
     fused_weights: bool = True
-    tie_word_embeddings: bool = True
+    tie_heads: bool = False
 
 
 class GPTBigCodeBlock(nn.Module):
@@ -262,7 +262,7 @@ class GPTBigCode(nn.Module):
             self.config.emb_dim, self.config.src_vocab_size, bias=False
         )
 
-        if self.config.tie_word_embeddings:
+        if self.config.tie_heads:
             # if this model ties weights, so we tie here
             self.head.weight = self.base_model.embedding.weight
 
@@ -292,15 +292,13 @@ class GPTBigCode(nn.Module):
     def post_init(self):
         # This function is called in `get_model` after the model is fully initalized in the correct device
 
-        if not self.get_config().tie_word_embeddings:
-            return
-
-        # this model ties weights, so we tie here
-        # make sure you assign the non-meta weights to the meta parameters
-        if self.head.weight.device == torch.device("meta"):
-            self.head.weight = self.base_model.embedding.weight
-        else:
-            self.base_model.embedding.weight = self.head.weight
+        # if this model ties weights, they are tied here
+        if self.config.tie_heads:
+            # handle assignment of non-meta weights to meta parameters
+            if self.head.weight.device == torch.device("meta"):
+                self.head.weight = self.base_model.embedding.weight
+            elif self.base_model.embedding.weight.device == torch.device("meta"):
+                self.base_model.embedding.weight = self.head.weight
 
     def forward(
         self,
