@@ -40,7 +40,6 @@ _vision_config = SiglipVisionConfig(
     nlayers=8,
     patch_size=14,
     fused_weights=True,
-    device="cpu",
 )
 
 _image_grid = [
