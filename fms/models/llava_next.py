@@ -190,6 +190,7 @@ class LlavaNext(nn.Module):
 
     def post_init(self):
         self.language_model.post_init()
+        self.vision_tower.post_init()
 
     def unpad_image(self, tensor, original_size):
         if not isinstance(original_size, (list, tuple)):
