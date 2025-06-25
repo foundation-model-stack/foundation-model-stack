@@ -262,7 +262,7 @@ class GPTBigCode(nn.Module):
             self.config.emb_dim, self.config.src_vocab_size, bias=False
         )
 
-        if config.tie_word_embeddings:
+        if self.config.tie_word_embeddings:
             # if this model ties weights, so we tie here
             self.head.weight = self.base_model.embedding.weight
 
