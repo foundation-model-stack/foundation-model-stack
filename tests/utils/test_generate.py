@@ -102,7 +102,10 @@ def test_batched_heterogeneous():
         result1_batched = result[0]
         result2_batched = result[1]
 
+
         result1 = generate(_model_mock, first, max_new_tokens=5, do_sample=False)
+        print ('result1', result1)
+        print ('result1_batched', result1_batched[second.size(0) - first.size(0) :])
         torch.testing.assert_close(
             result1, result1_batched[second.size(0) - first.size(0) :]
         )
