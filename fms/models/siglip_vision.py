@@ -40,7 +40,6 @@ class SiglipVisionConfig(ModelConfig):
     attention_dropout: float = 0.0
     linear_config: Optional[Mapping[str, Any]] = None
     fused_weights: bool = True
-    device: str = "cuda"
 
 
 class SiglipVisionEmbeddings(nn.Module):
@@ -62,10 +61,7 @@ class SiglipVisionEmbeddings(nn.Module):
         self.num_patches = (self.image_size // self.patch_size) ** 2
         self.num_positions = self.num_patches
         self.position_embedding = nn.Embedding(self.num_positions, self.embed_dim)
-        self.position_ids = torch.arange(
-            self.num_positions, device=config.device
-        ).expand((1, -1))
-        # self.register_buffer("position_ids", torch.arange(self.num_positions).expand((1, -1)), persistent=False)
+        self.position_ids = torch.arange(self.num_positions).expand((1, -1))
 
     def reset_parameters(self):
         nn.init.normal_(
@@ -78,6 +74,12 @@ class SiglipVisionEmbeddings(nn.Module):
         fan_in, fan_out = nn.init._calculate_fan_in_and_fan_out(tensor)
         variance = 1.0 / fan_in
         nn.init.trunc_normal_(tensor, std=math.sqrt(variance))
+
+    def post_init(self):
+        device = self.position_embedding.weight.device
+        self.position_ids = torch.arange(self.num_positions, device=device).expand(
+            (1, -1)
+        )
 
     # NOTE: Does not support interpolation of position encodings-- not used by granite-vision
     def forward(self, pixel_values: torch.FloatTensor) -> torch.Tensor:
@@ -270,6 +272,9 @@ class SiglipVisionHeadless(nn.Module):
         for m in self.modules():
             m.reset_parameters()
 
+    def post_init(self):
+        self.embeddings.post_init()
+
     def forward(
         self,
         pixel_values,
@@ -298,13 +303,7 @@ class SiglipVision(nn.Module):
 
         self.base_model = SiglipVisionHeadless(self.config, self.distributed_strategy)
 
-        self.use_head = (
-            True
-            if not hasattr(self.config, "vision_use_head")
-            else self.config.vision_use_head
-        )
-        if self.use_head:
-            self.head = SiglipMultiheadAttentionPoolingHead(self.config)
+        self.head = SiglipMultiheadAttentionPoolingHead(self.config)
 
     @classmethod
     def from_config(cls, config: SiglipVisionConfig) -> "SiglipVision":
@@ -314,9 +313,11 @@ class SiglipVision(nn.Module):
         return self.config
 
     def reset_parameters(self):
-        if self.use_head:
-            self.head.reset_parameters()
+        self.head.reset_parameters()
         self.base_model.reset_parameters()
+
+    def post_init(self):
+        self.base_model.post_init()
 
     def forward(
         self,
@@ -324,7 +325,7 @@ class SiglipVision(nn.Module):
         **attn_kwargs: Unpack[AttentionKwargs],
     ):
         hidden_states = self.base_model(pixel_values, **attn_kwargs)
-        pooler_output = self.head(hidden_states) if self.use_head else None
+        pooler_output = self.head(hidden_states)
         return hidden_states, pooler_output
 
 
