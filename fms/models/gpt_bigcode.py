@@ -38,6 +38,7 @@ class GPTBigCodeConfig(ModelConfig):
         None  # pass as {"linear_type": str, <other kwargs>}
     )
     fused_weights: bool = True
+    tie_word_embeddings: bool = True
 
 
 class GPTBigCodeBlock(nn.Module):
@@ -261,8 +262,9 @@ class GPTBigCode(nn.Module):
             self.config.emb_dim, self.config.src_vocab_size, bias=False
         )
 
-        # this model ties weights, so we tie here
-        self.head.weight = self.base_model.embedding.weight
+        if config.tie_word_embeddings:
+            # if this model ties weights, so we tie here
+            self.head.weight = self.base_model.embedding.weight
 
     @classmethod
     def from_config(cls, config: GPTBigCodeConfig) -> "GPTBigCode":
@@ -289,6 +291,9 @@ class GPTBigCode(nn.Module):
 
     def post_init(self):
         # This function is called in `get_model` after the model is fully initalized in the correct device
+
+        if not self.get_config().tie_word_embeddings:
+            return
 
         # this model ties weights, so we tie here
         # make sure you assign the non-meta weights to the meta parameters

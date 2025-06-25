@@ -171,6 +171,7 @@ def _infer_model_configuration(
         config_params["multiquery_attn"] = config.multi_query
         config_params["emb_dim"] = config.hidden_size
         config_params["max_expected_seq_len"] = config.n_positions
+        config_params["tie_word_embeddings"] = config.tie_word_embeddings
     elif architecture == "MixtralForCausalLM":
         inner_dim = config.intermediate_size
         architecture = "mixtral"
