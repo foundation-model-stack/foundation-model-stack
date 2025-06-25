@@ -2,8 +2,6 @@ import pytest
 import torch
 import requests
 
-from PIL import Image
-from transformers import LlavaNextProcessor, LlavaNextForConditionalGeneration
 from fms.models import get_model
 from fms.utils.generation import generate, pad_input_ids
 
@@ -12,6 +10,8 @@ torch.set_default_dtype(torch.float32)
 
 
 def _get_inputs(processor):
+    from PIL import Image
+
     url = "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/pipeline-cat-chonk.jpeg"
     image = Image.open(requests.get(url, stream=True).raw)
     inputs = "<|system|>\nA chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions.\n<|user|>\n<image>\nWhat animal is shown in this image?\n<|assistant|>\n"
@@ -20,6 +20,8 @@ def _get_inputs(processor):
 
 
 def _get_hf_model_output(model_path, inputs):
+    from transformers import LlavaNextForConditionalGeneration
+
     model = LlavaNextForConditionalGeneration.from_pretrained(model_path).to(device)
     model.eval()
     with torch.no_grad():
@@ -62,8 +64,9 @@ def _get_fms_model_output(model_path, inputs):
     return output
 
 
-@pytest.mark.slow
+# @pytest.mark.slow
 def test_granite_vision_3_2_2b_equivalence():
+    from transformers import LlavaNextProcessor
     # for now, this test won't be run, but it has been verified
     # if you would like to try this, set model_path to the actial model checkpoint
 
