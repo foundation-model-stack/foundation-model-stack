@@ -4,6 +4,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Mapping, Optional, Tuple, Unpack
 
+import pdb
 import torch
 import torch.nn as nn
 
@@ -90,6 +91,7 @@ class MistralConfig(ModelConfig):
     fused_weights: bool = True  # FMS Specific -- For CPU/GPU = T, AIU = F
     pad_id: int = -1  # borrowed from granite, we do need it
     linear_config: Optional[Mapping[str, Any]] = None  # To suppor quantization
+    head_dim: Optional[int] = None
 
 
 _7b_config = MistralConfig()
@@ -99,8 +101,13 @@ class MistralBlock(nn.Module):
     def __init__(self, config: MistralConfig, rotary_emb: RotaryEmbedding):
         super(MistralBlock, self).__init__()
         self.config = config
-        emb_kq = self.config.emb_dim // self.config.nheads
-        emb_v = self.config.emb_dim // self.config.nheads
+        #head_dim = getattr(config, "head_dim", config.emb_dim // config.nheads)
+        head_dim = config.head_dim or config.emb_dim // config.nheads
+        emb_kq = head_dim
+        emb_v = head_dim
+        #emb_kq = self.config.emb_dim // self.config.nheads
+        #emb_v = self.config.emb_dim // self.config.nheads
+        attn_scale_factor = head_dim**-0.5
 
         self.ln = LayerNormParameterized(
             self.config.emb_dim,
@@ -136,6 +143,7 @@ class MistralBlock(nn.Module):
             position_encoder=rotary_emb,
             fused=self.config.fused_weights,
             linear_config=self.config.linear_config,
+            scale_factor=attn_scale_factor, #TODO: added when testing pixtral, may not be needed
         )
         self.ff_sub_layer = GatedLinearUnit(
             self.config.emb_dim,
@@ -160,6 +168,7 @@ class MistralBlock(nn.Module):
         use_cache=False,
         **attn_kwargs: Unpack[AttentionKwargs],
     ):
+        #pdb.set_trace()
         # if the cache is not empty, we need to get the kv cache for self and cross attention
         self_attn_past_key_value = past_key_value_state
 
@@ -212,8 +221,11 @@ class MistralHeadless(nn.Module):
             padding_idx=self.config.pad_id,
         )
 
+        #head_dim = getattr(config, "head_dim", config.emb_dim // config.nheads)
+        head_dim = config.head_dim or config.emb_dim // config.nheads
         self.rot_emb = RotaryEmbedding(
-            dim=self.config.emb_dim // self.config.nheads,
+            dim=head_dim,
+            #dim=self.config.emb_dim // self.config.nheads,
             scaling=self.config.rope_scaling,
             max_seq_len=self.config.max_expected_seq_len,
             ratio=self.config.rope_base,
@@ -304,8 +316,10 @@ class MistralHeadless(nn.Module):
         position_ids=None,
         past_key_value_states=None,
         use_cache=False,
+        is_input_embedded=False,
         **attn_kwargs: Unpack[AttentionKwargs],
     ):
+        #pdb.set_trace()
         # Embed the given vocabulary indices using the given attention mask, with pre-/post-norm and dropout as specified
         # x_in: batch_size x seq_len
         # mask: batch_size x seq_len x seq_len
@@ -313,7 +327,8 @@ class MistralHeadless(nn.Module):
         if past_key_value_states is None or len(past_key_value_states) == 0:
             past_key_value_states = [None for _ in range(len(self.layers))]
 
-        x_in = self.embedding(x_in)
+        if not is_input_embedded:
+            x_in = self.embedding(x_in)
 
         # this is the output cache for all the decoder layers
         present_key_value_states = []
@@ -394,6 +409,7 @@ class Mistral(nn.Module):
         past_key_value_states: Optional[Tuple[torch.FloatTensor,]] = None,
         use_cache: bool = False,
         only_last_token: bool = False,
+        is_input_embedded: Optional[bool] = False,
         **attn_kwargs: Unpack[AttentionKwargs],
     ):
         get_attention_type(**attn_kwargs)["validate_attn_kwargs"](
@@ -403,7 +419,7 @@ class Mistral(nn.Module):
             **attn_kwargs,
         )
         output, cache = self.base_model(
-            x, position_ids, past_key_value_states, use_cache, **attn_kwargs
+            x, position_ids, past_key_value_states, use_cache, is_input_embedded, **attn_kwargs
         )
 
         if only_last_token:
@@ -525,7 +541,9 @@ def _hf_to_fms_rope(
     new_sd = {}
 
     if model_config:
-        head_size = model_config.emb_dim // model_config.nheads
+        #head_size = model_config.emb_dim // model_config.nheads
+        #head_size = getattr(model_config, "head_dim", model_config.emb_dim // model_config.nheads)
+        head_dim = config.head_dim or config.emb_dim // config.nheads
         linear_type = "torch_linear"
         if model_config.linear_config:
             linear_type = model_config.linear_config["linear_type"]
