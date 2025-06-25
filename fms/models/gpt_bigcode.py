@@ -297,7 +297,7 @@ class GPTBigCode(nn.Module):
             # handle assignment of non-meta weights to meta parameters
             if self.head.weight.device == torch.device("meta"):
                 self.head.weight = self.base_model.embedding.weight
-            elif self.base_model.embedding.weight.device == torch.device("meta"):
+            else:
                 self.base_model.embedding.weight = self.head.weight
 
     def forward(
