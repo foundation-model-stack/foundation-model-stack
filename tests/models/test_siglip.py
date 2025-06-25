@@ -37,7 +37,6 @@ class SiglipFixtures(ConfigFixtureMixin, ModelFixtureMixin):
             layer_norm_eps=1e-6,
             attention_dropout=0.0,
             fused_weights=True,
-            device="cpu",
         )
 
 
