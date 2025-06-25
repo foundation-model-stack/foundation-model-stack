@@ -64,7 +64,7 @@ def _get_fms_model_output(model_path, inputs):
     return output
 
 
-# @pytest.mark.slow
+@pytest.mark.slow
 def test_granite_vision_3_2_2b_equivalence():
     from transformers import LlavaNextProcessor
     # for now, this test won't be run, but it has been verified
