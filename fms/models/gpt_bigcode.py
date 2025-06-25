@@ -38,7 +38,7 @@ class GPTBigCodeConfig(ModelConfig):
         None  # pass as {"linear_type": str, <other kwargs>}
     )
     fused_weights: bool = True
-    tie_heads: bool = False
+    tie_heads: bool = True
 
 
 class GPTBigCodeBlock(nn.Module):
