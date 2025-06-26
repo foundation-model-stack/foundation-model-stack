@@ -142,7 +142,6 @@ def _infer_model_configuration(
             repo_id=str(model_id_or_path),
             ignore_patterns=ignore_patterns,
             allow_patterns=allow_patterns,
-            cache_dir=os.environ.get("HF_HOME", None),
         )
     else:
         model_path = str(model_id_or_path)
@@ -220,6 +219,8 @@ def _infer_model_configuration(
         config_params["attention_multiplier"] = config.attention_multiplier
         config_params["logits_scaling"] = config.logits_scaling
         config_params["embedding_multiplier"] = config.embedding_multiplier
+        config_params["rope_theta"] = config.rope_theta
+        config_params["activation_fn"] = config.hidden_act
     elif architecture == "MistralForCausalLM":
         inner_dim = config.intermediate_size
         architecture = "mistral"

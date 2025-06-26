@@ -1,25 +1,21 @@
-from typing import Optional, Tuple, Unpack
+from typing import Optional, Tuple
 
-from fms.modules.attention import SDPAAttentionKwargs
 import torch
 import torch.nn as nn
 from transformers import PretrainedConfig
 from transformers.modeling_outputs import BaseModelOutputWithPastAndCrossAttentions
 
-from fms.models.hf.llama.configuration_llama_hf import HFAdaptedLLaMAConfig
+from fms.models.hf.granite.configuration_granite_hf import HFAdaptedGraniteConfig
 from fms.models.hf.lm_head_mixins import LMHeadModelLMHeadMixin
 from fms.models.hf.modeling_hf_adapter import HFDecoder, HFDecoderModelArchitecture
-from fms.models.llama import LLaMA
+from fms.models.granite import Granite, GraniteHeadless
 
 
-class HFAdaptedLLaMADecoder(HFDecoder):
-    """Adapter for the LLaMA decoder"""
+class HFAdaptedGraniteDecoder(HFDecoder):
+    """Adapter for the Granite decoder"""
 
-    def __init__(self, model: LLaMA, config: PretrainedConfig):
+    def __init__(self, model: Granite, config: PretrainedConfig):
         super().__init__(model, config, attention_mask_dim=3)
-
-    def set_input_embeddings(self, value: nn.Module):
-        self.model.shared.emb = value
 
     def _adapt(
         self,
@@ -29,12 +25,12 @@ class HFAdaptedLLaMADecoder(HFDecoder):
         past_key_values: Optional[Tuple[torch.Tensor]] = None,
         use_cache: Optional[bool] = None,
         *args,
-        **kwargs: Unpack[SDPAAttentionKwargs],
+        **kwargs,
     ) -> BaseModelOutputWithPastAndCrossAttentions:
         if kwargs.get("mask", None) is None:
             kwargs["mask"] = attention_mask
 
-        output = self.model._helper(
+        output = self.model(
             x_in=input_ids,
             position_ids=position_ids,
             past_key_value_states=past_key_values,
@@ -50,12 +46,15 @@ class HFAdaptedLLaMADecoder(HFDecoder):
         )
 
 
-class HFAdaptedLLaMAHeadless(HFDecoderModelArchitecture):
-    """This is the Adapter for the base llama architecture"""
+class HFAdaptedGraniteHeadless(HFDecoderModelArchitecture):
+    """This is the Adapter for the base granite architecture"""
 
     # attributes required by HF
-    config_class = HFAdaptedLLaMAConfig
-    base_model_prefix = "hf_adapted_llama"
+    config_class = HFAdaptedGraniteConfig
+    base_model_prefix = "hf_adapted_granite"
+
+    _tied_weights_keys = ["decoder.model.embedding.weight", "embedding.weight"]
+    _keys_to_ignore_on_save = ["embedding.weight"]
 
     def __init__(
         self,
@@ -68,12 +67,12 @@ class HFAdaptedLLaMAHeadless(HFDecoderModelArchitecture):
         # in the case we have not yet received the encoder/decoder/embedding, initialize it here
         if decoder is None or embedding is None:
             params = config.to_dict()
-            model = LLaMA(pad_id=params.pop("pad_token_id"), **params)
+            model = GraniteHeadless(**params)
             decoder = model if decoder is None else decoder
-            embedding = model.shared.emb if embedding is None else embedding
+            embedding = model.embedding if embedding is None else embedding
 
         # these are now huggingface compatible
-        decoder = HFAdaptedLLaMADecoder(decoder, config)
+        decoder = HFAdaptedGraniteDecoder(decoder, config)
         super().__init__(decoder, embedding, config, *args, **kwargs)
 
     def _prepare_inputs_for_generation(
@@ -85,7 +84,7 @@ class HFAdaptedLLaMAHeadless(HFDecoderModelArchitecture):
         **model_kwargs,
     ) -> dict:
         """
-        Overriding _prepare_inputs_for_generation to include position_ids requirements for llama batch processing
+        Overriding _prepare_inputs_for_generation to include position_ids requirements for granite batch processing
         """
         position_ids = model_kwargs.pop("position_ids", None)
 
@@ -109,25 +108,20 @@ class HFAdaptedLLaMAHeadless(HFDecoderModelArchitecture):
         }
 
 
-class HFAdaptedLLaMAForCausalLM(LMHeadModelLMHeadMixin, HFAdaptedLLaMAHeadless):
+class HFAdaptedGraniteForCausalLM(LMHeadModelLMHeadMixin, HFAdaptedGraniteHeadless):
     _keys_to_ignore_on_load_missing = [r"lm_head.weight"]
     _tied_weights_keys = ["embedding.weight", "lm_head.weight"]
 
-    def __init__(self, config: HFAdaptedLLaMAConfig, *args, **kwargs):
+    def __init__(self, config: HFAdaptedGraniteConfig, *args, **kwargs):
         super().__init__(config=config, bias=False, *args, **kwargs)
 
     @classmethod
     def _hf_model_from_fms(
-        cls, model: LLaMA, config: HFAdaptedLLaMAConfig
-    ) -> "HFAdaptedLLaMAForCausalLM":
+        cls, model: Granite, config: HFAdaptedGraniteConfig
+    ) -> "HFAdaptedGraniteForCausalLM":
         return cls(
             config=config,
-            decoder=model,
-            embedding=model.shared.emb,
-            lm_head=model.shared.head,
+            decoder=model.base_model,
+            embedding=model.base_model.embedding,
+            lm_head=model.head,
         )
-
-    # overriding this to enable tensor-parallel since it requires a WordEmbedding forward
-    # in the future WordEmbedding should be split up
-    def _lm_head(self, input_ids, *args, **kwargs):
-        return self.decoder.model.shared(input_ids, reverse=True)
