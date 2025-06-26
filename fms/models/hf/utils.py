@@ -255,7 +255,16 @@ def _map_model_config(architecture, config):
             "GraniteForCausalLM", config.text_config
         )
         config_params["text_config"] = GraniteConfig(**text_config_params)
-
+    elif architecture == "MPNetForMaskedLM":
+        inner_dim = config.intermediate_size
+        architecture = "mpnet"
+        config_params["activation_fn"] = config.activation_fn
+        config_params["emb_dim"] = config.emb_dim
+        config_params["max_expected_seq_len"] = config.max_expected_seq_len
+        config_params["attention_probs_dropout_prob"] = config.attention_probs_dropout_prob
+        config_params["hidden_dropout_prob"] = config.hidden_dropout_prob
+        config_params["norm_eps"] = config.layer_norm_eps
+        config_params["pad_id"] = config.pad_id
     else:
         raise ValueError(
             "FMS model implementations currently only support LlamaForCausalLM, GPTBigCodeForCausalLM, MixtralForCausalLM, RobertaForMaskedLM, GraniteForCausalLM, SiglipModel and LlavaNextForConditionalGeneration"
