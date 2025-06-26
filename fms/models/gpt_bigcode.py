@@ -262,10 +262,6 @@ class GPTBigCode(nn.Module):
             self.config.emb_dim, self.config.src_vocab_size, bias=False
         )
 
-        if self.config.tie_heads:
-            # if this model ties weights, so we tie here
-            self.head.weight = self.base_model.embedding.weight
-
     @classmethod
     def from_config(cls, config: GPTBigCodeConfig) -> "GPTBigCode":
         return cls(config)
