@@ -229,10 +229,8 @@ class ModelCompileTestSuite(ModelFixtureMixin):
             get_signature(
                 compiled_model,
                 params=self._get_signature_params,
-                # default attn_algorithm won't compile on CPU
-                # TODO: add non-mmath attn_algorithm when we have GPUs to run unit tests
-                optional_params={"attn_algorithm": "math"},
                 logits_getter_fn=self._get_signature_logits_getter_fn,
+                device="cuda" if torch.cuda.is_available() else "cpu",
             )
             assert cnt.frame_count == 1
         except TorchDynamoException as e:
@@ -297,6 +295,7 @@ class ModelConsistencyTestSuite(ModelFixtureMixin, SignatureFixtureMixin):
             params=self._get_signature_params,
             optional_params=self._get_signature_optional_params,
             logits_getter_fn=self._get_signature_logits_getter_fn,
+            device="cuda" if torch.cuda.is_available() else "cpu",
         )
 
         if capture_expectation:
