@@ -3,6 +3,7 @@ import math
 import re
 from dataclasses import dataclass
 from typing import Any, Mapping, Optional, Tuple, Unpack
+import warnings
 
 import torch
 import torch.nn as nn
@@ -21,6 +22,7 @@ from fms.modules.positions import RotaryEmbedding
 from fms.utils import serialization
 from fms.utils.activation import str_to_activation
 from fms.utils.config import ModelConfig
+from fms.utils.headless import gather_outputs
 
 
 logger = logging.getLogger(__name__)
@@ -268,6 +270,7 @@ class GraniteHeadless(nn.Module):
         ):
             self.rot_emb.compute_freqs_cis(device, self.config.max_expected_seq_len)
 
+    @gather_outputs
     def forward(
         self,
         x_in,
@@ -364,7 +367,7 @@ class Granite(nn.Module):
         position_ids: Optional[torch.LongTensor] = None,
         past_key_value_states: Optional[Tuple[torch.FloatTensor,]] = None,
         use_cache: bool = False,
-        only_last_token: bool = False,
+        index: Optional[int | torch.Tensor] = None,
         **attn_kwargs: Unpack[AttentionKwargs],
     ):
         get_attention_type(**attn_kwargs)["validate_attn_kwargs"](
@@ -379,11 +382,31 @@ class Granite(nn.Module):
             position_ids,
             past_key_value_states,
             use_cache,
+            index=index,
             **attn_kwargs,
         )
 
-        if only_last_token:
-            output = output[:, -1, :]
+        # # added for deprecation
+        # if "only_last_token" in attn_kwargs:
+        #     if index is None:
+        #         index = -1 if attn_kwargs["only_last_token"] else None
+        #     else:
+        #         warnings.warn("ignoring only_last_token as index is set")
+            
+        #     warnings.warn(
+        #         "only_last_token will be deprecated in future versions, use index instead",
+        #         DeprecationWarning,
+        #         stacklevel=2,
+        #     )
+
+        # if index is not None:
+        #     if isinstance(index, int):
+        #         output = output[:, index, :]
+        #     else:
+        #         #torch.cat((torch.zeros(2,1, dtype=torch.int64),context_lengths_without_pads.unsqueeze(1) - 1), dim=1)
+        #         # gather_idx = torch.cat((torch.zeros(2,1, dtype=torch.int64),context_lengths_without_pads.unsqueeze(1) - 1), dim=1)
+        #         # kwargs["position_ids"] = kwargs["position_ids"].gather(1, gather_idx)
+        #         output = output.gather(1, index)
         preds = self.head(output)
         preds = preds / self.config.logits_scaling
 
