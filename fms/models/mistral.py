@@ -100,9 +100,7 @@ class MistralBlock(nn.Module):
     def __init__(self, config: MistralConfig, rotary_emb: RotaryEmbedding):
         super(MistralBlock, self).__init__()
         self.config = config
-
-        # emb_kq = self.config.emb_dim // self.config.nheads
-        # emb_v = self.config.emb_dim // self.config.nheads
+        
         emb_kq = config.head_dim
         emb_v = config.head_dim
 
