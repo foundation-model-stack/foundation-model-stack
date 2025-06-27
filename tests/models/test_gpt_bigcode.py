@@ -1,6 +1,7 @@
 import pytest
 import torch
 
+from fms.models import get_model
 from fms.models.gpt_bigcode import GPTBigCode, GPTBigCodeConfig, GPTBigCodeHeadless
 from fms.testing._internal.model_test_suite import (
     ConfigFixtureMixin,
@@ -20,7 +21,13 @@ class GPTBigCodeFixtures(ConfigFixtureMixin, ModelFixtureMixin):
 
     @pytest.fixture(scope="class", autouse=True)
     def uninitialized_model(self, config: GPTBigCodeConfig):
-        return GPTBigCode(config)
+        return get_model(
+            architecture='gpt_bigcode',
+            variant='micro',
+            device_type="cpu",
+            data_type=torch.float32,
+            **config.as_dict(),
+        )
 
     @pytest.fixture(scope="class", autouse=True)
     def config(self) -> GPTBigCodeConfig:
