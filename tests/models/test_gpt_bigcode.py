@@ -22,8 +22,8 @@ class GPTBigCodeFixtures(ConfigFixtureMixin, ModelFixtureMixin):
     @pytest.fixture(scope="class", autouse=True)
     def uninitialized_model(self, config: GPTBigCodeConfig):
         return get_model(
-            architecture='gpt_bigcode',
-            variant='micro',
+            architecture="gpt_bigcode",
+            variant="micro",
             device_type="cpu",
             data_type=torch.float32,
             **config.as_dict(),
