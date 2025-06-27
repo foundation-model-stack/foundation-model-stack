@@ -219,7 +219,7 @@ class _TekkenTokenizer(BaseTokenizer):
                 return f.read()
         return ""
 
-    def _load_tokenizer(self) :
+    def _load_tokenizer(self):
         """
         Load the tekken tokenizer
         https://github.com/mistralai/mistral-common/blob/main/src/mistral_common/tokens/tokenizers/tekken.py
@@ -231,8 +231,8 @@ class _TekkenTokenizer(BaseTokenizer):
                 from mistral_common.tokens.tokenizers.tekken import Tekkenizer
             except ImportError:
                 raise ImportError(
-                "mistral-common is required for MistralAI tokenizers. "
-                "Please install it with: pip install mistral-common --upgrade"
+                    "mistral-common is required for MistralAI tokenizers. "
+                    "Please install it with: pip install mistral-common --upgrade"
                 )
 
             try:
@@ -262,7 +262,7 @@ class _TekkenTokenizer(BaseTokenizer):
     def decode(
         self,
         token_ids: List[int],
-        stp = 0 # SpecialTokenPolicy = SpecialTokenPolicy.IGNORE,
+        stp=0,  # SpecialTokenPolicy = SpecialTokenPolicy.IGNORE,
     ) -> str:
         """Decode a list of token ids into a string.
 
@@ -272,7 +272,7 @@ class _TekkenTokenizer(BaseTokenizer):
                 Use the tokenizer's [attribute][mistral_common.tokens.tokenizers.tekken.Tekkenizer.special_token_policy]
                 if `None`. Passing `None` is deprecated and will be changed
                 to `SpecialTokenPolicy.IGNORE` in `mistral_common=1.7.0`.
-                
+
                 SpecialTokenPolicy
                 IGNORE = 0
                 KEEP = 1
@@ -359,7 +359,6 @@ class _TekkenTokenizer(BaseTokenizer):
             str: _description_
         """
         return "".join(tokens)
-
 
 
 def get_tokenizer(name: str, style: Optional[str] = None) -> BaseTokenizer:
