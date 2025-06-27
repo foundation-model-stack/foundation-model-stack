@@ -68,7 +68,7 @@ class TestHFAdaptedGPTBigCode(
     HFAdaptedGPTBigCodeFixtures,
 ):
     """
-    LLaMA2 FMS Huggingface Tests for:
+    GPTBigCode FMS Huggingface Tests for:
 
     - FMS Huggingface configuration tests
     - model equivalency tests
