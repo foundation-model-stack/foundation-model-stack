@@ -133,6 +133,9 @@ class _HFTokenizer(BaseTokenizer):
         self.bos_token = self.tokenizer.bos_token
         self.eos_token = self.tokenizer.eos_token
 
+    def apply_chat_template(self, conversation, chat_template=None, **kwargs):
+        return self.tokenizer.apply_chat_template(conversation, chat_template, **kwargs)
+
     def batch_decode(
         self,
         sequences: Union[List[int], List[List[int]]],
