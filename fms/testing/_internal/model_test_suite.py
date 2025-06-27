@@ -226,12 +226,16 @@ class ModelCompileTestSuite(ModelFixtureMixin):
             cnt = CompileCounterWithBackend("inductor")
             compiled_model = torch.compile(model=model, backend=cnt, fullgraph=True)
             assert cnt.frame_count == 0
+
+            optional_params = self._get_signature_optional_params
+            # default attn_algorithm won't compile on CPU for older pytorch versions
+            # TODO: add non-math attn_algorithm when we have GPUs to run unit tests
+            optional_params.update({"attn_algorithm": "math"})
+
             get_signature(
                 compiled_model,
                 params=self._get_signature_params,
-                # default attn_algorithm won't compile on CPU
-                # TODO: add non-mmath attn_algorithm when we have GPUs to run unit tests
-                optional_params={"attn_algorithm": "math"},
+                optional_params=optional_params,
                 logits_getter_fn=self._get_signature_logits_getter_fn,
             )
             assert cnt.frame_count == 1
@@ -286,7 +290,7 @@ class ModelConsistencyTestSuite(ModelFixtureMixin, SignatureFixtureMixin):
         Optional[dict[str, torch.Tensor]]
             the dictionary of optional params to pass to the model
         """
-        return None
+        return {}
 
     def test_model_output(self, model, signature, model_id, capture_expectation):
         """test consistency of model output with signature"""
