@@ -232,6 +232,17 @@ def _infer_model_configuration(
         config_params["norm_eps"] = config.rms_norm_eps
         config_params["rope_base"] = config.rope_theta
         config_params["sliding_window"] = config.sliding_window
+    elif architecture == "Qwen3ForCausalLM":
+        inner_dim = config.intermediate_size
+        architecture = "qwen3"  # or qwen?
+        config_params["activation_fn"] = config.hidden_act
+        config_params["emb_dim"] = config.hidden_size
+        config_params["max_expected_seq_len"] = config.max_position_embeddings
+        config_params["kvheads"] = config.num_key_value_heads
+        config_params["p_dropout"] = config.attention_dropout
+        config_params["norm_eps"] = config.rms_norm_eps
+        config_params["rope_base"] = config.rope_theta
+        config_params["sliding_window"] = config.sliding_window
     elif architecture == "BambaForCausalLM":
         inner_dim = config.intermediate_size
         architecture = "bamba"
