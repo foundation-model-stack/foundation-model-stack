@@ -1,15 +1,9 @@
 import os
-from pathlib import Path
-from typing import List, Optional, Union, Dict, Any
+from typing import List, Optional, Union
+
 import torch
-import json
 
 from fms import utils
-
-# Mistaral
-# git repo : https://github.com/mistralai/mistral-common
-from mistral_common.tokens.tokenizers.tekken import Tekkenizer
-from mistral_common.tokens.tokenizers.tekken import SpecialTokenPolicy
 
 
 # constants for common tokenizers
@@ -147,18 +141,12 @@ class _HFTokenizer(BaseTokenizer):
         return self.tokenizer.batch_decode(sequences, skip_special_tokens)
 
     def tokenize(self, text: str):
-        print(
-            "**** DEPRICATION WARNING ****: Instead of tokenize(), use encode(text: str) -> List[int] methed"
-        )
         return self.tokenizer.tokenize(text)
 
     def convert_ids_to_tokens(self, ids: torch.LongTensor):
         return self.tokenizer.convert_ids_to_tokens(ids)
 
     def convert_tokens_to_ids(self, tokens: Union[str, list[str]]):
-        print(
-            "**** DEPRICATION WARNING ****: Instead of convert_tokens_to_ids(), use encode(text: str) -> List[int] methed"
-        )
         return self.tokenizer.convert_tokens_to_ids(tokens)
 
     def convert_tokens_to_string(self, tokens: list[str]):
@@ -177,184 +165,6 @@ class _HFTokenizer(BaseTokenizer):
             )
         else:
             return self.tokenizer.convert_tokens_to_ids(self.tokenizer.tokenize(text))
-
-
-"""
-MistralAI Tokenizer implementation for foundation-model-stack
-Add this class to fms/utils/tokenizers.py
-"""
-
-
-class _TekkenTokenizer(BaseTokenizer):
-    """
-    MistralAI tekken tokenizer wrapper that follows the same interface as other tokenizers
-    in the foundation model stack.
-
-    Supports Tekken (tiktoken-based)
-    Requires: pip install mistral-common --upgrade
-    """
-
-    def __init__(self, model_path: Union[str, Path], **kwargs):
-        self.model_path = Path(model_path)
-        self.config = self._load_config()
-        self.system_prompt = self._load_system_prompt()
-
-        # Try to load the tokenizer from the model path
-        self.tokenizer = self._load_tokenizer()
-
-        # Get special token IDs from config or use defaults
-        self.bos_token_id = self.config.get("bos_token_id", 1)
-        self.eos_token_id = self.config.get("eos_token_id", 2)
-        self.unk_token_id = self.config.get("unk_token_id", 0)
-        self.pad_token_id = self.config.get("pad_token_id", self.eos_token_id)
-
-        # Store commonly used special tokens (strings)
-        self.bos_token = "<s>"
-        self.eos_token = "</s>"
-        self.unk_token = "<unk>"
-        self.pad_token = self.eos_token  # Mistral typically uses EOS as pad
-
-    def _load_config(self) -> Dict[str, Any]:
-        """Load configuration from config.json"""
-        config_path = self.model_path / "config.json"
-        if config_path.exists():
-            with open(config_path, "r", encoding="utf-8") as f:
-                return json.load(f)
-        return {}
-
-    def _load_system_prompt(self) -> str:
-        """Load system promp from model path"""
-        system_prompt = self.model_path / "SYSTEM_PROMPT.txt"
-        if system_prompt.exists():
-            with open(system_prompt, "r") as f:
-                return f.read()
-        return ""
-
-    def _load_tokenizer(self) -> Tekkenizer:
-        """
-        Load the tekken tokenizer
-        https://github.com/mistralai/mistral-common/blob/main/src/mistral_common/tokens/tokenizers/tekken.py
-        """
-        # Check for Tekken tokenizer (newer models)
-        tekken_path = self.model_path / "tekken.json"
-        if tekken_path.exists():
-            try:
-                return Tekkenizer.from_file(str(tekken_path))
-            except Exception as e:
-                print(f"Error: Failed to load Tekken tokenizer from {tekken_path}: {e}")
-                raise RuntimeError(
-                    f"Tekkenizer failed to load tekken.json at model_path {self.model_path}"
-                )
-        else:
-            raise RuntimeError(
-                f"Tekkenizer Error: Could not find the tekken.json at model_path {self.model_path}"
-            )
-
-    def encode(self, text: str, add_special_tokens: bool = False) -> List[int]:
-        """Encode a string into a list of token ids.
-
-        Args:
-            text (str): input text string to be tokenized and converted to ids
-            add_special_tokens (bool, optional): prefix bos token to the input text
-
-        Returns:
-            List[int]: token ids of tokenized text string
-        """
-        return self.tokenizer.encode(text, bos=add_special_tokens, eos=False)
-
-    def decode(
-        self,
-        token_ids: List[int],
-        stp: SpecialTokenPolicy = SpecialTokenPolicy.IGNORE,
-    ) -> str:
-        """Decode a list of token ids into a string.
-
-        Args:
-            token_ids (List[int]): The list of token ids to decode.
-            special_token_policy: The policy for handling special tokens.
-                Use the tokenizer's [attribute][mistral_common.tokens.tokenizers.tekken.Tekkenizer.special_token_policy]
-                if `None`. Passing `None` is deprecated and will be changed
-                to `SpecialTokenPolicy.IGNORE` in `mistral_common=1.7.0`.
-
-        Returns:
-            str: Decoded text string
-        """
-        return self.tokenizer.decode(token_ids, stp)
-
-    def tokenize(self, text: str) -> List[str]:
-        """
-        Tokenize text into tokens (strings)
-
-        Args:
-            text: Input text to tokenize
-        Returns:
-            List of string tokens
-        """
-        print(
-            "**** DEPRICATION WARNING ****: Instead of tokenize(), use encode(text: str) -> List[int] methed"
-        )
-        self.ids = self.encode(text)
-        return list(map(self.tokenizer.decode, [[id] for id in self.ids]))
-
-    def convert_tokens_to_ids(self, tokens: Union[str, list[str]]) -> List[int]:
-        """
-        Convert tokens to token IDs
-
-        Args:
-            tokens:
-
-        Returns:
-            List of token IDs
-        """
-        print(
-            "**** DEPRICATION WARNING ****: Instead of convert_tokens_to_ids(), use encode(text: str) -> List[int] methed"
-        )
-        try:
-            if len(self.ids) == len(tokens):
-                return self.ids
-        except Exception as e:
-            raise RuntimeError(
-                f"Misrtral tokenizer error: convert_tokens_to_ids() must be used in tandum with tokenize() Error: {type(e).__name__} occurred: {e}"
-            )
-        return [0]
-
-    def convert_ids_to_tokens(self, ids) -> List[str]:
-        """
-        Convert token IDs to tokens
-
-        Args:
-            ids: List of token IDs
-
-        Returns:
-            List of token strings
-        """
-        if isinstance(ids, torch.Tensor):
-            ids = ids.tolist()
-
-        if isinstance(ids, list) and not all(
-            isinstance(element, int) for element in ids
-        ):
-            ids = ids[0]
-
-        return list(map(self.tokenizer.decode, [[i] for i in ids]))
-
-    def convert_tokens_to_string(self, tokens: list[str]) -> str:
-        """Conver list of string tokens
-
-        Args:
-            tokens (list[str]): _description_
-
-        Returns:
-            str: _description_
-        """
-        return "".join(tokens)
-
-    # def batch_decode(
-    #     self,
-    #     sequences: Union[List[int], List[List[int]]],
-    #     skip_special_tokens: bool = False,
-    # ):
-    #     return self.tokenizer.batch_decode(sequences, skip_special_tokens)
 
 
 def get_tokenizer(name: str, style: Optional[str] = None) -> BaseTokenizer:
@@ -389,14 +199,8 @@ def get_tokenizer(name: str, style: Optional[str] = None) -> BaseTokenizer:
         raise RuntimeError(
             f"Could not find tokenizer '{name}' and HuggingFace transformers is not installed"
         )
-
-    model_path = Path(name)
-    if style == "tekken" or (model_path / "tekken.json").exists():
-        return _TekkenTokenizer(name)
-
     if style is None or style == "hf":
         return _HFTokenizer(name)
-
     if style is None:
         raise RuntimeError(f"Could not find a tokenzier {name}")
     else:
