@@ -29,7 +29,16 @@ def gather_outputs(f):
             if isinstance(index, int):
                 output = output[:, index, :]
             else:
+                # x: [b n ...]
+                # i: [b] or [b l]
+                # out: [b ...] or [b l ...]
+                if len(index.shape) == 1:
+                    index = index[:,None]
+                s = output.shape
+                output = output.view(s[0],s[1],-1)  # b n d
+                index = index[:,:,None].expand(s[0],index.size(1), output.size(-1))  # b 1 d
                 output = output.gather(1, index)
+                output = output.view(s[0], index.size(1), *s[2:]).squeeze(1)
         
         return output, cache
     return _headless_execution
