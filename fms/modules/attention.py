@@ -324,19 +324,19 @@ class QKV(nn.Module, metaclass=abc.ABCMeta):
         emb_kq_per_head: int,
         emb_v_per_head: int,
         use_bias: bool,
-        use_norm: bool = False,
+        use_norm: bool,
         linear_config: Optional[Mapping[str, Any]] = None,
         *args,
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
-        self.use_norm = use_norm
         self.emb_dim = emb_dim
         self.nheads = nheads
         self.kvheads = kvheads
         self.emb_kq_per_head = emb_kq_per_head
         self.emb_v_per_head = emb_v_per_head
         self.use_bias = use_bias
+        self.use_norm = use_norm
         self.linear_config = linear_config
 
     @abc.abstractmethod
@@ -383,8 +383,6 @@ class UnfusedQKV(QKV):
         emb_kq_per_head: int,
         emb_v_per_head: int,
         use_bias: bool,
-        use_norm: bool = False,
-        norm_eps: float = 1e-6,
         linear_config: Optional[Mapping[str, Any]] = None,
         *args,
         **kwargs,
@@ -396,7 +394,6 @@ class UnfusedQKV(QKV):
             emb_kq_per_head,
             emb_v_per_head,
             use_bias,
-            use_norm,
             linear_config,
             *args,
             **kwargs,
@@ -420,23 +417,6 @@ class UnfusedQKV(QKV):
             bias=use_bias,
             linear_config=linear_config,
         )
-        if self.use_norm:
-            self.q_norm = LayerNormParameterized(
-                self.emb_kq_per_head,
-                elementwise_scale=True,
-                elementwise_shift=False,
-                use_mean=False,
-                eps=norm_eps,
-                use_high_precision_pow=True,
-            )
-            self.k_norm = LayerNormParameterized(
-                self.emb_kq_per_head,
-                elementwise_scale=True,
-                elementwise_shift=False,
-                use_mean=False,
-                eps=norm_eps,
-                use_high_precision_pow=True,
-            )
 
     def reset_parameters(self):
         for m in self.modules():
@@ -458,12 +438,7 @@ class UnfusedQKV(QKV):
 
         # b x h x qlen x ds
         queries = self.query(q)
-        input_shape = queries.shape
-        if self.use_norm:
-            queries = self.q_norm(queries.view(*input_shape[:-1], -1, self.emb_kq_per_head))
         keys = self.key(k)
-        if self.use_norm:
-            keys = self.k_norm(keys.view(*input_shape[:-1], -1, self.emb_kq_per_head))
         values = self.value(v)
         return queries, keys, values
 
@@ -481,7 +456,6 @@ class FusedQKV(QKV):
         emb_kq_per_head: int,
         emb_v_per_head: int,
         use_bias: bool,
-        use_norm: bool = False,
         linear_config: Optional[Mapping[str, Any]] = None,
         *args,
         **kwargs,
@@ -493,7 +467,6 @@ class FusedQKV(QKV):
             emb_kq_per_head,
             emb_v_per_head,
             use_bias,
-            use_norm,
             linear_config,
             *args,
             **kwargs,
@@ -510,21 +483,6 @@ class FusedQKV(QKV):
             bias=self.use_bias,
             linear_config=linear_config,
         )
-        if self.use_norm:
-            self.q_norm = LayerNormParameterized(
-                self.emb_kq_per_head,
-                elementwise_scale=True,
-                elementwise_shift=False,
-                use_mean=False,
-                use_high_precision_pow=True,
-            )
-            self.k_norm = LayerNormParameterized(
-                self.emb_kq_per_head,
-                elementwise_scale=True,
-                elementwise_shift=False,
-                use_mean=False,
-                use_high_precision_pow=True,
-            )
 
     def unfuse_weights(self):
         with torch.device("meta"):
@@ -561,20 +519,8 @@ class FusedQKV(QKV):
             qkv = q
         else:
             raise ValueError("q, k, and v must be the same or k and v must be None")
-        # queries, keys, values = self.qkv_fused(qkv).split(self.splits, dim=-1)
-        # if self.use_norm:
-        #     queries = self.q_norm(queries)
-        #     keys = self.k_norm(keys)
-        # return queries, keys, values
-        queries = self.query(q)
-        input_shape = queries.shape
-        if self.use_norm:
-            queries = self.q_norm(queries.view(*input_shape[:-1], -1, self.emb_kq_per_head))
-        keys = self.key(k)
-        if self.use_norm:
-            keys = self.k_norm(keys.view(*input_shape[:-1], -1, self.emb_kq_per_head))
-        values = self.value(v)
-        return queries.view(*input_shape[:-1], -1), keys.view(*input_shape[:-1], -1), values
+        queries, keys, values = self.qkv_fused(qkv).split(self.splits, dim=-1)
+        return queries, keys, values
 
 
 class MultiHeadAttention(nn.Module):
@@ -635,16 +581,37 @@ class MultiHeadAttention(nn.Module):
         self.linear_config = linear_config
         self.scale_factor = scale_factor
 
-        self.in_proj: QKV = (FusedQKV if self.fused else UnfusedQKV)(
+        self.in_proj:QKV = None     # type:ignore
+        if self.fused:
+            self.in_proj = FusedQKV(
             self.emb_dim,
             self.nheads,
             self.kvheads,
             self.emb_kq_per_head,
             self.emb_v_per_head,
             self.use_bias,
-            self.use_norm,
-            linear_config=linear_config,
-        )
+            linear_config
+            )
+        else:
+            self.in_proj = UnfusedQKV(
+            self.emb_dim,
+            self.nheads,
+            self.kvheads,
+            self.emb_kq_per_head,
+            self.emb_v_per_head,
+            self.use_bias,
+            linear_config,
+            )
+        # self.in_proj: QKV = (FusedQKV if self.fused else )(
+        #     self.emb_dim,
+        #     self.nheads,
+        #     self.kvheads,
+        #     self.emb_kq_per_head,
+        #     self.emb_v_per_head,
+        #     self.use_bias,
+        #     self.use_norm,
+        #     linear_config=linear_config,
+        # )
 
         self.dense = get_linear(
             self.nheads * self.emb_v_per_head,
@@ -652,6 +619,21 @@ class MultiHeadAttention(nn.Module):
             bias=use_bias,
             linear_config=linear_config,
         )
+        if self.use_norm:
+            self.q_norm = LayerNormParameterized(
+                self.emb_kq_per_head,
+                elementwise_scale=True,
+                elementwise_shift=False,
+                use_mean=False,
+                use_high_precision_pow=True,
+            )
+            self.k_norm = LayerNormParameterized(
+                self.emb_kq_per_head,
+                elementwise_scale=True,
+                elementwise_shift=False,
+                use_mean=False,
+                use_high_precision_pow=True,
+            )
 
         if self.p_dropout:
             self.attn_dropout = nn.Dropout(self.p_dropout)
@@ -674,7 +656,6 @@ class MultiHeadAttention(nn.Module):
         q: torch.Tensor,
         k: Optional[torch.Tensor] = None,
         v: Optional[torch.Tensor] = None,
-        mask: Optional[Tensor] = None,
         position_ids=None,
         past_key_value_state: Optional[Tuple[Tensor | None, Tensor | None]] = None,
         use_cache=False,
@@ -708,6 +689,11 @@ class MultiHeadAttention(nn.Module):
         # b x h x kvlen x ds
         # todo: Cross attention (This always is true for now)
         q_out, k_out, v_out = self.in_proj(q, k, v)
+
+        input_shape = q_out.shape
+        if self.use_norm:
+            q_out = self.q_norm(q_out.view(*input_shape[:-1], -1, self.emb_kq_per_head)).view(*input_shape[:-1], -1)
+            k_out = self.k_norm(k_out.view(*input_shape[:-1], -1, self.emb_kq_per_head)).view(*input_shape[:-1], -1)
 
         # note: transposes will be moved in a later PR to fix dis-contiguous tensor issues
         queries = q_out.view(batch_size, q_len, self.nheads, self.emb_kq_per_head)
