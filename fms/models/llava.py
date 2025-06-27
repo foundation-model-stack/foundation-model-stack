@@ -4,7 +4,6 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Mapping, Optional, Unpack, Tuple
 
-import pdb
 import torch
 import torch.nn as nn
 
@@ -18,8 +17,6 @@ from fms.utils import serialization
 from fms.utils.activation import str_to_activation
 from fms.utils.config import ModelConfig
 
-# TODO: percolate ditributed_strategy, taking care of _no_split_modules from original transformers code
-
 logger = logging.getLogger(__name__)
 
 _text_config = MistralConfig(
@@ -30,11 +27,10 @@ _text_config = MistralConfig(
     kvheads=8,
     nlayers=40,
     hidden_grow_factor=14336 / 5120,
-    max_expected_seq_len=1024000,   #TODO: might need to change
+    max_expected_seq_len=1024000,
     rope_base=1000000000.0,
     sliding_window=None,
-    fused_weights=False, #TODO: revert
-    head_dim=128, #TODO: might need to fix emb_kq and emb_v to head_dim in Mistral
+    head_dim=128,
 )
 
 _vision_config = PixtralVisionConfig(
@@ -144,6 +140,7 @@ class Llava(nn.Module):
 
     def post_init(self):
         self.language_model.post_init()
+        self.vision_tower.post_init()
 
     def get_image_features(
         self,
@@ -182,7 +179,6 @@ class Llava(nn.Module):
         use_cache=False,
         **attn_kwargs: Unpack[AttentionKwargs],
     ):
-        pdb.set_trace()
         if input_ids is None and inputs_embeds is None:
             raise ValueError("input_ids and inputs_embeds can't both be None")
 
@@ -195,7 +191,6 @@ class Llava(nn.Module):
                 pixel_values=pixel_values,
                 image_sizes=image_sizes,
             )
-            #TODO: image_features value doesn't match HF but shape does
 
             special_image_mask = (input_ids == self.config.image_token_index).unsqueeze(
                 -1
@@ -210,7 +205,6 @@ class Llava(nn.Module):
                 special_image_mask, image_features
             )
 
-        #pdb.set_trace()
         outputs = self.language_model(
             inputs_embeds,
             position_ids=position_ids,
@@ -275,9 +269,9 @@ def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]
         (r"attention\.v_proj", "attn.in_proj.value"),
         (r"attention\.q_proj", "attn.in_proj.query"),
         (r"attention\.o_proj", "attn.dense"),
-        (r"feed_forward\.gate_proj", "feed_forward.wg"),
-        (r"feed_forward\.up_proj", "feed_forward.w1"),
-        (r"feed_forward\.down_proj", "feed_forward.w2"),
+        (r"feed_forward\.gate_proj", "ff_sub_layer.wg"),
+        (r"feed_forward\.up_proj", "ff_sub_layer.w1"),
+        (r"feed_forward\.down_proj", "ff_sub_layer.w2"),
         # language
         (r"language_model\.lm_head\.weight", "language_model.head.weight"),
         (
@@ -315,7 +309,6 @@ def _get_rope_params(linear_type: str) -> list[str]:
         return ["weight", "bias"]
 
 
-#TODO: might need _hf_to_fms_rope for pixtral as well
 #TODO: combine both _hf_to_fms_rope_xxx_model() into one
 
 def _hf_to_fms_rope_vision_model(
@@ -468,7 +461,5 @@ serialization.register_adapter_step(
 serialization.register_adapter(
     _architecture_name,
     "hf",
-    #["hf_to_fms_names"],
-    ["hf_to_fms_names", "hf_to_fms_rope_language_model", "hf_to_fms_rope_vision_model"],
-    #["hf_to_fms_names", "hf_to_fms_rope", "weight_fusion"],
+    ["hf_to_fms_names", "hf_to_fms_rope_language_model", "hf_to_fms_rope_vision_model", "weight_fusion"],
 )
