@@ -630,6 +630,9 @@ def _load_partial_state_dict(
                 )
                 unused_keys_tp = tp_module.load_weights(tensor_values)
         except Exception as e:
+            print(e)
+            import pdb
+            pdb.set_trace()
             # capture error specific to shape mismatch and halt the processing
             if "shape" in str(e) or "size" in str(e):
                 raise ValueError(
