@@ -130,7 +130,7 @@ if args.default_dtype is not None:
     default_dtype = dtypes_map[args.default_dtype]
 
 if "fp8" in args.attn_name:
-    import fms_mo.aiu_addons.fp8.fp8_attn
+    import fms_mo.aiu_addons.fp8.fp8_attn  # noqa: F401
 
 # requires setting environment variable: `CUBLAS_WORKSPACE_CONFIG=:4096:8`
 if args.deterministic:
