@@ -143,7 +143,7 @@ def register_attention_op(
     if compute_decode_op is None:
         compute_decode_op = compute_op
 
-    compute_dict = {
+    compute_dict: dict[str, Callable] = {
         "store": store_op,
         "is_prefill": (lambda **_: True) if is_prefill_op is None else is_prefill_op,
         "compute_prefill": compute_op,

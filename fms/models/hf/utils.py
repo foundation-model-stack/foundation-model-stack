@@ -270,7 +270,7 @@ def _infer_model_configuration(
     quant_config = getattr(config, "quantization_config", None)
     if quant_config is not None:
         try:
-            from fms_mo.aiu_addons import _infer_quantization_config
+            from fms_mo.aiu_addons import _infer_quantization_config  # type: ignore[import-untyped,import-not-found]
         except ImportError:
             raise RuntimeError(
                 "You need to install fms-model-optimizer to load quantized models"
