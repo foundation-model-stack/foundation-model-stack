@@ -562,34 +562,9 @@ def _hf_gptq_llama_check(
     return input_sd
 
 
-def _hf_fp8_llama_check(
-    input_sd: Mapping[str, Any], model_config: Optional[LLaMAConfig] = None, **kwargs
-) -> Mapping[str, Any]:
-    has_fused_weights = True
-    linear_type = "torch_linear"
-    if model_config:
-        if not model_config.fused_weights:
-            has_fused_weights = False
-        if model_config.linear_config:
-            linear_type = model_config.linear_config["linear_type"]
-            if callable(linear_type):
-                # Calling this with "any" guarantees "fp8" to be returned
-                # when loading an HF fp8 checkpoint, and never in any other condition
-                linear_type = get_linear_type(model_config.linear_config, "any")
-
-    if "fp8" in linear_type and has_fused_weights:
-        raise ValueError(
-            "FP8 HF llama checkpoints cannot be loaded into a model with fused weights"
-        )
-
-    return input_sd
-
-
 serialization.register_adapter_step(
     "llama", "hf_gptq_fusion_check", _hf_gptq_llama_check
 )
-
-serialization.register_adapter_step("llama", "hf_fp8_llama_check", _hf_fp8_llama_check)
 
 
 def _meta_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]:
@@ -733,7 +708,6 @@ serialization.register_adapter(
         "hf_to_fms_names",
         "hf_to_fms_rope",
         "hf_gptq_fusion_check",
-        "hf_fp8_llama_check",
         "weight_fusion",
     ],
 )

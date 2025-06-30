@@ -477,9 +477,11 @@ serialization.register_adapter_step(
 def _get_rope_params(linear_type: str) -> list[str]:
     if "gptq" in linear_type:
         return ["qweight", "scales", "qzeros", "bias"]
-    if "int8" in linear_type:
+    elif "int8" in linear_type:
         # quantize_weight is fms-model-optimizer identifier of weight clip values
         return ["weight", "bias", "quantize_weight"]
+    elif "fp8" in linear_type:
+        return ["weight", "weight_scale", "input_scale", "bias"]
     else:  # torch.nn.Linear
         return ["weight", "bias"]
 
@@ -491,22 +493,25 @@ def _hf_to_fms_rope(
 
     if model_config:
         head_size = model_config.emb_dim // model_config.nheads
-        linear_type_str = "torch_linear"
-        if model_config.linear_config:
-            linear_type_str = get_linear_type(
-                model_config.linear_config,
-                module_name=None,  # if callable, linear_type should return default str
-            )
     else:
         logger.warning("Missing model_config, assuming defaults for head_size")
         head_size = 128  # Good default for most models
-        linear_type_str = "torch_linear"
 
-    rope_params = _get_rope_params(linear_type_str)
-    trans_required_pattern = re.compile(
-        f"base_model.layers.[0-9]+.attn.in_proj.(query|key).({'|'.join(rope_params)})"
-    )
     for name, param in input_sd.items():
+        # Some checkpoints have weights in different precisions, which can have
+        # auxiliary tensors (see _get_rope_params e.g. gptq, fp8).
+        # Thus, we need to get rope_params per parameter.
+        linear_type_str = "torch_linear"
+        if model_config and model_config.linear_config:
+            linear_type_str = get_linear_type(
+                model_config.linear_config,
+                module_name=name,
+            )
+        rope_params = _get_rope_params(linear_type_str)
+        trans_required_pattern = re.compile(
+            f"layers.[0-9]+.attn.in_proj.(query|key).({'|'.join(rope_params)})$"
+        )
+
         # hf -> fms requires a transpose operation for the query and key
         # weight and bias parameters for Llama models
         # This transpose is due to the different implementation of RoPE in
@@ -557,7 +562,7 @@ def _hf_gptq_granite_check(
         if model_config.linear_config:
             linear_type = model_config.linear_config["linear_type"]
 
-    if "gptq" in linear_type and has_fused_weights:
+    if not callable(linear_type) and "gptq" in linear_type and has_fused_weights:
         raise ValueError(
             "GPTQ HF granite checkpoints cannot be loaded into a model with fused weights"
         )

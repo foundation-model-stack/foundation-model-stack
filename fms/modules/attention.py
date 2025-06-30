@@ -3,6 +3,7 @@ import functools
 from typing import (
     Any,
     Callable,
+    Concatenate,
     List,
     Mapping,
     NotRequired,
@@ -55,17 +56,17 @@ class AttentionKwargs(TypedDict, total=False):
 def register_attention_op(
     attn_type: str,
     store_op: Callable[
-        [
+        Concatenate[
             torch.Tensor,
             torch.Tensor,
             Optional[torch.Tensor],
             Optional[torch.Tensor],
-            Unpack[AttentionKwargs],
+            ...,
         ],
         Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
     ],
     compute_op: Callable[
-        [
+        Concatenate[
             torch.Tensor,
             torch.Tensor,
             torch.Tensor,
@@ -73,14 +74,14 @@ def register_attention_op(
             int,
             float,
             float,
-            Unpack[AttentionKwargs],
+            ...,
         ],
         torch.Tensor,
     ],
-    is_prefill_op: Optional[Callable[[Unpack[AttentionKwargs]], bool]] = None,
+    is_prefill_op: Optional[Callable[..., bool]] = None,
     compute_decode_op: Optional[
         Callable[
-            [
+            Concatenate[
                 torch.Tensor,
                 torch.Tensor,
                 torch.Tensor,
@@ -88,21 +89,19 @@ def register_attention_op(
                 int,
                 float,
                 float,
-                Unpack[AttentionKwargs],
+                ...,
             ],
             torch.Tensor,
         ]
     ] = None,
-    update_attn_kwargs_op: Optional[
-        Callable[[Unpack[AttentionKwargs]], AttentionKwargs]
-    ] = None,
+    update_attn_kwargs_op: Optional[Callable[..., AttentionKwargs]] = None,
     validate_attn_kwargs_op: Optional[
         Callable[
-            [
+            Concatenate[
                 torch.Tensor,
                 torch.Tensor,
                 Optional[List[Tuple[torch.Tensor, torch.Tensor]]],
-                Unpack["AttentionKwargs"],
+                ...,
             ],
             None,
         ]
@@ -269,7 +268,9 @@ def _sdpa_compute_op(
     return attn
 
 
-def _sdpa_update_attn_kwargs(**attn_kwargs):
+def _sdpa_update_attn_kwargs(
+    **attn_kwargs: Unpack[SDPAAttentionKwargs],
+) -> SDPAAttentionKwargs:
     # this is updating the mask for decoding
     mask = attn_kwargs.get("mask", None)
     if mask is not None:

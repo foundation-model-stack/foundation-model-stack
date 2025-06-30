@@ -1,5 +1,6 @@
 import pytest
 import torch
+from importlib.util import find_spec
 
 from fms.models.llama import LLaMA, LLaMAConfig
 from fms.modules import UninitializedModule
@@ -254,6 +255,11 @@ class LLaMA31FP8Fixtures(ModelFixtureMixin):
 
     @pytest.fixture(scope="class", autouse=True)
     def uninitialized_model(self):
+        if find_spec("fms_mo"):
+            import fms_mo.aiu_addons
+            import fms_mo.aiu_addons.fp8.fp8_linear  # noqa: F401
+        else:
+            raise ImportError("fms-model-optimizer needed to run FP8 tests")
         torch.set_default_dtype(torch.bfloat16)
         with torch.device("cuda"):
             model = LLaMA(

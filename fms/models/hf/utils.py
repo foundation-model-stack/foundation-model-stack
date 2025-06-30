@@ -107,61 +107,6 @@ def mask_2d_to_3d_bidirectional(
     return mask_encoder.unsqueeze(1) == mask_decoder.unsqueeze(2)
 
 
-def _infer_quantization_config(
-    quant_config: dict,
-) -> Optional[dict]:
-    # There's many quantization packages compatible with HF
-    # We initially focus on llm-compressor as it is the one used in FMS-MO
-
-    # llm-compressor saves its checkpoints with quant_method = compressed-tensors
-    # quantization_status tells us whether the model has already been quantized
-    #   We only support loading already quantized models (compressed status)
-    if (
-        quant_config["quant_method"] == "compressed-tensors"
-        and quant_config["quantization_status"] == "compressed"
-    ):
-        # FP8 quantization will have FP8 weights
-        # We assume a single quantization group (group_0), to follow fms-mo checkpoints
-        # num_bits and type tells us "float" with "8" bits, aka FP8
-        if (
-            quant_config["config_groups"]["group_0"]["weights"]["type"] == "float"
-            and quant_config["config_groups"]["group_0"]["weights"]["num_bits"] == 8
-        ):
-            # This is used by get_linear to decide whether a linear layer
-            # will be quantized or not inside the model
-            def fp8_linear_type(name: str) -> str:
-                # We need to translate HF names to FMS names
-                translations = {
-                    "lm_head": "head",
-                }
-                for ignored_layer in quant_config["ignore"]:
-                    assert isinstance(ignored_layer, str)
-                    fms_ign_layer = translations.get(ignored_layer, ignored_layer)
-                    if name in fms_ign_layer:
-                        return "torch_linear"
-                for pattern in quant_config["config_groups"]["group_0"]["targets"]:
-                    # Special case from llm-compressor that covers all linear layers
-                    # not in the ignore pattern
-                    assert isinstance(pattern, str)
-                    if pattern == "Linear":
-                        return "fp8"
-                    if name in translations.get(pattern, pattern):
-                        return "fp8"
-                return "torch_linear"
-
-            return {
-                "linear_type": fp8_linear_type,
-                "input_activations": quant_config["config_groups"]["group_0"][
-                    "input_activations"
-                ],
-                "output_activations": quant_config["config_groups"]["group_0"][
-                    "output_activations"
-                ],
-                "weights": quant_config["config_groups"]["group_0"]["weights"],
-            }
-    return None
-
-
 def _infer_model_configuration(
     model_id_or_path: str | os.PathLike,
     download_weights: bool = True,
@@ -319,6 +264,12 @@ def _infer_model_configuration(
     ## infer quantization parameters
     quant_config = getattr(config, "quantization_config", None)
     if quant_config is not None:
+        try:
+            from fms_mo.aiu_addons import _infer_quantization_config
+        except ImportError:
+            raise RuntimeError(
+                "You need to install fms-model-optimizer to load quantized models"
+            )
         linear_config = _infer_quantization_config(quant_config)
         if linear_config:
             config_params["linear_config"] = linear_config
