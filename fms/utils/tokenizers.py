@@ -228,7 +228,7 @@ class _TekkenTokenizer(BaseTokenizer):
         tekken_path = self.model_path / "tekken.json"
         if tekken_path.exists():
             try:
-                from mistral_common.tokens.tokenizers.tekken import Tekkenizer # type: ignore
+                from mistral_common.tokens.tokenizers.tekken import Tekkenizer  # type: ignore
             except ImportError:
                 raise ImportError(
                     "mistral-common is required for MistralAI tokenizers. "
