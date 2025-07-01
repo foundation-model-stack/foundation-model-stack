@@ -2,7 +2,7 @@ import logging
 import math
 import re
 from dataclasses import dataclass, field
-from typing import Any, Mapping, Optional, Unpack, Tuple, Union
+from typing import Any, Mapping, Optional, Unpack, Tuple
 
 import torch
 import torch.nn as nn
@@ -192,9 +192,9 @@ class LlavaNext(nn.Module):
         self.language_model.post_init()
         self.vision_tower.post_init()
 
-    def unpad_image(self, tensor: torch.Tensor, original_size: Tuple[torch.Tensor, ...]):
-        if not isinstance(original_size, (list, tuple)):
-            original_size = original_size.tolist()
+    def unpad_image(self, tensor: torch.Tensor, original_image_size: torch.Tensor):
+        if not isinstance(original_image_size, (list, tuple)):
+            original_size = original_image_size.tolist()
         original_height, original_width = original_size
         current_height, current_width = tensor.shape[1:]
 
@@ -217,11 +217,11 @@ class LlavaNext(nn.Module):
     # TODO: fix graph break in the HF impl here
     def select_best_resolution(
         self,
-        original_size: Union[list, Tuple[torch.Tensor, ...]],
-        possible_resolutions: list[Tuple[int,int]],
+        original_image_size: torch.Tensor,
+        possible_resolutions: list[Tuple[int, int]],
     ):
-        if not isinstance(original_size, (list, tuple)):
-            original_size = original_size.tolist()
+        if not isinstance(original_image_size, (list, tuple)):
+            original_size = original_image_size.tolist()
 
         original_height, original_width = original_size
         best_fit = None
@@ -251,8 +251,8 @@ class LlavaNext(nn.Module):
 
     def image_size_to_num_patches(
         self,
-        image_size: Union[list, Tuple[torch.Tensor]],
-        grid_pinpoints: list[Tuple[int,int]],
+        image_size: torch.Tensor,
+        grid_pinpoints: list[Tuple[int, int]],
         patch_size: int,
     ):
         height, width = self.select_best_resolution(image_size, grid_pinpoints)
@@ -358,14 +358,13 @@ class LlavaNext(nn.Module):
                         (image_feature, image_newline[None].to(image_feature)), dim=0
                     )
             new_image_features.append(image_feature)
-        image_features = torch.cat(new_image_features, dim=0)
-        return image_features
+        return torch.cat(new_image_features, dim=0)
 
     def forward(
         self,
-        input_ids: torch.Tensor = None,
-        pixel_values: torch.Tensor = None,
-        image_sizes: Optional[torch.Tensor] = None,
+        input_ids: torch.Tensor,
+        pixel_values: torch.Tensor,
+        image_sizes: torch.Tensor,
         position_ids: Optional[torch.Tensor] = None,
         past_key_value_states: Optional[Tuple[torch.FloatTensor,]] = None,
         inputs_embeds: Optional[torch.Tensor] = None,
