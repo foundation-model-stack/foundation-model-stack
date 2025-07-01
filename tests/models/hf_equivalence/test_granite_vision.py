@@ -68,7 +68,7 @@ def _get_fms_model_output(model_path, inputs):
 def test_granite_vision_3_2_2b_equivalence():
     from transformers import LlavaNextProcessor
     # for now, this test won't be run, but it has been verified
-    # if you would like to try this, set model_path to the actial model checkpoint
+    # if you would like to try this, set model_path to the actual model checkpoint
 
     model_path = "/path/to/granite-vision-3.2-2b"
     processor = LlavaNextProcessor.from_pretrained(model_path)

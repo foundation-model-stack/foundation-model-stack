@@ -235,7 +235,7 @@ class SiglipMultiheadAttentionPoolingHead(nn.Module):
         nn.init.xavier_uniform_(self.probe.data)
         nn.init.xavier_uniform_(self.attention.in_proj_weight.data)
         nn.init.zeros_(self.attention.in_proj_bias.data)
-        self.layer_norm.reset_parameters()
+        self.layernorm.reset_parameters()
         self.mlp.reset_parameters()
 
     def forward(self, hidden_state):

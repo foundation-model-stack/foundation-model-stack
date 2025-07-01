@@ -2,7 +2,7 @@ import logging
 import math
 import re
 from dataclasses import dataclass, field
-from typing import Any, Mapping, Optional, Unpack
+from typing import Any, Mapping, Optional, Unpack, Tuple, Union
 
 import torch
 import torch.nn as nn
@@ -192,7 +192,7 @@ class LlavaNext(nn.Module):
         self.language_model.post_init()
         self.vision_tower.post_init()
 
-    def unpad_image(self, tensor, original_size):
+    def unpad_image(self, tensor: torch.Tensor, original_size: Tuple[torch.Tensor, ...]):
         if not isinstance(original_size, (list, tuple)):
             original_size = original_size.tolist()
         original_height, original_width = original_size
@@ -215,7 +215,11 @@ class LlavaNext(nn.Module):
         return unpadded_tensor
 
     # TODO: fix graph break in the HF impl here
-    def select_best_resolution(self, original_size, possible_resolutions: list):
+    def select_best_resolution(
+        self,
+        original_size: Union[list, Tuple[torch.Tensor, ...]],
+        possible_resolutions: list[Tuple[int,int]],
+    ):
         if not isinstance(original_size, (list, tuple)):
             original_size = original_size.tolist()
 
@@ -245,7 +249,12 @@ class LlavaNext(nn.Module):
 
         return best_fit
 
-    def image_size_to_num_patches(self, image_size, grid_pinpoints, patch_size: int):
+    def image_size_to_num_patches(
+        self,
+        image_size: Union[list, Tuple[torch.Tensor]],
+        grid_pinpoints: list[Tuple[int,int]],
+        patch_size: int,
+    ):
         height, width = self.select_best_resolution(image_size, grid_pinpoints)
         num_patches = 1
         for i in range(0, height, patch_size):
@@ -301,7 +310,12 @@ class LlavaNext(nn.Module):
         image_features = torch.split(image_features, image_num_patches, dim=0)
         return image_features
 
-    def pack_image_features(self, image_features, image_sizes, image_newline=None):
+    def pack_image_features(
+        self,
+        image_features: list[torch.Tensor],
+        image_sizes: torch.Tensor,
+        image_newline: Optional[torch.Tensor] = None,
+    ):
         new_image_features = []
 
         for image_idx, image_feature in enumerate(image_features):
@@ -349,13 +363,13 @@ class LlavaNext(nn.Module):
 
     def forward(
         self,
-        input_ids=None,
-        pixel_values=None,
-        image_sizes=None,
-        position_ids=None,
-        past_key_value_states=None,
-        inputs_embeds=None,
-        use_cache=False,
+        input_ids: torch.Tensor = None,
+        pixel_values: torch.Tensor = None,
+        image_sizes: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.Tensor] = None,
+        past_key_value_states: Optional[Tuple[torch.FloatTensor,]] = None,
+        inputs_embeds: Optional[torch.Tensor] = None,
+        use_cache: Optional[bool] = False,
         **attn_kwargs: Unpack[AttentionKwargs],
     ):
         if input_ids is None and inputs_embeds is None:
@@ -407,6 +421,8 @@ class LlavaNext(nn.Module):
         input_ids,
         kwargs,
     ):
+        # No need to process image data again in cached decoding stage.
+        # Use with arg `prepare_model_inputs_hook=model.prepare_inputs_for_generation` when calling generate()
         if kwargs["use_cache"] and iteration > 0:
             kwargs["pixel_values"] = None
             kwargs["image_sizes"] = None
