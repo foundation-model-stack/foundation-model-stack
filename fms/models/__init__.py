@@ -489,7 +489,25 @@ def get_model(
     return fms_model
 
 
-from fms.models import bamba, gpt_bigcode, granite, llama, mistral, mixtral, roberta  # noqa: E402
+from fms.models import (  # noqa: E402
+    bamba,
+    gpt_bigcode,
+    granite,
+    llama,
+    mistral,
+    mixtral,
+    roberta,
+    siglip_vision,
+)
 
 
-__all__ = ["bamba", "gpt_bigcode", "granite", "llama", "mistral", "mixtral", "roberta"]
+__all__ = [
+    "bamba",
+    "gpt_bigcode",
+    "granite",
+    "llama",
+    "mistral",
+    "mixtral",
+    "roberta",
+    "siglip_vision",
+]
