@@ -33,11 +33,9 @@ def _get_hf_model_output(model_path, inputs):
 
 def _get_fms_model_output(model_path, inputs):
     model = get_model(
-        "llava_next",
-        "granite_vision_3_2_2b",
-        model_path=model_path,
+        "hf_pretrained",
+        model_path,
         data_type=torch.float32,
-        source="hf",
         device_type=device,
     )
     model.eval()

@@ -145,6 +145,7 @@ def _infer_model_configuration(
 
     architecture = config.architectures[0]
     config_params = {}
+    infer_common_params = True
 
     if architecture == "LlamaForCausalLM":
         inner_dim = config.intermediate_size
@@ -245,31 +246,72 @@ def _infer_model_configuration(
         config_params["use_bias"] = config.mamba_proj_bias
         config_params["norm_eps"] = config.rms_norm_eps
     elif architecture == "SiglipModel":
+        infer_common_params = False
         config = config.vision_config
         inner_dim = config.intermediate_size
         architecture = "siglip_vision"
         config_params["hidden_size"] = config.hidden_size
         config_params["intermediate_size"] = config.intermediate_size
-        config_params["num_hidden_layers"] = config.num_hidden_layers
-        config_params["num_attention_heads"] = config.num_attention_heads
+        config_params["nlayers"] = config.num_hidden_layers
+        config_params["nheads"] = config.num_attention_heads
         config_params["num_channels"] = config.num_channels
         config_params["image_size"] = config.image_size
         config_params["patch_size"] = config.patch_size
         config_params["hidden_act"] = config.hidden_act
         config_params["layer_norm_eps"] = config.layer_norm_eps
         config_params["attention_dropout"] = config.attention_dropout
+    elif architecture == "LlavaNextForConditionalGeneration":
+        from fms.models.siglip_vision import SiglipVisionConfig
+        from fms.models.granite import GraniteConfig
+
+        infer_common_params = False
+        architecture = "llava_next"
+        config_params["image_token_index"] = config.image_token_index
+        config_params["vision_feature_select_strategy"] = (
+            config.vision_feature_select_strategy
+        )
+        config_params["vision_feature_layer"] = config.vision_feature_layer
+        config_params["image_grid_pinpoints"] = config.image_grid_pinpoints
+
+        config_params["vision_config"] = SiglipVisionConfig(
+            hidden_size=config.vision_config.hidden_size,
+            image_size=config.vision_config.image_size,
+            intermediate_size=config.vision_config.intermediate_size,
+            nheads=config.vision_config.num_attention_heads,
+            nlayers=config.vision_config.num_hidden_layers,
+            patch_size=config.vision_config.patch_size,
+        )
+
+        config_params["text_config"] = GraniteConfig(
+            src_vocab_size=config.text_config.vocab_size,
+            emb_dim=config.text_config.hidden_size,
+            norm_eps=config.text_config.rms_norm_eps,
+            nheads=config.text_config.num_attention_heads,
+            kvheads=config.text_config.num_key_value_heads,
+            nlayers=config.text_config.num_hidden_layers,
+            hidden_grow_factor=config.text_config.intermediate_size
+            / config.text_config.hidden_size,
+            max_expected_seq_len=config.text_config.max_position_embeddings,
+            rope_theta=config.text_config.rope_theta,
+            pad_id=config.text_config.pad_token_id,
+            tie_heads=config.text_config.tie_word_embeddings,
+            embedding_multiplier=config.text_config.embedding_multiplier,
+            logits_scaling=config.text_config.logits_scaling,
+            residual_multiplier=config.text_config.residual_multiplier,
+            attention_multiplier=config.text_config.attention_multiplier,
+        )
     else:
         raise ValueError(
-            "FMS model implementations currently only support LlamaForCausalLM, GPTBigCodeForCausalLM, MixtralForCausalLM, RobertaForMaskedLM, GraniteForCausalLM and SiglipModel"
+            "FMS model implementations currently only support LlamaForCausalLM, GPTBigCodeForCausalLM, MixtralForCausalLM, RobertaForMaskedLM, GraniteForCausalLM, SiglipModel and LlavaNextForConditionalGeneration"
         )
 
     # infer common params
-    if hasattr(config, "vocab_size"):
+    if infer_common_params:
         config_params["src_vocab_size"] = config.vocab_size
-    config_params["nheads"] = config.num_attention_heads
-    config_params["nlayers"] = config.num_hidden_layers
-    config_params["hidden_grow_factor"] = inner_dim / config.hidden_size
-    config_params["tie_heads"] = config.tie_word_embeddings
+        config_params["nheads"] = config.num_attention_heads
+        config_params["nlayers"] = config.num_hidden_layers
+        config_params["hidden_grow_factor"] = inner_dim / config.hidden_size
+        config_params["tie_heads"] = config.tie_word_embeddings
 
     # infer get_model params
     config_params["architecture"] = architecture
