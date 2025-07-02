@@ -269,6 +269,15 @@ def _infer_model_configuration(
         from fms.models.siglip_vision import SiglipVisionConfig
         from fms.models.granite import GraniteConfig
 
+        if config.text_config.model_type != "granite":
+            raise ValueError(
+                "FMS implementation of LlavaNext currently supports only Granite language model"
+            )
+        if config.vision_config.model_type != "siglip_vision_model":
+            raise ValueError(
+                "FMS implementation of LlavaNext currently supports only Siglip vision model"
+            )
+
         infer_common_params = False
         architecture = "llava_next"
         config_params["image_token_index"] = config.image_token_index
