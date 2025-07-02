@@ -150,7 +150,13 @@ class LlavaNext(nn.Module):
             self.config = config
         else:
             self.config = LlavaNextConfig()
+
         self.config = self.config.updated(**kwargs)
+
+        if not self.config.fused_weights:
+            self.config.text_config.fused_weights = False
+            self.config.vision_config.fused_weights = False
+
         self.distributed_strategy = distributed_strategy
 
         if not isinstance(self.config.vision_config, SiglipVisionConfig):
