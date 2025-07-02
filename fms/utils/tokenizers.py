@@ -33,6 +33,36 @@ class BaseTokenizer:
         self.bos_token_id = bos_id
         self.eos_token_id = eos_id
 
+    # Ref: https://github.com/huggingface/tokenizers/blob/ee2c5708bdce9d6610fa74faeb22cf6297c6390a/bindings/python/py_src/tokenizers/implementations/base_tokenizer.py#L192
+    def encode(self, text: str, add_special_tokens: bool = False) -> List[int]:
+        """
+        Encode a string into a list of token ids.
+
+        Args:
+            text (str): input text string to be tokenized and converted to ids
+            add_special_tokens (bool, optional): prefix bos token to the input text
+
+        Returns:
+            List[int]: token ids of tokenized text string
+        """
+        raise NotImplementedError
+
+    # Ref: https://github.com/huggingface/tokenizers/blob/ee2c5708bdce9d6610fa74faeb22cf6297c6390a/bindings/python/py_src/tokenizers/implementations/base_tokenizer.py#L262
+    def decode(self, ids: List[int], skip_special_tokens: Optional[bool] = True) -> str:
+        """Decode the given list of ids to a string sequence
+
+        Args:
+            ids: List[unsigned int]:
+                A list of ids to be decoded
+
+            skip_special_tokens: (`optional`) boolean:
+                Whether to remove all the special tokens from the output string
+
+        Returns:
+            The decoded string
+        """
+        raise NotImplementedError
+
     def tokenize(self, text: str):
         raise NotImplementedError
 
@@ -191,6 +221,9 @@ class _TekkenTokenizer(BaseTokenizer):
         # Try to load the tokenizer from the model path
         self.tokenizer = self._load_tokenizer()
 
+        # vocab_size
+        self._vocab_size = self.tokenizer.n_words
+
         # Get special token IDs from config or use defaults
         self.bos_token_id = self.config.get("bos_token_id", 1)
         self.eos_token_id = self.config.get("eos_token_id", 2)
@@ -281,6 +314,11 @@ class _TekkenTokenizer(BaseTokenizer):
         Returns:
             str: Decoded text string
         """
+        from mistral_common.tokens.tokenizers.base import SpecialTokenPolicy  # type: ignore
+
+        if stp == 0:
+            stp = SpecialTokenPolicy.IGNORE  # type: ignore
+
         return self.tokenizer.decode(token_ids, stp)
 
     def tokenize(self, text: str) -> List[str]:
@@ -293,7 +331,7 @@ class _TekkenTokenizer(BaseTokenizer):
             List of string tokens
         """
         warnings.warn(
-            "this method will be deprecated in future versions, this will be a lot more inefficient than encode, directly use encode(text: str) -> List[int] methed instead",
+            "this method will be deprecated in future versions, this will be a lot more inefficient than encode, directly use encode(text: str) -> List[int] method instead",
             DeprecationWarning,
             stacklevel=2,
         )
@@ -311,7 +349,7 @@ class _TekkenTokenizer(BaseTokenizer):
             List of token IDs
         """
         warnings.warn(
-            "this method will be deprecated in future versions, use encode(text: str) -> List[int] methed instead",
+            "this method will be deprecated in future versions, use encode(text: str) -> List[int] method instead",
             DeprecationWarning,
             stacklevel=2,
         )
@@ -320,7 +358,7 @@ class _TekkenTokenizer(BaseTokenizer):
                 return self.ids
         except Exception as e:
             raise RuntimeError(
-                f"Misrtral tokenizer error: convert_tokens_to_ids() must be used in tandum with tokenize() Error: {type(e).__name__} occurred: {e}"
+                f"Misrtal tokenizer error: convert_tokens_to_ids() must be used in tandem with tokenize() Error: {type(e).__name__} occurred: {e}"
             )
         return [0]
 
@@ -335,7 +373,7 @@ class _TekkenTokenizer(BaseTokenizer):
             List of token strings
         """
         warnings.warn(
-            "this method will be deprecated in future versions, this will be a lot more inefficient, use decode( token_ids: List[int]) -> str methed instead",
+            "this method will be deprecated in future versions, for being inefficient, use decode(token_ids: List[int]) -> str method instead",
             DeprecationWarning,
             stacklevel=2,
         )
@@ -350,15 +388,19 @@ class _TekkenTokenizer(BaseTokenizer):
         return list(map(self.tokenizer.decode, [[i] for i in ids]))
 
     def convert_tokens_to_string(self, tokens: list[str]) -> str:
-        """Conver list of string tokens
+        """Convert list of string tokens
 
         Args:
-            tokens (list[str]): _description_
+            tokens (list[str]): List of the strings
 
         Returns:
-            str: _description_
+            str: joined token strings
         """
         return "".join(tokens)
+
+    def vocab_size(self):
+        """Vocabulary size of the tokenizer."""
+        return self._vocab_size
 
 
 def get_tokenizer(name: str, style: Optional[str] = None) -> BaseTokenizer:
