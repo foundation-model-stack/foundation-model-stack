@@ -131,7 +131,7 @@ def __spyre_paged_store_op(
     key_cache: Optional[torch.Tensor],
     value_cache: Optional[torch.Tensor],
     **attn_kwargs,
-):
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     result_key_cache, result_value_cache = torch.ops.spyre.paged_attn_store(
         keys, values, key_cache, value_cache, attn_kwargs["slot_mapping"]
     )
@@ -157,7 +157,7 @@ def __spyre_paged_compute_op(
     p_dropout: float,
     scale_factor: Optional[float],
     **attn_kwargs,
-):
+) -> torch.Tensor:
     if scale_factor is None:
         scale_factor = 1 / math.sqrt(query.shape[-1])
     return torch.ops.spyre.paged_attn_compute(

@@ -280,6 +280,20 @@ def _infer_model_configuration(
     config_params["architecture"] = architecture
     config_params["variant"] = list_variants(architecture)[0]
     config_params["model_path"] = model_path if download_weights else None
+
+    ## infer quantization parameters
+    quant_config = getattr(config, "quantization_config", None)
+    if quant_config is not None:
+        try:
+            from fms_mo.aiu_addons import _infer_quantization_config  # type: ignore[import-untyped,import-not-found]
+        except ImportError:
+            raise RuntimeError(
+                "You need to install fms-model-optimizer to load quantized models"
+            )
+        linear_config = _infer_quantization_config(quant_config)
+        if linear_config:
+            config_params["linear_config"] = linear_config
+
     return config_params
 
 
