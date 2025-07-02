@@ -375,9 +375,7 @@ def _weight_fusion(
 
     new_sd = input_sd
     if has_fused_weights:
-        new_sd = serialization._mlp_glu_unfused_to_fused_adapter_step(
-            serialization._attn_unfused_to_fused_step(new_sd)
-        )
+        new_sd = serialization._attn_unfused_to_fused_step(new_sd)
     return new_sd
 
 
