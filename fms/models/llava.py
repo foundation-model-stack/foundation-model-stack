@@ -110,16 +110,22 @@ class Llava(nn.Module):
             self.config = config
         else:
             self.config = LlavaConfig()
+
         self.config = self.config.updated(**kwargs)
+
+        if not self.config.fused_weights:
+            self.config.text_config.fused_weights = False
+            self.config.vision_config.fused_weights = False        
+
         self.distributed_strategy = distributed_strategy
 
         if not isinstance(self.config.vision_config, PixtralVisionConfig):
             print(
                 "FMS implementation of Llava currently supports only Pixtral vision model"
             )
-        if not isinstance(self.config.text_config, MistralConfig) and not isinstance(self.config.text_config, GraniteConfig):
+        if not isinstance(self.config.text_config, MistralConfig):
             print(
-                "FMS implementation of Llava currently supports only Mistral and Granite language models"
+                "FMS implementation of Llava currently supports only Mistral language model"
             )
 
         self.language_model = Mistral(self.config.text_config)

@@ -145,6 +145,7 @@ def _infer_model_configuration(
 
     architecture = config.architectures[0]
     config_params = {}
+    infer_common_params = True
 
     if architecture == "LlamaForCausalLM":
         inner_dim = config.intermediate_size
@@ -244,17 +245,67 @@ def _infer_model_configuration(
         config_params["mamba_n_heads"] = config.mamba_n_heads
         config_params["use_bias"] = config.mamba_proj_bias
         config_params["norm_eps"] = config.rms_norm_eps
+    elif architecture == "LlavaForConditionalGeneration":
+        from fms.models.pixtral import PixtralVisionConfig
+        from fms.models.mistral import MistralConfig
+        from fms.models.llava import _text_config as default_text_config
+        from fms.models.llava import _vision_config as default_vision_config
+
+        if config.text_config.model_type != "mistral":
+            raise ValueError(
+                "FMS implementation of Llava currently supports only Mistral language model"
+            )
+        if config.vision_config.model_type != "pixtral":
+            raise ValueError(
+                "FMS implementation of Llava currently supports only Pixtral vision model"
+            )
+
+        infer_common_params = False
+        architecture = "llava"
+        config_params["image_token_index"] = config.image_token_index
+        config_params["projector_hidden_act"] = config.projector_hidden_act
+        config_params["vision_feature_select_strategy"] = (
+            config.vision_feature_select_strategy
+        )
+        config_params["vision_feature_layer"] = config.vision_feature_layer
+        
+        config_params["vision_config"] = PixtralVisionConfig(
+            image_size=config.vision_config.image_size,
+            patch_size=config.vision_config.patch_size,
+            hidden_act=config.vision_config.hidden_act,
+            rope_theta=config.vision_config.rope_theta,
+            hidden_size=getattr(config.vision_config, "hidden_size", default_vision_config.hidden_size),
+            intermediate_size=getattr(config.vision_config, "intermediate_size", default_vision_config.intermediate_size),
+            nheads=(config.vision_config.num_attention_heads if getattr(config.vision_config, "num_attention_heads", None) else config.vision.config.hidden_size // config.vision_config.head_dim),
+            nlayers=getattr(config.vision_config, "num_hidden_layers", default_vision_config.nlayers),
+            nchannels=getattr(config.vision_config, "num_channels", default_vision_config.nchannels),
+        )
+
+        config_params["text_config"] = MistralConfig(
+            src_vocab_size=config.text_config.vocab_size,
+            emb_dim=config.text_config.hidden_size,
+            norm_eps=config.text_config.rms_norm_eps,
+            nheads=getattr(config.text_config, "num_attention_heads", default_text_config.nheads),
+            kvheads=config.text_config.num_key_value_heads,
+            nlayers=config.text_config.num_hidden_layers,
+            hidden_grow_factor=config.text_config.intermediate_size  / config.text_config.hidden_size,
+            max_expected_seq_len=config.text_config.max_position_embeddings,
+            rope_base=config.text_config.rope_theta,
+            sliding_window=config.text_config.sliding_window,
+            head_dim=config.text_config.head_dim,
+        )        
     else:
         raise ValueError(
-            "FMS model implementations currently only support LlamaForCausalLM, GPTBigCodeForCausalLM, MixtralForCausalLM, RobertaForMaskedLM and GraniteForCausalLM"
+            "FMS model implementations currently only support LlamaForCausalLM, GPTBigCodeForCausalLM, MixtralForCausalLM, RobertaForMaskedLM, GraniteForCausalLM and LlavaForConditionalGeneration"
         )
 
     # infer common params
-    config_params["src_vocab_size"] = config.vocab_size
-    config_params["nheads"] = config.num_attention_heads
-    config_params["nlayers"] = config.num_hidden_layers
-    config_params["hidden_grow_factor"] = inner_dim / config.hidden_size
-    config_params["tie_heads"] = config.tie_word_embeddings
+    if infer_common_params:
+        config_params["src_vocab_size"] = config.vocab_size
+        config_params["nheads"] = config.num_attention_heads
+        config_params["nlayers"] = config.num_hidden_layers
+        config_params["hidden_grow_factor"] = inner_dim / config.hidden_size
+        config_params["tie_heads"] = config.tie_word_embeddings
 
     # infer get_model params
     config_params["architecture"] = architecture
