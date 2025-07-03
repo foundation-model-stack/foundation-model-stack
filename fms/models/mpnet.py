@@ -26,7 +26,6 @@ import torch
 from torch import nn
 from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss
 
-#from fms.utils.activation import gelu
 from fms.utils.config import ModelConfig
 from fms import models
 from fms.modules.attention import (
@@ -62,7 +61,7 @@ class MpnetConfig(ModelConfig):
     bos_token_id: int = 0
     eos_token_id: int = 2
     linear_config: Optional[Mapping[str, Any]] = None
-    fused_weights: bool = False
+    fused_weights: bool = True
 
 
 class MpnetBlock(nn.Module):
@@ -73,41 +72,12 @@ class MpnetBlock(nn.Module):
         emb_v = self.config.emb_dim // self.config.nheads
 
         kvheads = self.config.nheads
-        #self.ln = LayerNormParameterized(
-        #    self.config.emb_dim,
-        #    elementwise_scale=True,
-        #    elementwise_shift=False,
-        #    use_mean=False,
-        #    eps=self.config.layer_norm_eps,
-        #    use_high_precision_pow=True,
-        #)
-        #self.ff_ln = LayerNormParameterized(
-        #    self.config.emb_dim,
-        #    elementwise_scale=True,
-        #    elementwise_shift=False,
-        #    use_mean=False,
-        #    eps=self.config.layer_norm_eps,
-        #    use_high_precision_pow=True,
-        #)
-        
-        #self.attn = MultiHeadAttention(
-        #    self.config.emb_dim,
-        #    emb_kq,
-        #    emb_v,
-        #    self.config.nheads,
-        #    kvheads,
-        #    p_dropout=self.config.hidden_dropout_prob,
-        #    use_bias=True,
-        #    #position_encoder=rotary_emb,
-        #    fused=self.config.fused_weights,
-        #    linear_config=self.config.linear_config,
-        #)
         self.attn = MultiHeadAttention(
             self.config.emb_dim,
             self.config.emb_dim // self.config.nheads,
             self.config.emb_dim // self.config.nheads,
             self.config.nheads,
-            kvheads=1 if self.config.multiquery_attn else self.config.nheads,
+            kvheads,
             p_dropout=self.config.hidden_dropout_prob,
             use_bias=True,
             fused=self.config.fused_weights,
@@ -137,17 +107,14 @@ class MpnetBlock(nn.Module):
             q=x,
             **attn_kwargs,
         )
-        #print("reached here")
-        if self.config.hidden_dropout_prob != 0:
-            x = self.dropout(x)
         x = x + residual
-        residual = x
         x = self.ln(x)
+        residual = x
         x = self.ff_sub_layer(x)
-        x = self.ff_ln(x)
-        if self.config.hidden_dropout_prob != 0:
-            x = self.dropout(x)
         x = x + residual
+        if self.config.hidden_dropout_prob != 0:
+           x = self.dropout(x)
+        x = self.ff_ln(x)
 
         return x
 
@@ -167,13 +134,6 @@ class MpnetHeadless(nn.Module):
         self.width = self.config.emb_dim
         self.pad_id = self.config.pad_id
         self.max_expected_seq_len = self.config.max_expected_seq_len
-
-        #self.embedding = nn.Embedding(
-        #    self.config.src_vocab_size,
-        #    self.config.emb_dim,
-        #    padding_idx=self.config.pad_id,
-        #)
-
         self.embedding = nn.Embedding(config.src_vocab_size, config.emb_dim, padding_idx=self.pad_id)
         self.position_embeddings = nn.Embedding(
             config.max_expected_seq_len, config.emb_dim, padding_idx=self.pad_id
@@ -182,7 +142,6 @@ class MpnetHeadless(nn.Module):
         self.enc_norm = nn.LayerNorm(config.emb_dim, eps=config.layer_norm_eps)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
         self.register_buffer(
-            #"position_ids", torch.arange(config.max_expected_seq_len).expand((1, -1)), persistent=False
             "position_ids", torch.arange(514).expand((1, -1)), persistent=False
         )
         layers = []
@@ -245,9 +204,6 @@ class MpnetHeadless(nn.Module):
     def forward(
         self,
         x_in,
-        #hidden_states: torch.Tensor,
-        #attention_mask: Optional[torch.Tensor] = None,
-        #head_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         output_attentions: bool = False,
         output_hidden_states: bool = False,
@@ -279,22 +235,16 @@ class MpnetHeadless(nn.Module):
         position_bias = self.compute_position_bias(embeddings)
         all_hidden_states = () if output_hidden_states else None
         all_attentions = () if output_attentions else None
-        if output_hidden_states:
-            all_hidden_states = all_hidden_states + (embeddings,)
+        x = embeddings
         for layer in self.layers:
-            x = layer(x=embeddings, position_ids=position_bias,
-                #past_key_value_state=past_key_value_states[i],
-                #use_cache=use_cache,
+            x = layer(x, position_ids=position_bias,
                 **kwargs)
             if output_attentions:
                 all_attentions = all_attentions + (x[1],)
 
-            x = x[0]
             if output_hidden_states:
                 all_hidden_states = all_hidden_states + (x,)
-        if not return_dict:
-            return tuple(v for v in [x, all_hidden_states, all_attentions] if v is not None)
-        #return x
+        return x
 
 
 
@@ -312,9 +262,7 @@ class Mpnet(nn.Module):
             self.config = MpnetConfig()
         self.config = self.config.updated(**kwargs)
         self.base_model = MpnetHeadless(self.config)
-        #self.head = nn.Linear(
-        #    self.config.emb_dim, self.config.src_vocab_size, bias=False)
-        self.dense = nn.Linear(config.emb_dim, config.emb_dim)
+        self.den = nn.Linear(config.emb_dim, config.emb_dim)
         self.activation = nn.Tanh()
      @classmethod
      def from_config(cls, config: MpnetConfig) -> "Mpnet":
@@ -339,7 +287,6 @@ class Mpnet(nn.Module):
             else:
                 self.base_model.embedding.weight = self.head.weight
 
-         #self.base_model.post_init()
 
 
      def forward(
@@ -352,33 +299,28 @@ class Mpnet(nn.Module):
         head_mask: Optional[torch.FloatTensor] = None,
         return_dict: Optional[bool] = None,
         **attn_kwargs: Unpack[AttentionKwargs],
-        #**kwargs,
     ):
         get_attention_type(**attn_kwargs)["validate_attn_kwargs"](
             input_ids=x, position_ids=position_ids, **attn_kwargs
         )
-        # TODO add cache in return
         output = self.base_model(
             x,
             position_ids,
             past_key_value_states,
             use_cache,
             **attn_kwargs,
-            #**kwargs,
         )
         return output
-        #first_token_tensor = output[0][:, 0]
+        # will uncomment after verifying pooler usage
+        #first_token_tensor = output[:, 0]
+        #sequence_output = output[0]
         #print(first_token_tensor)
-        #pooled_output = self.dense(first_token_tensor)
+        #pooled_output = self.den(first_token_tensor)
+        #print(pooled_output)
         #pooled_output = self.activation(pooled_output)
         #if not return_dict:
-        #    return (first_token_tensor, pooled_output) + output[1:]
+        #    return (sequence_output, pooled_output) #+ output[1:]
 
-        #if only_last_token:
-        #    output = output[:, -1, :]
-        #preds = self.head(output)
-        #preds = preds / self.config.logits_scaling
-        #return preds
 def create_position_ids_from_input_ids(input_ids, padding_idx):
     """
     Replace non-padding symbols with their position numbers. Position numbers begin at padding_idx+1. Padding symbols
@@ -401,8 +343,8 @@ def _mpnet_factory_factory(config):
 _v2_config = MpnetConfig(
     src_vocab_size = 30_527,
     emb_dim = 768,
-    nlayers = 12, #12
-    nheads = 12, #12
+    nlayers = 12, 
+    nheads = 12,
     intermediate_size=3072,
     activation_fn="gelu",
     hidden_dropout_prob=0.1,
@@ -414,34 +356,32 @@ _v2_config = MpnetConfig(
     pad_id=1,
     bos_token_id=0,
     eos_token_id=2,
-    fused_weights=False,
+    fused_weights=True,
 )
 models.register_model(_architecture_name, "v2", _mpnet_factory_factory(_v2_config))
 
-#def _weight_fusion(
-#    input_sd: Mapping, model_config: Optional[MpnetConfig] = None, **kwargs
-#):
-#    has_fused_weights = True
-#    if model_config:
-#        if not model_config.fused_weights:
-#            has_fused_weights = False
-#
-#    new_sd = input_sd
-#    if has_fused_weights:
-#        new_sd = serialization._mlp_glu_unfused_to_fused_adapter_step(
-#            serialization._attn_unfused_to_fused_step(new_sd)
-#        )
-#    return new_sd
-#
-#
-#serialization.register_adapter_step(_architecture_name, "weight_fusion", _weight_fusion)
+def _weight_fusion(
+    input_sd: Mapping, model_config: Optional[MpnetConfig] = None, **kwargs
+):
+    has_fused_weights = True
+    if model_config:
+        if not model_config.fused_weights:
+            has_fused_weights = False
 
-#(r"attention\.output\.dense", "attn.dense"),
+    new_sd = input_sd
+    if has_fused_weights:
+        new_sd  =  serialization._attn_unfused_to_fused_step(new_sd)
+    return new_sd
+
+
+serialization.register_adapter_step(_architecture_name, "weight_fusion", _weight_fusion)
+
 
 def _hf_to_fms_names(hf_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]:
     replacements = [
         (r"embeddings.word_embeddings.weight", "base_model.embedding.weight"),
         (r"^encoder.relative_attention_bias.weight", "base_model.relative_attention_bias.weight"),
+        (r"^pooler.dense.weight.weight", "den.weight"),
         (
             r"embeddings.position_embeddings.weight",
             "base_model.position_embeddings.weight",
@@ -477,4 +417,4 @@ def _hf_to_fms_names(hf_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]:
 serialization.register_adapter_step(
     _architecture_name, "hf_to_fms_names", _hf_to_fms_names
 )
-serialization.register_adapter("mpnet", "hf", ["hf_to_fms_names"]) #, "weight_fusion"])
+serialization.register_adapter("mpnet", "hf", ["hf_to_fms_names", "weight_fusion"])
