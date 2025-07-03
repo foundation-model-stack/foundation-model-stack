@@ -20,6 +20,7 @@ from fms.modules.attention import (
 from fms.modules.embedding import WordEmbedding
 from fms.modules.feedforward import GatedLinearUnit
 from fms.modules.layernorm import LayerNormParameterized
+from fms.modules.linear import get_linear_type
 from fms.modules.positions import RotaryEmbedding
 from fms.utils import serialization
 from fms.utils.activation import str_to_activation
@@ -553,7 +554,7 @@ def _hf_gptq_llama_check(
         if model_config.linear_config:
             linear_type = model_config.linear_config["linear_type"]
 
-    if "gptq" in linear_type and has_fused_weights:
+    if not callable(linear_type) and "gptq" in linear_type and has_fused_weights:
         raise ValueError(
             "GPTQ HF llama checkpoints cannot be loaded into a model with fused weights"
         )
@@ -627,6 +628,8 @@ serialization.register_adapter_step("llama", "hf_to_fms_names", _hf_to_fms_names
 def _get_rope_params(linear_type: str) -> list[str]:
     if "gptq" in linear_type:
         return ["qweight", "scales", "qzeros", "bias"]
+    elif "fp8" in linear_type:
+        return ["weight", "weight_scale", "input_scale", "bias"]
     else:  # torch.nn.Linear
         return ["weight", "bias"]
 
@@ -638,19 +641,25 @@ def _hf_to_fms_rope(
 
     if model_config:
         head_size = model_config.emb_dim // model_config.nheads
-        linear_type = "torch_linear"
-        if model_config.linear_config:
-            linear_type = model_config.linear_config["linear_type"]
     else:
         logger.warning("Missing model_config, assuming defaults for head_size")
         head_size = 128  # Good default for most models
-        linear_type = "torch_linear"
 
-    rope_params = _get_rope_params(linear_type)
-    trans_required_pattern = re.compile(
-        f"layers.[0-9]+.attn.in_proj.(query|key).({'|'.join(rope_params)})"
-    )
     for name, param in input_sd.items():
+        # Some checkpoints have weights in different precisions, which can have
+        # auxiliary tensors (see _get_rope_params e.g. gptq, fp8).
+        # Thus, we need to get rope_params per parameter.
+        linear_type_str = "torch_linear"
+        if model_config and model_config.linear_config:
+            linear_type_str = get_linear_type(
+                model_config.linear_config,
+                module_name=name,
+            )
+        rope_params = _get_rope_params(linear_type_str)
+        trans_required_pattern = re.compile(
+            f"layers.[0-9]+.attn.in_proj.(query|key).({'|'.join(rope_params)})$"
+        )
+
         # hf -> fms requires a transpose operation for the query and key
         # weight and bias parameters for Llama models
         # This transpose is due to the different implementation of RoPE in
@@ -662,9 +671,9 @@ def _hf_to_fms_rope(
         # Therefore, to make FMS produce the correct order of outputs when
         # loading from an HF checkpoint, we need to undo the transformation
         # that HF does from the original Meta weights:
-        if bool(trans_required_pattern.match(name)):
+        if bool(trans_required_pattern.match(name)) and param.size(0) > 1:
             temp = param
-            if "gptq" in linear_type and temp.dim() == 2:
+            if "gptq" in linear_type_str and temp.dim() == 2:
                 # GPTQ qweights are [in_feat, out_feat] (unlike usual [out_feat, in_feat])
                 # and are fully transposed before & after process
                 temp = temp.transpose(0, 1)
@@ -678,7 +687,7 @@ def _hf_to_fms_rope(
                 temp_view = temp.view(num_heads, 2, -1)
             temp = temp_view.transpose(1, 2).reshape(*temp.size())
 
-            if "gptq" in linear_type and temp.dim() == 2:
+            if "gptq" in linear_type_str and temp.dim() == 2:
                 temp = temp.transpose(0, 1)
 
             new_sd[name] = temp
@@ -695,7 +704,12 @@ serialization.register_adapter("llama", "meta", ["meta_to_fms_names", "weight_fu
 serialization.register_adapter(
     "llama",
     "hf",
-    ["hf_to_fms_names", "hf_to_fms_rope", "hf_gptq_fusion_check", "weight_fusion"],
+    [
+        "hf_to_fms_names",
+        "hf_to_fms_rope",
+        "hf_gptq_fusion_check",
+        "weight_fusion",
+    ],
 )
 serialization.register_adapter(
     "llama",
