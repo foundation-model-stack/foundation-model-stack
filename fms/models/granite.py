@@ -535,7 +535,7 @@ def _hf_to_fms_rope(
             )
         rope_params = _get_rope_params(linear_type_str)
         trans_required_pattern = re.compile(
-            f"layers.[0-9]+.attn.in_proj.(query|key).({'|'.join(rope_params)})$"
+            f"base_model.layers.[0-9]+.attn.in_proj.(query|key).({'|'.join(rope_params)})$"
         )
 
         # hf -> fms requires a transpose operation for the query and key
