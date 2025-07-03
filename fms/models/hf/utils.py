@@ -107,50 +107,10 @@ def mask_2d_to_3d_bidirectional(
     return mask_encoder.unsqueeze(1) == mask_decoder.unsqueeze(2)
 
 
-def _infer_model_configuration(
-    model_id_or_path: str | os.PathLike,
-    download_weights: bool = True,
-) -> Dict[str, Any]:
-    # if the path does not exist, download it from huggingface and get the local path
-    if not os.path.exists(model_id_or_path):
-        from huggingface_hub import snapshot_download  # type: ignore
-
-        # in the case we don't want to download the weights, but just create the model from scratch, we will only allow config.json
-        if download_weights:
-            allow_patterns = ["*config.json", "tokenizer*", "special_tokens_map.json"]
-
-            # mixtral saves safetensors expert sharded, so we will need their pt checkpoints
-            # ideally this should be fixed in the adapter in the future
-            ignore_patterns = None
-            if isinstance(model_id_or_path, str) and model_id_or_path.startswith(
-                "mistralai/Mixtral"
-            ):
-                ignore_patterns = ["*.safetensors"]
-                allow_patterns.append("*.pt")
-            elif isinstance(model_id_or_path, str) and model_id_or_path.startswith(
-                "mistralai/Mistral"
-            ):
-                ignore_patterns = ["consolidated.safetensors"]
-                allow_patterns.append("*.safetensors*")
-            else:
-                allow_patterns.append("*.safetensors*")
-        else:
-            allow_patterns = ["config.json"]
-            ignore_patterns = None
-
-        model_path = snapshot_download(
-            repo_id=str(model_id_or_path),
-            ignore_patterns=ignore_patterns,
-            allow_patterns=allow_patterns,
-        )
-    else:
-        model_path = str(model_id_or_path)
-
-    config = AutoConfig.from_pretrained(model_path)
-
-    architecture = config.architectures[0]
-    config_params = {}
+def _map_model_config(architecture, config):
+    # Map HF model config to FMS model config
     infer_common_params = True
+    config_params = {}
 
     if architecture == "LlamaForCausalLM":
         inner_dim = config.intermediate_size
@@ -253,7 +213,6 @@ def _infer_model_configuration(
     elif architecture == "SiglipModel":
         infer_common_params = False
         config = config.vision_config
-        inner_dim = config.intermediate_size
         architecture = "siglip_vision"
         config_params["hidden_size"] = config.hidden_size
         config_params["intermediate_size"] = config.intermediate_size
@@ -281,39 +240,18 @@ def _infer_model_configuration(
         infer_common_params = False
         architecture = "llava_next"
         config_params["image_token_index"] = config.image_token_index
+        config_params["image_grid_pinpoints"] = config.image_grid_pinpoints
+        config_params["vision_feature_layer"] = config.vision_feature_layer
         config_params["vision_feature_select_strategy"] = (
             config.vision_feature_select_strategy
         )
-        config_params["vision_feature_layer"] = config.vision_feature_layer
-        config_params["image_grid_pinpoints"] = config.image_grid_pinpoints
-
-        config_params["vision_config"] = SiglipVisionConfig(
-            hidden_size=config.vision_config.hidden_size,
-            image_size=config.vision_config.image_size,
-            intermediate_size=config.vision_config.intermediate_size,
-            nheads=config.vision_config.num_attention_heads,
-            nlayers=config.vision_config.num_hidden_layers,
-            patch_size=config.vision_config.patch_size,
+        _, vision_config_params = _map_model_config("SiglipModel", config)
+        config_params["vision_config"] = SiglipVisionConfig(**vision_config_params)
+        _, text_config_params = _map_model_config(
+            "GraniteForCausalLM", config.text_config
         )
+        config_params["text_config"] = GraniteConfig(**text_config_params)
 
-        config_params["text_config"] = GraniteConfig(
-            src_vocab_size=config.text_config.vocab_size,
-            emb_dim=config.text_config.hidden_size,
-            norm_eps=config.text_config.rms_norm_eps,
-            nheads=config.text_config.num_attention_heads,
-            kvheads=config.text_config.num_key_value_heads,
-            nlayers=config.text_config.num_hidden_layers,
-            hidden_grow_factor=config.text_config.intermediate_size
-            / config.text_config.hidden_size,
-            max_expected_seq_len=config.text_config.max_position_embeddings,
-            rope_theta=config.text_config.rope_theta,
-            pad_id=config.text_config.pad_token_id,
-            tie_heads=config.text_config.tie_word_embeddings,
-            embedding_multiplier=config.text_config.embedding_multiplier,
-            logits_scaling=config.text_config.logits_scaling,
-            residual_multiplier=config.text_config.residual_multiplier,
-            attention_multiplier=config.text_config.attention_multiplier,
-        )
     else:
         raise ValueError(
             "FMS model implementations currently only support LlamaForCausalLM, GPTBigCodeForCausalLM, MixtralForCausalLM, RobertaForMaskedLM, GraniteForCausalLM, SiglipModel and LlavaNextForConditionalGeneration"
@@ -326,6 +264,52 @@ def _infer_model_configuration(
         config_params["nlayers"] = config.num_hidden_layers
         config_params["hidden_grow_factor"] = inner_dim / config.hidden_size
         config_params["tie_heads"] = config.tie_word_embeddings
+
+    return architecture, config_params
+
+
+def _infer_model_configuration(
+    model_id_or_path: str | os.PathLike,
+    download_weights: bool = True,
+) -> Dict[str, Any]:
+    # if the path does not exist, download it from huggingface and get the local path
+    if not os.path.exists(model_id_or_path):
+        from huggingface_hub import snapshot_download  # type: ignore
+
+        # in the case we don't want to download the weights, but just create the model from scratch, we will only allow config.json
+        if download_weights:
+            allow_patterns = ["*config.json", "tokenizer*", "special_tokens_map.json"]
+
+            # mixtral saves safetensors expert sharded, so we will need their pt checkpoints
+            # ideally this should be fixed in the adapter in the future
+            ignore_patterns = None
+            if isinstance(model_id_or_path, str) and model_id_or_path.startswith(
+                "mistralai/Mixtral"
+            ):
+                ignore_patterns = ["*.safetensors"]
+                allow_patterns.append("*.pt")
+            elif isinstance(model_id_or_path, str) and model_id_or_path.startswith(
+                "mistralai/Mistral"
+            ):
+                ignore_patterns = ["consolidated.safetensors"]
+                allow_patterns.append("*.safetensors*")
+            else:
+                allow_patterns.append("*.safetensors*")
+        else:
+            allow_patterns = ["config.json"]
+            ignore_patterns = None
+
+        model_path = snapshot_download(
+            repo_id=str(model_id_or_path),
+            ignore_patterns=ignore_patterns,
+            allow_patterns=allow_patterns,
+        )
+    else:
+        model_path = str(model_id_or_path)
+
+    config = AutoConfig.from_pretrained(model_path)
+    architecture = config.architectures[0]
+    architecture, config_params = _map_model_config(architecture, config)
 
     # infer get_model params
     config_params["architecture"] = architecture
