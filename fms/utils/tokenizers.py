@@ -292,34 +292,30 @@ class _TekkenTokenizer(BaseTokenizer):
         """
         return self.tokenizer.encode(text, bos=add_special_tokens, eos=False)
 
-    def decode(
-        self,
-        token_ids: List[int],
-        stp=0,  # SpecialTokenPolicy = SpecialTokenPolicy.IGNORE,
-    ) -> str:
-        """Decode a list of token ids into a string.
+    def decode(self, ids: List[int], skip_special_tokens: Optional[bool] = True) -> str:
+        """Decode the given list of ids to a string sequence
 
         Args:
-            token_ids (List[int]): The list of token ids to decode.
-            special_token_policy: The policy for handling special tokens.
-                Use the tokenizer's [attribute][mistral_common.tokens.tokenizers.tekken.Tekkenizer.special_token_policy]
-                if `None`. Passing `None` is deprecated and will be changed
-                to `SpecialTokenPolicy.IGNORE` in `mistral_common=1.7.0`.
+            ids: List[unsigned int]:
+                A list of ids to be decoded
 
-                SpecialTokenPolicy
-                IGNORE = 0
-                KEEP = 1
-                RAISE = 2
+            skip_special_tokens: (`optional`) boolean:
+                Whether to remove all the special tokens from the output string
+                Mistral: SpecialTokenPolicy
+                IGNORE = 0 --> skip_special_tokens = True
+                KEEP = 1  --> skip_special_tokens = False
 
         Returns:
-            str: Decoded text string
+            The decoded string
         """
         from mistral_common.tokens.tokenizers.base import SpecialTokenPolicy  # type: ignore
 
-        if stp == 0:
+        if skip_special_tokens:
             stp = SpecialTokenPolicy.IGNORE  # type: ignore
+        else:
+            stp = SpecialTokenPolicy.KEEP  # type: ignore
 
-        return self.tokenizer.decode(token_ids, stp)
+        return self.tokenizer.decode(ids, stp)
 
     def tokenize(self, text: str) -> List[str]:
         """
