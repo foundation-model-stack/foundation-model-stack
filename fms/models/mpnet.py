@@ -141,9 +141,7 @@ class MpnetHeadless(nn.Module):
 
         self.enc_norm = nn.LayerNorm(config.emb_dim, eps=config.layer_norm_eps)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
-        self.register_buffer(
-            "position_ids", torch.arange(514).expand((1, -1)), persistent=False
-        )
+        self.position_ids = torch.arange(514).expand((1, -1))
         layers = []
         for i in range(self.config.nlayers):
             block: nn.Module = MpnetBlock(self.config)
@@ -204,7 +202,7 @@ class MpnetHeadless(nn.Module):
     def forward(
         self,
         x_in,
-        position_ids: Optional[torch.LongTensor] = None,
+        position_ids: Optional[torch.Tensor] = None,
         output_attentions: bool = False,
         output_hidden_states: bool = False,
         return_dict: bool = False,
@@ -291,8 +289,8 @@ class Mpnet(nn.Module):
 
      def forward(
         self,
-        x: torch.LongTensor,
-        position_ids: Optional[torch.LongTensor] = None,
+        x: torch.Tensor,
+        position_ids: Optional[torch.Tensor] = None,
         past_key_value_states: Optional[Tuple[torch.FloatTensor,]] = None,
         use_cache: bool = False,
         only_last_token: bool = False,
