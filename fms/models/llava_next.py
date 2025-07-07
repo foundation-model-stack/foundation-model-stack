@@ -262,10 +262,7 @@ class LlavaNext(nn.Module):
         patch_size: int,
     ):
         height, width = self.select_best_resolution(image_size, grid_pinpoints)
-        num_patches = 1
-        for i in range(0, height, patch_size):
-            for j in range(0, width, patch_size):
-                num_patches += 1
+        num_patches = 1 + math.ceil(height / patch_size) * math.ceil(width / patch_size)
         return num_patches
 
     # HF impl
