@@ -6,7 +6,6 @@ import torch
 import json
 
 from fms import utils
-import warnings
 
 
 # constants for common tokenizers
