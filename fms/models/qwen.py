@@ -169,8 +169,6 @@ class QwenBlock(nn.Module):
             p_dropout=self.config.p_dropout,
             use_bias=False,
             position_encoder=rotary_emb,
-            use_norm=True,
-            norm_eps=self.config.norm_eps,
             fused=self.config.fused_weights,
             linear_config=self.config.linear_config,
         )
