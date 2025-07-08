@@ -300,6 +300,7 @@ class PixtralVision(nn.Module):
         #pdb.set_trace()
         # pass images through initial convolution independently
         patch_embeds = self.patch_conv(pixel_values)
+        # Potential graph break here:
         patch_embeds_list = [
             embed[..., : (size[0] // self.patch_size), : (size[1] // self.patch_size)]
             for embed, size in zip(patch_embeds, image_sizes)
