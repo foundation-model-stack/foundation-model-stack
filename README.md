@@ -8,6 +8,8 @@ Foundation Model Stack is a collection of components for development, inference,
 | LLaMA        | :heavy_check_mark: | :heavy_check_mark: |
 | GPT-BigCode  | :heavy_check_mark: | :x: |
 | RoBERTa      | :heavy_check_mark: | :x: |
+| Mistral      | :heavy_check_mark: | :x: |
+| Bamba        | :heavy_check_mark: | :x: |
 
 
 ## Installation
@@ -40,7 +42,7 @@ Our approach for inference optimization is to use PyTorch compile, accelerated t
 
 To enable the Llama models to compile, we had to reimplement `RoPE` encodings without complex numbers. With this change, Llama model inference is able to leverage model compilation for latency reduction.
 
-#### Inference latency
+#### Inference latency for LLaMa models
 We measured inference latencies with 1024 token prompt and generation of 256 tokens on AWS P4de instance nodes with 8 80G A100 GPUs and report the median latency in the below table.
 | Model | # GPUs | Median latency (ms) |
 | ----- | ----------- | ----- |
