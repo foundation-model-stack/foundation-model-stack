@@ -420,15 +420,16 @@ def get_model(
 
     # Run post-model instantiation for layers that require their own name
     # This is usually the case for quantization strategies
-    for name, module in fms_model.named_modules():
-        if isinstance(module, UninitializedModule):
-            fqn_list = name.split(".")
-            parent_name = ".".join(fqn_list[:-1])
-            setattr(
-                fms_model.get_submodule(parent_name),
-                fqn_list[-1],
-                module.initialize(name),
-            )
+    with torch.device("meta"):
+        for name, module in fms_model.named_modules():
+            if isinstance(module, UninitializedModule):
+                fqn_list = name.split(".")
+                parent_name = ".".join(fqn_list[:-1])
+                setattr(
+                    fms_model.get_submodule(parent_name),
+                    fqn_list[-1],
+                    module.initialize(name),
+                )
 
     # Choose when to wrap and load the model weights based on the combination
     # distribution strategy and checkpoint sharding
@@ -488,7 +489,26 @@ def get_model(
     return fms_model
 
 
-from fms.models import bamba, gpt_bigcode, granite, llama, llava, mistral, mixtral, pixtral, roberta  # noqa: E402
+from fms.models import (  # noqa: E402
+    bamba,
+    gpt_bigcode,
+    granite,
+    llama,
+    mistral,
+    mixtral,
+    roberta,
+    siglip_vision,
+)
 
 
-__all__ = ["bamba", "gpt_bigcode", "granite", "llama", "llava", "mistral", "mixtral", "pixtral", "roberta"]
+__all__ = [
+    "bamba",
+    "gpt_bigcode",
+    "granite",
+    "llama",
+    "llava",
+    "mistral",
+    "mixtral",
+    "roberta",
+    "siglip_vision",
+]

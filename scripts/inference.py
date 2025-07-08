@@ -102,6 +102,12 @@ parser.add_argument(
     help="Pad inputs to a minimum specified length. If any prompt is larger than the specified length, padding will be determined by the largest prompt",
     default=0,
 )
+parser.add_argument(
+    "--attn_name",
+    type=str,
+    help="Type of attention to use",
+    default="sdpa_causal",
+)
 parser.add_argument("--context_file", type=str, default=None, help="File to summarize")
 
 args = parser.parse_args()
@@ -122,6 +128,9 @@ dtypes_map = {
 }
 if args.default_dtype is not None:
     default_dtype = dtypes_map[args.default_dtype]
+
+if "fp8" in args.attn_name:
+    import fms_mo.aiu_addons.fp8.fp8_attn  # noqa: F401
 
 # requires setting environment variable: `CUBLAS_WORKSPACE_CONFIG=:4096:8`
 if args.deterministic:
@@ -149,6 +158,7 @@ model = get_model(
     model_path=args.model_path,
     device_type=args.device_type,
     source=args.model_source,
+    data_type=default_dtype,
     distributed_strategy=distr_param,
     group=dist.group.WORLD,
     fused_weights=not args.unfuse_weights,
@@ -228,6 +238,7 @@ def print_result(result):
 
 
 def infer(use_cache, do_sample):
+    global padding_kwargs
     # With greedy generation (do_sample=False) we _should_ always get the same results.
     # There is currently a bug in start_pos for batched rotary embeddings that can lead
     # varying results for the same prompt.
@@ -242,6 +253,9 @@ def infer(use_cache, do_sample):
     else:
         # without ntk scaling, extending the seq length too far gives bogus results.
         max_seq_len = model.config.max_expected_seq_len
+    if padding_kwargs is None:
+        padding_kwargs = {}
+    padding_kwargs["attn_name"] = args.attn_name
     result = generate(
         model,
         ids,

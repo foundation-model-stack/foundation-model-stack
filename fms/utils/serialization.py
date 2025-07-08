@@ -97,6 +97,53 @@ def register_adapter(
     __adapters[architecture] = sources
 
 
+def extend_adapter(
+    architecture: str,
+    source: str,
+    adapter_steps: list[str],
+):
+    """
+    Extends an existing state dict adapter to the (de) serialization
+    API.
+
+    Args:
+    architecture: The name of the model architecture, e.g. 'llama'
+    source: A label representing the format of the weights to be converted.
+            E.g. 'hf'
+    adapter_steps: a list of registered steps to extend the adapter for an
+            architecture and source combination. This can be augmented with extra
+            steps if needed during call to _get_adapter()
+    """
+    sources: MutableMapping[str, Callable[[Mapping[str, Any]], Mapping[str, Any]]] = {}
+    if architecture not in __adapters or source not in __adapters[architecture]:
+        raise KeyError(
+            f"Source {source} must already be registered for architecture {architecture}"
+        )
+
+    orig_adapter_fn = __adapters[architecture][source]
+
+    # Create a new extended adapter for this source
+    step_functions = [orig_adapter_fn] + [
+        __adapter_steps[architecture][step] for step in adapter_steps
+    ]
+
+    def adapter_fn(initial_sd: Mapping[str, Any], **extra_kwargs) -> Mapping[str, Any]:
+        def reduce_fn(
+            state_dict: Mapping[str, Any],
+            step_func: Callable[[Mapping[str, Any]], Mapping[str, Any]],
+        ) -> Mapping[str, Any]:
+            return step_func(state_dict, **extra_kwargs)
+
+        return reduce(
+            reduce_fn,
+            step_functions,
+            initial_sd,
+        )
+
+    sources[source] = adapter_fn
+    __adapters[architecture] = sources
+
+
 def list_sources(architecture: str):
     """
     Lists available sources (attribute formats) of a model architecture.
