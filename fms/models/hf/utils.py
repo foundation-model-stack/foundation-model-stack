@@ -127,6 +127,11 @@ def _infer_model_configuration(
             ):
                 ignore_patterns = ["*.safetensors"]
                 allow_patterns.append("*.pt")
+            elif isinstance(model_id_or_path, str) and model_id_or_path.startswith(
+                "mistralai/Mistral"
+            ):
+                ignore_patterns = ["consolidated.safetensors"]
+                allow_patterns.append("*.safetensors*")
             else:
                 allow_patterns.append("*.safetensors*")
         else:
@@ -244,13 +249,28 @@ def _infer_model_configuration(
         config_params["mamba_n_heads"] = config.mamba_n_heads
         config_params["use_bias"] = config.mamba_proj_bias
         config_params["norm_eps"] = config.rms_norm_eps
+    elif architecture == "SiglipModel":
+        config = config.vision_config
+        inner_dim = config.intermediate_size
+        architecture = "siglip_vision"
+        config_params["hidden_size"] = config.hidden_size
+        config_params["intermediate_size"] = config.intermediate_size
+        config_params["num_hidden_layers"] = config.num_hidden_layers
+        config_params["num_attention_heads"] = config.num_attention_heads
+        config_params["num_channels"] = config.num_channels
+        config_params["image_size"] = config.image_size
+        config_params["patch_size"] = config.patch_size
+        config_params["hidden_act"] = config.hidden_act
+        config_params["layer_norm_eps"] = config.layer_norm_eps
+        config_params["attention_dropout"] = config.attention_dropout
     else:
         raise ValueError(
             "FMS model implementations currently only support LlamaForCausalLM, GPTBigCodeForCausalLM, MixtralForCausalLM, RobertaForMaskedLM and GraniteForCausalLM"
         )
 
     # infer common params
-    config_params["src_vocab_size"] = config.vocab_size
+    if hasattr(config, "vocab_size"):
+        config_params["src_vocab_size"] = config.vocab_size
     config_params["nheads"] = config.num_attention_heads
     config_params["nlayers"] = config.num_hidden_layers
     config_params["hidden_grow_factor"] = inner_dim / config.hidden_size
@@ -260,6 +280,20 @@ def _infer_model_configuration(
     config_params["architecture"] = architecture
     config_params["variant"] = list_variants(architecture)[0]
     config_params["model_path"] = model_path if download_weights else None
+
+    ## infer quantization parameters
+    quant_config = getattr(config, "quantization_config", None)
+    if quant_config is not None:
+        try:
+            from fms_mo.aiu_addons import _infer_quantization_config  # type: ignore[import-untyped,import-not-found]
+        except ImportError:
+            raise RuntimeError(
+                "You need to install fms-model-optimizer to load quantized models"
+            )
+        linear_config = _infer_quantization_config(quant_config)
+        if linear_config:
+            config_params["linear_config"] = linear_config
+
     return config_params
 
 
