@@ -538,7 +538,7 @@ def _hf_to_fms_rope(
     new_sd = {}
 
     if model_config:
-        head_dim = model_config.head_dim or model_config.emb_dim // model_config.nheads
+        head_size = model_config.head_dim or model_config.emb_dim // model_config.nheads
         linear_type = "torch_linear"
         if model_config.linear_config:
             linear_type = model_config.linear_config["linear_type"]

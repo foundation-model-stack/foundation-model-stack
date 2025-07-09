@@ -1,12 +1,10 @@
 import logging
-import math
 import re
 from dataclasses import dataclass
-from typing import Any, Mapping, Optional, Unpack, Tuple
+from typing import Any, Mapping, Optional, Unpack
 
 import torch
 import torch.nn as nn
-import numpy as np
 
 from fms import models
 from fms.distributed.strategy import DistributedStrategy, NoOpStrategy
@@ -14,7 +12,7 @@ from fms.modules.attention import (
     AttentionKwargs,
     MultiHeadAttention,
 )
-from fms.modules.feedforward import FeedForwardBlock, GatedLinearUnit
+from fms.modules.feedforward import GatedLinearUnit
 from fms.modules.layernorm import LayerNormParameterized
 from fms.modules.positions import RotaryEmbedding
 from fms.modules.linear import get_linear_type
