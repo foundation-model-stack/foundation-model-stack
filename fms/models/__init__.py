@@ -506,6 +506,7 @@ __all__ = [
     "gpt_bigcode",
     "granite",
     "llama",
+    "llava",
     "mistral",
     "mixtral",
     "roberta",
