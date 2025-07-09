@@ -48,12 +48,8 @@ _vision_config = PixtralVisionConfig(
 
 @dataclass
 class LlavaConfig(ModelConfig):
-    vision_config: PixtralVisionConfig = field(
-        default_factory=lambda: _vision_config
-    )
-    text_config: MistralConfig = field(
-        default_factory=lambda: _text_config
-    )
+    vision_config: PixtralVisionConfig = field(default_factory=lambda: _vision_config)
+    text_config: MistralConfig = field(default_factory=lambda: _text_config)
     image_token_index: int = 10
     projector_hidden_act: str = "gelu"
     vision_feature_select_strategy: str = "full"
@@ -115,7 +111,7 @@ class Llava(nn.Module):
 
         if not self.config.fused_weights:
             self.config.text_config.fused_weights = False
-            self.config.vision_config.fused_weights = False        
+            self.config.vision_config.fused_weights = False
 
         self.distributed_strategy = distributed_strategy
 
@@ -167,12 +163,11 @@ class Llava(nn.Module):
                 for layer_idx in self.config.vision_feature_layer
             ]
             if self.config.vision_feature_select_strategy == "default":
-                hs_pool = [hs[:, 1:] for hs in hs_pool]            
+                hs_pool = [hs[:, 1:] for hs in hs_pool]
             selected_image_feature = torch.cat(hs_pool, dim=-1)
 
         image_features = self.multi_modal_projector(selected_image_feature)
         return image_features
-
 
     def forward(
         self,
@@ -228,6 +223,8 @@ class Llava(nn.Module):
         input_ids,
         kwargs,
     ):
+        # No need to process image data again in cached decoding stage.
+        # Use with arg `prepare_model_inputs_hook=model.prepare_inputs_for_generation` when calling generate()
         if kwargs["use_cache"] and iteration > 0:
             kwargs["pixel_values"] = None
             kwargs["image_sizes"] = None
@@ -268,6 +265,7 @@ def _weight_fusion(
         )
     return new_sd
 
+
 def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]:
     replacements = [
         # vision
@@ -289,7 +287,7 @@ def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]
         (r"self_attn\.k_proj", "attn.in_proj.key"),
         (r"self_attn\.v_proj", "attn.in_proj.value"),
         (r"self_attn\.q_proj", "attn.in_proj.query"),
-        (r"self_attn\.o_proj", "attn.dense"),        
+        (r"self_attn\.o_proj", "attn.dense"),
         (r"mlp\.gate_proj", "ff_sub_layer.wg"),
         (r"mlp\.up_proj", "ff_sub_layer.w1"),
         (r"mlp\.down_proj", "ff_sub_layer.w2"),
@@ -315,34 +313,10 @@ def _get_rope_params(linear_type: str) -> list[str]:
         return ["weight", "bias"]
 
 
-#TODO: combine both _hf_to_fms_rope_xxx_model() into one
-
-def _hf_to_fms_rope_vision_model(
-    input_sd: Mapping[str, Any],
-    model_config=None,
-    **kwargs,
-) -> Mapping[str, Any]:
+def _hf_to_fms_rope_common(
+    input_sd, head_size, linear_type_str, trans_required_pattern
+):
     new_sd = {}
-    if model_config:
-        model_config = model_config.vision_config
-
-    if model_config:
-        head_size = model_config.hidden_size // model_config.nheads
-        linear_type_str = "torch_linear"
-        if model_config.linear_config:
-            linear_type_str = get_linear_type(
-                model_config.linear_config,
-                module_name=None,  # if callable, linear_type should return default str
-            )
-    else:
-        logger.warning("Missing model_config, assuming defaults for head_size")
-        head_size = 128  # Good default for most models
-        linear_type_str = "torch_linear"
-
-    rope_params = _get_rope_params(linear_type_str)
-    trans_required_pattern = re.compile(
-        f"vision_tower.transformer.layers.[0-9]+.attn.in_proj.(query|key).({'|'.join(rope_params)})"
-    )
     for name, param in input_sd.items():
         # hf -> fms requires a transpose operation for the query and key
         # weight and bias parameters for Llama models
@@ -379,73 +353,52 @@ def _hf_to_fms_rope_vision_model(
             new_sd[name] = temp
         else:
             new_sd[name] = param
-
     return new_sd
 
 
-def _hf_to_fms_rope_language_model(
+def _hf_to_fms_rope(
     input_sd: Mapping[str, Any],
     model_config=None,
     **kwargs,
 ) -> Mapping[str, Any]:
-    new_sd = {}
-    if model_config:
-        model_config = model_config.text_config
+    head_size = 128  # Good default for most models
+    linear_type_str = "torch_linear"
 
-    if model_config:
-        #head_size = model_config.emb_dim // model_config.nheads
-        head_size = model_config.head_dim
-        linear_type_str = "torch_linear"
-        if model_config.linear_config:
+    if not model_config:
+        logger.warning("Missing model_config, assuming defaults for head_size")
+    else:
+        # language model
+        language_model_config = model_config.text_config
+        head_size = language_model_config.head_dim
+        if language_model_config.linear_config:
             linear_type_str = get_linear_type(
-                model_config.linear_config,
+                language_model_config.linear_config,
                 module_name=None,  # if callable, linear_type should return default str
             )
-    else:
-        logger.warning("Missing model_config, assuming defaults for head_size")
-        head_size = 128  # Good default for most models
-        linear_type_str = "torch_linear"
-
     rope_params = _get_rope_params(linear_type_str)
     trans_required_pattern = re.compile(
         f"language_model.base_model.layers.[0-9]+.attn.in_proj.(query|key).({'|'.join(rope_params)})"
     )
-    for name, param in input_sd.items():
-        # hf -> fms requires a transpose operation for the query and key
-        # weight and bias parameters for Llama models
-        # This transpose is due to the different implementation of RoPE in
-        # HF and FMS. While FMS follows the original RoPE paper
-        # (https://arxiv.org/abs/2104.09864), HF has its own implementation
-        # that doesn't respect the order of outputs. This is OK as long as you
-        # rearrange the weights of the query and key projections, as the
-        # combination projection + RoPE ends up producing the same outputs.
-        # Therefore, to make FMS produce the correct order of outputs when
-        # loading from an HF checkpoint, we need to undo the transformation
-        # that HF does from the original Meta weights
-        is_gptq_2d_qparam = "gptq" in linear_type_str and param.dim() == 2
-        if bool(trans_required_pattern.match(name)) and param.numel() > 1:
-            temp = param
-            if is_gptq_2d_qparam:
-                # GPTQ qweights are [in_feat, out_feat] (unlike usual [out_feat, in_feat])
-                # and are fully transposed before & after process.
-                # GPTQ scales and qzeros are also transposed accordingly
-                temp = temp.transpose(0, 1)
-            # num_heads is used in the transformation required for hf->fms
-            # can't be precomputed because q and k might have different num_heads
-            num_heads = temp.size(0) // head_size
+    new_sd = _hf_to_fms_rope_common(
+        input_sd, head_size, linear_type_str, trans_required_pattern
+    )
 
-            if temp.dim() == 2:  # weight
-                temp_view = temp.view(num_heads, 2, -1, temp.size(1))
-            else:  # 1-dim parameters
-                temp_view = temp.view(num_heads, 2, -1)
-            temp = temp_view.transpose(1, 2).reshape(*temp.size())
-
-            if is_gptq_2d_qparam:
-                temp = temp.transpose(0, 1)
-
-            new_sd[name] = temp
-        else:
-            new_sd[name] = param
+    # vision model
+    if model_config:
+        vision_model_config = model_config.vision_config
+        head_size = vision_model_config.hidden_size // vision_model_config.nheads
+        if vision_model_config.linear_config:
+            linear_type_str = get_linear_type(
+                vision_model_config.linear_config,
+                module_name=None,  # if callable, linear_type should return default str
+            )
+    rope_params = _get_rope_params(linear_type_str)
+    trans_required_pattern = re.compile(
+        f"vision_tower.transformer.layers.[0-9]+.attn.in_proj.(query|key).({'|'.join(rope_params)})"
+    )
+    new_sd = _hf_to_fms_rope_common(
+        new_sd, head_size, linear_type_str, trans_required_pattern
+    )
 
     return new_sd
 
@@ -457,15 +410,11 @@ serialization.register_adapter_step(
 )
 
 serialization.register_adapter_step(
-    _architecture_name, "hf_to_fms_rope_language_model", _hf_to_fms_rope_language_model
-)
-
-serialization.register_adapter_step(
-    _architecture_name, "hf_to_fms_rope_vision_model", _hf_to_fms_rope_vision_model
+    _architecture_name, "hf_to_fms_rope", _hf_to_fms_rope
 )
 
 serialization.register_adapter(
     _architecture_name,
     "hf",
-    ["hf_to_fms_names", "hf_to_fms_rope_language_model", "hf_to_fms_rope_vision_model", "weight_fusion"],
+    ["hf_to_fms_names", "hf_to_fms_rope", "weight_fusion"],
 )

@@ -273,32 +273,51 @@ def _infer_model_configuration(
             config.vision_feature_select_strategy
         )
         config_params["vision_feature_layer"] = config.vision_feature_layer
-        
+
+        # TODO: use recursive infer_model_configuration post llava_next PR merge
+
         config_params["vision_config"] = PixtralVisionConfig(
             image_size=config.vision_config.image_size,
             patch_size=config.vision_config.patch_size,
             hidden_act=config.vision_config.hidden_act,
             rope_theta=config.vision_config.rope_theta,
-            hidden_size=getattr(config.vision_config, "hidden_size", default_vision_config.hidden_size),
-            intermediate_size=getattr(config.vision_config, "intermediate_size", default_vision_config.intermediate_size),
-            nheads=(config.vision_config.num_attention_heads if getattr(config.vision_config, "num_attention_heads", None) else config.vision.config.hidden_size // config.vision_config.head_dim),
-            nlayers=getattr(config.vision_config, "num_hidden_layers", default_vision_config.nlayers),
-            nchannels=getattr(config.vision_config, "num_channels", default_vision_config.nchannels),
+            hidden_size=getattr(
+                config.vision_config, "hidden_size", default_vision_config.hidden_size
+            ),
+            intermediate_size=getattr(
+                config.vision_config,
+                "intermediate_size",
+                default_vision_config.intermediate_size,
+            ),
+            nheads=(
+                config.vision_config.num_attention_heads
+                if getattr(config.vision_config, "num_attention_heads", None)
+                else config.vision.config.hidden_size // config.vision_config.head_dim
+            ),
+            nlayers=getattr(
+                config.vision_config, "num_hidden_layers", default_vision_config.nlayers
+            ),
+            nchannels=getattr(
+                config.vision_config, "num_channels", default_vision_config.nchannels
+            ),
         )
 
         config_params["text_config"] = MistralConfig(
             src_vocab_size=config.text_config.vocab_size,
             emb_dim=config.text_config.hidden_size,
             norm_eps=config.text_config.rms_norm_eps,
-            nheads=getattr(config.text_config, "num_attention_heads", default_text_config.nheads),
+            nheads=getattr(
+                config.text_config, "num_attention_heads", default_text_config.nheads
+            ),
             kvheads=config.text_config.num_key_value_heads,
             nlayers=config.text_config.num_hidden_layers,
-            hidden_grow_factor=config.text_config.intermediate_size  / config.text_config.hidden_size,
+            hidden_grow_factor=config.text_config.intermediate_size
+            / config.text_config.hidden_size,
             max_expected_seq_len=config.text_config.max_position_embeddings,
             rope_base=config.text_config.rope_theta,
             sliding_window=config.text_config.sliding_window,
             head_dim=config.text_config.head_dim,
-        )        
+        )
     elif architecture == "SiglipModel":
         config = config.vision_config
         inner_dim = config.intermediate_size

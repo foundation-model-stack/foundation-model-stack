@@ -58,7 +58,10 @@ class TestPixtral(
         [[torch.arange(0, 1, 1 / 224).tolist() for _ in range(224)] for _ in range(3)]
     ]
     pixel_values = torch.tensor(pixel_values)  # shape [1, 3, 224, 224]
-    _get_signature_optional_params = {"pixel_values": pixel_values, "image_sizes": image_sizes}
+    _get_signature_optional_params = {
+        "pixel_values": pixel_values,
+        "image_sizes": image_sizes,
+    }
     _get_signature_logits_getter_fn = get_last_hidden_state
 
     def test_config_passed_to_model_and_updated(self, model, config):

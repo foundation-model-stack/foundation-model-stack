@@ -13,7 +13,7 @@ from fms.testing._internal.model_test_suite import (
 )
 from fms.utils.config import ModelConfig
 
-#TODO: reduce dims
+# TODO: reduce dims
 _text_config = MistralConfig(
     src_vocab_size=384,
     emb_dim=16,
@@ -79,10 +79,7 @@ class TestLlava(
     # sample image size, pixel values and input_ids for testing
     image_sizes = torch.tensor([[384, 384]])
     pixel_values = [
-        [
-            [torch.arange(0, 1, 1 / 384).tolist() for _ in range(384)]
-            for _ in range(3)
-        ]
+        [[torch.arange(0, 1, 1 / 384).tolist() for _ in range(384)] for _ in range(3)]
     ]
     pixel_values = torch.tensor(pixel_values)  # shape [1, 3, 384, 384]
     input_ids = torch.arange(380).unsqueeze(0)
@@ -99,7 +96,7 @@ class TestLlava(
     def test_config_passed_to_model_and_updated(self, model, config):
         """test model constructor appropriately merges any passed kwargs into the config without mutating the original config"""
         model = type(model)(
-            config=config, image_token_index=config.image_token_index+1
+            config=config, image_token_index=config.image_token_index + 1
         )
         # check not same reference
         assert model.get_config() is not config

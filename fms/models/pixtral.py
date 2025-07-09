@@ -4,7 +4,6 @@ import re
 from dataclasses import dataclass
 from typing import Any, Mapping, Optional, Unpack, Tuple
 
-import pdb
 import torch
 import torch.nn as nn
 import numpy as np
@@ -18,6 +17,7 @@ from fms.modules.attention import (
 from fms.modules.feedforward import FeedForwardBlock, GatedLinearUnit
 from fms.modules.layernorm import LayerNormParameterized
 from fms.modules.positions import RotaryEmbedding
+from fms.modules.linear import get_linear_type
 from fms.utils import serialization
 from fms.utils.activation import str_to_activation
 from fms.utils.config import ModelConfig
@@ -40,7 +40,6 @@ class PixtralVisionConfig(ModelConfig):
     attention_dropout: float = 0.0
     linear_config: Optional[Mapping[str, Any]] = None
     fused_weights: bool = True
-
 
 
 class PixtralAttentionLayer(nn.Module):
@@ -66,7 +65,7 @@ class PixtralAttentionLayer(nn.Module):
             linear_config=config.linear_config,
             scale_factor=attn_scale_factor,
         )
-        
+
         self.attention_norm = LayerNormParameterized(
             config.hidden_size,
             elementwise_shift=False,
@@ -77,12 +76,12 @@ class PixtralAttentionLayer(nn.Module):
         self.ff_sub_layer = GatedLinearUnit(
             config.hidden_size,
             hidden_grow_factor=config.intermediate_size / config.hidden_size,
-            activation_fn=str_to_activation(config.hidden_act),  
+            activation_fn=str_to_activation(config.hidden_act),
             use_bias=False,
             p_dropout=config.attention_dropout,
             fused=config.fused_weights,
             linear_config=config.linear_config,
-        )        
+        )
         self.ffn_norm = LayerNormParameterized(
             config.hidden_size,
             elementwise_shift=False,
@@ -90,7 +89,7 @@ class PixtralAttentionLayer(nn.Module):
             eps=config.layer_norm_eps,
             use_high_precision_pow=True,
         )
-    
+
     def reset_parameters(self):
         for m in self.modules():
             if (
@@ -105,21 +104,17 @@ class PixtralAttentionLayer(nn.Module):
         hidden_states: torch.Tensor,
         attention_mask: torch.Tensor,
         position_ids: Optional[torch.Tensor] = None,
-        position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
         **attn_kwargs: Unpack[AttentionKwargs],
     ):
-        #pdb.set_trace()
         attn_kwargs["attn_name"] = attn_kwargs.get("attn_name", "sdpa_bidirectional")
-        attn_kwargs["mask"] = attention_mask
 
         residual = hidden_states
 
         hidden_states = self.attention_norm(hidden_states)
         hidden_states = self.attn(
             q=hidden_states,
-            #attention_mask=attention_mask,
-            #position_embeddings=position_embeddings,
             position_ids=position_ids,
+            mask=attention_mask,
             **attn_kwargs,
         )
         hidden_states = residual + hidden_states
@@ -139,7 +134,7 @@ class PixtralTransformer(nn.Module):
         self.layers = torch.nn.ModuleList()
         for _ in range(config.nlayers):
             self.layers.append(PixtralAttentionLayer(config, rotary_emb))
-    
+
     def reset_parameters(self):
         for m in self.layers:
             m.reset_parameters()
@@ -149,11 +144,9 @@ class PixtralTransformer(nn.Module):
         inputs_embeds,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.Tensor] = None,
-        position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
         output_hidden_states: Optional[bool] = None,
         **attn_kwargs: Unpack[AttentionKwargs],
     ):
-        #pdb.set_trace()
         hidden_states = inputs_embeds
         encoder_states = (hidden_states,) if output_hidden_states else ()
 
@@ -162,7 +155,6 @@ class PixtralTransformer(nn.Module):
                 hidden_states,
                 attention_mask,
                 position_ids=position_ids,
-                position_embeddings=position_embeddings,
                 **attn_kwargs,
             )
             if output_hidden_states:
@@ -195,13 +187,14 @@ class PixtralVision(nn.Module):
         )
         self.patch_size = self.config.patch_size
         self.image_size = self.config.image_size
-        
-        #self.patch_positional_embedding = PixtralRotaryEmbedding(self.config)
-        rope_scaling = {"rope_type": "pixtral", "max_patches_per_side": self.image_size // self.patch_size}
+
+        rope_scaling = {
+            "rope_type": "pixtral",
+            "max_patches_per_side": self.image_size // self.patch_size,
+        }
         self.rot_emb = RotaryEmbedding(
             dim=self.config.hidden_size // self.config.nheads,
             scaling=rope_scaling,
-            #max_seq_len=self.config.max_expected_seq_len,
             ratio=self.config.rope_theta,
         )
         # RoPE init
@@ -210,7 +203,7 @@ class PixtralVision(nn.Module):
             + [buffer.device for buffer in self.buffers()]
         ):
             self.rot_emb.compute_freqs_cis(device)
-        
+
         self.transformer = PixtralTransformer(self.config, self.rot_emb)
 
         self.ln_pre = LayerNormParameterized(
@@ -237,7 +230,6 @@ class PixtralVision(nn.Module):
         cached_freqs: dict[Optional[torch.device], dict[int, torch.Tensor]],
         max_seq_len_cached: dict[Optional[torch.device], int],
     ):
-        #pdb.set_trace()
         # remove meta tensors from cached_freqs
         for dev in list(cached_freqs.keys()):
             for alp in list(cached_freqs[dev].keys()):
@@ -261,14 +253,16 @@ class PixtralVision(nn.Module):
             [param.device for param in self.parameters()]
             + [buffer.device for buffer in self.buffers()]
         ):
-            self.rot_emb.compute_freqs_cis(device)            
+            self.rot_emb.compute_freqs_cis(device)
 
     def generate_block_attention_mask(self, patch_embeds_list, tensor):
         dtype = tensor.dtype
         device = tensor.device
         seq_len = tensor.shape[1]
         d_min = torch.finfo(dtype).min
-        causal_mask = torch.full((seq_len, seq_len), fill_value=d_min, dtype=dtype, device=device)
+        causal_mask = torch.full(
+            (seq_len, seq_len), fill_value=d_min, dtype=dtype, device=device
+        )
 
         block_end_idx = torch.tensor(patch_embeds_list).cumsum(-1)
         block_start_idx = torch.tensor([0] + patch_embeds_list[:-1]).cumsum(-1)
@@ -282,7 +276,9 @@ class PixtralVision(nn.Module):
         positions = []
         for patch in patch_embeds_list:
             height, width = patch.shape[-2:]
-            mesh = torch.meshgrid(torch.arange(height), torch.arange(width), indexing="ij")
+            mesh = torch.meshgrid(
+                torch.arange(height), torch.arange(width), indexing="ij"
+            )
             h_grid, v_grid = torch.stack(mesh, dim=-1).reshape(-1, 2).chunk(2, -1)
             ids = h_grid * max_width + v_grid
             positions.append(ids[:, 0])
@@ -294,10 +290,8 @@ class PixtralVision(nn.Module):
         image_sizes: torch.Tensor,
         output_hidden_states: Optional[bool] = None,
         *args,
-        #**kwargs,
         **attn_kwargs: Unpack[AttentionKwargs],
     ):
-        #pdb.set_trace()
         # pass images through initial convolution independently
         patch_embeds = self.patch_conv(pixel_values)
         # Potential graph break here:
@@ -307,29 +301,25 @@ class PixtralVision(nn.Module):
         ]
 
         # flatten to a single sequence
-        patch_embeds = torch.cat([p.flatten(1).T for p in patch_embeds_list], dim=0).unsqueeze(0)
+        patch_embeds = torch.cat(
+            [p.flatten(1).T for p in patch_embeds_list], dim=0
+        ).unsqueeze(0)
         patch_embeds = self.ln_pre(patch_embeds)
 
         # positional embeddings
         position_ids = self.position_ids_in_meshgrid(
-            patch_embeds_list, max_width=self.config.image_size // self.config.patch_size
+            patch_embeds_list,
+            max_width=self.config.image_size // self.config.patch_size,
         )
         position_ids = position_ids.unsqueeze(0)
-        #position_embeddings = self.patch_positional_embedding(patch_embeds, position_ids)
 
         attention_mask = self.generate_block_attention_mask(
             [p.shape[-2] * p.shape[-1] for p in patch_embeds_list], patch_embeds
         )
 
-        #TODO: attention_mask vs mask present in attn_kwargs
-        #TODO: position_ids vs position_ids present in attn_kwargs
-        #attn_kwargs is empty!
-
         last_hidden_state, hidden_states = self.transformer(
             patch_embeds,
             attention_mask=attention_mask,
-            #position_embeddings=position_embeddings,
-            position_embeddings=None,
             position_ids=position_ids,
             output_hidden_states=output_hidden_states,
             **attn_kwargs,
@@ -375,6 +365,7 @@ def _weight_fusion(
         )
     return new_sd
 
+
 def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]:
     replacements = [
         (r"attention\.k_proj", "attn.in_proj.key"),
@@ -383,7 +374,7 @@ def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]
         (r"attention\.o_proj", "attn.dense"),
         (r"feed_forward\.gate_proj", "ff_sub_layer.wg"),
         (r"feed_forward\.up_proj", "ff_sub_layer.w1"),
-        (r"feed_forward\.down_proj", "ff_sub_layer.w2"),        
+        (r"feed_forward\.down_proj", "ff_sub_layer.w2"),
     ]
     new_sd = {}
     for name, param in input_sd.items():

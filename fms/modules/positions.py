@@ -3,7 +3,6 @@ import copy
 import math
 from typing import MutableMapping, Optional, Tuple
 
-import pdb
 import torch
 
 
@@ -197,15 +196,9 @@ class RopeLlama3ScalingImpl(RopeNoScalingImpl):
 
 class RopePixtralImpl(RopeNoScalingImpl):
     def compute_scaled_freqs(self, device: str, alpha: int):
-        #pdb.set_trace()
         ratio = self.ratio
         dim = self.dim
-        max_patches_per_side = self.scaling_info['max_patches_per_side']
-
-        #freqs = 1.0 / (
-        #    ratio
-        #    ** (torch.arange(0, dim, 2, device=device)[: (dim // 2)].float() / dim)
-        #)
+        max_patches_per_side = self.scaling_info["max_patches_per_side"]
 
         freqs = 1.0 / (ratio ** (torch.arange(0, dim, 2, device=device).float() / dim))
 
@@ -220,7 +213,7 @@ class RopePixtralImpl(RopeNoScalingImpl):
                 freqs_w[None, :, :].repeat(max_patches_per_side, 1, 1),
             ],
             dim=-1,
-        ).reshape(-1, dim // 2)        
+        ).reshape(-1, dim // 2)
 
         return freqs
 
@@ -262,7 +255,6 @@ class RotaryEmbedding(PositionEncoder):
         scaling: dict
             dictionary of information on how to scale RoPE to higher seq lens
         """
-        #pdb.set_trace()
         super(RotaryEmbedding, self).__init__()
         self.partial_rope = partial_rope
         self.dim = int(partial_rope * dim)
@@ -276,7 +268,6 @@ class RotaryEmbedding(PositionEncoder):
         self.max_seq_len_cached: MutableMapping[int, int] = {}
 
     def compute_freqs_cis(self, device, max_seq_len=2048):
-        #pdb.set_trace()
         alpha = self.rope_scaling.get_alpha(max_seq_len)
 
         if device == torch.device("meta"):
@@ -298,8 +289,10 @@ class RotaryEmbedding(PositionEncoder):
                 # This only runs if a particular combination of alpha
                 # and max_seq_len hasn't been seen before
                 freqs = self.rope_scaling.compute_scaled_freqs(device, alpha)
-                if self.rope_scaling.scaling_info["rope_type"] !=  "pixtral":
-                    t = torch.arange(scaled_max_seq_len, device=device, dtype=freqs.dtype)
+                if self.rope_scaling.scaling_info["rope_type"] != "pixtral":
+                    t = torch.arange(
+                        scaled_max_seq_len, device=device, dtype=freqs.dtype
+                    )
                     freqs = torch.outer(t, freqs).float()
                 self.max_seq_len_cached[dev_idx] = scaled_max_seq_len
                 self.cached_freqs[dev_idx][alpha] = torch.stack(
@@ -345,7 +338,6 @@ class RotaryEmbedding(PositionEncoder):
             not always be the pre-cached position 0...S. For kv-caching without dynamic batching
             or variable per-row left padding position_ids is shared for all the batch.
         """
-        #pdb.set_trace()
         assert len(q.size()) == 4
         assert len(k.size()) == 4
 
