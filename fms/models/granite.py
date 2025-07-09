@@ -3,7 +3,6 @@ import math
 import re
 from dataclasses import dataclass
 from typing import Any, Mapping, Optional, Tuple, Unpack
-import warnings
 
 import torch
 import torch.nn as nn
@@ -386,27 +385,6 @@ class Granite(nn.Module):
             **attn_kwargs,
         )
 
-        # # added for deprecation
-        # if "only_last_token" in attn_kwargs:
-        #     if index is None:
-        #         index = -1 if attn_kwargs["only_last_token"] else None
-        #     else:
-        #         warnings.warn("ignoring only_last_token as index is set")
-            
-        #     warnings.warn(
-        #         "only_last_token will be deprecated in future versions, use index instead",
-        #         DeprecationWarning,
-        #         stacklevel=2,
-        #     )
-
-        # if index is not None:
-        #     if isinstance(index, int):
-        #         output = output[:, index, :]
-        #     else:
-        #         #torch.cat((torch.zeros(2,1, dtype=torch.int64),context_lengths_without_pads.unsqueeze(1) - 1), dim=1)
-        #         # gather_idx = torch.cat((torch.zeros(2,1, dtype=torch.int64),context_lengths_without_pads.unsqueeze(1) - 1), dim=1)
-        #         # kwargs["position_ids"] = kwargs["position_ids"].gather(1, gather_idx)
-        #         output = output.gather(1, index)
         preds = self.head(output)
         preds = preds / self.config.logits_scaling
 

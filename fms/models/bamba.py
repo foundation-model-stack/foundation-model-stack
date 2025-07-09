@@ -21,7 +21,7 @@ from fms.modules.ssm import SSM, SSMCacheUnit
 from fms.utils import serialization
 from fms.utils.activation import str_to_activation
 from fms.utils.config import ModelConfig
-
+from fms.utils.headless import gather_outputs
 
 logger = logging.getLogger(__name__)
 
@@ -293,6 +293,7 @@ class BambaHeadless(nn.Module):
         ):
             self.rot_emb.compute_freqs_cis(device, self.config.max_expected_seq_len)
 
+    @gather_outputs
     def forward(
         self,
         x_in,
@@ -426,13 +427,14 @@ class Bamba(nn.Module):
             List[SSMCacheUnit | Tuple[torch.FloatTensor,]]
         ] = None,
         use_cache: bool = False,
-        only_last_token: bool = False,
+        index: Optional[int | torch.Tensor] = None,
         **attn_kwargs: Unpack[AttentionKwargs],
     ):
         get_attention_type(**attn_kwargs)["validate_attn_kwargs"](
             input_ids=x,
             position_ids=position_ids,
             past_key_value_states=past_key_value_states,
+            index=index,
             **attn_kwargs,
         )
         output, cache = self.base_model(
@@ -440,11 +442,10 @@ class Bamba(nn.Module):
             position_ids,
             past_key_value_states,
             use_cache,
+            index=index,
             **attn_kwargs,
         )
 
-        if only_last_token:
-            output = output[:, -1, :]
         preds = self.head(output)
 
         if use_cache:
