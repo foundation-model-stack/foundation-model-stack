@@ -9,7 +9,11 @@ Foundation Model Stack is a collection of components for development, inference,
 | GPT-BigCode  | :heavy_check_mark: | :x: |
 | RoBERTa      | :heavy_check_mark: | :x: |
 | Mistral      | :heavy_check_mark: | :x: |
+| Mixtral      | :heavy_check_mark: | :x: |
+| Granite      | :heavy_check_mark: | :x: |
+| SiglipVision | :heavy_check_mark: | :x: |
 | Bamba        | :heavy_check_mark: | :x: |
+
 
 
 ## Installation
