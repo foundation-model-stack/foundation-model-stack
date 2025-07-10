@@ -3,7 +3,7 @@ import torch
 
 class RMSNormFMS(torch.nn.RMSNorm):
     """
-    A RmsNorm implementation. 
+    A RmsNorm implementation.
     ...
     Args
     ----
