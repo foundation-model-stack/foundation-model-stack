@@ -24,7 +24,7 @@ class RMSNorm(nn.Module):
         elementwise_scale=True,
         use_high_precision_pow=False,
     ):
-        super(LayerNormParameterized, self).__init__()
+        super(RMSNorm, self).__init__()
         self.normalized_shape = normalized_shape
         self.eps = eps
         self.elementwise_scale = elementwise_scale
