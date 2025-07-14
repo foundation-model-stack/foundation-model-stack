@@ -413,8 +413,6 @@ _base_questionanswering_config = RoBERTaQuestionAnsweringConfig(
     num_classes=2,
 )
 
-_architecture_name = "roberta"
-
 
 def _roberta_factory_factory(config):
     def factory(**kwargs):
@@ -430,25 +428,6 @@ def _roberta_question_answering_factory_factory(config):
     return factory
 
 
-models.register_model(
-    _architecture_name, "micro", _roberta_factory_factory(_micro_char_config)
-)
-models.register_model(
-    _architecture_name, "base", _roberta_factory_factory(_base_config)
-)
-models.register_model(
-    "roberta_question_answering",
-    "base",
-    _roberta_question_answering_factory_factory(_base_questionanswering_config),
-)
-
-serialization.register_adapter_step(
-    _architecture_name,
-    "pre0.0.6_attn_unfused_to_fused",
-    serialization._pre006_attn_adapter_step,
-)
-
-
 def _weight_fusion(
     input_sd: Mapping[str, Any], model_config: Optional[RoBERTaConfig] = None, **kwargs
 ) -> Mapping[str, Any]:
@@ -461,14 +440,6 @@ def _weight_fusion(
     if has_fused_weights:
         new_sd = serialization._attn_unfused_to_fused_step(new_sd)
     return new_sd
-
-
-serialization.register_adapter_step(_architecture_name, "weight_fusion", _weight_fusion)
-serialization.register_adapter_step(
-    "roberta_question_answering",
-    "weight_fusion",
-    _weight_fusion,
-)
 
 
 def _hf_to_fms_names(hf_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]:
@@ -495,7 +466,7 @@ def _hf_to_fms_names(hf_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]:
         (r"^lm_head\.dense", "classification_head.dense"),
         (r"^lm_head\.layer_norm", "classification_head.ln"),
         (r"^lm_head\.decoder", "classification_head.head"),
-        (r"^qa_outputs", "qa_head"),  # only relevant to QuestionAnswering task
+        (r"^qa_outputs", "qa_head"),  # only for QuestionAnswering task
     ]
     new_sd = {}
     for name, param in hf_sd.items():
@@ -511,17 +482,92 @@ def _hf_to_fms_names(hf_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]:
     return new_sd
 
 
-serialization.register_adapter_step(
-    _architecture_name, "hf_to_fms_names", _hf_to_fms_names
+def _bert_hf_to_fms_names(hf_sd: Mapping[str, Any], **kwargs) -> Mapping[Any, Any]:
+    replacements = [
+        (r"^bert.embeddings.word_embeddings.weight", "base_model.embedding.weight"),
+        (
+            r"^bert.embeddings.position_embeddings.weight",
+            "base_model.position_embedding.weight",
+        ),
+        (
+            r"^bert.embeddings.token_type_embeddings.weight",
+            "base_model.token_type_embeddings.weight",
+        ),
+        (r"^bert.embeddings.LayerNorm", "base_model.enc_norm"),
+        (r"^bert.encoder.layer", "base_model.layers"),
+        (r"attention\.output\.LayerNorm", "ln"),
+        (r"output\.LayerNorm", "ff_ln"),
+        (r"attention\.self\.key", "attn.in_proj.key"),
+        (r"attention\.self\.value", "attn.in_proj.value"),
+        (r"attention\.self\.query", "attn.in_proj.query"),
+        (r"attention\.output\.dense", "attn.dense"),
+        (r"intermediate\.dense", "ff_sub_layer.w1"),
+        (r"output\.dense", "ff_sub_layer.w2"),
+        (r"^qa_outputs", "qa_head"),  # only for QuestionAnswering task
+    ]
+    new_sd = {}
+    for name, param in hf_sd.items():
+        new_name = name
+        for pattern, repl in replacements:
+            new_name = re.sub(pattern, repl, new_name)
+        new_sd[new_name] = param
+
+    # NOTE: unlike roberta, bert doesn't reserve first 2 elements of position embeddings
+
+    return new_sd
+
+
+# Register models
+models.register_model(
+    "roberta", "micro", _roberta_factory_factory(_micro_char_config)
 )
+models.register_model(
+    "roberta", "base", _roberta_factory_factory(_base_config)
+)
+models.register_model(
+    "roberta_question_answering",
+    "base",
+    _roberta_question_answering_factory_factory(_base_questionanswering_config),
+)
+models.register_model(
+    "bert_question_answering",
+    "base",
+    _roberta_question_answering_factory_factory(_base_questionanswering_config),
+)
+
+# Register adapter steps
+serialization.register_adapter_step(
+    "roberta",
+    "pre0.0.6_attn_unfused_to_fused",
+    serialization._pre006_attn_adapter_step,
+)
+serialization.register_adapter_step("roberta", "hf_to_fms_names", _hf_to_fms_names)
+serialization.register_adapter_step("roberta", "weight_fusion", _weight_fusion)
 serialization.register_adapter_step(
     "roberta_question_answering", "hf_to_fms_names", _hf_to_fms_names
 )
+serialization.register_adapter_step(
+    "roberta_question_answering",
+    "weight_fusion",
+    _weight_fusion,
+)
+serialization.register_adapter_step(
+    "bert_question_answering", "bert_hf_to_fms_names", _bert_hf_to_fms_names
+)
+serialization.register_adapter_step(
+    "bert_question_answering",
+    "weight_fusion",
+    _weight_fusion,
+)
 
+# Register adapters
 serialization.register_adapter("roberta", "hf", ["hf_to_fms_names", "weight_fusion"])
 serialization.register_adapter(
     "roberta", "fms.pre0.0.6", ["pre0.0.6_attn_unfused_to_fused", "weight_fusion"]
 )
 serialization.register_adapter(
     "roberta_question_answering", "hf", ["hf_to_fms_names", "weight_fusion"]
+)
+serialization.register_adapter(
+    "bert_question_answering", "hf", ["bert_hf_to_fms_names", "weight_fusion"]
 )
