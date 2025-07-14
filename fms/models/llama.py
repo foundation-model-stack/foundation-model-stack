@@ -1,7 +1,8 @@
 import logging
 import re
 from dataclasses import dataclass, field
-from typing import Any, Mapping, Optional, Tuple, Unpack
+from typing import Any, Mapping, Optional, Tuple
+from typing_extensions import Unpack
 
 import torch
 import torch.nn as nn
