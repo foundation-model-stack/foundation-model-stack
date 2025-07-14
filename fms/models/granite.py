@@ -16,7 +16,7 @@ from fms.modules.attention import (
     get_attention_type,
 )
 from fms.modules.feedforward import GatedLinearUnit
-from fms.modules.rmsnorm import RMSNormFMS
+from fms.modules.rmsnorm import RMSNorm
 from fms.modules.linear import get_linear_type
 from fms.modules.positions import RotaryEmbedding
 from fms.utils import serialization
@@ -61,15 +61,13 @@ class GraniteBlock(nn.Module):
         emb_kq = self.config.emb_dim // self.config.nheads
         emb_v = self.config.emb_dim // self.config.nheads
 
-        self.ln = RMSNormFMS(
+        self.ln = RMSNorm(
             self.config.emb_dim,
             eps=self.config.norm_eps,
-            use_high_precision_pow=True,
         )
-        self.ff_ln = RMSNormFMS(
+        self.ff_ln = RMSNorm(
             self.config.emb_dim,
             eps=self.config.norm_eps,
-            use_high_precision_pow=True,
         )
 
         if self.config.kvheads == 0:
@@ -197,10 +195,9 @@ class GraniteHeadless(nn.Module):
             layers.append(block)
         self.layers = nn.ModuleList(layers)
 
-        dec_norm = RMSNormFMS(
+        dec_norm = RMSNorm(
             self.config.emb_dim,
             eps=self.config.norm_eps,
-            use_high_precision_pow=True,
         )
         self.dec_norm = self.distributed_strategy.distribute_module(
             dec_norm, final_layers=True
@@ -226,7 +223,7 @@ class GraniteHeadless(nn.Module):
             if (
                 isinstance(m, MultiHeadAttention)
                 or isinstance(m, GatedLinearUnit)
-                or isinstance(m, RMSNormFMS)
+                or isinstance(m, RMSNorm)
             ):
                 m.reset_parameters()
 

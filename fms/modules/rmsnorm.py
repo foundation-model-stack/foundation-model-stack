@@ -1,7 +1,7 @@
 import torch
 
 
-class RMSNormFMS(torch.nn.RMSNorm):
+class RMSNorm(torch.nn.RMSNorm):
     """
     A RmsNorm implementation.
     ...
@@ -18,9 +18,9 @@ class RMSNormFMS(torch.nn.RMSNorm):
         self,
         normalized_shape,
         eps=1e-06,
-        use_high_precision_pow=False,
+        use_high_precision_pow=True,
     ):
-        super(RMSNormFMS, self).__init__(normalized_shape, eps)
+        super(RMSNorm, self).__init__(normalized_shape, eps)
         self.use_high_precision_pow = use_high_precision_pow
 
     def forward(self, x):
