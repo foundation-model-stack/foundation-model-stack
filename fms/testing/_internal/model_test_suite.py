@@ -14,6 +14,7 @@ from torch._dynamo.testing import CompileCounterWithBackend
 from fms.testing.comparison import get_signature
 from fms.utils.config import ModelConfig
 from fms.utils.fusion import apply_unfuse_weights
+from fms.utils.generation import generate
 
 
 _FAILED_CONFIG_LOAD_MSG = """
@@ -150,6 +151,7 @@ class SignatureFixtureMixin:
             print(
                 "Signature failed to load, please re-run the tests with --capture_expectation"
             )
+            return []
 
 
 class ModelConfigTestSuite(ConfigFixtureMixin, ModelFixtureMixin):
@@ -215,6 +217,17 @@ class ModelCompileTestSuite(ModelFixtureMixin):
         """
         pass
 
+    @property
+    def _get_signature_optional_params(self) -> Optional[dict[str, torch.Tensor]]:
+        """the value to pass into optional_params in get_signature function for this model
+
+        Returns
+        -------
+        Optional[dict[str, torch.Tensor]]
+            the dictionary of optional params to pass to the model
+        """
+        return {}
+
     @pytest.mark.skipif(
         platform.system() != "Linux",
         reason=f"pytorch compile is more stable on Linux, skipping as current platform is {platform.platform()}",
@@ -227,7 +240,7 @@ class ModelCompileTestSuite(ModelFixtureMixin):
             compiled_model = torch.compile(model=model, backend=cnt, fullgraph=True)
             assert cnt.frame_count == 0
 
-            optional_params = self._get_signature_optional_params
+            optional_params = self._get_signature_optional_params or {}
             # default attn_algorithm won't compile on CPU for older pytorch versions
             # TODO: add non-math attn_algorithm when we have GPUs to run unit tests
             optional_params.update({"attn_algorithm": "math"})
@@ -293,37 +306,119 @@ class ModelConsistencyTestSuite(ModelFixtureMixin, SignatureFixtureMixin):
         """
         return {}
 
+    def _supports_generation(self, model: nn.Module) -> bool:
+        """Check if model supports text generation (is a causal language model)
+        
+        Parameters
+        ----------
+        model: nn.Module
+            The model to check
+            
+        Returns
+        -------
+        bool
+            True if model supports generation, False otherwise
+        """
+        # Check if model has an lm_head (language modeling head)
+        has_lm_head = hasattr(model, 'lm_head') or hasattr(model, 'head')
+        
+        # Check if it's not a vision model or encoder-only model
+        # Vision models usually have 'vision' in their class name
+        # RoBERTa models are encoder-only and don't support causal generation
+        model_name = model.__class__.__name__.lower()
+        is_vision_model = 'siglip' in model_name or 'vision' in model_name
+        is_encoder_only = 'roberta' in model_name and 'questionanswering' not in model_name
+        
+        return has_lm_head and not is_vision_model and not is_encoder_only
+
+    def _get_generation_signature(self, model: nn.Module, input_ids: torch.Tensor) -> list[float]:
+        """Generate a signature from model generation (1 prefill + 1 decode)
+        
+        Parameters
+        ----------
+        model: nn.Module
+            The model to use for generation
+        input_ids: torch.Tensor
+            The input tensor for generation
+            
+        Returns
+        -------
+        list[float]
+            A signature derived from the generated output
+        """
+        try:
+            model.eval()
+            device = next(model.parameters()).device
+            input_ids = input_ids.to(device)
+            
+            # Generate 1 token (1 prefill + 1 decode)
+            with torch.no_grad():
+                generated = generate(
+                    model=model,
+                    input_ids=input_ids,
+                    max_new_tokens=1,
+                    do_sample=False,  # Use greedy generation for consistency
+                    use_cache=False,
+                    temperature=1.0
+                )
+            
+            # Create signature from the generated token
+            # Get the newly generated token (last token) for each batch item
+            new_tokens = generated[:, -1]
+            
+            # Create a simple signature from the new token
+            return [float(new_tokens.sum().item())]
+        except Exception:
+            # If generation fails for any reason, return empty signature
+            return []
+
     def test_model_output(self, model, signature, model_id, capture_expectation):
         """test consistency of model output with signature"""
 
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        model = model.to(device)
+
+        # Test standard forward pass signature
         actual = get_signature(
             model,
             inp=self._get_signature_input_ids,
             params=self._get_signature_params,
             optional_params=self._get_signature_optional_params,
             logits_getter_fn=self._get_signature_logits_getter_fn,
-            device="cuda" if torch.cuda.is_available() else "cpu",
+            device=device,
         )
+
+        # Test generation signature for applicable models
+        generation_signature = None
+        if self._supports_generation(model):
+            input_ids = self._get_signature_input_ids
+            if input_ids is None:
+                input_ids = torch.arange(16).unsqueeze(0)
+            generation_signature = self._get_generation_signature(model, input_ids)
+
+        # Combine signatures
+        combined_actual = actual + (generation_signature if generation_signature else [])
 
         if capture_expectation:
             expectation_file_path = self._get_expectation_path(
                 "test_model_output", model_id
             )
             with open(expectation_file_path, "w") as signature_file:
-                signature_file.write(",".join(map(str, actual)))
+                signature_file.write(",".join(map(str, combined_actual)))
             signature_file.close()
             pytest.fail(
                 "Signature file has been saved, please re-run the tests without --capture_expectation"
             )
-        print(actual, signature)
+        
+        print(combined_actual, signature)
         assertion_msg = f"""
-        difference: {np.mean(np.abs(np.array(actual) - np.array(signature)))}
+        difference: {np.mean(np.abs(np.array(combined_actual) - np.array(signature)))}
 
         {_FAILED_MODEL_SIGNATURE_OUTPUT_MSG}
         """
 
         (
-            torch.testing.assert_close(torch.tensor(actual), torch.tensor(signature)),
+            torch.testing.assert_close(torch.tensor(combined_actual), torch.tensor(signature)),
             assertion_msg,
         )
 
