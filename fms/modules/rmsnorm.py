@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 
 
-class LayerNormParameterized(nn.Module):
+class RMSNorm(nn.Module):
     """
     A generalized LayerNorm implementation. With all optional arguments set to True, equivalent to nn.LayerNorm up to epsilon stabilization term
     (this class divides inputs by min(norm, eps), while nn.LayerNorm divides by norm + eps).
