@@ -319,8 +319,12 @@ class ModelConsistencyTestSuite(ModelFixtureMixin, SignatureFixtureMixin):
         bool
             True if model supports generation, False otherwise
         """
-        # Check if model has an lm_head (language modeling head)
-        has_lm_head = hasattr(model, 'lm_head') or hasattr(model, 'head')
+        # Check if model has a language modeling head
+        has_lm_head = (
+            hasattr(model, 'lm_head') or 
+            hasattr(model, 'head') or
+            hasattr(model, 'shared')  # LLaMA models use shared.head
+        )
         
         # Check if it's not a vision model or encoder-only model
         # Vision models usually have 'vision' in their class name
@@ -364,12 +368,15 @@ class ModelConsistencyTestSuite(ModelFixtureMixin, SignatureFixtureMixin):
             
             # Create signature from the generated token
             # Get the newly generated token (last token) for each batch item
-            new_tokens = generated[:, -1]
+            new_tokens = generated.select(dim=1, index=-1)
             
             # Create a simple signature from the new token
+            print(f"Generation successful: generated token sum = {new_tokens.sum().item()}")
             return [float(new_tokens.sum().item())]
-        except Exception:
-            # If generation fails for any reason, return empty signature
+            
+        except Exception as e:
+            # If generation fails, log the error and return empty signature
+            print(f"Generation failed for {model.__class__.__name__}: {e}")
             return []
 
     def test_model_output(self, model, signature, model_id, capture_expectation):
