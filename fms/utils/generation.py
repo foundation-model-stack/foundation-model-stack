@@ -38,6 +38,7 @@ def pad_input_ids(
         A mapping from mask to a 3d causal mask and from position_ids to a 2d rectangular position_ids tensor
     """
     max_len = max([min_pad_length] + [seq.size(0) for seq in input_ids_list])
+    logger.debug("Padding input_ids to max_len %d", max_len)
 
     padded_input_ids_list = []
     mask_list = []
