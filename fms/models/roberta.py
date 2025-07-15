@@ -475,7 +475,7 @@ def _hf_to_fms_names(hf_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]:
             new_name = re.sub(pattern, repl, new_name)
         new_sd[new_name] = param
 
-        # hf always has the first 2 spots set, we need to remove them as they are not used
+        # hf always has the first 2 spots set, need to remove them as they are not used
         if name == "roberta.embeddings.position_embeddings.weight":
             new_sd[new_name] = new_sd[new_name][2:]
 
@@ -518,12 +518,8 @@ def _bert_hf_to_fms_names(hf_sd: Mapping[str, Any], **kwargs) -> Mapping[Any, An
 
 
 # Register models
-models.register_model(
-    "roberta", "micro", _roberta_factory_factory(_micro_char_config)
-)
-models.register_model(
-    "roberta", "base", _roberta_factory_factory(_base_config)
-)
+models.register_model("roberta", "micro", _roberta_factory_factory(_micro_char_config))
+models.register_model("roberta", "base", _roberta_factory_factory(_base_config))
 models.register_model(
     "roberta_question_answering",
     "base",
