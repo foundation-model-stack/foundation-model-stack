@@ -258,7 +258,17 @@ class ModelCompileTestSuite(ModelFixtureMixin):
 
 
 class ModelConsistencyTestSuite(ModelFixtureMixin, SignatureFixtureMixin):
-    """All tests related to model consistency will be part of this test suite"""
+    """All tests related to model consistency will be part of this test suite
+    
+    To enable generation testing for decoder models that support text generation,
+    set the class attribute _supports_generation = True in your test class.
+    
+    Example:
+        class TestMyModel(ModelConsistencyTestSuite):
+            _supports_generation = True  # Enable generation testing
+            
+            # ... rest of your test implementation
+    """
 
     @property
     def _get_signature_input_ids(self) -> Optional[torch.Tensor]:
@@ -306,37 +316,8 @@ class ModelConsistencyTestSuite(ModelFixtureMixin, SignatureFixtureMixin):
         """
         return {}
 
-    def _supports_generation(self, model: nn.Module) -> bool:
-        """Check if model supports text generation (is a decoder model with KV-cache)
-        
-        Parameters
-        ----------
-        model: nn.Module
-            The model to check
-            
-        Returns
-        -------
-        bool
-            True if model supports generation, False otherwise
-        """
-        # Check if model has a language modeling head
-        has_lm_head = (
-            hasattr(model, 'lm_head') or 
-            hasattr(model, 'head') or
-            hasattr(model, 'shared')  # LLaMA models use shared.head
-        )
-        
-        # Check if model supports KV-cache (has use_cache parameter in forward method)
-        import inspect
-        forward_signature = inspect.signature(model.forward)
-        has_use_cache = 'use_cache' in forward_signature.parameters
-        
-        # Check if it's not a vision model or encoder-only model
-        model_name = model.__class__.__name__.lower()
-        is_vision_model = 'siglip' in model_name or 'vision' in model_name
-        is_encoder_only = 'roberta' in model_name and 'questionanswering' not in model_name
-        
-        return has_lm_head and has_use_cache and not is_vision_model and not is_encoder_only
+    # Class attribute that test classes can set to enable generation testing
+    _supports_generation = False
 
     def _get_generation_signature(self, model: nn.Module, input_ids: torch.Tensor) -> list[float]:
         """Generate a signature from model generation (1 prefill + 1 decode)
@@ -412,7 +393,7 @@ class ModelConsistencyTestSuite(ModelFixtureMixin, SignatureFixtureMixin):
 
         # Test generation signature for applicable models
         generation_signature = None
-        if self._supports_generation(model):
+        if self._supports_generation:
             input_ids = self._get_signature_input_ids
             if input_ids is None:
                 input_ids = torch.arange(16).unsqueeze(0)
@@ -485,7 +466,7 @@ class ModelConsistencyTestSuite(ModelFixtureMixin, SignatureFixtureMixin):
 
         # Test generation signature for applicable models
         generation_signature = None
-        if self._supports_generation(unfused_model):
+        if self._supports_generation:
             input_ids = self._get_signature_input_ids
             if input_ids is None:
                 input_ids = torch.arange(16).unsqueeze(0)
