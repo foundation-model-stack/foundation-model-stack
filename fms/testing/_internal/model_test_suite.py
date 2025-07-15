@@ -357,8 +357,18 @@ class ModelConsistencyTestSuite(ModelFixtureMixin, SignatureFixtureMixin):
             model.eval()
             device = next(model.parameters()).device
             input_ids = input_ids.to(device)
+
+            captured_logits = []
+
+            def capture_logits_hook(token_position, logits, next_val, kwargs):
+                """Hook to capture logits during generation
+                Post iteration hook must have following signature: 
+                f(int token_position, Tensor logits, Tensor next_val, Dict kwargs) ->
+                Tuple[Tensor next_val, Dict kwargs]."""
+                captured_logits.append(logits.detach().cpu())
+                return next_val, kwargs
             
-            # Generate 1 token (1 prefill + 1 decode)
+            # Generate 2 tokens (1 prefill + 1 decode)
             with torch.no_grad():
                 generated = generate(
                     model=model,
@@ -366,12 +376,17 @@ class ModelConsistencyTestSuite(ModelFixtureMixin, SignatureFixtureMixin):
                     max_new_tokens=2, # 1 prefill + 1 decode
                     do_sample=False,  # Use greedy generation for consistency
                     use_cache=True, 
-                    temperature=1.0
+                    temperature=1.0,
+                    post_iteration_hook= capture_logits_hook,
                 )
             
-            # Create signature from the generated token
-            # Get the newly generated token (last token) for each batch item
-            new_tokens = generated.select(dim=1, index=-1)
+            # Create signature from the generated tokens
+            if captured_logits:
+                # Use the last captured logits for the last two generated tokens
+                new_tokens = captured_logits[-1][:, -2:, :]  # Last two tokens logits
+            else:
+                # If no logits were captured, fallback to the last tokens in generated
+                new_tokens = generated[-1][:, -2:]
             
             # Create a simple signature from the new token
             print(f"Generation successful: generated token sum = {new_tokens.sum().item()}")
