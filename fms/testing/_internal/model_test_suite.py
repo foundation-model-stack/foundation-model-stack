@@ -262,12 +262,6 @@ class ModelConsistencyTestSuite(ModelFixtureMixin, SignatureFixtureMixin):
     
     To enable generation testing for decoder models that support text generation,
     set the class attribute _supports_generation = True in your test class.
-    
-    Example:
-        class TestMyModel(ModelConsistencyTestSuite):
-            _supports_generation = True  # Enable generation testing
-            
-            # ... rest of your test implementation
     """
 
     @property
