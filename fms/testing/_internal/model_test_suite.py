@@ -217,17 +217,6 @@ class ModelCompileTestSuite(ModelFixtureMixin):
         """
         pass
 
-    @property
-    def _get_signature_optional_params(self) -> Optional[dict[str, torch.Tensor]]:
-        """the value to pass into optional_params in get_signature function for this model
-
-        Returns
-        -------
-        Optional[dict[str, torch.Tensor]]
-            the dictionary of optional params to pass to the model
-        """
-        return {}
-
     @pytest.mark.skipif(
         platform.system() != "Linux",
         reason=f"pytorch compile is more stable on Linux, skipping as current platform is {platform.platform()}",
@@ -240,10 +229,10 @@ class ModelCompileTestSuite(ModelFixtureMixin):
             compiled_model = torch.compile(model=model, backend=cnt, fullgraph=True)
             assert cnt.frame_count == 0
 
-            optional_params = self._get_signature_optional_params or {}
+            optional_params = self._get_signature_optional_params
             # default attn_algorithm won't compile on CPU for older pytorch versions
             # TODO: add non-math attn_algorithm when we have GPUs to run unit tests
-            optional_params = {**optional_params, "attn_algorithm": "math"}
+            optional_params.update({"attn_algorithm": "math"})
 
             get_signature(
                 compiled_model,
