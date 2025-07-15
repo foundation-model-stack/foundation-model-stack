@@ -82,6 +82,7 @@ class MistralConfig(ModelConfig):
     p_dropout: float = 0.0
     activation_fn: str = "swish"
     emb_dim: int = 4096
+    head_dim: int = 128  # getattr(config, "head_dim", None) or config.hidden_size // config.num_attention_heads
     max_expected_seq_len: int = 32768
     kvheads: int = 8
     norm_eps: float = 1e-5
@@ -100,8 +101,9 @@ class MistralBlock(nn.Module):
     def __init__(self, config: MistralConfig, rotary_emb: RotaryEmbedding):
         super(MistralBlock, self).__init__()
         self.config = config
-        emb_kq = self.config.emb_dim // self.config.nheads
-        emb_v = self.config.emb_dim // self.config.nheads
+
+        emb_kq = config.head_dim
+        emb_v = config.head_dim
 
         self.ln = LayerNormParameterized(
             self.config.emb_dim,
@@ -214,7 +216,7 @@ class MistralHeadless(nn.Module):
         )
 
         self.rot_emb = RotaryEmbedding(
-            dim=self.config.emb_dim // self.config.nheads,
+            dim=self.config.head_dim,
             scaling=self.config.rope_scaling,
             max_seq_len=self.config.max_expected_seq_len,
             ratio=self.config.rope_base,
