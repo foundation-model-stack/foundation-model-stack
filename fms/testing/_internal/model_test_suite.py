@@ -217,17 +217,6 @@ class ModelCompileTestSuite(ModelFixtureMixin):
         """
         pass
 
-    @property
-    def _get_signature_optional_params(self) -> Optional[dict[str, torch.Tensor]]:
-        """the value to pass into optional_params in get_signature function for this model
-
-        Returns
-        -------
-        Optional[dict[str, torch.Tensor]]
-            the dictionary of optional params to pass to the model
-        """
-        return {}
-
     @pytest.mark.skipif(
         platform.system() != "Linux",
         reason=f"pytorch compile is more stable on Linux, skipping as current platform is {platform.platform()}",
@@ -382,9 +371,6 @@ class ModelConsistencyTestSuite(ModelFixtureMixin, SignatureFixtureMixin):
     def test_model_output(self, model, signature, model_id, capture_expectation):
         """test consistency of model output with signature"""
 
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        model = model.to(device)
-
         # Test standard forward pass signature
         actual = get_signature(
             model,
@@ -392,7 +378,7 @@ class ModelConsistencyTestSuite(ModelFixtureMixin, SignatureFixtureMixin):
             params=self._get_signature_params,
             optional_params=self._get_signature_optional_params,
             logits_getter_fn=self._get_signature_logits_getter_fn,
-            device=device,
+            device="cuda" if torch.cuda.is_available() else "cpu",
         )
 
         # Test generation signature for applicable models
