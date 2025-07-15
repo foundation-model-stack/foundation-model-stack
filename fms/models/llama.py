@@ -20,7 +20,7 @@ from fms.modules.attention import (
 )
 from fms.modules.embedding import WordEmbedding
 from fms.modules.feedforward import GatedLinearUnit
-from fms.modules.layernorm import LayerNormParameterized
+from fms.modules.rmsnorm import RMSNorm
 from fms.modules.linear import get_linear_type
 from fms.modules.positions import RotaryEmbedding
 from fms.utils import serialization
@@ -68,21 +68,13 @@ class LLaMABlock(nn.Module):
         emb_kq = self.config.emb_dim // self.config.nheads
         emb_v = self.config.emb_dim // self.config.nheads
 
-        self.ln = LayerNormParameterized(
+        self.ln = RMSNorm(
             self.config.emb_dim,
-            elementwise_scale=True,
-            elementwise_shift=False,
-            use_mean=False,
             eps=self.config.norm_eps,
-            use_high_precision_pow=True,
         )
-        self.ff_ln = LayerNormParameterized(
+        self.ff_ln = RMSNorm(
             self.config.emb_dim,
-            elementwise_scale=True,
-            elementwise_shift=False,
-            use_mean=False,
             eps=self.config.norm_eps,
-            use_high_precision_pow=True,
         )
 
         if self.config.kvheads == 0:
@@ -228,13 +220,9 @@ class LLaMA(nn.Module):
             layers.append(block)
         self.layers = nn.ModuleList(layers)
 
-        dec_norm = LayerNormParameterized(
+        dec_norm = RMSNorm(
             self.config.emb_dim,
-            elementwise_scale=True,
-            elementwise_shift=False,
-            use_mean=False,
             eps=self.config.norm_eps,
-            use_high_precision_pow=True,
         )
         self.dec_norm = self.distributed_strategy.distribute_module(
             dec_norm, final_layers=True
@@ -257,7 +245,7 @@ class LLaMA(nn.Module):
                 isinstance(m, MultiHeadAttention)
                 or isinstance(m, WordEmbedding)
                 or isinstance(m, GatedLinearUnit)
-                or isinstance(m, LayerNormParameterized)
+                or isinstance(m, RMSNorm)
             ):
                 m.reset_parameters()
 
@@ -277,11 +265,8 @@ class LLaMA(nn.Module):
                 assert p.isnan().int().sum() == 0
                 assert p.isinf().int().sum() == 0
             for m in self.modules():
-                if isinstance(LayerNormParameterized):
-                    if m.elementwise_scale:
-                        assert m.weight.sum() == m.weight.numel()
-                    if m.elementwise_shift:
-                        assert m.bias.add(1).sum() == m.bias.numel()
+                if isinstance(RMSNorm):
+                    assert m.weight.sum() == m.weight.numel()
                 elif isinstance(WordEmbedding):
                     check_close(m.emb.weight)
                     check_close(m.head.weight)
