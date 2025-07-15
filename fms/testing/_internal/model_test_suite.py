@@ -382,8 +382,8 @@ class ModelConsistencyTestSuite(ModelFixtureMixin, SignatureFixtureMixin):
             
             # Create signature from the generated tokens
             if captured_logits:
-                # Use the last captured logits for the last two generated tokens
-                new_tokens = captured_logits[-1][:, -2:, :]  # Last two tokens logits
+                # Use the captured logits for the last two generated tokens
+                new_tokens = captured_logits[-1][:, -2:]  # Get the logits for the last two tokens
             else:
                 # If no logits were captured, fallback to the last tokens in generated
                 new_tokens = generated[-1][:, -2:]
