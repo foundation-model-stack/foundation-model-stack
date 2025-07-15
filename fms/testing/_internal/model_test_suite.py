@@ -307,7 +307,7 @@ class ModelConsistencyTestSuite(ModelFixtureMixin, SignatureFixtureMixin):
         return {}
 
     def _supports_generation(self, model: nn.Module) -> bool:
-        """Check if model supports text generation (is a causal language model)
+        """Check if model supports text generation (is a decoder model with KV-cache)
         
         Parameters
         ----------
@@ -326,14 +326,17 @@ class ModelConsistencyTestSuite(ModelFixtureMixin, SignatureFixtureMixin):
             hasattr(model, 'shared')  # LLaMA models use shared.head
         )
         
+        # Check if model supports KV-cache (has use_cache parameter in forward method)
+        import inspect
+        forward_signature = inspect.signature(model.forward)
+        has_use_cache = 'use_cache' in forward_signature.parameters
+        
         # Check if it's not a vision model or encoder-only model
-        # Vision models usually have 'vision' in their class name
-        # RoBERTa models are encoder-only and don't support causal generation
         model_name = model.__class__.__name__.lower()
         is_vision_model = 'siglip' in model_name or 'vision' in model_name
         is_encoder_only = 'roberta' in model_name and 'questionanswering' not in model_name
         
-        return has_lm_head and not is_vision_model and not is_encoder_only
+        return has_lm_head and has_use_cache and not is_vision_model and not is_encoder_only
 
     def _get_generation_signature(self, model: nn.Module, input_ids: torch.Tensor) -> list[float]:
         """Generate a signature from model generation (1 prefill + 1 decode)
