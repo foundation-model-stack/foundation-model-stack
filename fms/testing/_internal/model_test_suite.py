@@ -363,9 +363,9 @@ class ModelConsistencyTestSuite(ModelFixtureMixin, SignatureFixtureMixin):
                 generated = generate(
                     model=model,
                     input_ids=input_ids,
-                    max_new_tokens=1,
+                    max_new_tokens=2, # 1 prefill + 1 decode
                     do_sample=False,  # Use greedy generation for consistency
-                    use_cache=False,
+                    use_cache=True, 
                     temperature=1.0
                 )
             
