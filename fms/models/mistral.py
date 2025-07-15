@@ -2,7 +2,8 @@ import logging
 import math
 import re
 from dataclasses import dataclass, field
-from typing import Any, Mapping, Optional, Tuple, Unpack
+from typing import Any, Mapping, Optional, Tuple
+from typing_extensions import Unpack
 
 import torch
 import torch.nn as nn
@@ -61,7 +62,7 @@ logger = logging.getLogger(__name__)
   "num_key_value_heads": 8,
   "rms_norm_eps": 1e-05,
   "rope_theta": 1000000.0,
-  "sliding_window": null,     X 
+  "sliding_window": null,     X
   "tie_word_embeddings": false,
   "torch_dtype": "bfloat16",
   "transformers_version": "4.42.0.dev0",

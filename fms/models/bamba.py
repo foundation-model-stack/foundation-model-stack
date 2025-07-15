@@ -2,7 +2,8 @@ import dataclasses
 import logging
 import math
 import re
-from typing import Any, List, Mapping, Optional, Tuple, Unpack
+from typing import Any, List, Mapping, Optional, Tuple
+from typing_extensions import Unpack
 
 import torch
 import torch.nn as nn

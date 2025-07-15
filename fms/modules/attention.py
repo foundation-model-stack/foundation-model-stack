@@ -6,12 +6,11 @@ from typing import (
     Concatenate,
     List,
     Mapping,
-    NotRequired,
     Optional,
     Tuple,
     TypedDict,
-    Unpack,
 )
+from typing_extensions import NotRequired, Unpack
 
 import torch
 import torch.distributed
