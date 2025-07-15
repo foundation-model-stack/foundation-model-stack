@@ -217,6 +217,17 @@ class ModelCompileTestSuite(ModelFixtureMixin):
         """
         pass
 
+    @property
+    def _get_signature_optional_params(self) -> Optional[dict[str, torch.Tensor]]:
+        """the value to pass into optional_params in get_signature function for this model
+
+        Returns
+        -------
+        Optional[dict[str, torch.Tensor]]
+            the dictionary of optional params to pass to the model
+        """
+        return {}
+
     @pytest.mark.skipif(
         platform.system() != "Linux",
         reason=f"pytorch compile is more stable on Linux, skipping as current platform is {platform.platform()}",
@@ -232,7 +243,7 @@ class ModelCompileTestSuite(ModelFixtureMixin):
             optional_params = self._get_signature_optional_params or {}
             # default attn_algorithm won't compile on CPU for older pytorch versions
             # TODO: add non-math attn_algorithm when we have GPUs to run unit tests
-            optional_params.update({"attn_algorithm": "math"})
+            optional_params = {**optional_params, "attn_algorithm": "math"}
 
             get_signature(
                 compiled_model,
@@ -443,23 +454,37 @@ class ModelConsistencyTestSuite(ModelFixtureMixin, SignatureFixtureMixin):
         """test unfused model output against signature"""
 
         unfused_model = apply_unfuse_weights(model)
+        
+        # Test standard forward pass signature
         unfused_signature = get_signature(
             unfused_model,
             inp=self._get_signature_input_ids,
             params=self._get_signature_params,
             optional_params=self._get_signature_optional_params,
             logits_getter_fn=self._get_signature_logits_getter_fn,
+            device="cuda" if torch.cuda.is_available() else "cpu",
         )
 
+        # Test generation signature for applicable models
+        generation_signature = None
+        if self._supports_generation(unfused_model):
+            input_ids = self._get_signature_input_ids
+            if input_ids is None:
+                input_ids = torch.arange(16).unsqueeze(0)
+            generation_signature = self._get_generation_signature(unfused_model, input_ids)
+
+        # Combine signatures
+        combined_unfused_signature = unfused_signature + (generation_signature if generation_signature else [])
+
         assertion_msg = f"""
-        difference: {np.mean(np.abs(np.array(unfused_signature) - np.array(signature)))}
+        difference: {np.mean(np.abs(np.array(combined_unfused_signature) - np.array(signature)))}
 
         Output for signature of unfused model is incorrect
         """
 
         (
             torch.testing.assert_close(
-                torch.tensor(unfused_signature), torch.tensor(signature)
+                torch.tensor(combined_unfused_signature), torch.tensor(signature)
             ),
             assertion_msg,
         )
