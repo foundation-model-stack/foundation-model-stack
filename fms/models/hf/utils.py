@@ -267,6 +267,16 @@ def _infer_model_configuration(
         config_params["hidden_act"] = config.hidden_act
         config_params["layer_norm_eps"] = config.layer_norm_eps
         config_params["attention_dropout"] = config.attention_dropout
+    elif architecture == "MPNetForMaskedLM":
+        inner_dim = config.intermediate_size
+        architecture = "mpnet"
+        config_params["activation_fn"] = config.activation_fn
+        config_params["emb_dim"] = config.emb_dim
+        config_params["max_expected_seq_len"] = config.max_expected_seq_len
+        config_params["attention_probs_dropout_prob"] = config.attention_probs_dropout_prob
+        config_params["hidden_dropout_prob"] = config.hidden_dropout_prob
+        config_params["norm_eps"] = config.layer_norm_eps
+        config_params["pad_id"] = config.pad_id
     else:
         raise ValueError(
             "FMS model implementations currently only support LlamaForCausalLM, GPTBigCodeForCausalLM, MixtralForCausalLM, RobertaForMaskedLM and GraniteForCausalLM"
