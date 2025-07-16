@@ -205,6 +205,10 @@ def __spyre_paged_validate_attn_kwargs_op(
             for i in range(len(past_key_value_states)):
                 assert k.shape[0] == past_key_value_states[i][0].shape[0]
                 assert v.shape[0] == past_key_value_states[i][1].shape[0]
+            
+            if "fp8" in attn_kwargs["attn_name"]:
+                assert k._scale.shape[0] == input_ids.shape[0]
+                assert v._scale.shape[0] == input_ids.shape[0]
 
 
 register_attention_op(
