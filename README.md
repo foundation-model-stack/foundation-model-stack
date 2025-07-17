@@ -1,4 +1,4 @@
-# HPML Project: Extending Tensor Parallelism for IBM FMS: Sequence Parallelism 
+# Extending Tensor Parallelism for IBM FMS: Sequence Parallelism 
 
 ## Team Information
 - **Team Name**: IBM Projects Team 9
