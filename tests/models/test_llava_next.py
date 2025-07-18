@@ -148,8 +148,3 @@ class TestLlavaNext(
         pytest.skip(
             "llava_next uses nested configs for vision and text model, which get flattened with config.as_dict()"
         )
-
-    def test_model_compile_no_graph_breaks(self, model):
-        pytest.skip(
-            "data dependent graph break exists in original implementation; needs to be fixed"
-        )

@@ -274,17 +274,16 @@ class GraniteHeadless(nn.Module):
         position_ids=None,
         past_key_value_states=None,
         use_cache=False,
-        is_input_embedded=False,
         **attn_kwargs: Unpack[AttentionKwargs],
     ):
         # Embed the given vocabulary indices using the given attention mask, with pre-/post-norm and dropout as specified
-        # x_in: batch_size x seq_len
+        # x_in: batch_size x seq_len x emb_dim if input is already embedded, otherwise batch_size x seq_len
         # mask: batch_size x seq_len x seq_len
         # bias: nheads x seq_len x seq_len
         if past_key_value_states is None or len(past_key_value_states) == 0:
             past_key_value_states = [None for _ in range(len(self.layers))]
 
-        if not is_input_embedded:
+        if x_in.dim() == 2:  # input is not already embedded
             x_in = self.embedding(x_in)
         x_in = x_in * self.config.embedding_multiplier
 
@@ -367,7 +366,6 @@ class Granite(nn.Module):
         past_key_value_states: Optional[Tuple[torch.FloatTensor,]] = None,
         use_cache: bool = False,
         only_last_token: bool = False,
-        is_input_embedded: Optional[bool] = False,
         **attn_kwargs: Unpack[AttentionKwargs],
     ):
         get_attention_type(**attn_kwargs)["validate_attn_kwargs"](
@@ -382,7 +380,6 @@ class Granite(nn.Module):
             position_ids,
             past_key_value_states,
             use_cache,
-            is_input_embedded,
             **attn_kwargs,
         )
 

@@ -366,55 +366,19 @@ class LlavaNext(nn.Module):
     def forward(
         self,
         input_ids: torch.Tensor,
-        pixel_values: torch.Tensor,
-        image_sizes: torch.Tensor,
         position_ids: Optional[torch.Tensor] = None,
         past_key_value_states: Optional[Tuple[torch.FloatTensor,]] = None,
-        inputs_embeds: Optional[torch.Tensor] = None,
+        inputs: Optional[torch.Tensor] = None,
         use_cache: Optional[bool] = False,
         **attn_kwargs: Unpack[AttentionKwargs],
     ):
-        if input_ids is None and inputs_embeds is None:
-            raise ValueError("input_ids and inputs_embeds can't both be None")
-
-        # input_embeds supersedes input_ids
-        if inputs_embeds is None:
-            inputs_embeds = self.language_model.base_model.embedding(input_ids)
-
-        if pixel_values is not None and pixel_values.size(0) > 0:
-            image_features = self.get_image_features(
-                pixel_values,
-                image_sizes,
-            )
-
-            image_features = self.pack_image_features(
-                image_features,
-                image_sizes,
-                image_newline=self.image_newline,
-            )
-
-            special_image_mask = (input_ids == self.config.image_token_index).unsqueeze(
-                -1
-            )
-            special_image_mask = special_image_mask.expand_as(inputs_embeds).to(
-                inputs_embeds.device
-            )
-            image_features = image_features.to(
-                inputs_embeds.device, inputs_embeds.dtype
-            )
-            inputs_embeds = inputs_embeds.masked_scatter(
-                special_image_mask, image_features
-            )
-
         outputs = self.language_model(
-            inputs_embeds,
+            input_ids if inputs is None else inputs,
             position_ids=position_ids,
             past_key_value_states=past_key_value_states,
             use_cache=use_cache,
-            is_input_embedded=True,
             **attn_kwargs,
         )
-
         return outputs
 
     def prepare_inputs_for_generation(
@@ -423,11 +387,46 @@ class LlavaNext(nn.Module):
         input_ids,
         kwargs,
     ):
-        # No need to process image data again in cached decoding stage.
         # Use with arg `prepare_model_inputs_hook=model.prepare_inputs_for_generation` when calling generate()
-        if kwargs["use_cache"] and iteration > 0:
-            kwargs["pixel_values"] = None
-            kwargs["image_sizes"] = None
+
+        if iteration > 0:
+            kwargs["inputs"] = None
+            if kwargs[
+                "use_cache"
+            ]:  # No need to process image data again in cached decoding stage.
+                return input_ids, kwargs
+
+        pixel_values = kwargs.get("pixel_values")
+        image_sizes = kwargs.get("image_sizes")
+
+        # No image data to pre-process
+        if pixel_values is None or pixel_values.size(0) == 0:
+            return input_ids, kwargs
+
+        inputs = kwargs.get("inputs")
+        if input_ids is None and inputs is None:
+            raise ValueError("input_ids and inputs can't both be None")
+
+        # embedded inputs supersede input_ids
+        if inputs is None:
+            inputs = self.language_model.base_model.embedding(input_ids)
+
+        image_features = self.get_image_features(
+            pixel_values,
+            image_sizes,
+        )
+
+        image_features = self.pack_image_features(
+            image_features,
+            image_sizes,
+            image_newline=self.image_newline,
+        )
+
+        special_image_mask = (input_ids == self.config.image_token_index).unsqueeze(-1)
+        special_image_mask = special_image_mask.expand_as(inputs).to(inputs.device)
+        image_features = image_features.to(inputs.device, inputs.dtype)
+        inputs = inputs.masked_scatter(special_image_mask, image_features)
+        kwargs["inputs"] = inputs
         return input_ids, kwargs
 
 
