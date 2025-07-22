@@ -1,0 +1,440 @@
+# Copyright 2018 The HuggingFace Inc. team, Microsoft Corporation.
+# Copyright (c) 2018, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+"""PyTorch MPNet model."""
+
+import math
+import re
+from typing import Optional, Unpack, Any
+from collections.abc import Mapping
+import logging
+from dataclasses import dataclass
+
+import torch
+from torch import nn
+
+from fms.utils.config import ModelConfig
+from fms import models
+from fms.distributed.strategy import DistributedStrategy, NoOpStrategy
+from fms.modules.attention import (
+    AttentionKwargs,
+    MultiHeadAttention,
+    get_attention_type,
+)
+from fms.modules.feedforward import FeedForwardBlock
+from fms.utils.activation import str_to_activation
+from fms.utils import serialization
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class MpnetConfig(ModelConfig):
+    src_vocab_size: int = 30_527
+    emb_dim: int = 768
+    nlayers: int = 12
+    nheads: int = 12
+    intermediate_size: int = 3072
+    activation_fn: str = "gelu"
+    hidden_dropout_prob: float = 0.1
+    attention_probs_dropout_prob: float = 0.1
+    max_expected_seq_len: int = 512
+    initializer_range: float = 0.02
+    multiquery_attn: bool = False
+    layer_norm_eps: float = 1e-12
+    hidden_grow_factor: float = 4.0
+    relative_attention_num_buckets: int = 32
+    tie_heads: bool = False
+    pad_id: int = 1
+    bos_token_id: int = 0
+    eos_token_id: int = 2
+    linear_config: Optional[Mapping[str, Any]] = None
+    fused_weights: bool = True
+
+
+@dataclass
+class MpnetQuestionAnsweringConfig(MpnetConfig):
+    """Model configuration of Mpnet for Question-Answering downstream task"""
+
+    num_classes: int = 2
+
+
+class MpnetBlock(nn.Module):
+    def __init__(self, config: MpnetConfig):
+        super().__init__()
+        self.config = config
+        kvheads = self.config.nheads
+        self.attn = MultiHeadAttention(
+            self.config.emb_dim,
+            self.config.emb_dim // self.config.nheads,
+            self.config.emb_dim // self.config.nheads,
+            self.config.nheads,
+            kvheads,
+            p_dropout=self.config.hidden_dropout_prob,
+            use_bias=True,
+            fused=self.config.fused_weights,
+            linear_config=self.config.linear_config,
+        )
+        self.ln = nn.LayerNorm(self.config.emb_dim, self.config.layer_norm_eps)
+        self.dens1 = nn.Linear(config.emb_dim, config.intermediate_size)
+        self.ff_sub_layer = FeedForwardBlock(
+            self.config.emb_dim,
+            hidden_grow_factor=self.config.hidden_grow_factor,
+            activation_fn=str_to_activation(self.config.activation_fn),
+            p_dropout=self.config.hidden_dropout_prob,
+            use_bias=True,
+            linear_config=self.config.linear_config,
+        )
+        self.dens2 = nn.Linear(config.intermediate_size, config.emb_dim)
+        self.ff_ln = nn.LayerNorm(
+            self.config.emb_dim, self.config.layer_norm_eps
+        )
+        if self.config.hidden_dropout_prob != 0:
+            self.dropout = nn.Dropout(self.config.hidden_dropout_prob)
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        position_ids: torch.Tensor,
+        **attn_kwargs: Unpack[AttentionKwargs],
+    ):
+        residual = x
+        x = self.attn(
+            q=x,
+            **attn_kwargs,
+        )
+        x = x + residual
+        x = self.ln(x)
+        residual = x
+        x = self.ff_sub_layer(x)
+        x = x + residual
+        x = self.ff_ln(x)
+
+        return x
+
+
+class MpnetHeadless(nn.Module):
+    def __init__(
+        self,
+        config: Optional[MpnetConfig] = None,
+        distributed_strategy: DistributedStrategy = NoOpStrategy,
+        **kwargs,
+    ):
+        super().__init__()
+        if config is not None:
+            self.config = config
+        else:
+            self.config = MpnetConfig()
+        self.config = self.config.updated(**kwargs)
+        self.distributed_strategy = distributed_strategy
+        self.embedding = self.distributed_strategy.distribute_module(
+            nn.Embedding(
+                config.src_vocab_size, config.emb_dim, 
+                padding_idx=self.config.pad_id
+            )
+        )
+        self.position_embeddings = self.distributed_strategy.distribute_module(
+            nn.Embedding(
+                config.max_expected_seq_len,
+                config.emb_dim,
+                padding_idx=self.config.pad_id,
+            )
+        )
+
+        self.enc_norm = self.distributed_strategy.distribute_module(
+            nn.LayerNorm(config.emb_dim, eps=config.layer_norm_eps)
+        )
+        self.dropout = self.distributed_strategy.distribute_module(
+            nn.Dropout(config.hidden_dropout_prob)
+        )
+        self.position_ids = torch.arange(
+                            self.config.max_expected_seq_len+2).expand((1, -1))
+        layers = []
+        for i in range(self.config.nlayers):
+            block: nn.Module = MpnetBlock(self.config)
+            block = self.distributed_strategy.distribute_layer(block, i)
+            layers.append(block)
+        self.layers = nn.ModuleList(layers)
+        self.relative_attention_bias = (
+            self.distributed_strategy.distribute_module(
+                nn.Embedding(
+                    config.relative_attention_num_buckets, self.config.nheads
+                )
+            )
+        )
+
+    def compute_position_bias(self, x, position_ids=None, num_buckets=32):
+        bsz, qlen, klen = x.size(0), x.size(1), x.size(1)
+        if position_ids is not None:
+            context_position = position_ids[:, :, None]
+            memory_position = position_ids[:, None, :]
+        else:
+            context_position = torch.arange(qlen, dtype=torch.long)[:, None]
+            memory_position = torch.arange(klen, dtype=torch.long)[None, :]
+
+        relative_position = memory_position - context_position
+
+        rp_bucket = self.relative_position_bucket(
+            relative_position, num_buckets=num_buckets
+        )
+        rp_bucket = rp_bucket.to(x.device)
+        values = self.relative_attention_bias(rp_bucket)
+        values = values.permute([2, 0, 1]).unsqueeze(0)
+        values = values.expand((bsz, -1, qlen, klen)).contiguous()
+        return values
+
+    @staticmethod
+    def relative_position_bucket(
+        relative_position, num_buckets=32, max_distance=128
+    ):
+        ret = 0
+        n = -relative_position
+
+        num_buckets //= 2
+        ret += (n < 0).to(torch.long) * num_buckets
+        n = torch.abs(n)
+
+        max_exact = num_buckets // 2
+        is_small = n < max_exact
+
+        val_if_large = max_exact + (
+            torch.log(n.float() / max_exact)
+            / math.log(max_distance / max_exact)
+            * (num_buckets - max_exact)
+        ).to(torch.long)
+
+        val_if_large = torch.min(
+            val_if_large, torch.full_like(val_if_large, num_buckets - 1)
+        )
+        ret += torch.where(is_small, n, val_if_large)
+        return ret
+
+    def reset_parameters(self):
+        for layer in ["embedding", "position_embedding"]:
+            nn.init.normal_(
+                getattr(self, layer).weight,
+                mean=0.0,
+                std=self.config.emb_dim**-0.5,
+            )
+        nn.init.zeros_(self.token_type_embeddings.weight)
+        for layer in self.layers:
+            for sublayer in ["ln", "ff_ln", "attn", "ff_sub_layer"]:
+                getattr(layer, sublayer).reset_parameters()
+        self.enc_norm.reset_parameters()
+
+    def forward(
+        self,
+        x_in,
+        position_ids: Optional[torch.Tensor] = None,
+        **kwargs,
+    ):
+        inputs_embeds = self.embedding(x_in)
+        if position_ids is None:
+            if x_in is not None:
+                position_ids = create_position_ids_from_input_ids(
+                    x_in, self.config.pad_id
+                )
+            else:
+                position_ids = self.create_position_ids_from_inputs_embeds(
+                    inputs_embeds
+                )
+
+        if x_in is not None:
+            input_shape = x_in.size()
+        else:
+            input_shape = inputs_embeds.size()[:-1]
+
+        seq_length = input_shape[1]
+
+        if position_ids is None:
+            position_ids = self.position_ids[:, :seq_length]
+
+        position_embeddings = self.position_embeddings(position_ids)
+
+        embeddings = inputs_embeds + position_embeddings
+        embeddings = self.enc_norm(embeddings)
+        embeddings = self.dropout(embeddings)
+        position_bias = self.compute_position_bias(embeddings)
+        x = embeddings
+        for layer in self.layers:
+            x = layer(x, position_ids=position_bias, **kwargs)
+        return x
+
+
+class Mpnet(nn.Module):
+    def __init__(
+        self,
+        config: Optional[MpnetConfig] = None,
+        distributed_strategy: DistributedStrategy = NoOpStrategy,
+        **kwargs,
+    ):
+        super().__init__()
+        if config is not None:
+            self.config = config
+        else:
+            self.config = MpnetConfig()
+        self.config = self.config.updated(**kwargs)
+        self.distributed_strategy = distributed_strategy
+        self.base_model = MpnetHeadless(self.config, self.distributed_strategy)
+        self.den = nn.Linear(self.config.emb_dim, self.config.emb_dim)
+        self.activation = nn.Tanh()
+
+    @classmethod
+    def from_config(cls, config: MpnetConfig) -> "Mpnet":
+        return cls(config)
+
+    def get_config(self) -> MpnetConfig:
+        return self.config
+
+    def reset_parameters(self):
+        self.head.weight.data.normal_(
+            0,
+            1
+            / math.sqrt(
+                math.sqrt(self.config.emb_dim * self.config.src_vocab_size)
+            ),
+        )
+        self.base_model.reset_parameters()
+
+    def post_init(self):
+        if self.config.tie_heads:
+            # handle assignment of non-meta weights to meta parameters
+            if self.head.weight.device == torch.device("meta"):
+                self.head.weight = self.base_model.embedding.weight
+            else:
+                self.base_model.embedding.weight = self.head.weight
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        position_ids: Optional[torch.Tensor] = None,
+        **attn_kwargs: Unpack[AttentionKwargs],
+    ):
+        get_attention_type(**attn_kwargs)["validate_attn_kwargs"](
+            input_ids=x, position_ids=position_ids, **attn_kwargs
+        )
+        output = self.base_model(
+            x,
+            position_ids,
+            **attn_kwargs,
+        )
+        first_token_tensor = output[:, 0]
+        sequence_output = output[0]
+        pooled_output = self.den(first_token_tensor)
+        pooled_output = self.activation(pooled_output)
+        return (sequence_output, pooled_output)
+
+
+def create_position_ids_from_input_ids(input_ids, padding_idx):
+    mask = input_ids.ne(padding_idx).int()
+    incremental_indices = torch.cumsum(mask, dim=1).type_as(mask) * mask
+    return incremental_indices.long() + padding_idx
+
+
+_architecture_name = "mpnet"
+
+
+def _mpnet_factory_factory(config):
+    def factory(**kwargs):
+        return Mpnet(config, **kwargs)
+
+    return factory
+
+_v2_config = MpnetConfig(
+    src_vocab_size=30_527,
+    emb_dim=768,
+    nlayers=12,
+    nheads=12,
+    intermediate_size=3072,
+    activation_fn="gelu",
+    hidden_dropout_prob=0.1,
+    attention_probs_dropout_prob=0.1,
+    max_expected_seq_len=512,
+    initializer_range=0.02,
+    layer_norm_eps=1e-12,
+    relative_attention_num_buckets=32,
+    pad_id=1,
+    bos_token_id=0,
+    eos_token_id=2,
+    fused_weights=True,
+)
+models.register_model(
+    _architecture_name, "v2", _mpnet_factory_factory(_v2_config)
+)
+
+
+def _weight_fusion(
+    input_sd: Mapping, model_config: Optional[MpnetConfig] = None, **kwargs
+):
+    has_fused_weights = True
+    if model_config and not model_config.fused_weights:
+            has_fused_weights = False
+
+    new_sd = input_sd
+    if has_fused_weights:
+        new_sd = serialization._attn_unfused_to_fused_step(new_sd)
+    return new_sd
+
+
+serialization.register_adapter_step(
+    _architecture_name, "weight_fusion", _weight_fusion
+)
+
+
+def _hf_to_fms_names(hf_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]:
+    replacements = [
+        (r"embeddings.word_embeddings.weight", "base_model.embedding.weight"),
+        (
+            r"^encoder.relative_attention_bias.weight",
+            "base_model.relative_attention_bias.weight",
+        ),
+        (r"^pooler.dense", "den"),
+        (
+            r"embeddings.position_embeddings.weight",
+            "base_model.position_embeddings.weight",
+        ),
+        (
+            r"embeddings.position_ids",
+            "base_model.position_ids",
+        ),
+        (r"embeddings.LayerNorm", "base_model.enc_norm"),
+        (r"^encoder.layer", "base_model.layers"),
+        (r"output\.LayerNorm", "ff_ln"),
+        (r"attention\.LayerNorm", "ln"),
+        (r"attention\.attn\.k", "attn.in_proj.key"),
+        (r"attention\.attn\.v", "attn.in_proj.value"),
+        (r"attention\.attn\.q", "attn.in_proj.query"),
+        (r"attention\.attn\.o", "attn.dense"),
+        (r"intermediate\.dense", "ff_sub_layer.w1"),
+        (r"output\.dense", "ff_sub_layer.w2"),
+    ]
+    new_sd = {}
+    for name, param in hf_sd.items():
+        new_name = name
+        for pattern, repl in replacements:
+            new_name = re.sub(pattern, repl, new_name)
+        new_sd[new_name] = param
+
+        if name == "embeddings.position_embeddings.weight":
+            new_sd[new_name] = new_sd[new_name][2:]
+
+    return new_sd
+
+
+serialization.register_adapter_step(
+    _architecture_name, "hf_to_fms_names", _hf_to_fms_names
+)
+serialization.register_adapter(
+    "mpnet", "hf", ["hf_to_fms_names", "weight_fusion"]
+)
