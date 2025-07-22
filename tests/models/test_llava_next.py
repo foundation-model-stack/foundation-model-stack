@@ -13,65 +13,6 @@ from fms.testing._internal.model_test_suite import (
 )
 from fms.utils.config import ModelConfig
 
-_text_config = GraniteConfig(
-    src_vocab_size=384,
-    emb_dim=16,
-    norm_eps=1e-5,
-    nheads=8,
-    kvheads=8,
-    nlayers=2,
-    hidden_grow_factor=4,
-    max_expected_seq_len=4096,
-    pad_id=0,
-    p_dropout=0.0,
-    tie_heads=True,
-    embedding_multiplier=12.0,
-    logits_scaling=8.0,
-    residual_multiplier=0.22,
-    attention_multiplier=0.015625,
-    fused_weights=True,
-)
-
-_vision_config = SiglipVisionConfig(
-    hidden_size=16,
-    image_size=384,
-    intermediate_size=64,
-    nheads=8,
-    nlayers=8,
-    patch_size=14,
-    fused_weights=True,
-)
-
-_image_grid = [
-    [384, 384],
-    [384, 768],
-    [384, 1152],
-    [384, 1536],
-    [384, 1920],
-    [384, 2304],
-    [384, 2688],
-    [384, 3072],
-    [384, 3456],
-    [384, 3840],
-    [768, 384],
-    [768, 768],
-    [768, 1152],
-    [768, 1536],
-    [768, 1920],
-    [1152, 384],
-    [1152, 768],
-    [1152, 1152],
-    [1536, 384],
-    [1536, 768],
-    [1920, 384],
-    [1920, 768],
-    [2304, 384],
-    [2688, 384],
-    [3072, 384],
-    [3456, 384],
-    [3840, 384],
-]
-
 
 class LlavaNextFixtures(ConfigFixtureMixin, ModelFixtureMixin):
     """
@@ -86,6 +27,65 @@ class LlavaNextFixtures(ConfigFixtureMixin, ModelFixtureMixin):
 
     @pytest.fixture(scope="class", autouse=True)
     def config(self) -> ModelConfig:
+        _text_config = GraniteConfig(
+            src_vocab_size=384,
+            emb_dim=16,
+            norm_eps=1e-5,
+            nheads=8,
+            kvheads=8,
+            nlayers=2,
+            hidden_grow_factor=4,
+            max_expected_seq_len=4096,
+            pad_id=0,
+            p_dropout=0.0,
+            tie_heads=True,
+            embedding_multiplier=12.0,
+            logits_scaling=8.0,
+            residual_multiplier=0.22,
+            attention_multiplier=0.015625,
+            fused_weights=True,
+        )
+
+        _vision_config = SiglipVisionConfig(
+            hidden_size=16,
+            image_size=384,
+            intermediate_size=64,
+            nheads=8,
+            nlayers=8,
+            patch_size=14,
+            fused_weights=True,
+        )
+
+        _image_grid = [
+            [384, 384],
+            [384, 768],
+            [384, 1152],
+            [384, 1536],
+            [384, 1920],
+            [384, 2304],
+            [384, 2688],
+            [384, 3072],
+            [384, 3456],
+            [384, 3840],
+            [768, 384],
+            [768, 768],
+            [768, 1152],
+            [768, 1536],
+            [768, 1920],
+            [1152, 384],
+            [1152, 768],
+            [1152, 1152],
+            [1536, 384],
+            [1536, 768],
+            [1920, 384],
+            [1920, 768],
+            [2304, 384],
+            [2688, 384],
+            [3072, 384],
+            [3456, 384],
+            [3840, 384],
+        ]
+
         return LlavaNextConfig(
             vision_config=_vision_config,
             text_config=_text_config,
@@ -123,7 +123,7 @@ class TestLlavaNext(
     pixel_values = torch.tensor(pixel_values)  # shape [1, 7, 3, 384, 384]
     input_ids = torch.arange(380).unsqueeze(0)
 
-    _get_signature_params = ["input_ids"]
+    _get_signature_params = ["input_ids_or_embeds"]
     _get_signature_input_ids = input_ids
     _get_signature_optional_params = {
         "pixel_values": pixel_values,

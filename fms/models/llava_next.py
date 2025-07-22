@@ -365,15 +365,14 @@ class LlavaNext(nn.Module):
 
     def forward(
         self,
-        input_ids: torch.Tensor,
+        input_ids_or_embeds: torch.Tensor,
         position_ids: Optional[torch.Tensor] = None,
         past_key_value_states: Optional[Tuple[torch.FloatTensor,]] = None,
-        inputs: Optional[torch.Tensor] = None,
         use_cache: Optional[bool] = False,
         **attn_kwargs: Unpack[AttentionKwargs],
     ):
         outputs = self.language_model(
-            input_ids if inputs is None else inputs,
+            input_ids_or_embeds,
             position_ids=position_ids,
             past_key_value_states=past_key_value_states,
             use_cache=use_cache,
@@ -389,12 +388,9 @@ class LlavaNext(nn.Module):
     ):
         # Use with arg `prepare_model_inputs_hook=model.prepare_inputs_for_generation` when calling generate()
 
-        if iteration > 0:
-            kwargs["inputs"] = None
-            if kwargs[
-                "use_cache"
-            ]:  # No need to process image data again in cached decoding stage.
-                return input_ids, kwargs
+        if kwargs["use_cache"] and iteration > 0:
+            # No need to process image data again in cached decoding stage.
+            return input_ids, kwargs
 
         pixel_values = kwargs.get("pixel_values")
         image_sizes = kwargs.get("image_sizes")
@@ -426,8 +422,7 @@ class LlavaNext(nn.Module):
         special_image_mask = special_image_mask.expand_as(inputs).to(inputs.device)
         image_features = image_features.to(inputs.device, inputs.dtype)
         inputs = inputs.masked_scatter(special_image_mask, image_features)
-        kwargs["inputs"] = inputs
-        return input_ids, kwargs
+        return inputs, kwargs
 
 
 _granite_vision_3_2_2b_config = LlavaNextConfig()
