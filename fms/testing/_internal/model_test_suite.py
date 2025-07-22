@@ -344,17 +344,34 @@ class ModelConsistencyTestSuite(ModelFixtureMixin, SignatureFixtureMixin):
                     post_iteration_hook= capture_logits_hook,
                 )
             
-            # Create signature from the generated tokens
-            if captured_logits:
-                # Use the captured logits for the last two generated tokens
-                new_tokens = captured_logits[-1][:, -2:]  # Get the logits for the last two tokens
-            else:
-                # If no logits were captured, fallback to the last tokens in generated
-                new_tokens = generated[-1][:, -2:]
+            # # Create signature from the generated tokens
+            # if captured_logits:
+            #     # Use the captured logits for the last two generated tokens
+            #     new_tokens = captured_logits[-1][:, -2:]  # Get the logits for the last two tokens
+            # else:
+            #     # If no logits were captured, fallback to the last tokens in generated
+            #     new_tokens = generated[-1][:, -2:]
             
-            # Create a simple signature from the new token
-            print(f"Generation successful: generated token sum = {new_tokens.sum().item()}")
-            return [float(new_tokens.sum().item())]
+            # # Create a simple signature from the new token
+            # print(f"Generation successful: generated token sum = {new_tokens.sum().item()}")
+            # return [float(new_tokens.sum().item())]
+
+            # Create signature from the generated tokens using get_signature pattern
+            if captured_logits:
+                # Use the captured logits - concatenate prefill and decode logits
+                # captured_logits should contain logits from each generation step
+                logits_concat = torch.cat(captured_logits, dim=1)  # Concatenate along sequence dimension
+            else:
+                # If no logits were captured, fallback to the generated tokens
+                # Use the full generated sequence (input + generated tokens)
+                logits_concat = generated
+            
+            # Create a simple signature from the logits
+            s = logits_concat.max(2)[0] - logits_concat.min(2)[0] if logits_concat.dim() >= 3 else logits_concat
+            generation_signature = (s.squeeze() - s.min()).tolist()
+            
+            print(f"Generation successful: signature length = {len(generation_signature)}")
+            return generation_signature
             
         except Exception as e:
             # If generation fails, log the error and return empty signature
