@@ -137,20 +137,18 @@ class MpnetHeadless(nn.Module):
         else:
             self.config = MpnetConfig()
         self.config = self.config.updated(**kwargs)
-        self.width = self.config.emb_dim
-        self.pad_id = self.config.pad_id
-        self.max_expected_seq_len = self.config.max_expected_seq_len
         self.distributed_strategy = distributed_strategy
         self.embedding = self.distributed_strategy.distribute_module(
             nn.Embedding(
-                config.src_vocab_size, config.emb_dim, padding_idx=self.pad_id
+                config.src_vocab_size, config.emb_dim, 
+                padding_idx=self.config.pad_id
             )
         )
         self.position_embeddings = self.distributed_strategy.distribute_module(
             nn.Embedding(
                 config.max_expected_seq_len,
                 config.emb_dim,
-                padding_idx=self.pad_id,
+                padding_idx=self.config.pad_id,
             )
         )
 
@@ -160,7 +158,8 @@ class MpnetHeadless(nn.Module):
         self.dropout = self.distributed_strategy.distribute_module(
             nn.Dropout(config.hidden_dropout_prob)
         )
-        self.position_ids = torch.arange(514).expand((1, -1))
+        self.position_ids = torch.arange(
+                            self.config.max_expected_seq_len+2).expand((1, -1))
         layers = []
         for i in range(self.config.nlayers):
             block: nn.Module = MpnetBlock(self.config)
@@ -238,16 +237,13 @@ class MpnetHeadless(nn.Module):
         self,
         x_in,
         position_ids: Optional[torch.Tensor] = None,
-        output_attentions: bool = False,
-        output_hidden_states: bool = False,
-        return_dict: bool = False,
         **kwargs,
     ):
         inputs_embeds = self.embedding(x_in)
         if position_ids is None:
             if x_in is not None:
                 position_ids = create_position_ids_from_input_ids(
-                    x_in, self.pad_id
+                    x_in, self.config.pad_id
                 )
             else:
                 position_ids = self.create_position_ids_from_inputs_embeds(
@@ -270,16 +266,9 @@ class MpnetHeadless(nn.Module):
         embeddings = self.enc_norm(embeddings)
         embeddings = self.dropout(embeddings)
         position_bias = self.compute_position_bias(embeddings)
-        all_hidden_states = () if output_hidden_states else None
-        all_attentions = () if output_attentions else None
         x = embeddings
         for layer in self.layers:
             x = layer(x, position_ids=position_bias, **kwargs)
-            if output_attentions:
-                all_attentions = all_attentions + (x[1],)
-
-            if output_hidden_states:
-                all_hidden_states = all_hidden_states + (x,)
         return x
 
 
@@ -330,11 +319,6 @@ class Mpnet(nn.Module):
         self,
         x: torch.Tensor,
         position_ids: Optional[torch.Tensor] = None,
-        past_key_value_states: Optional[tuple[torch.FloatTensor,]] = None,
-        use_cache: bool = False,
-        only_last_token: bool = False,
-        head_mask: Optional[torch.FloatTensor] = None,
-        return_dict: Optional[bool] = None,
         **attn_kwargs: Unpack[AttentionKwargs],
     ):
         get_attention_type(**attn_kwargs)["validate_attn_kwargs"](
@@ -343,16 +327,13 @@ class Mpnet(nn.Module):
         output = self.base_model(
             x,
             position_ids,
-            past_key_value_states,
-            use_cache,
             **attn_kwargs,
         )
         first_token_tensor = output[:, 0]
         sequence_output = output[0]
         pooled_output = self.den(first_token_tensor)
         pooled_output = self.activation(pooled_output)
-        if not return_dict:
-            return (sequence_output, pooled_output)
+        return (sequence_output, pooled_output)
 
 
 def create_position_ids_from_input_ids(input_ids, padding_idx):
