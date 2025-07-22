@@ -190,6 +190,10 @@ def _map_model_config(architecture, config):
         config_params["max_expected_seq_len"] = config.max_position_embeddings
         config_params["kvheads"] = config.num_key_value_heads
         config_params["p_dropout"] = config.attention_dropout
+        config_params["head_dim"] = (
+            getattr(config, "head_dim", None)
+            or config.hidden_size // config.num_attention_heads
+        )
         config_params["norm_eps"] = config.rms_norm_eps
         config_params["rope_base"] = config.rope_theta
         config_params["sliding_window"] = config.sliding_window

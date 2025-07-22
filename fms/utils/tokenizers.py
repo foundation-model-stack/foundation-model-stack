@@ -67,16 +67,27 @@ class BaseTokenizer:
         raise NotImplementedError
 
     def convert_ids_to_tokens(self, ids: torch.LongTensor):
+        warnings.warn(
+            "this method will be deprecated in future versions, use HF API tokenizer.decode instead",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         raise NotImplementedError
 
     def convert_tokens_to_ids(self, tokens: Union[str, list[str]]):
-        """
-        for all tokenizers, a str parameter will be interpreted as a single token,
-        and its output will be a single integer that represents the id.
-        """
+        warnings.warn(
+            "this method will be deprecated in future versions, use HF API tokenizer.encode instead",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         raise NotImplementedError
 
     def convert_tokens_to_string(self, tokens: list[str]):
+        warnings.warn(
+            "this method will be deprecated in future versions, use HF API tokenizer.decode instead",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         raise NotImplementedError
 
     def vocab_size(self) -> int:
@@ -97,9 +108,19 @@ class CharTokenizer(BaseTokenizer):
         return list(text)
 
     def convert_ids_to_tokens(self, ids: torch.LongTensor):
+        warnings.warn(
+            "this method will be deprecated in future versions, use HF API tokenizer.decode instead",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         return [chr(i) for i in ids]
 
     def convert_tokens_to_ids(self, tokens: Union[str, list[str]]):
+        warnings.warn(
+            "this method will be deprecated in future versions, use HF API tokenizer.encode instead",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         if isinstance(tokens, str):
             # returning a single integer to be compatible with other tokenizers
             if len(tokens) != 1:
@@ -111,6 +132,11 @@ class CharTokenizer(BaseTokenizer):
         return [ord(t) if len(t) == 1 and ord(t) < 256 else 0 for t in tokens]
 
     def convert_tokens_to_string(self, tokens: list[str]):
+        warnings.warn(
+            "this method will be deprecated in future versions, use HF API tokenizer.decode instead",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         return "".join(tokens)
 
     def vocab_size(self):
@@ -132,14 +158,29 @@ class _SentencePieceTokenizer(BaseTokenizer):
         return self.sp_model.encode_as_pieces(text)
 
     def convert_ids_to_tokens(self, ids: Union[List[int], torch.LongTensor]):
+        warnings.warn(
+            "this method will be deprecated in future versions, use HF API tokenizer.decode instead",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         if isinstance(ids, torch.Tensor):
             ids = ids.tolist()
         return self.sp_model.id_to_piece(ids)
 
     def convert_tokens_to_ids(self, tokens: Union[str, list[str]]):
+        warnings.warn(
+            "this method will be deprecated in future versions, use HF API tokenizer.encode instead",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         return self.sp_model.piece_to_id(tokens)
 
     def convert_tokens_to_string(self, tokens: list[str]):
+        warnings.warn(
+            "this method will be deprecated in future versions, use HF API tokenizer.decode instead",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         return self.sp_model.decode(tokens)
 
     def vocab_size(self):
@@ -175,12 +216,27 @@ class _HFTokenizer(BaseTokenizer):
         return self.tokenizer.tokenize(text)
 
     def convert_ids_to_tokens(self, ids: torch.LongTensor):
+        warnings.warn(
+            "this method will be deprecated in future versions, use HF API tokenizer.decode instead",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         return self.tokenizer.convert_ids_to_tokens(ids)
 
     def convert_tokens_to_ids(self, tokens: Union[str, list[str]]):
+        warnings.warn(
+            "this method will be deprecated in future versions, use HF API tokenizer.encode instead",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         return self.tokenizer.convert_tokens_to_ids(tokens)
 
     def convert_tokens_to_string(self, tokens: list[str]):
+        warnings.warn(
+            "this method will be deprecated in future versions, use HF API tokenizer.decode instead",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         return self.tokenizer.convert_tokens_to_string(tokens)
 
     def vocab_size(self):
