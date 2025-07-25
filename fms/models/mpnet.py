@@ -171,8 +171,10 @@ class MpnetHeadless(nn.Module):
             context_position = position_ids[:, :, None]
             memory_position = position_ids[:, None, :]
         else:
-            context_position = torch.arange(qlen, dtype=torch.long,device=device)[:, None]
-            memory_position = torch.arange(klen, dtype=torch.long,device=device)[None, :]
+            context_position = torch.arange(
+                               qlen, dtype=torch.long,device=device)[:, None]
+            memory_position = torch.arange(
+                              klen, dtype=torch.long,device=device)[None, :]
 
         relative_position = memory_position - context_position
 
@@ -225,7 +227,8 @@ class MpnetHeadless(nn.Module):
     def post_init(self):
         device = self.position_embeddings.weight.device
         self.position_ids = torch.arange(
-                            self.config.max_expected_seq_len+2, device=device).expand((1, -1))
+                            self.config.max_expected_seq_len+2, 
+                            device=device).expand((1, -1))
 
     def forward(
         self,

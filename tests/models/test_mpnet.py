@@ -65,8 +65,8 @@ class TestMpnet(
         return torch.cat([f_out[0][:1], f_out[1]], dim=-1)
 
     def test_config_passed_to_model_and_updated(self, model, config):
-        """test model constructor appropriately merges any passed kwargs into the config
-        without mutating the original config"""
+        """test model constructor appropriately merges any passed 
+        kwargs into the config without mutating the original config"""
         model = type(model)(config=config, pad_id=config.pad_id + 1)
         # check not same reference
         assert model.get_config() is not config
