@@ -89,7 +89,6 @@ class MpnetGPTQFixtures(ModelFixtureMixin):
             tie_heads=True,
             linear_config={"linear_type": "gptq_cpu"},
         )
-
     def _maybe_get_initialized_parameter(self, key, parameter):
         if "qweight" in key:
             return torch.randint(
@@ -111,6 +110,12 @@ class TestMpnetGPTQ(
 ):
     # x is the main parameter for this model which is the input tensor
     _get_signature_params = ["x"]
+
+    @staticmethod
+    def _get_signature_logits_getter_fn(f_out) -> torch.Tensor:
+        print(f_out[0][:1].size())
+        print(f_out[1].size())
+        return torch.cat([f_out[0][:1], f_out[1]], dim=-1)
 
     def test_model_unfused(self, model, signature):
         pytest.skip("weight unfuse is not implemented for GPTQ")
