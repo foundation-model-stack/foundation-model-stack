@@ -260,7 +260,7 @@ def _map_model_config(architecture, config):
         architecture = "mpnet"
         config_params["attention_probs_dropout_prob"] = config.attention_probs_dropout_prob
         config_params["hidden_dropout_prob"] = config.hidden_dropout_prob
-        config_params["norm_eps"] = config.layer_norm_eps
+        config_params["layer_norm_eps"] = config.layer_norm_eps
         config_params["bos_token_id"] = config.bos_token_id 
         config_params["eos_token_id"] = config.eos_token_id 
         config_params["activation_fn"] = config.hidden_act 
