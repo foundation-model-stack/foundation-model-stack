@@ -258,13 +258,16 @@ def _map_model_config(architecture, config):
     elif architecture == "MPNetForMaskedLM":
         inner_dim = config.intermediate_size
         architecture = "mpnet"
-        config_params["activation_fn"] = config.activation_fn
-        config_params["emb_dim"] = config.emb_dim
-        config_params["max_expected_seq_len"] = config.max_expected_seq_len
         config_params["attention_probs_dropout_prob"] = config.attention_probs_dropout_prob
         config_params["hidden_dropout_prob"] = config.hidden_dropout_prob
         config_params["norm_eps"] = config.layer_norm_eps
-        config_params["pad_id"] = config.pad_id
+        config_params["bos_token_id"] = config.bos_token_id 
+        config_params["eos_token_id"] = config.eos_token_id 
+        config_params["activation_fn"] = config.hidden_act 
+        config_params["emb_dim"] = config.hidden_size
+        config_params["max_expected_seq_len"] = config.max_position_embeddings 
+        config_params["pad_id"] = config.pad_token_id
+        config_params["relative_attention_num_buckets"] = config.relative_attention_num_buckets
     else:
         raise ValueError(
             "FMS model implementations currently only support LlamaForCausalLM, GPTBigCodeForCausalLM, MixtralForCausalLM, RobertaForMaskedLM, GraniteForCausalLM, SiglipModel and LlavaNextForConditionalGeneration"

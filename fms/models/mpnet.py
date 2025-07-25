@@ -62,14 +62,6 @@ class MpnetConfig(ModelConfig):
     linear_config: Optional[Mapping[str, Any]] = None
     fused_weights: bool = True
 
-
-@dataclass
-class MpnetQuestionAnsweringConfig(MpnetConfig):
-    """Model configuration of Mpnet for Question-Answering downstream task"""
-
-    num_classes: int = 2
-
-
 class MpnetBlock(nn.Module):
     def __init__(self, config: MpnetConfig):
         super().__init__()
@@ -87,7 +79,6 @@ class MpnetBlock(nn.Module):
             linear_config=self.config.linear_config,
         )
         self.ln = nn.LayerNorm(self.config.emb_dim, self.config.layer_norm_eps)
-        self.dens1 = nn.Linear(config.emb_dim, config.intermediate_size)
         self.ff_sub_layer = FeedForwardBlock(
             self.config.emb_dim,
             hidden_grow_factor=self.config.hidden_grow_factor,
@@ -96,7 +87,6 @@ class MpnetBlock(nn.Module):
             use_bias=True,
             linear_config=self.config.linear_config,
         )
-        self.dens2 = nn.Linear(config.intermediate_size, config.emb_dim)
         self.ff_ln = nn.LayerNorm(
             self.config.emb_dim, self.config.layer_norm_eps
         )
@@ -176,12 +166,13 @@ class MpnetHeadless(nn.Module):
 
     def compute_position_bias(self, x, position_ids=None, num_buckets=32):
         bsz, qlen, klen = x.size(0), x.size(1), x.size(1)
+        device = self.position_embeddings.weight.device
         if position_ids is not None:
             context_position = position_ids[:, :, None]
             memory_position = position_ids[:, None, :]
         else:
-            context_position = torch.arange(qlen, dtype=torch.long)[:, None]
-            memory_position = torch.arange(klen, dtype=torch.long)[None, :]
+            context_position = torch.arange(qlen, dtype=torch.long,device=device)[:, None]
+            memory_position = torch.arange(klen, dtype=torch.long,device=device)[None, :]
 
         relative_position = memory_position - context_position
 
@@ -227,11 +218,14 @@ class MpnetHeadless(nn.Module):
                 mean=0.0,
                 std=self.config.emb_dim**-0.5,
             )
-        nn.init.zeros_(self.token_type_embeddings.weight)
         for layer in self.layers:
             for sublayer in ["ln", "ff_ln", "attn", "ff_sub_layer"]:
                 getattr(layer, sublayer).reset_parameters()
         self.enc_norm.reset_parameters()
+    def post_init(self):
+        device = self.position_embeddings.weight.device
+        self.position_ids = torch.arange(
+                            self.config.max_expected_seq_len+2, device=device).expand((1, -1))
 
     def forward(
         self,
