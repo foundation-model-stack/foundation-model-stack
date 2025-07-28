@@ -322,8 +322,10 @@ def _infer_model_configuration(
 
     ## infer quantization parameters
     quant_config = getattr(config, "quantization_config", None)
+    print(f"Quantization config: {quant_config}")
     if quant_config is not None:
         try:
+            print("Trying to infer quantization config")
             from fms_mo.aiu_addons import _infer_quantization_config  # type: ignore[import-untyped,import-not-found]
         except ImportError:
             raise RuntimeError(
