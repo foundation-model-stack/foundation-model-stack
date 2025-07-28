@@ -84,6 +84,7 @@ def get_linear_type(
             )
         linear_type_str = linear_type_from_callable.lower()
         if linear_type_str not in __type_factory_map:
+            print("__type_factory_map:", __type_factory_map)
             raise ValueError(
                 f"Unsupported linear_type `{linear_type_str}` returned by "
                 "the callable set up in linear_config['linear_type']. Function failed "
