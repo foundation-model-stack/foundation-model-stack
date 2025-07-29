@@ -96,7 +96,6 @@ class MpnetBlock(nn.Module):
     def forward(
         self,
         x: torch.Tensor,
-        position_ids: torch.Tensor,
         **attn_kwargs: Unpack[AttentionKwargs],
     ):
         residual = x
@@ -208,7 +207,9 @@ class MpnetHeadless(nn.Module):
         ).to(torch.long)
 
         val_if_large = torch.min(
-            val_if_large, torch.full_like(val_if_large, num_buckets - 1)
+            val_if_large, torch.full(size=val_if_large.size(), 
+            fill_value=num_buckets - 1,dtype=val_if_large.dtype,
+            layout=val_if_large.layout)
         )
         ret += torch.where(is_small, n, val_if_large)
         return ret
@@ -233,29 +234,16 @@ class MpnetHeadless(nn.Module):
     def forward(
         self,
         x_in,
-        position_ids: Optional[torch.Tensor] = None,
+        position_ids,
         **kwargs,
     ):
         inputs_embeds = self.embedding(x_in)
-        if position_ids is None:
-            if x_in is not None:
-                position_ids = create_position_ids_from_input_ids(
-                    x_in, self.config.pad_id
-                )
-            else:
-                position_ids = self.create_position_ids_from_inputs_embeds(
-                    inputs_embeds
-                )
 
-        if x_in is not None:
-            input_shape = x_in.size()
-        else:
-            input_shape = inputs_embeds.size()[:-1]
+        input_shape = x_in.size()
 
         seq_length = input_shape[1]
 
-        if position_ids is None:
-            position_ids = self.position_ids[:, :seq_length]
+        position_ids = self.position_ids[:, :seq_length]
 
         position_embeddings = self.position_embeddings(position_ids)
 
@@ -263,9 +251,16 @@ class MpnetHeadless(nn.Module):
         embeddings = self.enc_norm(embeddings)
         embeddings = self.dropout(embeddings)
         position_bias = self.compute_position_bias(embeddings)
+        attn_mask = kwargs.get("mask")
+        if attn_mask is not None and attn_mask.dtype != torch.bool:
+                attn_mask = attn_mask + position_bias
+        else:
+            attn_mask = position_bias
+        kwargs["mask"] = attn_mask
+
         x = embeddings
         for layer in self.layers:
-            x = layer(x, position_ids=position_bias, **kwargs)
+            x = layer(x, **kwargs)
         return x
 
 
@@ -331,13 +326,6 @@ class Mpnet(nn.Module):
         pooled_output = self.den(first_token_tensor)
         pooled_output = self.activation(pooled_output)
         return (sequence_output, pooled_output)
-
-
-def create_position_ids_from_input_ids(input_ids, padding_idx):
-    mask = input_ids.ne(padding_idx).int()
-    incremental_indices = torch.cumsum(mask, dim=1).type_as(mask) * mask
-    return incremental_indices.long() + padding_idx
-
 
 _architecture_name = "mpnet"
 
