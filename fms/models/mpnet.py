@@ -215,7 +215,7 @@ class MpnetHeadless(nn.Module):
         return ret
 
     def reset_parameters(self):
-        for layer in ["embedding", "position_embedding"]:
+        for layer in ["embedding", "position_embeddings"]:
             nn.init.normal_(
                 getattr(self, layer).weight,
                 mean=0.0,
@@ -242,6 +242,7 @@ class MpnetHeadless(nn.Module):
         input_shape = x_in.size()
 
         seq_length = input_shape[1]
+
 
         position_ids = self.position_ids[:, :seq_length]
 
@@ -290,22 +291,10 @@ class Mpnet(nn.Module):
         return self.config
 
     def reset_parameters(self):
-        self.head.weight.data.normal_(
-            0,
-            1
-            / math.sqrt(
-                math.sqrt(self.config.emb_dim * self.config.src_vocab_size)
-            ),
-        )
         self.base_model.reset_parameters()
 
     def post_init(self):
-        if self.config.tie_heads:
-            # handle assignment of non-meta weights to meta parameters
-            if self.head.weight.device == torch.device("meta"):
-                self.head.weight = self.base_model.embedding.weight
-            else:
-                self.base_model.embedding.weight = self.head.weight
+        self.base_model.post_init()
 
     def forward(
         self,
@@ -316,6 +305,8 @@ class Mpnet(nn.Module):
         get_attention_type(**attn_kwargs)["validate_attn_kwargs"](
             input_ids=x, position_ids=position_ids, **attn_kwargs
         )
+        if(x.size()[1] > self.config.max_expected_seq_len):
+            raise ValueError("input length should be<=max_position_embeddings")
         output = self.base_model(
             x,
             position_ids,
