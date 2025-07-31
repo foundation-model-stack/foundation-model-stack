@@ -436,7 +436,7 @@ def _find_key_neighbors(key: str, sd_keys: Set[str]):
                 prefix_neighbors.add(key_in_sd)
     return list(prefix_neighbors)
 
-import os  # noqa: E402
+
 KWR_DEBUG = len(os.getenv("KWR_DEBUG", "")) > 0
 
 
@@ -496,7 +496,7 @@ def load_state_dict_into_model(
             if key in used_keys:
                 continue
             used_keys.add(key)
-            if KWRD_DEBUG:
+            if KWR_DEBUG:
                 print(f"unused-0:{key}")
 
             partial_sd = {key: state_dict[key]}
@@ -507,7 +507,7 @@ def load_state_dict_into_model(
             for neighbor in neighbors:
                 partial_sd[neighbor] = state_dict[neighbor]
                 used_keys.add(neighbor)
-                if KWRD_DEBUG:
+                if KWR_DEBUG:
                     print(f"unused-1(neighor): {key}")
             for psd_key in partial_sd.keys():
                 if partial_sd[psd_key].device != initial_device:
@@ -520,7 +520,7 @@ def load_state_dict_into_model(
                 dtype=dtype,
             )
             unused_keys.update(unused_keys_partial)
-            if KWRD_DEBUG:
+            if KWR_DEBUG:
                 print(f"unused-2(unused_keys_partial): {key}")
             # Be aggressive in removing weights to save as much memory as possible
             for p_key in partial_sd.keys():
@@ -529,7 +529,7 @@ def load_state_dict_into_model(
                         child_sd.pop(p_key, None)
                 else:
                     state_dict.pop(p_key)
-                    if KWRD_DEBUG:
+                    if KWR_DEBUG:
                         print(f"unused-3(pop): key={key} pkey={p_key}")
             del partial_sd
             del fms_partial_sd
