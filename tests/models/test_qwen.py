@@ -98,7 +98,6 @@ class Test_Qwen(
     def headless_model(self, model: Qwen) -> QwenHeadless:
         return model.base_model
 
-
 class QwenGPTQFixtures(ModelFixtureMixin):
     @pytest.fixture(scope="class", autouse=True)
     def uninitialized_model(self):

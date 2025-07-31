@@ -382,11 +382,15 @@ def load_state_dict(
                 )
             )
     else:
+        n = 0
         with torch.no_grad():
             checkpoint_sds = [
                 torch.load(str(ckpt_path), mmap=True, map_location=initial_device)
                 for ckpt_path in checkpoints
             ]
+            n += 1
+            type_name = type(checkpoint_sds)
+            print(f"load_state_dict(): n={n} {type_name}")
     return ChainMap(*checkpoint_sds)
 
 
@@ -431,6 +435,9 @@ def _find_key_neighbors(key: str, sd_keys: Set[str]):
             if not bool(re.search(r"\.\d+\.", key_in_sd)):
                 prefix_neighbors.add(key_in_sd)
     return list(prefix_neighbors)
+
+import os  # noqa: E402
+KWR_DEBUG = len(os.getenv("KWR_DEBUG", "")) > 0
 
 
 def load_state_dict_into_model(
@@ -489,6 +496,8 @@ def load_state_dict_into_model(
             if key in used_keys:
                 continue
             used_keys.add(key)
+            if KWRD_DEBUG:
+                print(f"unused-0:{key}")
 
             partial_sd = {key: state_dict[key]}
             # Find neighbors to the key. If the adapter requires a neighbor and
@@ -498,6 +507,8 @@ def load_state_dict_into_model(
             for neighbor in neighbors:
                 partial_sd[neighbor] = state_dict[neighbor]
                 used_keys.add(neighbor)
+                if KWRD_DEBUG:
+                    print(f"unused-1(neighor): {key}")
             for psd_key in partial_sd.keys():
                 if partial_sd[psd_key].device != initial_device:
                     partial_sd[psd_key] = partial_sd[psd_key].to(device=initial_device)
@@ -509,6 +520,8 @@ def load_state_dict_into_model(
                 dtype=dtype,
             )
             unused_keys.update(unused_keys_partial)
+            if KWRD_DEBUG:
+                print(f"unused-2(unused_keys_partial): {key}")
             # Be aggressive in removing weights to save as much memory as possible
             for p_key in partial_sd.keys():
                 if isinstance(state_dict, ChainMap):
@@ -516,6 +529,8 @@ def load_state_dict_into_model(
                         child_sd.pop(p_key, None)
                 else:
                     state_dict.pop(p_key)
+                    if KWRD_DEBUG:
+                        print(f"unused-3(pop): key={key} pkey={p_key}")
             del partial_sd
             del fms_partial_sd
 

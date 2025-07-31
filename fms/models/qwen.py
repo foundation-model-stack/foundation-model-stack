@@ -647,6 +647,8 @@ serialization.register_adapter_step(
     _ARCHITECTURE_NAME, "hf_gptq_fusion_check", _hf_gptq_qwen_check
 )
 
+import os  # noqa: E402
+KWR_DEBUG = len(os.getenv("KWR_DEBUG", "")) > 0
 
 def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]:
     """_summary_
@@ -675,11 +677,16 @@ def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]
         (r"self_attn\.q_norm", "attn.in_proj.q_norm"),
     ]
     new_sd = {}
+    if KWR_DEBUG:
+        print(f">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> {len(input_sd)}", flush=True)
     for name, param in input_sd.items():
         new_name = name
         for pattern, repl in replacements:
             new_name = re.sub(pattern, repl, new_name)
         new_sd[new_name] = param
+        if KWR_DEBUG:
+            flag = "S" if name == new_name else "D"
+            print(f"{flag}: {name:<60} -> {new_name}", flush=True)
     return new_sd
 
 
