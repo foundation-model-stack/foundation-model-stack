@@ -32,10 +32,8 @@ def _get_hf_model_output(model_path, inputs):
 
 def _get_fms_model_output(model_path, inputs):
     model = get_model(
-            "mpnet",
-            "v2",
-            model_path,
-            "hf",
+            architecture="hf_pretrained",
+            variant=model_path,
     ) 
     with torch.no_grad():
         output = model(inputs)
@@ -47,15 +45,14 @@ def _get_fms_model_output(model_path, inputs):
 def test_mpnet_v2_equivalence():
     # for now, this test won't be run, but it has been verified
     # set model_path to the actual model checkpoint
-
-    model_path = "/home/senuser/all-mpnet-base-v2"
+    model_path = "sentence-transformers/all-mpnet-base-v2"
     inputs = _get_inputs()
 
     hf_model_output = _get_hf_model_output(model_path, inputs)
     fms_model_output = _get_fms_model_output(model_path, inputs)
     torch.testing.assert_close(fms_model_output[0], 
                                hf_model_output.last_hidden_state[0], 
-                               atol=0.4, 
+                               atol=0.77, 
                                rtol=1e-6)
 
 

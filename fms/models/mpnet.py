@@ -149,7 +149,7 @@ class MpnetHeadless(nn.Module):
         )
         if not hasattr(self, 'position_ids'):
             self.position_ids = torch.arange(
-                                self.config.max_expected_seq_len+2).expand(
+                                self.config.max_expected_seq_len).expand(
                                 (1, -1))
         layers = []
         for i in range(self.config.nlayers):
@@ -230,7 +230,10 @@ class MpnetHeadless(nn.Module):
     def post_init(self):
         device = self.position_embeddings.weight.device
         if hasattr(self, 'position_ids'):
-            self.position_ids.to(device)
+         if self.position_ids.numel() == self.config.max_expected_seq_len:
+             self.position_ids = torch.arange(
+                                self.config.max_expected_seq_len,device=device).expand(
+                                (1, -1))
 
     def forward(
         self,
@@ -407,9 +410,6 @@ def _hf_to_fms_names(hf_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]:
         for pattern, repl in replacements:
             new_name = re.sub(pattern, repl, new_name)
         new_sd[new_name] = param
-
-        if name == "embeddings.position_embeddings.weight":
-            new_sd[new_name] = new_sd[new_name][2:]
 
     return new_sd
 
