@@ -343,17 +343,6 @@ class ModelConsistencyTestSuite(ModelFixtureMixin, SignatureFixtureMixin):
                     post_iteration_hook= capture_logits_hook,
                 )
             
-            # # Create signature from the generated tokens
-            # if captured_logits:
-            #     # Use the captured logits for the last two generated tokens
-            #     new_tokens = captured_logits[-1][:, -2:]  # Get the logits for the last two tokens
-            # else:
-            #     # If no logits were captured, fallback to the last tokens in generated
-            #     new_tokens = generated[-1][:, -2:]
-            
-            # # Create a simple signature from the new token
-            # print(f"Generation successful: generated token sum = {new_tokens.sum().item()}")
-            # return [float(new_tokens.sum().item())]
 
             # Create signature from the generated tokens using get_signature pattern
             if captured_logits:
