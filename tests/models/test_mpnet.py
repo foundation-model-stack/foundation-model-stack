@@ -64,8 +64,6 @@ class TestMpnet(
 
     @staticmethod
     def _get_signature_logits_getter_fn(f_out) -> torch.Tensor:
-        print(f_out[0][:1].size())
-        print(f_out[1].size())
         return torch.cat([f_out[0][:1], f_out[1]], dim=-1)
 
     def test_config_passed_to_model_and_updated(self, model, config):
@@ -88,7 +86,6 @@ class TestMpnet(
             loaded = get_model("mpnet", "v2", f.name)
 
             keys = loaded.state_dict().keys()
-            print(keys)
             first = next(iter(keys))
             assert keys == sd.keys()
             torch.testing.assert_close(loaded.state_dict()[first], sd[first])
@@ -160,8 +157,6 @@ class TestMpnetGPTQ(
 
     @staticmethod
     def _get_signature_logits_getter_fn(f_out) -> torch.Tensor:
-        print(f_out[0][:1].size())
-        print(f_out[1].size())
         return torch.cat([f_out[0][:1], f_out[1]], dim=-1)
 
     def test_model_unfused(self, model, signature):
