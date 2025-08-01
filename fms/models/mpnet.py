@@ -147,8 +147,10 @@ class MpnetHeadless(nn.Module):
         self.dropout = self.distributed_strategy.distribute_module(
             nn.Dropout(config.hidden_dropout_prob)
         )
-        self.position_ids = torch.arange(
-                            self.config.max_expected_seq_len+2).expand((1, -1))
+        if not hasattr(self, 'position_ids'):
+            self.position_ids = torch.arange(
+                                self.config.max_expected_seq_len+2).expand(
+                                (1, -1))
         layers = []
         for i in range(self.config.nlayers):
             block: nn.Module = MpnetBlock(self.config)
@@ -227,9 +229,8 @@ class MpnetHeadless(nn.Module):
         self.enc_norm.reset_parameters()
     def post_init(self):
         device = self.position_embeddings.weight.device
-        self.position_ids = torch.arange(
-                            self.config.max_expected_seq_len+2, 
-                            device=device).expand((1, -1))
+        if hasattr(self, 'position_ids'):
+            self.position_ids.to(device)
 
     def forward(
         self,
@@ -243,7 +244,6 @@ class MpnetHeadless(nn.Module):
 
         seq_length = input_shape[1]
 
-
         position_ids = self.position_ids[:, :seq_length]
 
         position_embeddings = self.position_embeddings(position_ids)
@@ -252,8 +252,14 @@ class MpnetHeadless(nn.Module):
         embeddings = self.enc_norm(embeddings)
         embeddings = self.dropout(embeddings)
         position_bias = self.compute_position_bias(embeddings)
-        attn_mask = kwargs.get("mask")
-        if attn_mask is not None and attn_mask.dtype != torch.bool:
+        # injecting position_bias as part of sdpa attn_mask
+        attn_mask = kwargs.get("mask") or None
+        if attn_mask is not None:
+            if attn_mask.dtype == torch.bool:
+                position_bias.masked_fill_(attn_mask.logical_not(), float(
+                "-inf"))
+                attn_mask = position_bias
+            else:    
                 attn_mask = attn_mask + position_bias
         else:
             attn_mask = position_bias
