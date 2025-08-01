@@ -1,7 +1,8 @@
 import math
 import re
 from dataclasses import dataclass
-from typing import Any, Mapping, MutableMapping, Optional, Tuple, Unpack
+from typing import Any, Mapping, MutableMapping, Optional, Tuple
+from typing_extensions import Unpack
 
 import torch
 import torch.nn as nn

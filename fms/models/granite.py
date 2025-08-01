@@ -2,7 +2,8 @@ import logging
 import math
 import re
 from dataclasses import dataclass
-from typing import Any, Mapping, Optional, Tuple, Unpack
+from typing import Any, Mapping, Optional, Tuple
+from typing_extensions import Unpack
 
 import torch
 import torch.nn as nn
@@ -277,13 +278,14 @@ class GraniteHeadless(nn.Module):
         **attn_kwargs: Unpack[AttentionKwargs],
     ):
         # Embed the given vocabulary indices using the given attention mask, with pre-/post-norm and dropout as specified
-        # x_in: batch_size x seq_len
+        # x_in: batch_size x seq_len x emb_dim if input is already embedded, otherwise batch_size x seq_len
         # mask: batch_size x seq_len x seq_len
         # bias: nheads x seq_len x seq_len
         if past_key_value_states is None or len(past_key_value_states) == 0:
             past_key_value_states = [None for _ in range(len(self.layers))]
 
-        x_in = self.embedding(x_in)
+        if x_in.dim() == 2:  # input is not already embedded
+            x_in = self.embedding(x_in)
         x_in = x_in * self.config.embedding_multiplier
 
         # this is the output cache for all the decoder layers
@@ -412,6 +414,25 @@ _8b_config = GraniteConfig(
     attention_multiplier=0.0078125,
 )
 
+_3_1_2b_config = GraniteConfig(
+    src_vocab_size=49155,
+    emb_dim=2048,
+    norm_eps=1e-5,
+    nheads=32,
+    kvheads=8,
+    nlayers=40,
+    hidden_grow_factor=8192 / 2048,
+    max_expected_seq_len=131072,
+    rope_theta=5000000.0,
+    pad_id=0,
+    p_dropout=0.0,
+    tie_heads=True,
+    embedding_multiplier=12.0,
+    logits_scaling=8.0,
+    residual_multiplier=0.22,
+    attention_multiplier=0.015625,
+)
+
 _architecture_name = "granite"
 
 
@@ -423,6 +444,9 @@ def _granite_factory_factory(config):
 
 
 models.register_model(_architecture_name, "8b", _granite_factory_factory(_8b_config))
+models.register_model(
+    _architecture_name, "3_1_2b", _granite_factory_factory(_3_1_2b_config)
+)
 
 
 def _weight_fusion(
