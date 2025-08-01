@@ -489,17 +489,13 @@ class ModelConsistencyTestSuite(ModelFixtureMixin, SignatureFixtureMixin):
         """test unfused model output against signature"""
 
         unfused_model = apply_unfuse_weights(model)
-        
-        # Test standard forward pass signature
         unfused_signature = get_signature(
             unfused_model,
             inp=self._get_signature_input_ids,
             params=self._get_signature_params,
             optional_params=self._get_signature_optional_params,
             logits_getter_fn=self._get_signature_logits_getter_fn,
-            device="cuda" if torch.cuda.is_available() else "cpu",
         )
-
 
         assertion_msg = f"""
         difference: {np.mean(np.abs(np.array(unfused_signature) - np.array(signature)))}
