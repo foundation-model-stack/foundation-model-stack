@@ -151,7 +151,6 @@ class SignatureFixtureMixin:
             print(
                 "Signature failed to load, please re-run the tests with --capture_expectation"
             )
-            return []
 
 
 class ModelConfigTestSuite(ConfigFixtureMixin, ModelFixtureMixin):
