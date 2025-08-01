@@ -339,7 +339,6 @@ class ModelConsistencyTestSuite(ModelFixtureMixin, SignatureFixtureMixin):
                     max_new_tokens=2, # 1 prefill + 1 decode
                     do_sample=False,  # Use greedy generation for consistency
                     use_cache=True, 
-                    temperature=1.0,
                     post_iteration_hook= capture_logits_hook,
                 )
             
