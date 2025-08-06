@@ -447,8 +447,7 @@ if KWR_DEBUG:
         size = len(fms_partial)  # noqa: F821
         print(f"serialization.py:fms_partial_cleanup() >>> fms_partial:/{size}")
         for key in sorted(fms_partial.keys()):  # noqa: F821
-            size = len(fms_partial[key])  # type: ignore # noqa: F821
-            print(f"{key:<60} : {fms_partial[key]}/{size}")  # noqa: F821
+            print(f"{key:<60} : {fms_partial[key]}")  # noqa: F821
     atexit.register(fms_partial_cleanup)
 
 def load_state_dict_into_model(
