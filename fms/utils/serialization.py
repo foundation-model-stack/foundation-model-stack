@@ -436,20 +436,20 @@ def _find_key_neighbors(key: str, sd_keys: Set[str]):
                 prefix_neighbors.add(key_in_sd)
     return list(prefix_neighbors)
 
-
-KWR_DEBUG = len(os.getenv("KWR_DEBUG", "")) > 0
 import atexit  # noqa: E402
-def serialization_cleanup() -> None:
-    """
-    This function will be called automatically when the script exits.
-    """
-    size = len(uniq_mapping)
-    print(f"serialization.py:serialization_cleanup() >>> uniq_mapping:/{size}")
-    for key in sorted(uniq_mapping.keys()):
-        size = len(uniq_mapping[key])
-        print(f"{key:<60} : {uniq_mapping[key]}/{size}")
-
-atexit.register(serialization_cleanup)
+KWR_DEBUG = len(os.getenv("KWR_DEBUG", "")) > 0
+if KWR_DEBUG:
+    fms_partial: Dict[str, int]
+    def fms_partial_cleanup() -> None:
+        """
+        This function will be called automatically when the script exits.
+        """
+        size = len(fms_partial)  # noqa: F821
+        print(f"serialization.py:fms_partial_cleanup() >>> fms_partial:/{size}")
+        for key in sorted(fms_partial.keys()):  # noqa: F821
+            size = len(fms_partial[key])  # type: ignore # noqa: F821
+            print(f"{key:<60} : {fms_partial[key]}/{size}")  # noqa: F821
+    atexit.register(fms_partial_cleanup)
 
 def load_state_dict_into_model(
     model: torch.nn.Module,
