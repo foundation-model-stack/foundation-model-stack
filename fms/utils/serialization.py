@@ -438,8 +438,8 @@ def _find_key_neighbors(key: str, sd_keys: Set[str]):
 
 import atexit  # noqa: E402
 KWR_DEBUG = len(os.getenv("KWR_DEBUG", "")) > 0
+fms_partial: Dict[str, int]
 if KWR_DEBUG:
-    fms_partial: Dict[str, int]
     def fms_partial_cleanup() -> None:
         """
         This function will be called automatically when the script exits.
