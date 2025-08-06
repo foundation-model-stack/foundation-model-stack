@@ -497,13 +497,6 @@ def load_state_dict_into_model(
             if key in used_keys:
                 continue
             used_keys.add(key)
-            if KWR_DEBUG:
-                # cound number of times a key is in sd_keys
-                if key in uniq_keys:
-                    uniq_keys[key] += 1
-                else:
-                    uniq_keys[key] = 1
-
             partial_sd = {key: state_dict[key]}
             # Find neighbors to the key. If the adapter requires a neighbor and
             # this function doesn't find it, it will crash.
@@ -523,8 +516,6 @@ def load_state_dict_into_model(
                 dtype=dtype,
             )
             unused_keys.update(unused_keys_partial)
-            if KWR_DEBUG:
-                print(f"unused_keys.update(unused_keys_partial): {key}/{unused_keys}")
             # Be aggressive in removing weights to save as much memory as possible
             for p_key in partial_sd.keys():
                 if isinstance(state_dict, ChainMap):
@@ -532,8 +523,14 @@ def load_state_dict_into_model(
                         child_sd.pop(p_key, None)
                 else:
                     state_dict.pop(p_key)
-                    if KWR_DEBUG:
-                        print(f"unused-3(pop): key={key} pkey={p_key}")
+            if KWR_DEBUG:
+                print("partial_sd:")
+                for key in sorted(partial_sd.keys()):
+                    print("f    {key}")
+                print("fms_partial_sd:")
+                for key in sorted(fms_partial_sd.keys()):
+                    print("f    {key}")
+                    
             del partial_sd
             del fms_partial_sd
 
