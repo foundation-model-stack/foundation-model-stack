@@ -539,7 +539,7 @@ def load_state_dict_into_model(
 
     if KWR_DEBUG:
         for key in sorted(uniq_keys.keys()):
-            print(f"{key:<45 : {uniq_keys[key]}}")
+            print(f"{key:<45} : {uniq_keys[key]}}")
 
     if unused_keys and rank == 0:
         # TODO: start using logger?
