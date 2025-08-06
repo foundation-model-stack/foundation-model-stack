@@ -535,10 +535,10 @@ def load_state_dict_into_model(
                 else:
                     state_dict.pop(p_key)
             if KWR_DEBUG:
-                for key in sorted(partial_sd.keys()):
-                    print(f"partial_sd {key}")
-                # for key in sorted(fms_partial_sd.keys()):
-                #     print(f"fms_partial_sd {key}")
+                # for key in sorted(partial_sd.keys()):
+                #     print(f"partial_sd {key}")
+                for key in sorted(fms_partial_sd.keys()):
+                    print(f"fms_partial_sd {key}")
 
             del partial_sd
             del fms_partial_sd
