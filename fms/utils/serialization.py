@@ -5,7 +5,7 @@ from collections import ChainMap
 from collections.abc import Iterable
 from functools import reduce
 from pathlib import Path
-from typing import Any, Callable, Mapping, MutableMapping, Optional, Set, Union
+from typing import Any, Dict, Callable, Mapping, MutableMapping, Optional, Set, Union
 
 import torch
 
@@ -491,13 +491,18 @@ def load_state_dict_into_model(
     unused_keys = set()
     sd_keys = set(state_dict.keys())
 
+    uniq_keys: Dict[str, int] = {}
     with torch.no_grad():
         for key in sd_keys:
             if key in used_keys:
                 continue
             used_keys.add(key)
             if KWR_DEBUG:
-                print(f"unused-0:{key}")
+                # cound number of times a key is in sd_keys
+                if key in uniq_keys:
+                    uniq_keys[key] += 1
+                else:
+                    uniq_keys[key] = 1
 
             partial_sd = {key: state_dict[key]}
             # Find neighbors to the key. If the adapter requires a neighbor and
@@ -507,8 +512,6 @@ def load_state_dict_into_model(
             for neighbor in neighbors:
                 partial_sd[neighbor] = state_dict[neighbor]
                 used_keys.add(neighbor)
-                if KWR_DEBUG:
-                    print(f"unused-1(neighor): {key}")
             for psd_key in partial_sd.keys():
                 if partial_sd[psd_key].device != initial_device:
                     partial_sd[psd_key] = partial_sd[psd_key].to(device=initial_device)
@@ -521,7 +524,7 @@ def load_state_dict_into_model(
             )
             unused_keys.update(unused_keys_partial)
             if KWR_DEBUG:
-                print(f"unused-2(unused_keys_partial): {key}")
+                print(f"unused_keys.update(unused_keys_partial): {key}/{unused_keys}")
             # Be aggressive in removing weights to save as much memory as possible
             for p_key in partial_sd.keys():
                 if isinstance(state_dict, ChainMap):
@@ -533,6 +536,10 @@ def load_state_dict_into_model(
                         print(f"unused-3(pop): key={key} pkey={p_key}")
             del partial_sd
             del fms_partial_sd
+
+    if KWR_DEBUG:
+        for key in sorted(uniq_keys.keys()):
+            print(f"{key:<45 : {uniq_keys[key]}}")
 
     if unused_keys and rank == 0:
         # TODO: start using logger?
