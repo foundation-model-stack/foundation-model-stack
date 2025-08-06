@@ -11,7 +11,7 @@ import logging
 import math
 import re
 from dataclasses import dataclass
-from typing import Any, Dict, Mapping, Optional, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 import torch
 from torch import nn
@@ -649,7 +649,7 @@ serialization.register_adapter_step(
 
 import os  # noqa: E402
 KWR_DEBUG = len(os.getenv("KWR_DEBUG", "")) > 0
-uniq_mapping: Dict[str, int] = {}
+uniq_mapping: Dict[str, List[str]] = {}
 
 import atexit  # noqa: E402
 def qwen_cleanup() -> None:
@@ -688,8 +688,6 @@ def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]
         (r"self_attn\.q_norm", "attn.in_proj.q_norm"),
     ]
     new_sd = {}
-    if KWR_DEBUG:
-        print(f">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> {len(input_sd)}", flush=True)
     for name, param in input_sd.items():
         new_name = name
         for pattern, repl in replacements:
@@ -698,6 +696,11 @@ def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]
         if KWR_DEBUG:
             flag = "S" if name == new_name else "D"
             print(f"{flag}: {name:<60} -> {new_name}", flush=True)
+        if KWR_DEBUG:
+            if name in uniq_mapping:
+                uniq_mapping[name].add(new_name) 
+            else:
+                uniq_mapping[name] = [new_name]
     return new_sd
 
 
