@@ -438,7 +438,18 @@ def _find_key_neighbors(key: str, sd_keys: Set[str]):
 
 
 KWR_DEBUG = len(os.getenv("KWR_DEBUG", "")) > 0
+import atexit  # noqa: E402
+def serialization_cleanup() -> None:
+    """
+    This function will be called automatically when the script exits.
+    """
+    size = len(uniq_mapping)
+    print(f"serialization.py:serialization_cleanup() >>> uniq_mapping:/{size}")
+    for key in sorted(uniq_mapping.keys()):
+        size = len(uniq_mapping[key])
+        print(f"{key:<60} : {uniq_mapping[key]}/{size}")
 
+atexit.register(serialization_cleanup)
 
 def load_state_dict_into_model(
     model: torch.nn.Module,
@@ -524,13 +535,11 @@ def load_state_dict_into_model(
                 else:
                     state_dict.pop(p_key)
             if KWR_DEBUG:
-                print("partial_sd:")
                 for key in sorted(partial_sd.keys()):
-                    print(f"    {key}")
-                print("fms_partial_sd:")
+                    print(f"partial_sd {key}")
                 for key in sorted(fms_partial_sd.keys()):
-                    print(f"    {key}")
-                    
+                    print(f"fms_partial_sd {key}")
+
             del partial_sd
             del fms_partial_sd
 
