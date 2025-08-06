@@ -439,6 +439,7 @@ def _find_key_neighbors(key: str, sd_keys: Set[str]):
 import atexit  # noqa: E402
 KWR_DEBUG = len(os.getenv("KWR_DEBUG", "")) > 0
 fms_partial: Dict[str, int] = {}
+pkeys: Dict[str, int] = {}
 if KWR_DEBUG:
     def fms_partial_cleanup() -> None:
         """
@@ -448,6 +449,8 @@ if KWR_DEBUG:
         print(f"serialization.py:fms_partial_cleanup() >>> fms_partial:/{size}")
         for key in sorted(fms_partial.keys()):  # noqa: F821
             print(f"{key:<60} : {fms_partial[key]}")  # noqa: F821
+        for key in sorted(pkeys.keys()):
+            print(f"{key:<60} : {pkeys[key]}")  # noqa: F821
     atexit.register(fms_partial_cleanup)
 
 def load_state_dict_into_model(
@@ -533,9 +536,15 @@ def load_state_dict_into_model(
                         child_sd.pop(p_key, None)
                 else:
                     state_dict.pop(p_key)
+                    if KWR_DEBUG:
+                        if p_key in pkeys:
+                            pkeys[p_key] +=1
+                        else:
+                            pkeys[p_key] = 1
             if KWR_DEBUG:
                 # for key in sorted(partial_sd.keys()):
                 #     print(f"partial_sd {key}")
+                
                 for key in sorted(fms_partial_sd.keys()):
                     if key in fms_partial:  # noqa: F821
                         fms_partial[key] += 1  # noqa: F821
