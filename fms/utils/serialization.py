@@ -449,6 +449,8 @@ if KWR_DEBUG:
         print(f"serialization.py:fms_partial_cleanup() >>> fms_partial:/{size}")
         for key in sorted(fms_partial.keys()):  # noqa: F821
             print(f"{key:<60} : {fms_partial[key]}")  # noqa: F821
+        size = len(pkeys)  # noqa: F821
+        print(f"serialization.py:fms_partial_cleanup() >>> pkeys:/{size}")
         for key in sorted(pkeys.keys()):
             print(f"{key:<60} : {pkeys[key]}")  # noqa: F821
     atexit.register(fms_partial_cleanup)
