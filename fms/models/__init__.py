@@ -430,6 +430,7 @@ def get_model(
                     fqn_list[-1],
                     module.initialize(name),
                 )
+                fms_model.get_submodule(name).module_name = name
 
     # Choose when to wrap and load the model weights based on the combination
     # distribution strategy and checkpoint sharding
