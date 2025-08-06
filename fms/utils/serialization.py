@@ -538,7 +538,10 @@ def load_state_dict_into_model(
                 # for key in sorted(partial_sd.keys()):
                 #     print(f"partial_sd {key}")
                 for key in sorted(fms_partial_sd.keys()):
-                    print(f"fms_partial_sd {key}")
+                    if key in fms_partial:  # noqa: F821
+                        fms_partial[key] += 1  # noqa: F821
+                    else:
+                        fms_partial[key] = 1  # noqa: F821
 
             del partial_sd
             del fms_partial_sd
