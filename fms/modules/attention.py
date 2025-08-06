@@ -9,7 +9,6 @@ from typing import (
     Optional,
     Tuple,
     TypedDict,
-    cast,
 )
 from typing_extensions import NotRequired, Unpack
 
@@ -822,9 +821,7 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
 
         # TODO: Remove assumption that all layers in module share quantization
         module_name = getattr(self.dense, "module_name", None)
-        linear_type = get_linear_type(
-            self.linear_config, cast(str, module_name)
-        )
+        linear_type = get_linear_type(self.linear_config, module_name)
         unused_keys = type_sharding_map[linear_type](
             tensor_values,
             self,

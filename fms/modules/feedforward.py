@@ -1,4 +1,4 @@
-from typing import Any, Mapping, Optional, Set, cast
+from typing import Any, Mapping, Optional, Set
 
 import torch
 import torch.distributed
@@ -412,9 +412,7 @@ class TPGatedLinearUnit(GatedLinearUnit, TPModule):
 
         # TODO: Remove assumption that all layers in module share quantization
         module_name = getattr(self.w2, "module_name", None)
-        linear_type = get_linear_type(
-            self.linear_config, cast(str, module_name)
-        )
+        linear_type = get_linear_type(self.linear_config, module_name)
         type_sharding_map = get_all_linear_type_to_sharding_maps()
         unused_keys = type_sharding_map[linear_type](
             tensor_values,
