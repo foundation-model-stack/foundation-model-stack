@@ -656,9 +656,11 @@ def qwen_cleanup() -> None:
     """
     This function will be called automatically when the script exits.
     """
-    print("qwen.py:qwen_cleanup() >>> uniq_mapping:")
+    size = len(uniq_mapping)
+    print("qwen.py:qwen_cleanup() >>> uniq_mapping:/{size}")
     for key in sorted(uniq_mapping.keys()):
-        print(f"{key:<60} : {uniq_mapping[key]}")
+        size = len(uniq_mapping[key])
+        print(f"{key:<60} : {uniq_mapping[key]}/{size}")
 atexit.register(qwen_cleanup)
 
 def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]:
