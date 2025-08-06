@@ -11,7 +11,7 @@ import logging
 import math
 import re
 from dataclasses import dataclass
-from typing import Any, Mapping, Optional, Tuple
+from typing import Any, Dict, Mapping, Optional, Tuple
 
 import torch
 from torch import nn
@@ -649,6 +649,17 @@ serialization.register_adapter_step(
 
 import os  # noqa: E402
 KWR_DEBUG = len(os.getenv("KWR_DEBUG", "")) > 0
+uniq_mapping: Dict[str, int] = {}
+
+import atexit  # noqa: E402
+def qwen_cleanup() -> None:
+    """
+    This function will be called automatically when the script exits.
+    """
+    print("qwen.py:qwen_cleanup() >>> uniq_mapping:")
+    for key in sorted(uniq_mapping.keys()):
+        print(f"{key:<60} : {uniq_mapping[key]}")
+atexit.register(qwen_cleanup)
 
 def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]:
     """_summary_
