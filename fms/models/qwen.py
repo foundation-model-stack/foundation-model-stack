@@ -696,11 +696,8 @@ def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]
             new_name = re.sub(pattern, repl, new_name)
         new_sd[new_name] = param
         if KWR_DEBUG:
-            flag = "S" if name == new_name else "D"
-            print(f"{flag}: {name:<60} -> {new_name}", flush=True)
-        if KWR_DEBUG:
             if name in uniq_mapping:
-                uniq_mapping[name].add(new_name) 
+                uniq_mapping[name].append(new_name) 
             else:
                 uniq_mapping[name] = [new_name]
     return new_sd
