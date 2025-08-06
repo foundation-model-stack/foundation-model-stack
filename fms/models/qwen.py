@@ -657,7 +657,7 @@ def qwen_cleanup() -> None:
     This function will be called automatically when the script exits.
     """
     size = len(uniq_mapping)
-    print("qwen.py:qwen_cleanup() >>> uniq_mapping:/{size}")
+    print(f"qwen.py:qwen_cleanup() >>> uniq_mapping:/{size}")
     for key in sorted(uniq_mapping.keys()):
         size = len(uniq_mapping[key])
         print(f"{key:<60} : {uniq_mapping[key]}/{size}")
