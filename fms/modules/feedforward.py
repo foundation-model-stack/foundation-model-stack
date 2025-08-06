@@ -376,9 +376,6 @@ class TPGatedLinearUnit(GatedLinearUnit, TPModule):
         )
         self.setup_tp(rank, group)
 
-        # linear_type must handle module_name = None to support TP of GLU
-        self.linear_type = get_linear_type(self.linear_config)
-
     def load_weights(
         self,
         tensor_values: dict[str, torch.Tensor],
@@ -413,8 +410,10 @@ class TPGatedLinearUnit(GatedLinearUnit, TPModule):
             self.w2, 1, [self.world_size]
         )
 
+        # TODO: Remove assumption that all layers in module share quantization
+        linear_type = get_linear_type(self.linear_config, self.w2.module_name)
         type_sharding_map = get_all_linear_type_to_sharding_maps()
-        unused_keys = type_sharding_map[self.linear_type](
+        unused_keys = type_sharding_map[linear_type](
             tensor_values,
             self,
             module_sharding_info,
