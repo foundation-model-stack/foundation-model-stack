@@ -518,7 +518,7 @@ def load_state_dict_into_model(
             )
             
             print(f"architecture='{architecture}'")
-            if architecture != "qwen":
+            if architecture != "qwen3":
                 unused_keys.update(unused_keys_partial)
             else:
                 msg ="skipping unused_keys,update() because "
