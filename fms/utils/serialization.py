@@ -530,6 +530,10 @@ def load_state_dict_into_model(
                 msg = f"len(unused_keys_partial)={len(unused_keys_partial)} "
                 msg += f"len(unused_keys)={len(unused_keys)}"
                 print(msg)
+                print(f"  unused_keys_partial: {len(unused_keys_partial)}")
+                for key in unused_keys_partial:
+                    print(f"    {key}")
+                print(f"  unused_keys: {len(unused_keys)}")
                 for key in unused_keys:
                     print(f"  {key}")
             # Be aggressive in removing weights to save as much memory as possible
