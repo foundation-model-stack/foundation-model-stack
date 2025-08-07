@@ -127,7 +127,7 @@ class MpnetHeadless(nn.Module):
             self.config = MpnetConfig()
         self.config = self.config.updated(**kwargs)
         self.distributed_strategy = distributed_strategy
-        self.embedding = self.distributed_strategy.distribute_module(
+        self.word_embedding = self.distributed_strategy.distribute_module(
             nn.Embedding(
                 config.src_vocab_size, config.emb_dim, 
                 padding_idx=self.config.pad_id
@@ -147,10 +147,6 @@ class MpnetHeadless(nn.Module):
         self.dropout = self.distributed_strategy.distribute_module(
             nn.Dropout(config.hidden_dropout_prob)
         )
-        if not hasattr(self, 'position_ids'):
-            self.position_ids = torch.arange(
-                                self.config.max_expected_seq_len).expand(
-                                (1, -1))
         layers = []
         for i in range(self.config.nlayers):
             block: nn.Module = MpnetBlock(self.config)
@@ -164,30 +160,6 @@ class MpnetHeadless(nn.Module):
                 )
             )
         )
-
-    def compute_position_bias(self, x, position_ids=None, num_buckets=32):
-        bsz, qlen, klen = x.size(0), x.size(1), x.size(1)
-        device = self.position_embeddings.weight.device
-        if position_ids is not None:
-            context_position = position_ids[:, :, None]
-            memory_position = position_ids[:, None, :]
-        else:
-            context_position = torch.arange(
-                               qlen, dtype=torch.long,device=device)[:, None]
-            memory_position = torch.arange(
-                              klen, dtype=torch.long,device=device)[None, :]
-
-        relative_position = memory_position - context_position
-
-        rp_bucket = self.relative_position_bucket(
-            relative_position, num_buckets=num_buckets
-        )
-        rp_bucket = rp_bucket.to(x.device)
-        values = self.relative_attention_bias(rp_bucket)
-        values = values.permute([2, 0, 1]).unsqueeze(0)
-        values = values.expand((bsz, -1, qlen, klen)).contiguous()
-        return values
-
     @staticmethod
     def relative_position_bucket(
         relative_position, num_buckets=32, max_distance=128
@@ -209,12 +181,30 @@ class MpnetHeadless(nn.Module):
         ).to(torch.long)
 
         val_if_large = torch.min(
-            val_if_large, torch.full(size=val_if_large.size(), 
+            val_if_large, torch.full(size=val_if_large.size(),
             fill_value=num_buckets - 1,dtype=val_if_large.dtype,
             layout=val_if_large.layout)
         )
         ret += torch.where(is_small, n, val_if_large)
         return ret
+    def compute_position_bias(self,x, num_buckets=32):
+        bsz, qlen, klen = x.size(0), x.size(1), x.size(1)
+        device = x.device
+        context_position = torch.arange(
+                               qlen, dtype=torch.long,device=device)[:, None]
+        memory_position = torch.arange(
+                              klen, dtype=torch.long,device=device)[None, :]
+
+        relative_position = memory_position - context_position
+
+        rp_bucket = self.relative_position_bucket(
+            relative_position, num_buckets=num_buckets
+        )
+        rp_bucket = rp_bucket.to(x.device)
+        values = self.relative_attention_bias(rp_bucket)
+        values = values.permute([2, 0, 1]).unsqueeze(0)
+        values = values.expand((bsz, -1, qlen, klen)).contiguous()
+        return values
 
     def reset_parameters(self):
         for layer in ["embedding", "position_embeddings"]:
@@ -229,11 +219,6 @@ class MpnetHeadless(nn.Module):
         self.enc_norm.reset_parameters()
     def post_init(self):
         device = self.position_embeddings.weight.device
-        if hasattr(self, 'position_ids'):
-         if self.position_ids.numel() == self.config.max_expected_seq_len:
-             self.position_ids = torch.arange(
-                                self.config.max_expected_seq_len,device=device).expand(
-                                (1, -1))
 
     def forward(
         self,
@@ -241,19 +226,21 @@ class MpnetHeadless(nn.Module):
         position_ids,
         **kwargs,
     ):
-        inputs_embeds = self.embedding(x_in)
+        inputs_embeds = self.word_embedding(x_in)
 
-        input_shape = x_in.size()
+        input_shape = inputs_embeds.size()[:-1]
 
         seq_length = input_shape[1]
+        position_ids = torch.arange(
+            self.config.pad_id + 1, seq_length + self.config.pad_id + 1, 
+            dtype=torch.long, device=x_in.device
+            ).unsqueeze(0).expand(input_shape)
 
-        position_ids = self.position_ids[:, :seq_length]
 
         position_embeddings = self.position_embeddings(position_ids)
 
         embeddings = inputs_embeds + position_embeddings
         embeddings = self.enc_norm(embeddings)
-        embeddings = self.dropout(embeddings)
         position_bias = self.compute_position_bias(embeddings)
         # injecting position_bias as part of sdpa attn_mask
         attn_mask = kwargs.get("mask") or None
@@ -379,7 +366,9 @@ serialization.register_adapter_step(
 
 def _hf_to_fms_names(hf_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]:
     replacements = [
-        (r"embeddings.word_embeddings.weight", "base_model.embedding.weight"),
+        (   r"embeddings.word_embeddings.weight", 
+            "base_model.word_embedding.weight",
+        ),
         (
             r"^encoder.relative_attention_bias.weight",
             "base_model.relative_attention_bias.weight",
