@@ -448,7 +448,6 @@ if KWR_DEBUG:
         print(f"serialization.py:fms_partial_cleanup() >>> fms_partial:/{size}")
         for key in sorted(fms_partial.keys()):  # noqa: F821
             print(f"{key:<60} : {fms_partial[key]}")  # noqa: F821
-        size = len(pkeys)  # noqa: F821
     atexit.register(fms_partial_cleanup)
 
 def load_state_dict_into_model(
@@ -527,6 +526,10 @@ def load_state_dict_into_model(
                 dtype=dtype,
             )
             unused_keys.update(unused_keys_partial)
+            if KWR_DEBUG:
+                msg = f"len(unused_keys_partial)={len(unused_keys_partial)} "
+                msg += f"len(unused_keys)={len(unused_keys)}"
+                print(msg)
             # Be aggressive in removing weights to save as much memory as possible
             for p_key in partial_sd.keys():
                 if isinstance(state_dict, ChainMap):
