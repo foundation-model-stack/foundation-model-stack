@@ -532,8 +532,8 @@ def load_state_dict_into_model(
                 if isinstance(state_dict, ChainMap):
                     for child_sd in state_dict.maps:
                         child_sd.pop(p_key, None)
-                    if KWR_DEBUG:
-                        print(f"child_sd.pop: {p_key}")
+                        if KWR_DEBUG:
+                            print(f"child_sd.pop: {p_key}")
                 else:
                     state_dict.pop(p_key)
                     if KWR_DEBUG:
