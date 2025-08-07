@@ -649,19 +649,6 @@ serialization.register_adapter_step(
 
 import os  # noqa: E402
 KWR_DEBUG = len(os.getenv("KWR_DEBUG", "")) > 0
-uniq_mapping: Dict[str, List[str]] = {}
-
-import atexit  # noqa: E402
-def qwen_cleanup() -> None:
-    """
-    This function will be called automatically when the script exits.
-    """
-    size = len(uniq_mapping)
-    print(f"qwen.py:qwen_cleanup() >>> uniq_mapping:/{size}")
-    for key in sorted(uniq_mapping.keys()):
-        size = len(uniq_mapping[key])
-        print(f"{key:<60} : {uniq_mapping[key]}/{size}")
-atexit.register(qwen_cleanup)
 
 def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]:
     """_summary_
@@ -695,11 +682,6 @@ def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]
         for pattern, repl in replacements:
             new_name = re.sub(pattern, repl, new_name)
         new_sd[new_name] = param
-        if KWR_DEBUG:
-            if name in uniq_mapping:
-                uniq_mapping[name].append(new_name) 
-            else:
-                uniq_mapping[name] = [new_name]
     return new_sd
 
 
