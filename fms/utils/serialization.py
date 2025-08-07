@@ -517,6 +517,7 @@ def load_state_dict_into_model(
                 dtype=dtype,
             )
             
+            print(f"architecture='{architecture}'")
             if architecture != "qwen":
                 unused_keys.update(unused_keys_partial)
             else:
