@@ -436,19 +436,10 @@ def _find_key_neighbors(key: str, sd_keys: Set[str]):
                 prefix_neighbors.add(key_in_sd)
     return list(prefix_neighbors)
 
-import atexit  # noqa: E402
+
 KWR_DEBUG = len(os.getenv("KWR_DEBUG", "")) > 0
-fms_partial: Dict[str, int] = {}
-if KWR_DEBUG:
-    def fms_partial_cleanup() -> None:
-        """
-        This function will be called automatically when the script exits.
-        """
-        size = len(fms_partial)  # noqa: F821
-        print(f"serialization.py:fms_partial_cleanup() >>> fms_partial:/{size}")
-        for key in sorted(fms_partial.keys()):  # noqa: F821
-            print(f"{key:<60} : {fms_partial[key]}")  # noqa: F821
-    atexit.register(fms_partial_cleanup)
+uni_keys: Dict[str, int] = {}
+
 
 def load_state_dict_into_model(
     model: torch.nn.Module,
@@ -525,7 +516,14 @@ def load_state_dict_into_model(
                 needs_tp_sharding=needs_tp_sharding,
                 dtype=dtype,
             )
-            unused_keys.update(unused_keys_partial)
+            
+            if architecture != "qwen":
+                unused_keys.update(unused_keys_partial)
+            else:
+                msg ="skipping unused_keys,update() because "
+                msg += f"architecture is '{architecture}'"
+                print(msg)
+
             if KWR_DEBUG:
                 msg = f"len(unused_keys_partial)={len(unused_keys_partial)} "
                 msg += f"len(unused_keys)={len(unused_keys)}"
@@ -536,6 +534,7 @@ def load_state_dict_into_model(
                 print(f"  unused_keys: {len(unused_keys)}")
                 for key in unused_keys:
                     print(f"    {key}")
+
             # Be aggressive in removing weights to save as much memory as possible
             for p_key in partial_sd.keys():
                 if isinstance(state_dict, ChainMap):
