@@ -439,7 +439,6 @@ def _find_key_neighbors(key: str, sd_keys: Set[str]):
 import atexit  # noqa: E402
 KWR_DEBUG = len(os.getenv("KWR_DEBUG", "")) > 0
 fms_partial: Dict[str, int] = {}
-pkeys: Dict[str, int] = {}
 if KWR_DEBUG:
     def fms_partial_cleanup() -> None:
         """
@@ -450,9 +449,6 @@ if KWR_DEBUG:
         for key in sorted(fms_partial.keys()):  # noqa: F821
             print(f"{key:<60} : {fms_partial[key]}")  # noqa: F821
         size = len(pkeys)  # noqa: F821
-        print(f"serialization.py:fms_partial_cleanup() >>> pkeys:/{size}")
-        for key in sorted(pkeys.keys()):
-            print(f"{key:<60} : {pkeys[key]}")  # noqa: F821
     atexit.register(fms_partial_cleanup)
 
 def load_state_dict_into_model(
@@ -536,18 +532,12 @@ def load_state_dict_into_model(
                 if isinstance(state_dict, ChainMap):
                     for child_sd in state_dict.maps:
                         child_sd.pop(p_key, None)
+                    if KWR_DEBUG:
+                        print(f"child_sd.pop: {p_key}")
                 else:
                     state_dict.pop(p_key)
                     if KWR_DEBUG:
-                        if p_key in pkeys:
-                            pkeys[p_key] +=1
-                        else:
-                            pkeys[p_key] = 1
-            if KWR_DEBUG:
-                    if key in fms_partial:  # noqa: F821
-                        fms_partial[key] += 1  # noqa: F821
-                    else:
-                        fms_partial[key] = 1  # noqa: F821
+                        print(f"state_dict.pop {p_key}")
 
             del partial_sd
             del fms_partial_sd
@@ -556,10 +546,6 @@ def load_state_dict_into_model(
         print(f"uniq_keys: {len(uniq_keys)}")
         for key in sorted(uniq_keys.keys()):
             print(f"{key:<45} : {uniq_keys[key]}")
-        print(f"pkeys: {len(pkeys)}")
-        for key in sorted(pkeys):
-            print(key)
-
 
     if unused_keys and rank == 0:
         # TODO: start using logger?
