@@ -553,10 +553,10 @@ def load_state_dict_into_model(
             del fms_partial_sd
 
     if KWR_DEBUG:
-        print("uniq_keys:")
+        print(f"uniq_keys: {len(uniq_keys)}")
         for key in sorted(uniq_keys.keys()):
             print(f"{key:<45} : {uniq_keys[key]}")
-        print("pkeys:")
+        print(f"pkeys: {len(pkeys)}")
         for key in sorted(pkeys):
             print(key)
 
