@@ -5,7 +5,7 @@ from collections import ChainMap
 from collections.abc import Iterable
 from functools import reduce
 from pathlib import Path
-from typing import Any, Dict, Callable, Mapping, MutableMapping, Optional, Set, Union
+from typing import Any, Callable, Mapping, MutableMapping, Optional, Set, Union
 
 import torch
 
@@ -491,7 +491,6 @@ def load_state_dict_into_model(
     unused_keys = set()
     sd_keys = set(state_dict.keys())
 
-    uniq_keys: Dict[str, int] = {}  # KWR_DEBUG artifact
     with torch.no_grad():
         for key in sd_keys:
             if key in used_keys:
@@ -550,11 +549,6 @@ def load_state_dict_into_model(
 
             del partial_sd
             del fms_partial_sd
-
-    if KWR_DEBUG:
-        print(f"uniq_keys: {len(uniq_keys)}")
-        for key in sorted(uniq_keys.keys()):
-            print(f"{key:<45} : {uniq_keys[key]}")
 
     if unused_keys and rank == 0:
         # TODO: start using logger?
