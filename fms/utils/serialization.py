@@ -438,8 +438,7 @@ def _find_key_neighbors(key: str, sd_keys: Set[str]):
 
 
 KWR_DEBUG = len(os.getenv("KWR_DEBUG", "")) > 0
-uni_keys: Dict[str, int] = {}
-
+qwen_msg: bool = False
 
 def load_state_dict_into_model(
     model: torch.nn.Module,
@@ -492,7 +491,7 @@ def load_state_dict_into_model(
     unused_keys = set()
     sd_keys = set(state_dict.keys())
 
-    uniq_keys: Dict[str, int] = {}
+    uniq_keys: Dict[str, int] = {}  # KWR_DEBUG artifact
     with torch.no_grad():
         for key in sd_keys:
             if key in used_keys:
@@ -517,13 +516,13 @@ def load_state_dict_into_model(
                 dtype=dtype,
             )
             
-            print(f"architecture='{architecture}'")
             if architecture != "qwen3":
                 unused_keys.update(unused_keys_partial)
-            else:
+            elif qwen_msg is False:  # type: ignore # noqa: F823
                 msg ="skipping unused_keys,update() because "
                 msg += f"architecture is '{architecture}'"
                 print(msg)
+                qwen_msg = True  # noqa: F841
 
             if KWR_DEBUG:
                 msg = f"len(unused_keys_partial)={len(unused_keys_partial)} "
