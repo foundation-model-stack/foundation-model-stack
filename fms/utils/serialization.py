@@ -519,7 +519,7 @@ def load_state_dict_into_model(
             if architecture != "qwen3":
                 unused_keys.update(unused_keys_partial)
             elif qwen3_msg is False:  # type: ignore # noqa: F823
-                msg ="skipping unused_keys,update() because "
+                msg ="skipping all calls to unused_keys,update() in 'serialization.py:load_state_dict_into_model()' because "
                 msg += f"architecture is '{architecture}'"
                 print(msg)
                 qwen3_msg = True  # noqa: F841
