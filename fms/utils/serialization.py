@@ -530,6 +530,8 @@ def load_state_dict_into_model(
                 msg = f"len(unused_keys_partial)={len(unused_keys_partial)} "
                 msg += f"len(unused_keys)={len(unused_keys)}"
                 print(msg)
+                for key in sorted(unused_keys.keys()):
+                    print(f"  {key}")
             # Be aggressive in removing weights to save as much memory as possible
             for p_key in partial_sd.keys():
                 if isinstance(state_dict, ChainMap):
