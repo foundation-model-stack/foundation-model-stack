@@ -544,10 +544,6 @@ def load_state_dict_into_model(
                         else:
                             pkeys[p_key] = 1
             if KWR_DEBUG:
-                # for key in sorted(partial_sd.keys()):
-                #     print(f"partial_sd {key}")
-                
-                for key in sorted(fms_partial_sd.keys()):
                     if key in fms_partial:  # noqa: F821
                         fms_partial[key] += 1  # noqa: F821
                     else:
@@ -557,8 +553,13 @@ def load_state_dict_into_model(
             del fms_partial_sd
 
     if KWR_DEBUG:
+        print("uniq_keys:")
         for key in sorted(uniq_keys.keys()):
             print(f"{key:<45} : {uniq_keys[key]}")
+        print("pkeys:")
+        for key in sorted(pkeys):
+            print(key)
+
 
     if unused_keys and rank == 0:
         # TODO: start using logger?
