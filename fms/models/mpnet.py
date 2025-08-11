@@ -234,10 +234,11 @@ class MpnetHeadless(nn.Module):
         input_shape = inputs_embeds.size()[:-1]
 
         seq_length = input_shape[1]
-        position_ids = torch.arange(
-            self.config.pad_id + 1, seq_length + self.config.pad_id + 1, 
-            dtype=torch.long, device=x_in.device
-            ).unsqueeze(0).expand(input_shape)
+        if position_ids is None:
+            position_ids = torch.arange(
+                self.config.pad_id + 1, seq_length + self.config.pad_id + 1, 
+                dtype=torch.long, device=x_in.device
+                ).unsqueeze(0).expand(input_shape)
 
 
         position_embeddings = self.position_embeddings(position_ids)
