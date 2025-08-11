@@ -439,6 +439,8 @@ def _find_key_neighbors(key: str, sd_keys: Set[str]):
 
 KWR_DEBUG = len(os.getenv("KWR_DEBUG", "")) > 0
 qwen3_msg = False
+KWR_SKIP = len(os.getenv("KWR_SKIP", "")) > 0
+print(f"KWR_DBUG={KWR_DEBUG} KWR_SKIP={KWR_SKIP}")
 
 def load_state_dict_into_model(
     model: torch.nn.Module,
@@ -514,12 +516,13 @@ def load_state_dict_into_model(
                 needs_tp_sharding=needs_tp_sharding,
                 dtype=dtype,
             )
-            
+
             global qwen3_msg
             if architecture != "qwen3":
                 unused_keys.update(unused_keys_partial)
-            elif qwen3_msg is False:  # type: ignore # noqa: F823
-                msg ="skipping all calls to unused_keys,update() in 'serialization.py:load_state_dict_into_model()' because "
+            elif KWR_SKIP and qwen3_msg is False:
+                # Only print skipping unused_keys.update() once if KWR_SKIP is set
+                msg ="skipping all calls to unused_keys.update() in 'serialization.py:load_state_dict_into_model()' because "
                 msg += f"architecture is '{architecture}'"
                 print(msg)
                 qwen3_msg = True  # noqa: F841
