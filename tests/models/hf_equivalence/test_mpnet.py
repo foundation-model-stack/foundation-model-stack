@@ -24,7 +24,7 @@ def _get_inputs():
 
 def _get_hf_model_output(model_path, inputs):
     model = AutoModel.from_pretrained(model_path).to(device)
-
+    model.eval()
     with torch.no_grad():
         output = model(inputs)
     return output
@@ -35,6 +35,7 @@ def _get_fms_model_output(model_path, inputs):
             architecture="hf_pretrained",
             variant=model_path,
     ) 
+    model.eval()
     with torch.no_grad():
         output = model(inputs)
 
@@ -43,17 +44,13 @@ def _get_fms_model_output(model_path, inputs):
 
 @pytest.mark.slow
 def test_mpnet_v2_equivalence():
-    # for now, this test won't be run, but it has been verified
-    # set model_path to the actual model checkpoint
     model_path = "sentence-transformers/all-mpnet-base-v2"
     inputs = _get_inputs()
 
     hf_model_output = _get_hf_model_output(model_path, inputs)
     fms_model_output = _get_fms_model_output(model_path, inputs)
     torch.testing.assert_close(fms_model_output[0], 
-                               hf_model_output.last_hidden_state[0], 
-                               atol=0.77, 
-                               rtol=1e-6)
+                               hf_model_output.last_hidden_state[0])
 
 
 if __name__ == "__main__":

@@ -48,7 +48,7 @@ class MpnetConfig(ModelConfig):
     intermediate_size: int = 3072
     activation_fn: str = "gelu"
     hidden_dropout_prob: float = 0.1
-    attention_probs_dropout_prob: float = 0.1
+    p_dropout: float = 0.1
     max_expected_seq_len: int = 512
     initializer_range: float = 0.02
     multiquery_attn: bool = False
@@ -67,15 +67,18 @@ class MpnetBlock(nn.Module):
         super().__init__()
         self.config = config
         kvheads = self.config.nheads
+        attention_head_size = int(self.config.emb_dim / self.config.nheads)
+        scale_factor = 1 / math.sqrt(attention_head_size)
         self.attn = MultiHeadAttention(
             self.config.emb_dim,
             self.config.emb_dim // self.config.nheads,
             self.config.emb_dim // self.config.nheads,
             self.config.nheads,
             kvheads,
-            p_dropout=self.config.hidden_dropout_prob,
+            p_dropout=self.config.p_dropout,
             use_bias=True,
             fused=self.config.fused_weights,
+            scale_factor=scale_factor,
             linear_config=self.config.linear_config,
         )
         self.ln = nn.LayerNorm(self.config.emb_dim, self.config.layer_norm_eps)
@@ -90,17 +93,19 @@ class MpnetBlock(nn.Module):
         self.ff_ln = nn.LayerNorm(
             self.config.emb_dim, self.config.layer_norm_eps
         )
-        if self.config.hidden_dropout_prob != 0:
-            self.dropout = nn.Dropout(self.config.hidden_dropout_prob)
+        if self.config.p_dropout != 0:
+            self.dropout = nn.Dropout(self.config.p_dropout)
 
     def forward(
         self,
         x: torch.Tensor,
+        position_ids=None,
         **attn_kwargs: Unpack[AttentionKwargs],
     ):
         residual = x
         x = self.attn(
             q=x,
+            position_ids=position_ids,
             **attn_kwargs,
         )
         x = x + residual
@@ -207,18 +212,16 @@ class MpnetHeadless(nn.Module):
         return values
 
     def reset_parameters(self):
-        for layer in ["embedding", "position_embeddings"]:
+        for layer in ["word_embedding", "position_embeddings"]:
             nn.init.normal_(
                 getattr(self, layer).weight,
                 mean=0.0,
-                std=self.config.emb_dim**-0.5,
+                std=self.config.initializer_range,
             )
         for layer in self.layers:
             for sublayer in ["ln", "ff_ln", "attn", "ff_sub_layer"]:
                 getattr(layer, sublayer).reset_parameters()
         self.enc_norm.reset_parameters()
-    def post_init(self):
-        device = self.position_embeddings.weight.device
 
     def forward(
         self,
@@ -241,6 +244,7 @@ class MpnetHeadless(nn.Module):
 
         embeddings = inputs_embeds + position_embeddings
         embeddings = self.enc_norm(embeddings)
+        embeddings = self.dropout(embeddings)
         position_bias = self.compute_position_bias(embeddings)
         # injecting position_bias as part of sdpa attn_mask
         attn_mask = kwargs.get("mask") or None
@@ -257,7 +261,7 @@ class MpnetHeadless(nn.Module):
 
         x = embeddings
         for layer in self.layers:
-            x = layer(x, **kwargs)
+            x = layer(x, position_ids=position_ids, **kwargs)
         return x
 
 
@@ -289,8 +293,6 @@ class Mpnet(nn.Module):
     def reset_parameters(self):
         self.base_model.reset_parameters()
 
-    def post_init(self):
-        self.base_model.post_init()
 
     def forward(
         self,
@@ -331,7 +333,7 @@ _v2_config = MpnetConfig(
     intermediate_size=3072,
     activation_fn="gelu",
     hidden_dropout_prob=0.1,
-    attention_probs_dropout_prob=0.1,
+    p_dropout=0.1,
     max_expected_seq_len=512,
     initializer_range=0.02,
     layer_norm_eps=1e-12,

@@ -258,7 +258,7 @@ def _map_model_config(architecture, config):
     elif architecture == "MPNetForMaskedLM":
         inner_dim = config.intermediate_size
         architecture = "mpnet"
-        config_params["attention_probs_dropout_prob"] = config.attention_probs_dropout_prob
+        config_params["p_dropout"] = config.attention_probs_dropout_prob
         config_params["hidden_dropout_prob"] = config.hidden_dropout_prob
         config_params["layer_norm_eps"] = config.layer_norm_eps
         config_params["bos_token_id"] = config.bos_token_id 
