@@ -526,6 +526,9 @@ def load_state_dict_into_model(
                 msg += f"architecture is '{architecture}'"
                 print(msg)
                 qwen3_msg = True  # noqa: F841
+            elif KWR_SKIP is False:
+                # Still want to do even if arch  is qwen3
+                unused_keys.update(unused_keys_partial)
 
             if KWR_DEBUG:
                 msg = f"len(unused_keys_partial)={len(unused_keys_partial)} "

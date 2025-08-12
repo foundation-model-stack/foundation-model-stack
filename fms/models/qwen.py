@@ -11,7 +11,7 @@ import logging
 import math
 import re
 from dataclasses import dataclass
-from typing import Any, Dict, List, Mapping, Optional, Tuple
+from typing import Any, Mapping, Optional, Tuple
 
 import torch
 from torch import nn
@@ -176,7 +176,7 @@ class QwenBlock(nn.Module):
             self.config.emb_dim,
             hidden_grow_factor=self.config.hidden_grow_factor,
             multiple_of=self.config.multiple_of,
-            activation_fn=str_to_activation(self.config.activation_fn),
+            activation_fn=str_to_activation(self.config.activation_fn), # type: ignore
             p_dropout=self.config.p_dropout,
             use_bias=False,
             fused=self.config.fused_weights,
@@ -367,8 +367,8 @@ class QwenHeadless(nn.Module):
         # fully initalized on the correct device
 
         self._clean_up_rot_emb_cache(
-            self.rot_emb.cached_freqs,
-            self.rot_emb.max_seq_len_cached,
+            self.rot_emb.cached_freqs, # type: ignore
+            self.rot_emb.max_seq_len_cached, # type: ignore
         )
 
         # init RoPE on the right device(s)
@@ -413,7 +413,7 @@ class QwenHeadless(nn.Module):
 
         # if we are using the cache, the key length needs to be extended with the past keys length
         if use_cache and past_key_value_states[0] is not None:
-            klen += past_key_value_states[0][0].size(-2)
+            klen += past_key_value_states[0][0].size(-2) # type: ignore
 
         # if mask is none, we need to specify causal mask
         if mask is None:

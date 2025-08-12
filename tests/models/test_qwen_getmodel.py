@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
 
 """
-Test case for Qwen3 models support.
+Test fms get_model() function and check no weights are not loaded
+    export KWR_SKIP=1 temporarily to get this test to succeed.
 """
+
 
 # pylint: disable=protected-access,unused-argument,abstract-method
 # pylint: disable=missing-module-docstring,disable=missing-class-docstring
@@ -11,19 +13,21 @@ Test case for Qwen3 models support.
 # pylint: disable=unknown-option-value,arguments-differ
 # type: ignore
 
+
 import torch
 from fms.models import get_model
 
 
 BEGIN_WARNING_MSG = "[WARNING] Keys from checkpoint (adapted to FMS) not copied into model: "
-MODEL_PATH="/home/kurtis/tmp/models/qwen3-1.7B-old"
+MODEL_PATH="/home/kurtis/tmp/models/qwen3-1.7B"
 
 class Test_Qwen3:
     """_summary_
     """
     def test_get_model(self, capsys):
         _ = get_model(
-        architecture="qwen3/1.7B",
+        architecture="qwen3",
+        variant="1.7b",
         model_path=MODEL_PATH,
         device_type="cpu",
         # data_type=torch.float16,
