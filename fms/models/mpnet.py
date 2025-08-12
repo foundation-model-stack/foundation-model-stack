@@ -229,6 +229,7 @@ class MpnetHeadless(nn.Module):
         position_ids,
         **kwargs,
     ):
+        kwargs["attn_name"] = kwargs.get("attn_name", "sdpa_bidirectional")
         inputs_embeds = self.word_embedding(x_in)
 
         input_shape = inputs_embeds.size()[:-1]
@@ -246,10 +247,15 @@ class MpnetHeadless(nn.Module):
         embeddings = inputs_embeds + position_embeddings
         embeddings = self.enc_norm(embeddings)
         embeddings = self.dropout(embeddings)
+        
         position_bias = self.compute_position_bias(embeddings)
-        # injecting position_bias as part of sdpa attn_mask
-        attn_mask = kwargs.get("mask") or None
+        # injecting position_bias as part of sdpa attn_mask 
+        #FIXME for other attentions
+        attn_mask = kwargs.get("mask")
         if attn_mask is not None:
+            while len(attn_mask.size()) != 4: 
+                # expects bs (x nheads) x q_len x kv_len
+                attn_mask = attn_mask.unsqueeze(1)
             if attn_mask.dtype == torch.bool:
                 position_bias.masked_fill_(attn_mask.logical_not(), float(
                 "-inf"))
@@ -312,7 +318,7 @@ class Mpnet(nn.Module):
             **attn_kwargs,
         )
         first_token_tensor = output[:, 0]
-        sequence_output = output[0]
+        sequence_output = output
         pooled_output = self.den(first_token_tensor)
         pooled_output = self.activation(pooled_output)
         return (sequence_output, pooled_output)

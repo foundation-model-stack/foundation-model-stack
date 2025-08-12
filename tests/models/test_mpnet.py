@@ -64,7 +64,8 @@ class TestMpnet(
 
     @staticmethod
     def _get_signature_logits_getter_fn(f_out) -> torch.Tensor:
-        return torch.cat([f_out[0][:1], f_out[1]], dim=-1)
+        #return torch.cat([f_out[0][:1], f_out[1]], dim=-1)
+        return torch.cat([f_out[0][0][:1], f_out[1]], dim=-1)
 
     def test_config_passed_to_model_and_updated(self, model, config):
         """test model constructor appropriately merges any passed 
@@ -114,7 +115,8 @@ class TestMpnet(
 
     def test_mpnet_input_too_long(self):
         model = get_model("mpnet", "v2", pretrained=False)
-        long_input = torch.randint(0, 100, (1, model.config.max_expected_seq_len+10))
+        long_input = torch.randint(0, 100, 
+                     (1, model.config.max_expected_seq_len+10))
         with pytest.raises(ValueError):
             model(long_input)
 
@@ -157,7 +159,7 @@ class TestMpnetGPTQ(
 
     @staticmethod
     def _get_signature_logits_getter_fn(f_out) -> torch.Tensor:
-        return torch.cat([f_out[0][:1], f_out[1]], dim=-1)
+        return torch.cat([f_out[0][0][:1], f_out[1]], dim=-1)
 
     def test_model_unfused(self, model, signature):
         pytest.skip("weight unfuse is not implemented for GPTQ")

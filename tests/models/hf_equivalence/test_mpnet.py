@@ -50,7 +50,7 @@ def test_mpnet_v2_equivalence():
     hf_model_output = _get_hf_model_output(model_path, inputs)
     fms_model_output = _get_fms_model_output(model_path, inputs)
     torch.testing.assert_close(fms_model_output[0], 
-                               hf_model_output.last_hidden_state[0])
+                               hf_model_output.last_hidden_state)
 
 
 if __name__ == "__main__":
