@@ -105,7 +105,6 @@ def test_mpnet_v2_equivalence():
                       inputs_hf, position_ids_hf)
     fms_model_output = _get_fms_model_output_multi_input(model_path,
                       inputs_fms, **kwargs_fms)
-    print(fms_model_output[0].shape, hf_model_output.last_hidden_state.shape)
     torch.testing.assert_close(fms_model_output[0][1,:-2],
                                hf_model_output.last_hidden_state[1,:-2])
 

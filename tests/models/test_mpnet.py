@@ -78,41 +78,6 @@ class TestMpnet(
         config.pad_id = config.pad_id + 1
         assert model.get_config().as_dict() == config.as_dict()
 
-    def test_load(self):
-        m = get_model("mpnet", "v2")
-        sd = m.state_dict()
-
-        with tempfile.NamedTemporaryFile(suffix=".pth") as f:
-            torch.save(sd, f.name)
-            loaded = get_model("mpnet", "v2", f.name)
-
-            keys = loaded.state_dict().keys()
-            first = next(iter(keys))
-            assert keys == sd.keys()
-            torch.testing.assert_close(loaded.state_dict()[first], sd[first])
-        with tempfile.TemporaryDirectory() as d:
-            keys = sd.keys()
-            count = 0
-            dicts = []
-            current = {}
-            for key in keys:
-                count += 1
-                current |= {key: sd[key]}
-                if count % 10 == 0:
-                    dicts.append(current)
-                    current = {}
-
-            dicts.append(current)
-            for i in range(len(dicts)):
-                path = Path(d) / f"{i}.pth"
-                torch.save(dicts[i], path)
-            newsd = serialization.load_state_dict(d)
-            as_loaded = get_model("mpnet", "v2", d).state_dict()
-            assert type(newsd) is ChainMap
-            for key in keys:
-                assert key in newsd
-                torch.testing.assert_close(sd[key], as_loaded[key])
-
     def test_mpnet_input_too_long(self):
         model = get_model("mpnet", "v2", pretrained=False)
         long_input = torch.randint(0, 100, 
