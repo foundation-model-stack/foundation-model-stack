@@ -500,6 +500,7 @@ from fms.models import (  # noqa: E402
     mixtral,
     roberta,
     siglip_vision,
+    mpnet,
 )
 
 
@@ -513,4 +514,5 @@ __all__ = [
     "mixtral",
     "roberta",
     "siglip_vision",
+    "mpnet",
 ]

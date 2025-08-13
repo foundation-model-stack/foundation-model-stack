@@ -16,7 +16,11 @@ from fms.models import get_model, list_variants
 
 def register_fms_models():
     """Register all FMS models with huggingface AutoModels"""
-    from fms.models.hf import _causal_lm_models, _headless_models, _masked_lm_models
+    from fms.models.hf import (
+        _causal_lm_models,
+        _headless_models,
+        _masked_lm_models,
+    )
 
     for model_cls in _headless_models:
         # register config
@@ -101,7 +105,9 @@ def mask_2d_to_3d_bidirectional(
     )
     needs_correction = needs_correction_1 | needs_correction_2
     mask_decoder = torch.where(
-        needs_correction.unsqueeze(1), mask_encoder[:, 0].unsqueeze(1), mask_decoder
+        needs_correction.unsqueeze(1),
+        mask_encoder[:, 0].unsqueeze(1),
+        mask_decoder,
     )
 
     return mask_encoder.unsqueeze(1) == mask_decoder.unsqueeze(2)
@@ -255,7 +261,21 @@ def _map_model_config(architecture, config):
             "GraniteForCausalLM", config.text_config
         )
         config_params["text_config"] = GraniteConfig(**text_config_params)
-
+    elif architecture == "MPNetForMaskedLM":
+        inner_dim = config.intermediate_size
+        architecture = "mpnet"
+        config_params["p_dropout"] = config.attention_probs_dropout_prob
+        config_params["hidden_dropout_prob"] = config.hidden_dropout_prob
+        config_params["layer_norm_eps"] = config.layer_norm_eps
+        config_params["bos_token_id"] = config.bos_token_id
+        config_params["eos_token_id"] = config.eos_token_id
+        config_params["activation_fn"] = config.hidden_act
+        config_params["emb_dim"] = config.hidden_size
+        config_params["max_expected_seq_len"] = config.max_position_embeddings
+        config_params["pad_id"] = config.pad_token_id
+        config_params["relative_attention_num_buckets"] = (
+            config.relative_attention_num_buckets
+        )
     else:
         raise ValueError(
             "FMS model implementations currently only support LlamaForCausalLM, GPTBigCodeForCausalLM, MixtralForCausalLM, RobertaForMaskedLM, GraniteForCausalLM, SiglipModel and LlavaNextForConditionalGeneration"
@@ -282,7 +302,11 @@ def _infer_model_configuration(
 
         # in the case we don't want to download the weights, but just create the model from scratch, we will only allow config.json
         if download_weights:
-            allow_patterns = ["*config.json", "tokenizer*", "special_tokens_map.json"]
+            allow_patterns = [
+                "*config.json",
+                "tokenizer*",
+                "special_tokens_map.json",
+            ]
 
             # mixtral saves safetensors expert sharded, so we will need their pt checkpoints
             # ideally this should be fixed in the adapter in the future

@@ -1,6 +1,7 @@
 import logging
 import time
-from typing import Any, Callable, Iterable, List, MutableMapping, Optional, Tuple, Union
+from typing import Any, Callable, List, Optional, Tuple, Union
+from collections.abc import Iterable, MutableMapping
 
 from fms.modules.attention import get_attention_type
 import torch
@@ -17,6 +18,7 @@ def pad_input_ids(
     min_pad_length: int = 0,
     is_causal_mask=True,
     padding_side="left",
+    position_ids_offset=0,
 ) -> Tuple[torch.Tensor, MutableMapping[str, Any]]:
     """
     Convert a list of Tensors to a rectangular tensor. Return extra padding kwargs for the position_ids and mask, since
@@ -29,6 +31,9 @@ def pad_input_ids(
     min_pad_length: int
         pad to a min length provided. If the min_pad_length is less than the largest input_ids in the input_ids_list,
         padding will be determined based on the largest length input_ids.
+    position_ids_offset: int
+        some models are trained with position_ids that do not start at 0 but at pad_id + 1. The default parameter
+        here will work for most models, but for example MPNet requires passing a real pad_id.
 
     Returns
     -------
@@ -80,6 +85,7 @@ def pad_input_ids(
     # FIXME: this method should be per attn type (for now default it)
 
     position_ids = torch.stack(position_ids_list)
+    position_ids += position_ids_offset
     padding_kwargs["position_ids"] = position_ids
 
     return input_ids, padding_kwargs
