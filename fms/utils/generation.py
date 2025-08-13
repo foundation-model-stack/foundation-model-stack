@@ -18,7 +18,7 @@ def pad_input_ids(
     min_pad_length: int = 0,
     is_causal_mask=True,
     padding_side="left",
-    position_ids_offset=-1,
+    position_ids_offset=0,
 ) -> Tuple[torch.Tensor, MutableMapping[str, Any]]:
     """
     Convert a list of Tensors to a rectangular tensor. Return extra padding kwargs for the position_ids and mask, since
@@ -52,9 +52,7 @@ def pad_input_ids(
         pads = torch.zeros(
             max_len - seq_len, dtype=torch.long, device=input_ids_i.device
         )
-        non_pads = torch.ones(
-            seq_len, dtype=torch.bool, device=input_ids_i.device
-        )
+        non_pads = torch.ones(seq_len, dtype=torch.bool, device=input_ids_i.device)
 
         # Setting this to 0, however if 0 is the eos, we will end up truncating the output if using truncate_after_eos
         # once this workflow works for nested tensor, this can probably be removed
@@ -101,9 +99,7 @@ def __update_padding_kwargs(
     attn_op = get_attention_type(**model_specific_kwargs)
 
     if "update_attn_kwargs" in attn_op:
-        model_specific_kwargs = attn_op["update_attn_kwargs"](
-            **model_specific_kwargs
-        )
+        model_specific_kwargs = attn_op["update_attn_kwargs"](**model_specific_kwargs)
 
     # extend the position_ids
     position_ids = model_specific_kwargs.get("position_ids", None)
@@ -135,10 +131,7 @@ def _make_cache_contiguous(
                 ]
             )
             and any(
-                [
-                    not cache_element.is_contiguous()
-                    for cache_element in layer_cache
-                ]
+                [not cache_element.is_contiguous() for cache_element in layer_cache]
             )
         ):
             n_kv_s.append(
