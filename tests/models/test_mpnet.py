@@ -51,7 +51,9 @@ class TestMpnet(
 
     # x is the main parameter for this model which is the input tensor
     _get_signature_params = ["x"]
-    _get_signature_input_ids = torch.arange(1, 16, dtype=torch.int64).unsqueeze(0)
+    _get_signature_input_ids = torch.arange(1, 16, dtype=torch.int64).unsqueeze(
+        0
+    )
 
     @staticmethod
     def _get_signature_logits_getter_fn(f_out) -> torch.Tensor:
@@ -71,7 +73,9 @@ class TestMpnet(
 
     def test_mpnet_input_too_long(self):
         model = get_model("mpnet", "v2", pretrained=False)
-        long_input = torch.randint(0, 100, (1, model.config.max_expected_seq_len + 10))
+        long_input = torch.randint(
+            0, 100, (1, model.config.max_expected_seq_len + 10)
+        )
         with pytest.raises(ValueError):
             model(long_input)
 
