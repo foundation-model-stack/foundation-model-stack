@@ -91,9 +91,7 @@ class MpnetBlock(nn.Module):
             use_bias=True,
             linear_config=self.config.linear_config,
         )
-        self.ff_ln = nn.LayerNorm(
-            self.config.emb_dim, self.config.layer_norm_eps
-        )
+        self.ff_ln = nn.LayerNorm(self.config.emb_dim, self.config.layer_norm_eps)
         if self.config.p_dropout != 0:
             self.dropout = nn.Dropout(self.config.p_dropout)
 
@@ -160,19 +158,15 @@ class MpnetHeadless(nn.Module):
             block = self.distributed_strategy.distribute_layer(block, i)
             layers.append(block)
         self.layers = nn.ModuleList(layers)
-        self.relative_attention_bias = (
-            self.distributed_strategy.distribute_module(
-                nn.Embedding(
-                    self.config.relative_attention_num_buckets,
-                    self.config.nheads,
-                )
+        self.relative_attention_bias = self.distributed_strategy.distribute_module(
+            nn.Embedding(
+                self.config.relative_attention_num_buckets,
+                self.config.nheads,
             )
         )
 
     @staticmethod
-    def relative_position_bucket(
-        relative_position, num_buckets=32, max_distance=128
-    ):
+    def relative_position_bucket(relative_position, num_buckets=32, max_distance=128):
         ret = 0
         n = -relative_position
 
@@ -204,12 +198,8 @@ class MpnetHeadless(nn.Module):
     def compute_position_bias(self, x, num_buckets=32):
         bsz, qlen, klen = x.size(0), x.size(1), x.size(1)
         device = x.device
-        context_position = torch.arange(qlen, dtype=torch.long, device=device)[
-            :, None
-        ]
-        memory_position = torch.arange(klen, dtype=torch.long, device=device)[
-            None, :
-        ]
+        context_position = torch.arange(qlen, dtype=torch.long, device=device)[:, None]
+        memory_position = torch.arange(klen, dtype=torch.long, device=device)[None, :]
 
         relative_position = memory_position - context_position
 
@@ -276,9 +266,7 @@ class MpnetHeadless(nn.Module):
                 # expects bs (x nheads) x q_len x kv_len
                 attn_mask = attn_mask.unsqueeze(1)
             if attn_mask.dtype == torch.bool:
-                position_bias.masked_fill_(
-                    attn_mask.logical_not(), float("-inf")
-                )
+                position_bias.masked_fill_(attn_mask.logical_not(), float("-inf"))
                 attn_mask = position_bias
             else:
                 attn_mask = attn_mask + position_bias
@@ -371,9 +359,7 @@ _v2_config = MpnetConfig(
     eos_token_id=2,
     fused_weights=True,
 )
-models.register_model(
-    _architecture_name, "v2", _mpnet_factory_factory(_v2_config)
-)
+models.register_model(_architecture_name, "v2", _mpnet_factory_factory(_v2_config))
 
 
 def _weight_fusion(
@@ -389,9 +375,7 @@ def _weight_fusion(
     return new_sd
 
 
-serialization.register_adapter_step(
-    _architecture_name, "weight_fusion", _weight_fusion
-)
+serialization.register_adapter_step(_architecture_name, "weight_fusion", _weight_fusion)
 
 
 def _hf_to_fms_names(hf_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]:
@@ -437,6 +421,4 @@ def _hf_to_fms_names(hf_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]:
 serialization.register_adapter_step(
     _architecture_name, "hf_to_fms_names", _hf_to_fms_names
 )
-serialization.register_adapter(
-    "mpnet", "hf", ["hf_to_fms_names", "weight_fusion"]
-)
+serialization.register_adapter("mpnet", "hf", ["hf_to_fms_names", "weight_fusion"])

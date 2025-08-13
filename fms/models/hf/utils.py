@@ -24,9 +24,7 @@ def register_fms_models():
 
     for model_cls in _headless_models:
         # register config
-        AutoConfig.register(
-            model_cls.config_class.model_type, model_cls.config_class
-        )
+        AutoConfig.register(model_cls.config_class.model_type, model_cls.config_class)
         # register base headless model
         AutoModel.register(model_cls.config_class, model_cls)
 
@@ -102,9 +100,9 @@ def mask_2d_to_3d_bidirectional(
     #   (1) encoder is all one type and decoder has multiple types, then we need a correction
     #   (2) both encoder and decoder are one type, but those types don't match
     needs_correction_1 = _is_one_type_enc & ~_is_one_type_dec
-    needs_correction_2 = (_is_one_type_enc & _is_one_type_dec) & mask_encoder[
-        :, 0
-    ].ne(mask_decoder[:, 0])
+    needs_correction_2 = (_is_one_type_enc & _is_one_type_dec) & mask_encoder[:, 0].ne(
+        mask_decoder[:, 0]
+    )
     needs_correction = needs_correction_1 | needs_correction_2
     mask_decoder = torch.where(
         needs_correction.unsqueeze(1),
@@ -258,9 +256,7 @@ def _map_model_config(architecture, config):
             config.vision_feature_select_strategy
         )
         _, vision_config_params = _map_model_config("SiglipModel", config)
-        config_params["vision_config"] = SiglipVisionConfig(
-            **vision_config_params
-        )
+        config_params["vision_config"] = SiglipVisionConfig(**vision_config_params)
         _, text_config_params = _map_model_config(
             "GraniteForCausalLM", config.text_config
         )
@@ -315,14 +311,14 @@ def _infer_model_configuration(
             # mixtral saves safetensors expert sharded, so we will need their pt checkpoints
             # ideally this should be fixed in the adapter in the future
             ignore_patterns = None
-            if isinstance(
-                model_id_or_path, str
-            ) and model_id_or_path.startswith("mistralai/Mixtral"):
+            if isinstance(model_id_or_path, str) and model_id_or_path.startswith(
+                "mistralai/Mixtral"
+            ):
                 ignore_patterns = ["*.safetensors"]
                 allow_patterns.append("*.pt")
-            elif isinstance(
-                model_id_or_path, str
-            ) and model_id_or_path.startswith("mistralai/Mistral"):
+            elif isinstance(model_id_or_path, str) and model_id_or_path.startswith(
+                "mistralai/Mistral"
+            ):
                 ignore_patterns = ["consolidated.safetensors"]
                 allow_patterns.append("*.safetensors*")
             else:

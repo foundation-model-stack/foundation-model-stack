@@ -16,9 +16,7 @@ torch.use_deterministic_algorithms(True)
 
 def _get_inputs():
     sentences = "This is an example sentence"
-    tokenizer = tokenizers.get_tokenizer(
-        "sentence-transformers/all-mpnet-base-v2"
-    )
+    tokenizer = tokenizers.get_tokenizer("sentence-transformers/all-mpnet-base-v2")
     encoded_input = tokenizer.tokenize(sentences)
     ids = tokenizer.convert_tokens_to_ids(encoded_input)
     ids = torch.tensor([ids], dtype=torch.long, device="cpu")
@@ -32,9 +30,7 @@ def _get_inputs_hf():
         "This is random sentence",
         "This is a mpnet test",
     ]
-    tokenizer = AutoTokenizer.from_pretrained(
-        "sentence-transformers/all-mpnet-base-v2"
-    )
+    tokenizer = AutoTokenizer.from_pretrained("sentence-transformers/all-mpnet-base-v2")
     encoded_input = tokenizer(sentences, return_tensors="pt", padding=True)
 
     input_ids, padding_kwargs = pad_input_ids(
@@ -54,9 +50,7 @@ def _get_inputs_fms():
         "This is random sentence",
         "This is a mpnet test",
     ]
-    tokenizer = AutoTokenizer.from_pretrained(
-        "sentence-transformers/all-mpnet-base-v2"
-    )
+    tokenizer = AutoTokenizer.from_pretrained("sentence-transformers/all-mpnet-base-v2")
     ids = []
     for s in sentences:
         ids.append(tokenizer.encode(s, return_tensors="pt").squeeze(0))
@@ -119,9 +113,7 @@ def test_mpnet_v2_equivalence():
 
     hf_model_output = _get_hf_model_output(model_path, inputs)
     fms_model_output = _get_fms_model_output(model_path, inputs)
-    torch.testing.assert_close(
-        fms_model_output[0], hf_model_output.last_hidden_state
-    )
+    torch.testing.assert_close(fms_model_output[0], hf_model_output.last_hidden_state)
 
     inputs_hf, position_ids_hf = _get_inputs_hf()
     inputs_fms, kwargs_fms = _get_inputs_fms()
