@@ -23,9 +23,7 @@ model_fms = get_model(
 
 def _get_inputs():
     sentences = "This is an example sentence"
-    tokenizer = tokenizers.get_tokenizer(
-        "sentence-transformers/all-mpnet-base-v2"
-    )
+    tokenizer = tokenizers.get_tokenizer("sentence-transformers/all-mpnet-base-v2")
     encoded_input = tokenizer.tokenize(sentences)
     ids = tokenizer.convert_tokens_to_ids(encoded_input)
     ids = torch.tensor([ids], dtype=torch.long, device="cpu")
@@ -39,9 +37,7 @@ def _get_inputs_hf():
         "This is random sentence",
         "This is a mpnet test",
     ]
-    tokenizer = AutoTokenizer.from_pretrained(
-        "sentence-transformers/all-mpnet-base-v2"
-    )
+    tokenizer = AutoTokenizer.from_pretrained("sentence-transformers/all-mpnet-base-v2")
     encoded_input = tokenizer(sentences, return_tensors="pt", padding=True)
 
     input_ids, padding_kwargs = pad_input_ids(
@@ -61,9 +57,7 @@ def _get_inputs_fms():
         "This is random sentence",
         "This is a mpnet test",
     ]
-    tokenizer = AutoTokenizer.from_pretrained(
-        "sentence-transformers/all-mpnet-base-v2"
-    )
+    tokenizer = AutoTokenizer.from_pretrained("sentence-transformers/all-mpnet-base-v2")
     ids = []
     for s in sentences:
         ids.append(tokenizer.encode(s, return_tensors="pt").squeeze(0))
@@ -118,18 +112,12 @@ def test_mpnet_v2_equivalence():
 
     hf_model_output = _get_hf_model_output(inputs)
     fms_model_output = _get_fms_model_output(inputs)
-    torch.testing.assert_close(
-        fms_model_output[0], hf_model_output.last_hidden_state
-    )
+    torch.testing.assert_close(fms_model_output[0], hf_model_output.last_hidden_state)
 
     inputs_hf, position_ids_hf = _get_inputs_hf()
     inputs_fms, kwargs_fms = _get_inputs_fms()
-    hf_model_output = _get_hf_model_output_multi_input(
-        inputs_hf, position_ids_hf
-    )
-    fms_model_output = _get_fms_model_output_multi_input(
-        inputs_fms, **kwargs_fms
-    )
+    hf_model_output = _get_hf_model_output_multi_input(inputs_hf, position_ids_hf)
+    fms_model_output = _get_fms_model_output_multi_input(inputs_fms, **kwargs_fms)
     torch.testing.assert_close(
         fms_model_output[0][1, :-2], hf_model_output.last_hidden_state[1, :-2]
     )
