@@ -16,11 +16,17 @@ from fms.models import get_model, list_variants
 
 def register_fms_models():
     """Register all FMS models with huggingface AutoModels"""
-    from fms.models.hf import _causal_lm_models, _headless_models, _masked_lm_models
+    from fms.models.hf import (
+        _causal_lm_models,
+        _headless_models,
+        _masked_lm_models,
+    )
 
     for model_cls in _headless_models:
         # register config
-        AutoConfig.register(model_cls.config_class.model_type, model_cls.config_class)
+        AutoConfig.register(
+            model_cls.config_class.model_type, model_cls.config_class
+        )
         # register base headless model
         AutoModel.register(model_cls.config_class, model_cls)
 
@@ -96,12 +102,14 @@ def mask_2d_to_3d_bidirectional(
     #   (1) encoder is all one type and decoder has multiple types, then we need a correction
     #   (2) both encoder and decoder are one type, but those types don't match
     needs_correction_1 = _is_one_type_enc & ~_is_one_type_dec
-    needs_correction_2 = (_is_one_type_enc & _is_one_type_dec) & mask_encoder[:, 0].ne(
-        mask_decoder[:, 0]
-    )
+    needs_correction_2 = (_is_one_type_enc & _is_one_type_dec) & mask_encoder[
+        :, 0
+    ].ne(mask_decoder[:, 0])
     needs_correction = needs_correction_1 | needs_correction_2
     mask_decoder = torch.where(
-        needs_correction.unsqueeze(1), mask_encoder[:, 0].unsqueeze(1), mask_decoder
+        needs_correction.unsqueeze(1),
+        mask_encoder[:, 0].unsqueeze(1),
+        mask_decoder,
     )
 
     return mask_encoder.unsqueeze(1) == mask_decoder.unsqueeze(2)
@@ -250,7 +258,9 @@ def _map_model_config(architecture, config):
             config.vision_feature_select_strategy
         )
         _, vision_config_params = _map_model_config("SiglipModel", config)
-        config_params["vision_config"] = SiglipVisionConfig(**vision_config_params)
+        config_params["vision_config"] = SiglipVisionConfig(
+            **vision_config_params
+        )
         _, text_config_params = _map_model_config(
             "GraniteForCausalLM", config.text_config
         )
@@ -261,13 +271,15 @@ def _map_model_config(architecture, config):
         config_params["p_dropout"] = config.attention_probs_dropout_prob
         config_params["hidden_dropout_prob"] = config.hidden_dropout_prob
         config_params["layer_norm_eps"] = config.layer_norm_eps
-        config_params["bos_token_id"] = config.bos_token_id 
-        config_params["eos_token_id"] = config.eos_token_id 
-        config_params["activation_fn"] = config.hidden_act 
+        config_params["bos_token_id"] = config.bos_token_id
+        config_params["eos_token_id"] = config.eos_token_id
+        config_params["activation_fn"] = config.hidden_act
         config_params["emb_dim"] = config.hidden_size
-        config_params["max_expected_seq_len"] = config.max_position_embeddings 
+        config_params["max_expected_seq_len"] = config.max_position_embeddings
         config_params["pad_id"] = config.pad_token_id
-        config_params["relative_attention_num_buckets"] = config.relative_attention_num_buckets
+        config_params["relative_attention_num_buckets"] = (
+            config.relative_attention_num_buckets
+        )
     else:
         raise ValueError(
             "FMS model implementations currently only support LlamaForCausalLM, GPTBigCodeForCausalLM, MixtralForCausalLM, RobertaForMaskedLM, GraniteForCausalLM, SiglipModel and LlavaNextForConditionalGeneration"
@@ -294,19 +306,23 @@ def _infer_model_configuration(
 
         # in the case we don't want to download the weights, but just create the model from scratch, we will only allow config.json
         if download_weights:
-            allow_patterns = ["*config.json", "tokenizer*", "special_tokens_map.json"]
+            allow_patterns = [
+                "*config.json",
+                "tokenizer*",
+                "special_tokens_map.json",
+            ]
 
             # mixtral saves safetensors expert sharded, so we will need their pt checkpoints
             # ideally this should be fixed in the adapter in the future
             ignore_patterns = None
-            if isinstance(model_id_or_path, str) and model_id_or_path.startswith(
-                "mistralai/Mixtral"
-            ):
+            if isinstance(
+                model_id_or_path, str
+            ) and model_id_or_path.startswith("mistralai/Mixtral"):
                 ignore_patterns = ["*.safetensors"]
                 allow_patterns.append("*.pt")
-            elif isinstance(model_id_or_path, str) and model_id_or_path.startswith(
-                "mistralai/Mistral"
-            ):
+            elif isinstance(
+                model_id_or_path, str
+            ) and model_id_or_path.startswith("mistralai/Mistral"):
                 ignore_patterns = ["consolidated.safetensors"]
                 allow_patterns.append("*.safetensors*")
             else:

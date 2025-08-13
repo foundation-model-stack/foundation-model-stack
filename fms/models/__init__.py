@@ -28,7 +28,9 @@ logger = logging.getLogger(__name__)
 __models: MutableMapping[str, MutableMapping[str, Callable[[], nn.Module]]] = {}
 
 
-def register_model(architecture: str, variant: str, factory: Callable[[], nn.Module]):
+def register_model(
+    architecture: str, variant: str, factory: Callable[[], nn.Module]
+):
     """
     Registers a model variant to be made available in the registration API.
     Args:
@@ -86,7 +88,9 @@ def __maybe_infer_model_variant(
         is_hf_configured = architecture == "hf_configured"
 
         if is_hf_pretrained:
-            if ((variant is None) == (model_path is None)) or source is not None:
+            if (
+                (variant is None) == (model_path is None)
+            ) or source is not None:
                 raise ValueError(
                     f"""
                     architecture="hf_pretrained" implies one of two things:
@@ -110,7 +114,9 @@ def __maybe_infer_model_variant(
         elif is_hf_configured and variant is not None:
             model_path_or_variant = variant
 
-        logger.info(f"inferring model configuration from {model_path_or_variant}")
+        logger.info(
+            f"inferring model configuration from {model_path_or_variant}"
+        )
 
         extra_kwargs = _infer_model_configuration(
             model_path_or_variant,
@@ -121,7 +127,9 @@ def __maybe_infer_model_variant(
 
         if is_hf_pretrained:
             model_path = (
-                model_path if model_path is not None else extra_kwargs.pop("model_path")
+                model_path
+                if model_path is not None
+                else extra_kwargs.pop("model_path")
             )
             source = "hf"
             for kwarg in kwargs:
@@ -135,7 +143,9 @@ def __maybe_infer_model_variant(
             extra_kwargs = {**extra_kwargs, **kwargs}
 
     if architecture is None or variant is None:
-        raise ValueError("Architecture and variant inference for get_model failed!")
+        raise ValueError(
+            "Architecture and variant inference for get_model failed!"
+        )
 
     return architecture, variant, model_path, source, extra_kwargs
 
@@ -217,7 +227,9 @@ def _class_hierarchy(clz):
     return result
 
 
-def _fsdp_autowrap_policy(module: nn.Module, recurse: bool, nonwrapped_numel: int):
+def _fsdp_autowrap_policy(
+    module: nn.Module, recurse: bool, nonwrapped_numel: int
+):
     if recurse:
         return True
     classes = _class_hierarchy(module.__class__)
@@ -263,7 +275,9 @@ def _fsdp_wrap(
     elif distributed_strategy == "ddp":
         dp_strategy = ShardingStrategy.NO_SHARD
     else:
-        raise KeyError("distributed strategy should be one of fsdp, dpp, or hsdp")
+        raise KeyError(
+            "distributed strategy should be one of fsdp, dpp, or hsdp"
+        )
 
     model = FSDP(
         model,
@@ -349,7 +363,9 @@ def get_model(
         try:
             data_type_parsed = getattr(torch, data_type)
         except AttributeError:
-            raise ValueError(f"Data type `{data_type}` is not a supported torch dtype")
+            raise ValueError(
+                f"Data type `{data_type}` is not a supported torch dtype"
+            )
         if extra_args.get("linear_config", None) and "gptq" in extra_args[
             "linear_config"
         ].get("linear_type", None):
@@ -378,12 +394,14 @@ def get_model(
         initial_device = device
 
     # infer the model architecture and variant if they do not exist yet
-    architecture, variant, model_path, source, extra_args = __maybe_infer_model_variant(
-        architecture,
-        variant,
-        model_path,
-        source,
-        **kwargs,
+    architecture, variant, model_path, source, extra_args = (
+        __maybe_infer_model_variant(
+            architecture,
+            variant,
+            model_path,
+            source,
+            **kwargs,
+        )
     )
 
     lazy_sd: MutableMapping[str, Any] = {}
@@ -435,7 +453,8 @@ def get_model(
     # Choose when to wrap and load the model weights based on the combination
     # distribution strategy and checkpoint sharding
     pre_load = (
-        distributed_strategy in ["fsdp", "hsdp"] and checkpoint_sharding != "fsdp"
+        distributed_strategy in ["fsdp", "hsdp"]
+        and checkpoint_sharding != "fsdp"
     )
 
     def model_wrap(model):
@@ -500,7 +519,7 @@ from fms.models import (  # noqa: E402
     mixtral,
     roberta,
     siglip_vision,
-    mpnet
+    mpnet,
 )
 
 

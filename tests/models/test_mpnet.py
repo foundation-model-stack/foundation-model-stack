@@ -1,10 +1,7 @@
 import pytest
 import torch
 from fms.models import get_model
-from fms.models.mpnet import (
-    Mpnet,
-    MpnetConfig
-)
+from fms.models.mpnet import Mpnet, MpnetConfig
 from fms.testing._internal.model_test_suite import (
     ConfigFixtureMixin,
     ModelCompileTestSuite,
@@ -60,11 +57,11 @@ class TestMpnet(
 
     @staticmethod
     def _get_signature_logits_getter_fn(f_out) -> torch.Tensor:
-        #return torch.cat([f_out[0][:1], f_out[1]], dim=-1)
+        # return torch.cat([f_out[0][:1], f_out[1]], dim=-1)
         return torch.cat([f_out[0][0][:1], f_out[1]], dim=-1)
 
     def test_config_passed_to_model_and_updated(self, model, config):
-        """test model constructor appropriately merges any passed 
+        """test model constructor appropriately merges any passed
         kwargs into the config without mutating the original config"""
         model = type(model)(config=config, pad_id=config.pad_id + 1)
         # check not same reference
@@ -76,11 +73,11 @@ class TestMpnet(
 
     def test_mpnet_input_too_long(self):
         model = get_model("mpnet", "v2", pretrained=False)
-        long_input = torch.randint(0, 100, 
-                     (1, model.config.max_expected_seq_len+10))
+        long_input = torch.randint(
+            0, 100, (1, model.config.max_expected_seq_len + 10)
+        )
         with pytest.raises(ValueError):
             model(long_input)
-
 
 
 class MpnetGPTQFixtures(ModelFixtureMixin):
@@ -96,6 +93,7 @@ class MpnetGPTQFixtures(ModelFixtureMixin):
             tie_heads=True,
             linear_config={"linear_type": "gptq_cpu"},
         )
+
     def _maybe_get_initialized_parameter(self, key, parameter):
         if "qweight" in key:
             return torch.randint(
