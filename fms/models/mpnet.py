@@ -251,7 +251,10 @@ class MpnetHeadless(nn.Module):
         position_bias = self.compute_position_bias(embeddings)
         # injecting position_bias as part of sdpa attn_mask 
         #FIXME for other attentions
-        attn_mask = kwargs.get("mask")
+        if kwargs.get("mask") is not None:
+            attn_mask = kwargs.get("mask")
+        else:
+            attn_mask = None
         if attn_mask is not None:
             while len(attn_mask.size()) != 4: 
                 # expects bs (x nheads) x q_len x kv_len
