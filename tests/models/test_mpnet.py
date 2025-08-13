@@ -1,10 +1,6 @@
 import pytest
 import torch
 from fms.models import get_model
-from fms.utils import serialization
-import tempfile
-from collections import ChainMap
-from pathlib import Path
 from fms.models.mpnet import (
     Mpnet,
     MpnetConfig
