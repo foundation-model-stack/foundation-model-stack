@@ -143,6 +143,32 @@ def _map_model_config(architecture, config):
         config_params["multiquery_attn"] = config.multi_query
         config_params["emb_dim"] = config.hidden_size
         config_params["max_expected_seq_len"] = config.n_positions
+    elif architecture == "GptOssForCausalLM":
+        inner_dim = config.intermediate_size
+        architecture = "gpt_oss"
+        config_params["attn_bias"] = getattr(config, "attention_bias", False)
+        config_params["p_dropout"] = config.attention_dropout
+        config_params["eos_token_id"] = config.eos_token_id
+        config_params["kvheads"] = config.num_key_value_heads
+        config_params["activation_fn"] = config.hidden_act
+        config_params["emb_dim"] = config.hidden_size
+        config_params["hidden_dim"] = inner_dim
+        config_params["norm_eps"] = config.rms_norm_eps
+        config_params["num_experts"] = config.num_local_experts
+        config_params["top_k_experts"] = config.num_experts_per_tok
+        config_params["max_expected_seq_len"] = config.max_position_embeddings
+        config_params["sliding_window"] = config.sliding_window
+        config_params["head_dim"] = (
+            getattr(config, "head_dim", None)
+            or config.hidden_size // config.num_attention_heads
+        )
+        rope_theta = getattr(config, "rope_theta", None)
+        if rope_theta is not None:
+            config_params["rope_theta"] = rope_theta
+            config_params["rope_base"] = config.rope_theta
+        rope_scaling = getattr(config, "rope_scaling", None)
+        if rope_scaling is not None:
+            config_params["rope_scaling"] = rope_scaling
     elif architecture == "MixtralForCausalLM":
         inner_dim = config.intermediate_size
         architecture = "mixtral"
