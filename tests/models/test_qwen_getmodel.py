@@ -16,6 +16,7 @@ Test fms get_model() function and check no weights are not loaded
 
 import torch
 from fms.models import get_model
+import transformers.modeling_outputs
 
 
 BEGIN_WARNING_MSG = "[WARNING] Keys from checkpoint (adapted to FMS) not copied into model: "
