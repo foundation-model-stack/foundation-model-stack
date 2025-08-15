@@ -14,18 +14,42 @@ Test fms get_model() function and check no weights are not loaded
 # type: ignore
 
 
+import os
 import torch
 from fms.models import get_model
-import transformers.modeling_outputs
+from unittest import mock
+# import transformers.modeling_outputs
 
 
 BEGIN_WARNING_MSG = "[WARNING] Keys from checkpoint (adapted to FMS) not copied into model: "
-MODEL_PATH="/home/kurtis/tmp/models/qwen3-1.7B"
+MODEL_PATH="/home/kurtis/tmp/models/qwen3-1.7B-old"
+
 
 class Test_Qwen3:
-    """_summary_
     """
+    Class to test FMS get_model() function.
+    """
+
+    # The following code adds environment var to tests
+    @mock.patch.dict(
+        os.environ,
+        {
+            "KWR_SKIP": "Y",
+        },
+        clear=True,
+    )
+
+    
     def test_get_model(self, capsys):
+        """Get model using FMS get_model() function and see if any missing weights
+
+        Args:
+            capsys (_type_): _description_
+        """
+        
+        kwr_skip = len(os.environ.get("KWR_SKIP", "")) > 0
+        print(f"kwr_skip={kwr_skip}")
+        
         _ = get_model(
         architecture="qwen3",
         variant="1.7b",
