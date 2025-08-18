@@ -26,7 +26,7 @@ class GPTOSSConfig(ModelConfig):
     num_hidden_layers: int = 36
     num_local_experts: int = 128
     src_vocab_size: int = 201088
-    hidden_size: int = 2880
+    emb_dim: int = 2880
     intermediate_size: int = 2880
     head_dim: int = 64
     num_attention_heads: int = 64
@@ -36,7 +36,7 @@ class GPTOSSConfig(ModelConfig):
     tie_word_embeddings=False
     hidden_act: str = "silu"
     initializer_range: float = 0.02
-    max_position_embeddings=131072
+    max_expected_seq_len=131072
     rms_norm_eps: float = 1e-5
     attention_dropout: float = 0.0
     num_experts_per_tok=4,
@@ -44,6 +44,10 @@ class GPTOSSConfig(ModelConfig):
     output_router_logits=False
     use_cache=True
     layer_types=None
+    pad_id = 199999
+    nheads: int = 64
+    nlayers: int = 24
+    dim: int = 2880
 
 
 class GPTOSSBlock(nn.Module):

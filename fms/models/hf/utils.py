@@ -158,6 +158,7 @@ def _map_model_config(architecture, config):
         config_params["top_k_experts"] = config.num_experts_per_tok
         config_params["max_expected_seq_len"] = config.max_position_embeddings
         config_params["sliding_window"] = config.sliding_window
+        config_params["dim"] = config.hidden_size
         config_params["head_dim"] = (
             getattr(config, "head_dim", None)
             or config.hidden_size // config.num_attention_heads
