@@ -30,15 +30,12 @@ class GPTOSSConfig(ModelConfig):
     intermediate_size: int = 2880
     head_dim: int = 64
     num_attention_heads: int = 64
-    num_key_value_heads: int = 8
     sliding_window: int = 128
     rope_base: float = 150000.0
     tie_word_embeddings=False
-    hidden_act: str = "silu"
+    activation_fn: str = "silu"
     initializer_range: float = 0.02
     max_expected_seq_len=131072
-    rms_norm_eps: float = 1e-5
-    attention_dropout: float = 0.0
     num_experts_per_tok=4,
     router_aux_loss_coef: float = 0.9
     output_router_logits=False
@@ -48,6 +45,13 @@ class GPTOSSConfig(ModelConfig):
     nheads: int = 64
     nlayers: int = 24
     dim: int = 2880
+    norm_eps: float = 1e-05
+    kvheads: int = 8
+    p_dropout: float = 0.0
+    fused_weights: bool = True 
+    linear_config: Optional[Mapping[str, Any]] = None 
+    hidden_grow_factor: float = intermediate_size / emb_dim
+    multiple_of: int = 256
 
 
 class GPTOSSBlock(nn.Module):
