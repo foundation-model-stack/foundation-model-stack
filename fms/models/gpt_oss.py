@@ -23,8 +23,7 @@ from fms.utils.config import ModelConfig
 
 @dataclass
 class GPTOSSConfig(ModelConfig):
-    num_hidden_layers: int = 36
-    num_local_experts: int = 128
+    num_experts: int = 128
     src_vocab_size: int = 201088
     emb_dim: int = 2880
     intermediate_size: int = 2880
