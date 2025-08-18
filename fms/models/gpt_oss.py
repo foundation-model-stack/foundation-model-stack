@@ -426,14 +426,14 @@ class GPTOSS(nn.Module):
         )
 
     @classmethod
-    def from_config(cls, config: GPTOSS) -> "GPTOSS":
+    def from_config(cls, config: GPTOSSConfig) -> "GPTOSS":
         """_summary_
 
         Args:
-            config (QwenConfig): _description_
+            config (GPTOSSConfig): _description_
 
         Returns:
-            Qwen: _description_
+            GPTOSS: _description_
         """
         return cls(config)
 
@@ -441,7 +441,7 @@ class GPTOSS(nn.Module):
         """_summary_
 
         Returns:
-            QwenConfig: _description_
+            GPTOSSConfig: _description_
         """
         return self.config
 
