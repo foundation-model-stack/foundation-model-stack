@@ -26,7 +26,7 @@ class GPTOSSConfig(ModelConfig):
     num_experts: int = 128
     src_vocab_size: int = 201088
     emb_dim: int = 2880
-    inner_dim: int = 2880
+    hidden_dim: int = 2880
     head_dim: int = 64
     num_attention_heads: int = 64
     sliding_window: int = 128
@@ -49,7 +49,7 @@ class GPTOSSConfig(ModelConfig):
     p_dropout: float = 0.0
     fused_weights: bool = True 
     linear_config: Optional[Mapping[str, Any]] = None 
-    hidden_grow_factor: float = inner_dim / emb_dim
+    hidden_grow_factor: float = hidden_dim / emb_dim
     multiple_of: int = 256
 
 
