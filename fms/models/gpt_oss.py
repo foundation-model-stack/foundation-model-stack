@@ -15,7 +15,7 @@ from fms.utils.config import ModelConfig
 
 from fms.modules.feedforward import MOEFeedForward
 from fms.modules.feedforward import GatedLinearUnit
-from fms.modules.layernorm import LayerNormParameterized
+from fms.modules.rmsnorm import RMSNorm
 from fms.modules.positions import RotaryEmbedding
 from fms.utils import serialization
 from fms.utils.config import ModelConfig
@@ -31,7 +31,7 @@ class GPTOSSConfig(ModelConfig):
     num_attention_heads: int = 64
     sliding_window: int = 128
     rope_base: float = 150000.0
-    tie_word_embeddings=False
+    tie_heads=False
     activation_fn: str = "silu"
     initializer_range: float = 0.02
     max_expected_seq_len=131072
@@ -67,7 +67,7 @@ class GPTOSSBlock(nn.Module):
         emb_kq = self.config.dim // self.config.nheads
         emb_v = self.config.dim // self.config.nheads
 
-        self.ln = LayerNormParameterized(
+        self.ln = RMSNorm(
             self.config.emb_dim,
             elementwise_scale=True,
             elementwise_shift=False,
@@ -75,7 +75,7 @@ class GPTOSSBlock(nn.Module):
             eps=self.config.norm_eps,
             use_high_precision_pow=True,
         )
-        self.ff_ln = LayerNormParameterized(
+        self.ff_ln = RMSNorm(
             self.config.emb_dim,
             elementwise_scale=True,
             elementwise_shift=False,
@@ -243,7 +243,7 @@ class GPTOSSHeadless(nn.Module):
             layers.append(block)
         self.layers = nn.ModuleList(layers)
 
-        dec_norm = LayerNormParameterized(
+        dec_norm = RMSNorm(
             self.config.emb_dim,
             elementwise_scale=True,
             elementwise_shift=False,
@@ -278,7 +278,7 @@ class GPTOSSHeadless(nn.Module):
                 isinstance(m, MultiHeadAttention)
                 or isinstance(m, GatedLinearUnit)
                 or isinstance(m, MOEFeedForward)
-                or isinstance(m, LayerNormParameterized)
+                or isinstance(m, RMSNorm)
             ):
                 m.reset_parameters()
 
