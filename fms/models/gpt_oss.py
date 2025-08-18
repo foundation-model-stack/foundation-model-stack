@@ -25,7 +25,7 @@ from fms.utils.config import ModelConfig
 class GPTOSSConfig(ModelConfig):
     num_hidden_layers: int = 36
     num_local_experts: int = 128
-    vocab_size: int = 201088
+    src_vocab_size: int = 201088
     hidden_size: int = 2880
     intermediate_size: int = 2880
     head_dim: int = 64
