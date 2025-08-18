@@ -493,6 +493,7 @@ def get_model(
 from fms.models import (  # noqa: E402
     bamba,
     gpt_bigcode,
+    gpt_oss,
     granite,
     llama,
     llava_next,
@@ -507,6 +508,7 @@ from fms.models import (  # noqa: E402
 __all__ = [
     "bamba",
     "gpt_bigcode",
+    "gpt_oss",
     "granite",
     "llama",
     "llava_next",
