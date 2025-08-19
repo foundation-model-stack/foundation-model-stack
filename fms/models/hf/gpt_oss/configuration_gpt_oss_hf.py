@@ -5,7 +5,7 @@ from transformers import PretrainedConfig
 from fms.models.gpt_oss import GptOssConfig
 
 class HFAdaptedGptOssConfig(PretrainedConfig):
-    model_type = "gpt_oss"
+    model_type = "hf_adapted_gpt_oss"
     attribute_map = {
         "vocab_size": "src_vocab_size",
         "hidden_size": "dim",
