@@ -29,7 +29,7 @@ from fms.models.llama import LLaMA
 from fms.models.granite import Granite, GraniteHeadless
 from fms.models.mixtral import Mixtral, MixtralHeadless
 from fms.models.roberta import RoBERTa, RoBERTaHeadless
-from fms.models.gpt_oss import GPTOSS, GPTOSSHeadless
+from fms.models.gpt_oss import GptOss, GptOssHeadless
 
 
 """
@@ -41,8 +41,8 @@ _fms_to_hf_adapt_map = {
     GraniteHeadless: HFAdaptedGraniteHeadless,
     GPTBigCode: HFAdaptedGPTBigCodeForCausalLM,
     GPTBigCodeHeadless: HFAdaptedGPTBigCodeHeadless,
-    GPTOSS: HFAdaptedGptOssForCausalLM,
-    GPTOSSHeadless: HFAdaptedGPTBigCodeHeadless,
+    GptOss: HFAdaptedGptOssForCausalLM,
+    GptOssHeadless: HFAdaptedGPTBigCodeHeadless,
     RoBERTa: HFAdaptedRoBERTaForMaskedLM,
     RoBERTaHeadless: HFAdaptedRoBERTaHeadless,
     Mixtral: HFAdaptedMixtralForCausalLM,

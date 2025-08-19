@@ -22,7 +22,7 @@ from fms.utils.config import ModelConfig
 
 
 @dataclass
-class GPTOSSConfig(ModelConfig):
+class GptOssConfig(ModelConfig):
     num_experts: int = 128
     src_vocab_size: int = 201088
     emb_dim: int = 2880
@@ -53,16 +53,16 @@ class GPTOSSConfig(ModelConfig):
     multiple_of: int = 256
 
 
-class GPTOSSBlock(nn.Module):
+class GptOssBlock(nn.Module):
     """
     
     Args:
         nn (_type_): _description_
     """
 
-    def __init__(self, config: GPTOSSConfig,
+    def __init__(self, config: GptOssConfig,
                  rotary_emb: RotaryEmbedding):
-        super(GPTOSSBlock, self).__init__()
+        super(GptOssBlock, self).__init__()
         self.config = config
         emb_kq = self.config.dim // self.config.nheads
         emb_v = self.config.dim // self.config.nheads
@@ -182,7 +182,7 @@ class GPTOSSBlock(nn.Module):
         return x
 
 
-class GPTOSSHeadless(nn.Module):
+class GptOssHeadless(nn.Module):
     """
 
     Args:
@@ -191,7 +191,7 @@ class GPTOSSHeadless(nn.Module):
 
     def __init__(
         self,
-        config: GPTOSSConfig,
+        config: GptOssConfig,
         distributed_strategy: DistributedStrategy = NoOpStrategy,
     ):
         """_summary_
@@ -201,7 +201,7 @@ class GPTOSSHeadless(nn.Module):
             distributed_strategy (DistributedStrategy, optional): 
                     _description_. Defaults to NoOpStrategy.
         """
-        super(GPTOSSHeadless, self).__init__()
+        super(GptOssHeadless, self).__init__()
         self.config = config
         self.distributed_strategy = distributed_strategy
 
@@ -226,7 +226,7 @@ class GPTOSSHeadless(nn.Module):
 
         layers = []
         for i in range(self.config.nlayers):
-            block: nn.Module = GPTOSSBlock(self.config, self.rot_emb)
+            block: nn.Module = GptOssBlock(self.config, self.rot_emb)
             block = self.distributed_strategy.distribute_layer(block, i)
             layers.append(block)
         self.layers = nn.ModuleList(layers)
@@ -382,7 +382,7 @@ class GPTOSSHeadless(nn.Module):
         return dec_out, present_key_value_states
 
 
-class GPTOSS(nn.Module):
+class GptOss(nn.Module):
     """
 
     Args:
@@ -391,7 +391,7 @@ class GPTOSS(nn.Module):
 
     def __init__(
         self,
-        config: Optional[GPTOSSConfig] = None,
+        config: Optional[GptOssConfig] = None,
         distributed_strategy: DistributedStrategy = NoOpStrategy,
         **kwargs,
     ):
@@ -402,36 +402,36 @@ class GPTOSS(nn.Module):
             distributed_strategy (DistributedStrategy, optional):
                 _description_. Defaults to NoOpStrategy.
         """
-        super(GPTOSS, self).__init__()
+        super(GptOss, self).__init__()
         if config is not None:
             self.config = config
         else:
-            self.config = GPTOSSConfig()
+            self.config = GptOssConfig()
         self.config = self.config.updated(**kwargs)
         self.distributed_strategy = distributed_strategy
 
-        self.base_model = GPTOSSHeadless(self.config, self.distributed_strategy)
+        self.base_model = GptOssHeadless(self.config, self.distributed_strategy)
         self.head = nn.Linear(
             self.config.emb_dim, self.config.src_vocab_size, bias=False
         )
 
     @classmethod
-    def from_config(cls, config: GPTOSSConfig) -> "GPTOSS":
+    def from_config(cls, config: GptOssConfig) -> "GptOss":
         """_summary_
 
         Args:
-            config (GPTOSSConfig): _description_
+            config (GptOssConfig): _description_
 
         Returns:
-            GPTOSS: _description_
+            GptOss: _description_
         """
         return cls(config)
 
-    def get_config(self) -> GPTOSSConfig:
+    def get_config(self) -> GptOssConfig:
         """_summary_
 
         Returns:
-            GPTOSSConfig: _description_
+            GptOssConfig: _description_
         """
         return self.config
 
@@ -496,11 +496,11 @@ class GPTOSS(nn.Module):
 
 
 _ARCHITECTURE_NAME = "gpt_oss"
-_20b_config = GPTOSSConfig()
+_20b_config = GptOssConfig()
 
 def _gpt_oss_factory_factory(config):
     def factory(**kwargs):
-        return GPTOSS(config, **kwargs)
+        return GptOss(config, **kwargs)
 
     return factory
 
@@ -518,7 +518,7 @@ serialization.register_adapter_step(
 
 
 def _weight_fusion(
-    input_sd: Mapping[str, Any], model_config: Optional[GPTOSSConfig] = None, **kwargs
+    input_sd: Mapping[str, Any], model_config: Optional[GptOssConfig] = None, **kwargs
 ) -> Mapping[str, Any]:
     has_fused_weights = True
     if model_config:
@@ -537,13 +537,13 @@ serialization.register_adapter_step(_ARCHITECTURE_NAME, "weight_fusion", _weight
 
 
 def _hf_gptq_gpt_oss_check(
-    input_sd: Mapping[str, Any], model_config: Optional[GPTOSSConfig] = None, **kwargs
+    input_sd: Mapping[str, Any], model_config: Optional[GptOssConfig] = None, **kwargs
 ) -> Mapping[str, Any]:
     """_summary_
 
     Args:
         input_sd (Mapping[str, Any]): _description_
-        model_config (Optional[GPTOSSConfig], optional): _description_. Defaults to None.
+        model_config (Optional[GptOssConfig], optional): _description_. Defaults to None.
 
     Raises:
         ValueError: _description_
@@ -631,13 +631,13 @@ def _get_rope_params(linear_type: str) -> list[str]:
 
 
 def _hf_to_fms_rope(
-    input_sd: Mapping[str, Any], model_config: Optional[GPTOSSConfig] = None, **kwargs
+    input_sd: Mapping[str, Any], model_config: Optional[GptOssConfig] = None, **kwargs
 ) -> Mapping[str, Any]:
     """_summary_
 
     Args:
         input_sd (Mapping[str, Any]): _description_
-        model_config (Optional[GPTOSSConfig], optional): _description_. Defaults to None.
+        model_config (Optional[GptOssConfig], optional): _description_. Defaults to None.
 
     Returns:
         Mapping[str, Any]: _description_

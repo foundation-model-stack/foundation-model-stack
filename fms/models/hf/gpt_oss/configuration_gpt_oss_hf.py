@@ -2,7 +2,7 @@ from typing import Optional
 
 from transformers import PretrainedConfig
 
-from fms.models.gpt_oss import GPTOSSConfig
+from fms.models.gpt_oss import GptOssConfig
 
 class HFAdaptedGptOssConfig(PretrainedConfig):
     model_type = "gpt_oss"
@@ -99,6 +99,6 @@ def from_pretrained(
     return cls.from_dict(config_dict, **kwargs)
 
 @classmethod
-def from_fms_config(cls, config: GPTOSSConfig, **hf_kwargs):
+def from_fms_config(cls, config: GptOssConfig, **hf_kwargs):
     config_dict = config.as_dict()
     return cls.from_dict(config_dict, **hf_kwargs)

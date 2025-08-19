@@ -9,7 +9,7 @@ from transformers.modeling_outputs import BaseModelOutputWithPastAndCrossAttenti
 
 from fms.models.hf.gpt_oss.configuration_gpt_oss_hf import HFAdaptedGptOssConfig
 from fms.models.hf.modeling_hf_adapter import HFDecoder, HFDecoderModelArchitecture
-from fms.models.gpt_oss import GPTOSS, GPTOSSHeadless
+from fms.models.gpt_oss import GptOss, GptOssHeadless
 
 import torch
 from torch import nn
@@ -17,7 +17,7 @@ from torch.nn import functional as F
 
 
 class HFAdapterGptOssDecoder(HFDecoder):
-    def __init__(self, model: GPTOSSHeadless, config: PretrainedConfig):
+    def __init__(self, model: GptOssHeadless, config: PretrainedConfig):
         super().__init__(model, config, attention_mask_dim=3)
 
     def adapt(
@@ -66,7 +66,7 @@ class HFAdaptedGptOssHeadless(HFDecoderModelArchitecture):
         # in the case we have not yet received the encoder/decoder/embedding, initialize it here
         if decoder is None or embedding is None:
             params = config.to_dict()
-            model = GPTOSSHeadless(**params)
+            model = GptOssHeadless(**params)
             decoder = model if decoder is None else decoder
             embedding = model.embedding if embedding is None else embedding
 
@@ -112,7 +112,7 @@ class HFAdaptedGptOssForCausalLM(HFAdaptedGptOssHeadless):
 
     @classmethod
     def _hf_model_from_fms(
-        cls, model: GPTOSS, config: HFAdaptedGptOssConfig
+        cls, model: GptOss, config: HFAdaptedGptOssConfig
     ) -> "HFAdaptedGptOssForCausalLM":
         return cls(
             config=config,
