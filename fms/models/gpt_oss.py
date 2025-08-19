@@ -15,7 +15,7 @@ from fms.utils.config import ModelConfig
 
 from fms.modules.feedforward import MOEFeedForward
 from fms.modules.feedforward import GatedLinearUnit
-from fms.modules.rmsnorm import RMSNorm
+from fms.modules.gpt_rmsnorm import GptOssRMSNorm
 from fms.modules.positions import RotaryEmbedding
 from fms.utils import serialization
 from fms.utils.config import ModelConfig
