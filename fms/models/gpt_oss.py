@@ -417,27 +417,12 @@ class GptOss(nn.Module):
 
     @classmethod
     def from_config(cls, config: GptOssConfig) -> "GptOss":
-        """_summary_
-
-        Args:
-            config (GptOssConfig): _description_
-
-        Returns:
-            GptOss: _description_
-        """
         return cls(config)
 
     def get_config(self) -> GptOssConfig:
-        """_summary_
-
-        Returns:
-            GptOssConfig: _description_
-        """
         return self.config
 
     def reset_parameters(self):
-        """_summary_
-        """
         self.head.weight.data.normal_(
             0,
             1 / math.sqrt(math.sqrt(self.config.emb_dim * self.config.src_vocab_size)),
@@ -445,9 +430,6 @@ class GptOss(nn.Module):
         self.base_model.reset_parameters()
 
     def post_init(self):
-        """_summary_
-        """
-        # if this model ties weights, they are tied here
         if self.config.tie_heads:
             # handle assignment of non-meta weights to meta parameters
             if self.head.weight.device == torch.device("meta"):
