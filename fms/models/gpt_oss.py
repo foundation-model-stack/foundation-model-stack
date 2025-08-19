@@ -202,7 +202,7 @@ class GptOssHeadless(nn.Module):
             padding_idx=self.config.pad_id,
         )
 
-        rope_scaling = {"rope_type": "ntk" if self.config.ntk_scaling else "regular"}
+        rope_scaling = {"rope_type": "regular"}
 
 
         self.rot_emb = RotaryEmbedding(
