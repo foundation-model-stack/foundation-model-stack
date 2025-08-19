@@ -1,10 +1,10 @@
 from typing import Optional
 
-from transformers import PretrainedConfig
+from transformers import GptOssConfig
 
 from fms.models.gpt_oss import GptOssConfig
 
-class HFAdaptedGptOssConfig(PretrainedConfig):
+class HFAdaptedGptOssConfig(GptOssConfig):
     model_type = "hf_adapted_gpt_oss"
     attribute_map = {
         "vocab_size": "src_vocab_size",
@@ -91,7 +91,7 @@ class HFAdaptedGptOssConfig(PretrainedConfig):
     @classmethod
     def from_pretrained(
         cls, pretrained_model_name_or_path, **kwargs
-    ) -> "PretrainedConfig":
+    ) -> "GptOssConfig":
         config_dict, kwargs = cls.get_config_dict(
             pretrained_model_name_or_path, **kwargs
         )

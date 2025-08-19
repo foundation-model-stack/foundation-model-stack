@@ -4,7 +4,7 @@ from typing_extensions import Unpack
 from fms.modules.attention import SDPAAttentionKwargs
 import torch
 import torch.nn as nn
-from transformers import PretrainedConfig
+from transformers import PretrainedConfig, GptOssConfig
 from transformers.modeling_outputs import BaseModelOutputWithPastAndCrossAttentions
 
 from fms.models.hf.gpt_oss.configuration_gpt_oss_hf import HFAdaptedGptOssConfig
@@ -14,7 +14,6 @@ from fms.models.gpt_oss import GptOss, GptOssHeadless
 
 import torch
 from torch import nn
-from torch.nn import functional as F
 
 
 class HFAdapterGptOssDecoder(HFDecoder):
