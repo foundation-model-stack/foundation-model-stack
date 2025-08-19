@@ -88,17 +88,17 @@ class HFAdaptedGptOssConfig(PretrainedConfig):
             **kwargs,
         )
 
-@classmethod
-def from_pretrained(
-    cls, pretrained_model_name_or_path, **kwargs
-) -> "PretrainedConfig":
-    config_dict, kwargs = cls.get_config_dict(
-        pretrained_model_name_or_path, **kwargs
-    )
+    @classmethod
+    def from_pretrained(
+        cls, pretrained_model_name_or_path, **kwargs
+    ) -> "PretrainedConfig":
+        config_dict, kwargs = cls.get_config_dict(
+            pretrained_model_name_or_path, **kwargs
+        )
 
-    return cls.from_dict(config_dict, **kwargs)
+        return cls.from_dict(config_dict, **kwargs)
 
-@classmethod
-def from_fms_config(cls, config: GptOssConfig, **hf_kwargs):
-    config_dict = config.as_dict()
-    return cls.from_dict(config_dict, **hf_kwargs)
+    @classmethod
+    def from_fms_config(cls, config: GptOssConfig, **hf_kwargs):
+        config_dict = config.as_dict()
+        return cls.from_dict(config_dict, **hf_kwargs)

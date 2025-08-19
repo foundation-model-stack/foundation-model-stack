@@ -22,7 +22,7 @@ from fms.models.hf.roberta.modeling_roberta_hf import (
 )
 from fms.models.hf.gpt_oss.modeling_gpt_oss_hf import (
     HFAdaptedGptOssForCausalLM,
-    HFAdaptedGptOssHeadless
+    HFAdaptedGptOssHeadless,
 )
 from fms.models.hf.utils import register_fms_models
 from fms.models.llama import LLaMA
