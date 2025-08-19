@@ -90,7 +90,7 @@ class HFAdaptedGptOssForCausalLM(
 
     @classmethod
     def _hf_model_from_fms(
-        cls, model: nn.Module, config: HFAdaptedGptOssConfig
+        cls, model: GptOss, config: HFAdaptedGptOssConfig
     ) -> "HFAdaptedGptOssForCausalLM":
         return cls(
             config=config,

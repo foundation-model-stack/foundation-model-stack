@@ -183,26 +183,18 @@ class GptOssBlock(nn.Module):
 
 
 class GptOssHeadless(nn.Module):
-    """
-
-    Args:
-        nn (_type_): _description_
-    """
-
     def __init__(
         self,
         config: GptOssConfig,
         distributed_strategy: DistributedStrategy = NoOpStrategy,
+        **kwargs,
     ):
-        """_summary_
-
-        Args:
-            config (QwenConfig): _description_
-            distributed_strategy (DistributedStrategy, optional): 
-                    _description_. Defaults to NoOpStrategy.
-        """
         super(GptOssHeadless, self).__init__()
-        self.config = config
+        if config is not None:
+            self.config = config
+        else:
+            self.config = GptOssConfig
+        self.config = self.config.updated(**kwargs)
         self.distributed_strategy = distributed_strategy
 
         self.embedding = nn.Embedding(
@@ -211,9 +203,12 @@ class GptOssHeadless(nn.Module):
             padding_idx=self.config.pad_id,
         )
 
+        rope_scaling = {"rope_type": "ntk" if self.config.ntk_scaling else "regular"}
+
+
         self.rot_emb = RotaryEmbedding(
             dim=self.config.emb_dim // self.config.nheads,
-            # ntk_scaling=False,
+            scaling=rope_scaling,
             max_seq_len=self.config.max_expected_seq_len,
             ratio=self.config.rope_base,
         )
@@ -312,24 +307,6 @@ class GptOssHeadless(nn.Module):
         use_cache=False,
         attn_algorithm=None,
     ):
-        """_summary_
-
-        Args:
-            x_in (_type_): _description_
-            mask (_type_, optional): _description_. Defaults to None.
-            position_ids (_type_, optional): _description_. Defaults to None.
-            past_key_value_states (_type_, optional): _description_. Defaults to None.
-            use_cache (bool, optional): _description_. Defaults to False.
-            attn_algorithm (_type_, optional): _description_. Defaults to None.
-
-        Returns:
-            _type_: _description_
-        """
-        # Embed the given vocabulary indices using the given attention mask, with pre-/post-norm
-        # and dropout as specified
-        # x_in: batch_size x seq_len
-        # mask: batch_size x seq_len x seq_len
-        # bias: nheads x seq_len x seq_len
         if past_key_value_states is None or len(past_key_value_states) == 0:
             past_key_value_states = [None for _ in range(len(self.layers))]
 
@@ -383,25 +360,12 @@ class GptOssHeadless(nn.Module):
 
 
 class GptOss(nn.Module):
-    """
-
-    Args:
-        nn (_type_): _description_
-    """
-
     def __init__(
         self,
         config: Optional[GptOssConfig] = None,
         distributed_strategy: DistributedStrategy = NoOpStrategy,
         **kwargs,
     ):
-        """_summary_
-
-        Args:
-            config (Optional[QwenConfig], optional): _description_. Defaults to None.
-            distributed_strategy (DistributedStrategy, optional):
-                _description_. Defaults to NoOpStrategy.
-        """
         super(GptOss, self).__init__()
         if config is not None:
             self.config = config
