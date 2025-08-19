@@ -18,7 +18,7 @@ from torch.nn import functional as F
 
 
 class HFAdapterGptOssDecoder(HFDecoder):
-    def __init__(self, model: GptOssHeadless, config: PretrainedConfig):
+    def __init__(self, model: GptOss, config: PretrainedConfig):
         super().__init__(model, config, attention_mask_dim=3)
 
     def adapt(
@@ -53,8 +53,6 @@ class HFAdaptedGptOssHeadless(HFDecoderModelArchitecture):
     config_class: HFAdaptedGptOssConfig
     base_model_prefix = "hf_adapted_gpt_oss"
     
-    _tied_weights_keys = ["lm_head.weight", "head.weight"]
-    _keys_to_ignore_on_save = ["embedding.weight"]
 
     def __init__(
         self,
@@ -67,53 +65,32 @@ class HFAdaptedGptOssHeadless(HFDecoderModelArchitecture):
         # in the case we have not yet received the encoder/decoder/embedding, initialize it here
         if decoder is None or embedding is None:
             params = config.to_dict()
+            params["pad_id"] = params.pop("pad_token_id")
             model = GptOssHeadless(**params)
-            decoder = model if decoder is None else decoder
-            embedding = model.embedding if embedding is None else embedding
+            decoder = model.base_model if decoder is None else decoder
+            embedding = model.base_model.embedding if embedding is None else embedding
+
 
         # these are now huggingface compatible
         decoder = HFAdaptedGptOssHeadless(decoder, config)
         super().__init__(decoder, embedding, config, *args, **kwargs)
 
-    def _prepare_inputs_for_generation(
-        self,
-        input_ids: torch.Tensor,
-        attention_mask: Optional[torch.Tensor] = None,
-        past_key_values: Optional[Tuple[torch.Tensor]] = None,
-        use_cache: Optional[bool] = None,
-        **model_kwargs,
-    ) -> dict:
-        """
-        Overriding _prepare_inputs_for_generation to include position_ids requirements for llama batch processing
-        """
-        position_ids = model_kwargs.pop("position_ids", None)
 
-        if position_ids is None and attention_mask is not None:
-            position_ids = attention_mask.long().cumsum(-1)
-
-        # Add more cached rope freqs if over cached number
-        max_expected_len = input_ids.shape[1] + torch.max(position_ids)
-        if max_expected_len > self.decoder.model.rot_emb.rope_scaling.orig_max_seq_len:
-            self.decoder.model.rot_emb.compute_freqs_cis(
-                input_ids.device, max_expected_len
-            )
-
-        return {
-            "input_ids": input_ids,
-            "attention_mask": attention_mask,
-            "past_key_values": past_key_values,
-            "use_cache": use_cache,
-            "position_ids": position_ids,
-            **model_kwargs,
-        }
-
-class HFAdaptedGptOssForCausalLM(LMHeadModelLMHeadMixin, HFAdaptedGptOssHeadless):
+class HFAdaptedGptOssForCausalLM(
+    LMHeadModelLMHeadMixin, HFAdaptedGptOssHeadless
+    ):
+    _keys_to_ignore_on_load_missing = [r"lm_head.weight"]
+    _tied_weights_keys = ["embedding.weight", "lm_head.weight"]
     def __init__(self, config: HFAdaptedGptOssConfig, *args, **kwargs):
         super().__init__(config=config, bias=False, *args, **kwargs)
+    def _tie_weights(self):
+        # We know that FMS always saves the LM head weight, so ensure the right pointer is shared
+        self.embedding.weight = self.lm_head.weight
+        self.decoder.model.embedding.weight = self.embedding.weight
 
     @classmethod
     def _hf_model_from_fms(
-        cls, model: GptOss, config: HFAdaptedGptOssConfig
+        cls, model: nn.Module, config: HFAdaptedGptOssConfig
     ) -> "HFAdaptedGptOssForCausalLM":
         return cls(
             config=config,
