@@ -262,7 +262,6 @@ class GPTOSSHeadless(nn.Module):
                 isinstance(m, MultiHeadAttention)
                 or isinstance(m, GatedLinearUnit)
                 or isinstance(m, MOEFeedForward)
-                or isinstance(m, GptOssRMSNorm)
             ):
                 m.reset_parameters()
 
