@@ -8,6 +8,7 @@ from transformers import PretrainedConfig
 from transformers.modeling_outputs import BaseModelOutputWithPastAndCrossAttentions
 
 from fms.models.hf.gpt_oss.configuration_gpt_oss_hf import HFAdaptedGptOssConfig
+from fms.models.hf.lm_head_mixins import LMHeadModelLMHeadMixin
 from fms.models.hf.modeling_hf_adapter import HFDecoder, HFDecoderModelArchitecture
 from fms.models.gpt_oss import GptOss, GptOssHeadless
 
@@ -52,7 +53,7 @@ class HFAdaptedGptOssHeadless(HFDecoderModelArchitecture):
     config_class: HFAdaptedGptOssConfig
     base_model_prefix = "hf_adapted_gpt_oss"
     
-    _tied_weights_keys = ["decoder.model.embedding.weight", "embedding.weight"]
+    _tied_weights_keys = ["lm_head.weight", "head.weight"]
     _keys_to_ignore_on_save = ["embedding.weight"]
 
     def __init__(
@@ -106,7 +107,7 @@ class HFAdaptedGptOssHeadless(HFDecoderModelArchitecture):
             **model_kwargs,
         }
 
-class HFAdaptedGptOssForCausalLM(HFAdaptedGptOssHeadless):
+class HFAdaptedGptOssForCausalLM(LMHeadModelLMHeadMixin, HFAdaptedGptOssHeadless):
     def __init__(self, config: HFAdaptedGptOssConfig, *args, **kwargs):
         super().__init__(config=config, bias=False, *args, **kwargs)
 
