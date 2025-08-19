@@ -67,23 +67,11 @@ class GPTOSSBlock(nn.Module):
         emb_kq = self.config.dim // self.config.nheads
         emb_v = self.config.dim // self.config.nheads
 
-        self.ln = GptOssRMSNorm(
-            self.config.emb_dim,
-            elementwise_scale=True,
-            elementwise_shift=False,
-            use_mean=False,
-            eps=self.config.norm_eps,
-            use_high_precision_pow=True,
-        )
-        self.ff_ln = GptOssRMSNorm(
-            self.config.emb_dim,
-            elementwise_scale=True,
-            elementwise_shift=False,
-            use_mean=False,
-            eps=self.config.norm_eps,
-            use_high_precision_pow=True,
-        )
-
+        self.ln = GptOssRMSNorm(config.emb_dim, 
+                                eps=config.norm_eps)
+        self.ff_ln = GptOssRMSNorm(config.emb_dim, 
+                                   eps=config.norm_eps)
+    
 
         if self.config.kvheads == 0:
             kvheads = self.config.nheads
@@ -244,12 +232,8 @@ class GPTOSSHeadless(nn.Module):
         self.layers = nn.ModuleList(layers)
 
         dec_norm = GptOssRMSNorm(
-            self.config.emb_dim,
-            elementwise_scale=True,
-            elementwise_shift=False,
-            use_mean=False,
-            eps=self.config.norm_eps,
-            use_high_precision_pow=True,
+            config.emb_dim,
+            eps=config.norm_eps,
         )
         self.dec_norm = self.distributed_strategy.distribute_module(
             dec_norm, final_layers=True
