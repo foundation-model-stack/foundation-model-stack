@@ -67,7 +67,7 @@ class GPTOSSBlock(nn.Module):
         emb_kq = self.config.dim // self.config.nheads
         emb_v = self.config.dim // self.config.nheads
 
-        self.ln = RMSNorm(
+        self.ln = GptOssRMSNorm(
             self.config.emb_dim,
             elementwise_scale=True,
             elementwise_shift=False,
@@ -75,7 +75,7 @@ class GPTOSSBlock(nn.Module):
             eps=self.config.norm_eps,
             use_high_precision_pow=True,
         )
-        self.ff_ln = RMSNorm(
+        self.ff_ln = GptOssRMSNorm(
             self.config.emb_dim,
             elementwise_scale=True,
             elementwise_shift=False,
@@ -243,7 +243,7 @@ class GPTOSSHeadless(nn.Module):
             layers.append(block)
         self.layers = nn.ModuleList(layers)
 
-        dec_norm = RMSNorm(
+        dec_norm = GptOssRMSNorm(
             self.config.emb_dim,
             elementwise_scale=True,
             elementwise_shift=False,
@@ -278,7 +278,7 @@ class GPTOSSHeadless(nn.Module):
                 isinstance(m, MultiHeadAttention)
                 or isinstance(m, GatedLinearUnit)
                 or isinstance(m, MOEFeedForward)
-                or isinstance(m, RMSNorm)
+                or isinstance(m, GptOssRMSNorm)
             ):
                 m.reset_parameters()
 
