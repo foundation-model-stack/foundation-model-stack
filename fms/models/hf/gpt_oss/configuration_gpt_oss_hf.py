@@ -1,48 +1,24 @@
-# coding=utf-8
-# Copyright 2025 The HuggingFace Team. All rights reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-"""openai model configuration"""
+from typing import Optional
 
-from ...configuration_utils import PretrainedConfig, layer_type_validation
-from ...modeling_rope_utils import rope_config_validation
+from transformers import PretrainedConfig
 
+from fms.models.gpt_oss import GPTOSSConfig
 
-class GptOssConfig(PretrainedConfig):
-    r"""
-    This will yield a configuration to that of the BERT
-    [google-bert/bert-base-uncased](https://huggingface.co/google-bert/bert-base-uncased) architecture.
-
-    """
-
+class HFAdaptedGptOssConfig(PretrainedConfig):
     model_type = "gpt_oss"
-    base_model_pp_plan = {
-        "embed_tokens": (["input_ids"], ["inputs_embeds"]),
-        "layers": (["hidden_states", "attention_mask"], ["hidden_states"]),
-        "norm": (["hidden_states"], ["hidden_states"]),
-    }
-    base_model_tp_plan = {
-        "layers.*.self_attn.q_proj": "colwise",
-        "layers.*.self_attn.k_proj": "colwise",
-        "layers.*.self_attn.v_proj": "colwise",
-        "layers.*.self_attn.o_proj": "rowwise",
-        "layers.*.self_attn.sinks": "local_rowwise",
-        "layers.*.mlp.experts": "gather",
-        "layers.*.mlp.router": "ep_router",
-        "layers.*.mlp.experts.gate_up_proj": "grouped_gemm",
-        "layers.*.mlp.experts.gate_up_proj_bias": "grouped_gemm",
-        "layers.*.mlp.experts.down_proj": "grouped_gemm",
-        "layers.*.mlp.experts.down_proj_bias": "grouped_gemm",
+    attribute_map = {
+        "vocab_size": "src_vocab_size",
+        "hidden_size": "dim",
+        "num_attention_heads": "nheads",
+        "num_hidden_layers": "nlayers",
+        "num_key_value_heads": "kvheads",
+        "num_local_experts": "num_experts",
+        "num_experts_per_tok": "top_k_experts",
+        "intermediate_size": "hidden_dim",
+        "rms_norm_eps": "norm_eps",
+        "max_position_embeddings": "max_expected_seq_len",
+        "rope_theta": "rope_base",
+        "attention_dropout": "p_dropout",
     }
 
     def __init__(
@@ -96,13 +72,11 @@ class GptOssConfig(PretrainedConfig):
             self.layer_types = [
                 "sliding_attention" if bool((i + 1) % 2) else "full_attention" for i in range(self.num_hidden_layers)
             ]
-        layer_type_validation(self.layer_types)
 
         # Validate the correctness of rotary position embeddings parameters
         # BC: if there is a 'type' field, copy it it to 'rope_type'.
         if self.rope_scaling is not None and "type" in self.rope_scaling:
             self.rope_scaling["rope_type"] = self.rope_scaling["type"]
-        rope_config_validation(self)
 
         self.attention_bias = True
         self.max_position_embeddings = max_position_embeddings
@@ -114,5 +88,17 @@ class GptOssConfig(PretrainedConfig):
             **kwargs,
         )
 
+@classmethod
+def from_pretrained(
+    cls, pretrained_model_name_or_path, **kwargs
+) -> "PretrainedConfig":
+    config_dict, kwargs = cls.get_config_dict(
+        pretrained_model_name_or_path, **kwargs
+    )
 
-__all__ = ["GptOssConfig"]
+    return cls.from_dict(config_dict, **kwargs)
+
+@classmethod
+def from_fms_config(cls, config: GPTOSSConfig, **hf_kwargs):
+    config_dict = config.as_dict()
+    return cls.from_dict(config_dict, **hf_kwargs)
