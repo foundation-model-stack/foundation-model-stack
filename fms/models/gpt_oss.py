@@ -63,8 +63,8 @@ class GptOssBlock(nn.Module):
                  rotary_emb: RotaryEmbedding):
         super(GptOssBlock, self).__init__()
         self.config = config
-        emb_kq = self.config.dim // self.config.nheads
-        emb_v = self.config.dim // self.config.nheads
+        emb_kq = self.head_dim
+        emb_v = self.head_dim
 
         self.ln = GptOssRMSNorm(config.emb_dim, 
                                 eps=config.norm_eps)
@@ -206,7 +206,7 @@ class GptOssHeadless(nn.Module):
 
 
         self.rot_emb = RotaryEmbedding(
-            dim=self.config.emb_dim // self.config.nheads,
+            dim=self.head_dim,
             scaling=rope_scaling,
             max_seq_len=self.config.max_expected_seq_len,
             ratio=self.config.rope_base,
