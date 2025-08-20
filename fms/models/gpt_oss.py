@@ -26,7 +26,7 @@ class GptOssConfig(ModelConfig):
     src_vocab_size: int = 201088
     emb_dim: int = 2880
     hidden_dim: int = 2880
-    head_dim: int = 64
+    head_dim: int = 45
     num_attention_heads: int = 64
     sliding_window: int = 128
     rope_base: float = 150000.0
