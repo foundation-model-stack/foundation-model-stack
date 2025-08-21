@@ -1,6 +1,5 @@
-
-
 from fms.models.gpt_oss import GptOssConfig
+
 
 class HFAdaptedGptOssConfig(GptOssConfig):
     model_type = "hf_adapted_gpt_oss"
@@ -38,7 +37,7 @@ class HFAdaptedGptOssConfig(GptOssConfig):
         output_router_logits=False,
         use_cache=True,
         layer_types=None,
-        pad_id = 199999,
+        pad_id=199999,
         nheads: int = 64,
         nlayers: int = 24,
         dim: int = 2880,
@@ -64,11 +63,16 @@ class HFAdaptedGptOssConfig(GptOssConfig):
         self.norm_eps = norm_eps
         self.rope_base = rope_base
         self.p_dropout = p_dropout
-        self.head_dim = head_dim if head_dim is not None else self.hidden_size // self.num_attention_heads
+        self.head_dim = (
+            head_dim
+            if head_dim is not None
+            else self.hidden_size // self.num_attention_heads
+        )
         self.layer_types = layer_types
         if self.layer_types is None:
             self.layer_types = [
-                "sliding_attention" if bool((i + 1) % 2) else "full_attention" for i in range(self.num_hidden_layers)
+                "sliding_attention" if bool((i + 1) % 2) else "full_attention"
+                for i in range(self.num_hidden_layers)
             ]
 
         # Validate the correctness of rotary position embeddings parameters
@@ -87,9 +91,7 @@ class HFAdaptedGptOssConfig(GptOssConfig):
         )
 
     @classmethod
-    def from_pretrained(
-        cls, pretrained_model_name_or_path, **kwargs
-    ) -> "GptOssConfig":
+    def from_pretrained(cls, pretrained_model_name_or_path, **kwargs) -> "GptOssConfig":
         config_dict, kwargs = cls.get_config_dict(
             pretrained_model_name_or_path, **kwargs
         )

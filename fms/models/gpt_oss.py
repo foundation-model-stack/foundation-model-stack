@@ -28,15 +28,15 @@ class GptOssConfig(ModelConfig):
     num_attention_heads: int = 64
     sliding_window: int = 128
     rope_base: float = 150000.0
-    tie_heads=False
+    tie_heads = False
     activation_fn: str = "silu"
     initializer_range: float = 0.02
-    max_expected_seq_len=131072
-    top_k_experts=4
+    max_expected_seq_len = 131072
+    top_k_experts = 4
     router_aux_loss_coef: float = 0.9
-    output_router_logits=False
-    use_cache=True
-    layer_types=None
+    output_router_logits = False
+    use_cache = True
+    layer_types = None
     pad_id = 199999
     nheads: int = 64
     nlayers: int = 24
@@ -44,31 +44,27 @@ class GptOssConfig(ModelConfig):
     norm_eps: float = 1e-05
     kvheads: int = 8
     p_dropout: float = 0.0
-    fused_weights: bool = True 
-    linear_config: Optional[Mapping[str, Any]] = None 
+    fused_weights: bool = True
+    linear_config: Optional[Mapping[str, Any]] = None
     hidden_grow_factor: float = hidden_dim / emb_dim
     multiple_of: int = 256
 
 
 class GptOssBlock(nn.Module):
     """
-    
+
     Args:
         nn (_type_): _description_
     """
 
-    def __init__(self, config: GptOssConfig,
-                 rotary_emb: RotaryEmbedding):
+    def __init__(self, config: GptOssConfig, rotary_emb: RotaryEmbedding):
         super(GptOssBlock, self).__init__()
         self.config = config
         emb_kq = self.config.head_dim
         emb_v = self.config.head_dim
 
-        self.ln = GptOssRMSNorm(config.emb_dim, 
-                                eps=config.norm_eps)
-        self.ff_ln = GptOssRMSNorm(config.emb_dim, 
-                                   eps=config.norm_eps)
-    
+        self.ln = GptOssRMSNorm(config.emb_dim, eps=config.norm_eps)
+        self.ff_ln = GptOssRMSNorm(config.emb_dim, eps=config.norm_eps)
 
         if self.config.kvheads == 0:
             kvheads = self.config.nheads
@@ -91,7 +87,7 @@ class GptOssBlock(nn.Module):
 
         if self.config.p_dropout != 0:
             self.dropout = nn.Dropout(self.config.p_dropout)
-        
+
         self.ff_sub_layer = MOEFeedForward(
             self.config.num_experts,
             self.config.top_k_experts,
@@ -192,7 +188,6 @@ class GptOssHeadless(nn.Module):
 
         rope_scaling = {"rope_type": "regular"}
 
-
         self.rot_emb = RotaryEmbedding(
             dim=self.config.head_dim,
             scaling=rope_scaling,
@@ -225,8 +220,7 @@ class GptOssHeadless(nn.Module):
             self.dropout = nn.Dropout(self.config.p_dropout)
 
     def reset_parameters(self):
-        """_summary_
-        """
+        """_summary_"""
         nn.init.trunc_normal_(
             self.embedding.weight, mean=0.0, std=self.config.emb_dim**-0.5
         )
@@ -268,14 +262,13 @@ class GptOssHeadless(nn.Module):
                         del max_seq_len_cached[dev]
 
     def post_init(self):
-        """_summary_
-        """
+        """_summary_"""
         # This function is called in `get_model` after the model is
         # fully initalized on the correct device
 
         self._clean_up_rot_emb_cache(
-            self.rot_emb.cached_freqs, # type: ignore
-            self.rot_emb.max_seq_len_cached, # type: ignore
+            self.rot_emb.cached_freqs,  # type: ignore
+            self.rot_emb.max_seq_len_cached,  # type: ignore
         )
 
         # init RoPE on the right device(s)
@@ -302,7 +295,7 @@ class GptOssHeadless(nn.Module):
 
         # if we are using the cache, the key length needs to be extended with the past keys length
         if use_cache and past_key_value_states[0] is not None:
-            klen += past_key_value_states[0][0].size(-2) # type: ignore
+            klen += past_key_value_states[0][0].size(-2)  # type: ignore
 
         # if mask is none, we need to specify causal mask
         if mask is None:
@@ -431,11 +424,13 @@ class GptOss(nn.Module):
 _ARCHITECTURE_NAME = "gpt_oss"
 _20b_config = GptOssConfig()
 
+
 def _gpt_oss_factory_factory(config):
     def factory(**kwargs):
         return GptOss(config, **kwargs)
 
     return factory
+
 
 models.register_model(_ARCHITECTURE_NAME, "20b", _gpt_oss_factory_factory(_20b_config))
 
@@ -505,7 +500,9 @@ serialization.register_adapter_step(
 )
 
 import os  # noqa: E402
+
 KWR_DEBUG = len(os.getenv("KWR_DEBUG", "")) > 0
+
 
 def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]:
     """_summary_

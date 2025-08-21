@@ -13,7 +13,6 @@ from fms.models.hf.modeling_hf_adapter import HFDecoder, HFDecoderModelArchitect
 from fms.models.gpt_oss import GptOss, GptOssHeadless
 
 
-
 class HFAdapterGptOssDecoder(HFDecoder):
     def __init__(self, model: GptOss, config: PretrainedConfig):
         super().__init__(model, config, attention_mask_dim=3)
@@ -49,7 +48,6 @@ class HFAdapterGptOssDecoder(HFDecoder):
 class HFAdaptedGptOssHeadless(HFDecoderModelArchitecture):
     config_class: HFAdaptedGptOssConfig
     base_model_prefix = "hf_adapted_gpt_oss"
-    
 
     def __init__(
         self,
@@ -67,19 +65,18 @@ class HFAdaptedGptOssHeadless(HFDecoderModelArchitecture):
             decoder = model.base_model if decoder is None else decoder
             embedding = model.base_model.embedding if embedding is None else embedding
 
-
         # these are now huggingface compatible
         decoder = HFAdaptedGptOssHeadless(decoder, config)
         super().__init__(decoder, embedding, config, *args, **kwargs)
 
 
-class HFAdaptedGptOssForCausalLM(
-    LMHeadModelLMHeadMixin, HFAdaptedGptOssHeadless
-    ):
+class HFAdaptedGptOssForCausalLM(LMHeadModelLMHeadMixin, HFAdaptedGptOssHeadless):
     _keys_to_ignore_on_load_missing = [r"lm_head.weight"]
     _tied_weights_keys = ["embedding.weight", "lm_head.weight"]
+
     def __init__(self, config: HFAdaptedGptOssConfig, *args, **kwargs):
         super().__init__(config=config, bias=False, *args, **kwargs)
+
     def _tie_weights(self):
         # We know that FMS always saves the LM head weight, so ensure the right pointer is shared
         self.embedding.weight = self.lm_head.weight
