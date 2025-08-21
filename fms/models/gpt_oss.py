@@ -10,14 +10,12 @@ from fms import models
 from fms.distributed.strategy import DistributedStrategy, NoOpStrategy
 from fms.modules.attention import MultiHeadAttention
 from fms.utils import serialization
-from fms.utils.activation import str_to_activation
 from fms.utils.config import ModelConfig
 
 from fms.modules.feedforward import MOEFeedForward
 from fms.modules.feedforward import GatedLinearUnit
 from fms.modules.gpt_rmsnorm import GptOssRMSNorm
 from fms.modules.positions import RotaryEmbedding
-from fms.utils import serialization
 
 
 @dataclass
@@ -87,16 +85,6 @@ class GptOssBlock(nn.Module):
             p_dropout=self.config.p_dropout,
             use_bias=False,
             position_encoder=rotary_emb,
-            fused=self.config.fused_weights,
-            linear_config=self.config.linear_config,
-        )
-        self.ff_sub_layer = GatedLinearUnit(
-            self.config.emb_dim,
-            hidden_grow_factor=self.config.hidden_grow_factor,
-            multiple_of=self.config.multiple_of,
-            activation_fn=str_to_activation(self.config.activation_fn), # type: ignore
-            p_dropout=self.config.p_dropout,
-            use_bias=False,
             fused=self.config.fused_weights,
             linear_config=self.config.linear_config,
         )
@@ -599,7 +587,6 @@ def _hf_to_fms_rope(
         if model_config.linear_config:
             linear_type = model_config.linear_config["linear_type"]
     else:
-        logger.warning("Missing model_config, assuming defaults for head_size")
         head_size = 128  # Good default for most models
         linear_type = "torch_linear"
 

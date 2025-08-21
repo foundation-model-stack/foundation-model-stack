@@ -1,6 +1,4 @@
-from typing import Optional
 
-from transformers import GptOssConfig
 
 from fms.models.gpt_oss import GptOssConfig
 
@@ -57,10 +55,10 @@ class HFAdaptedGptOssConfig(GptOssConfig):
         self.sliding_window = sliding_window
         self.top_k_experts = top_k_experts
         # for backward compatibility
-        if num_key_value_heads is None:
+        if kvheads is None:
             num_key_value_heads = num_attention_heads
 
-        self.num_key_value_heads = num_key_value_heads
+        self.kvheads = num_key_value_heads
         self.activation_fn = activation_fn
         self.initializer_range = initializer_range
         self.norm_eps = norm_eps
