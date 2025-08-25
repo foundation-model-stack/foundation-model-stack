@@ -290,8 +290,8 @@ class GptOssHeadless(nn.Module):
         if past_key_value_states is None or len(past_key_value_states) == 0:
             past_key_value_states = [None for _ in range(len(self.layers))]
 
-        qlen = x_in.size(0)
-        klen = x_in.size(0)
+        qlen = x_in.size(-1)
+        klen = x_in.size(-1)
 
         # if we are using the cache, the key length needs to be extended with the past keys length
         if use_cache and past_key_value_states[0] is not None:
