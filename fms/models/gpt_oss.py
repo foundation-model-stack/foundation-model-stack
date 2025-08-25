@@ -13,7 +13,7 @@ from fms.distributed.strategy import DistributedStrategy, NoOpStrategy
 from fms.modules.attention import (
     AttentionKwargs,
     MultiHeadAttention,
-    get_attention_type
+    get_attention_type,
 )
 from fms.utils import serialization
 from fms.utils.config import ModelConfig
@@ -56,7 +56,8 @@ class GptOssConfig(ModelConfig):
     multiple_of: int = 256
     embedding_multiplier: float = 1.0
     residual_multiplier: float = 1.0
-    
+    logits_scaling: float = 1.0
+    attention_multiplier: float = 1.0
 
 
 class GptOssBlock(nn.Module):
@@ -544,7 +545,7 @@ def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]
             new_sd[key] = new_sd[key].contiguous()
         if "w2" in key:
             new_sd[key] = new_sd[key].transpose(1, 2).contiguous()
-            
+
     return new_sd
 
 
