@@ -3,12 +3,18 @@ from typing import Any, Mapping, Optional, Tuple
 import re
 import math
 
+from typing_extensions import Unpack
+
 import torch
 import torch.nn as nn
 
 from fms import models
 from fms.distributed.strategy import DistributedStrategy, NoOpStrategy
-from fms.modules.attention import MultiHeadAttention
+from fms.modules.attention import (
+    AttentionKwargs,
+    MultiHeadAttention,
+    get_attention_type
+)
 from fms.utils import serialization
 from fms.utils.config import ModelConfig
 
@@ -102,46 +108,23 @@ class GptOssBlock(nn.Module):
         self,
         x,
         *,
-        mask=None,
         position_ids=None,
         past_key_value_state=None,
         use_cache=False,
-        is_causal_mask=False,
-        attn_algorithm=None,
+        **attn_kwargs: Unpack[AttentionKwargs],
     ):
-        """_summary_
-
-        Args:
-            x (_type_): _description_
-            mask (_type_, optional): _description_. Defaults to None.
-            position_ids (_type_, optional): _description_. Defaults to None.
-            past_key_value_state (_type_, optional): _description_. Defaults to None.
-            use_cache (bool, optional): _description_. Defaults to False.
-            is_causal_mask (bool, optional): _description_. Defaults to False.
-            attn_algorithm (_type_, optional): _description_. Defaults to None.
-
-        Returns:
-            _type_: _description_
-        """
         # if the cache is not empty, we need to get the kv cache for self and cross attention
         self_attn_past_key_value = past_key_value_state
-        # if past_key_value_state is not None:
-        #     self_attn_past_key_value = past_key_value_state[:2]
-        # else:
-        #     self_attn_past_key_value = None
 
         # first we do MHA and Add&Norm
         residual = x
         x = self.ln(x)
         x = self.attn(
             q=x,
-            mask=mask,
             position_ids=position_ids,
-            attn_algorithm=attn_algorithm,
             past_key_value_state=self_attn_past_key_value,
             use_cache=use_cache,
-            is_self=True,
-            is_causal_mask=is_causal_mask,
+            **attn_kwargs,
         )
         cache = None
         if use_cache:
@@ -149,7 +132,7 @@ class GptOssBlock(nn.Module):
         if self.config.p_dropout != 0:
             x = self.dropout(x)
         # residual connection
-        x = x + residual
+        x = x * self.config.residual_multiplier + residual
 
         # then we do FF and Add&Norm
         residual = x
@@ -158,11 +141,12 @@ class GptOssBlock(nn.Module):
         if self.config.p_dropout != 0:
             x = self.dropout(x)
         # another residual
-        x = x + residual
+        x = x * self.config.residual_multiplier + residual
 
         if use_cache:
             return (x, cache)
-        return x
+        else:
+            return x
 
 
 class GptOssHeadless(nn.Module):
@@ -281,34 +265,21 @@ class GptOssHeadless(nn.Module):
     def forward(
         self,
         x_in,
-        mask=None,
         position_ids=None,
         past_key_value_states=None,
         use_cache=False,
-        attn_algorithm=None,
+        **attn_kwargs: Unpack[AttentionKwargs],
     ):
+        # Embed the given vocabulary indices using the given attention mask, with pre-/post-norm and dropout as specified
+        # x_in: batch_size x seq_len x emb_dim if input is already embedded, otherwise batch_size x seq_len
+        # mask: batch_size x seq_len x seq_len
+        # bias: nheads x seq_len x seq_len
         if past_key_value_states is None or len(past_key_value_states) == 0:
             past_key_value_states = [None for _ in range(len(self.layers))]
 
-        qlen = x_in.size(-1)
-        klen = x_in.size(-1)
-
-        # if we are using the cache, the key length needs to be extended with the past keys length
-        if use_cache and past_key_value_states[0] is not None:
-            klen += past_key_value_states[0][0].size(-2)  # type: ignore
-
-        # if mask is none, we need to specify causal mask
-        if mask is None:
-            # we are caching and can assume all 1s in the mask
-            if use_cache and klen != 1 and qlen == 1:
-                # b x h x qlen x kvlen
-                is_causal_mask = False
-            else:
-                is_causal_mask = True
-        else:
-            is_causal_mask = False
-
-        x_in = self.embedding(x_in)
+        if x_in.dim() == 2:  # input is not already embedded
+            x_in = self.embedding(x_in)
+        x_in = x_in * self.config.embedding_multiplier
 
         # this is the output cache for all the decoder layers
         present_key_value_states = []
@@ -316,12 +287,10 @@ class GptOssHeadless(nn.Module):
         for i, layer in enumerate(self.layers):
             output = layer(
                 x=x_in,
-                mask=mask,
                 position_ids=position_ids,
                 past_key_value_state=past_key_value_states[i],
                 use_cache=use_cache,
-                is_causal_mask=is_causal_mask,
-                attn_algorithm=attn_algorithm,
+                **attn_kwargs,
             )
 
             if use_cache:
@@ -386,39 +355,36 @@ class GptOss(nn.Module):
     def forward(
         self,
         x: torch.LongTensor,
-        mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_value_states: Optional[Tuple[torch.FloatTensor,]] = None,
         use_cache: bool = False,
         only_last_token: bool = False,
-        attn_algorithm: Optional[str] = None,
+        **attn_kwargs: Unpack[AttentionKwargs],
     ):
-        """_summary_
+        get_attention_type(**attn_kwargs)["validate_attn_kwargs"](
+            input_ids=x,
+            position_ids=position_ids,
+            past_key_value_states=past_key_value_states,
+            **attn_kwargs,
+        )
 
-        Args:
-            x (torch.LongTensor): _description_
-            mask (Optional[torch.Tensor], optional): _description_. Defaults to None.
-            position_ids (Optional[torch.LongTensor], optional): _description_. Defaults to None.
-            past_key_value_states (Optional[Tuple[torch.FloatTensor,]], optional):
-                    _description_. Defaults to None.
-            use_cache (bool, optional): _description_. Defaults to False.
-            only_last_token (bool, optional): _description_. Defaults to False.
-            attn_algorithm (Optional[str], optional): _description_. Defaults to None.
-
-        Returns:
-            _type_: _description_
-        """
         output, cache = self.base_model(
-            x, mask, position_ids, past_key_value_states, use_cache, attn_algorithm
+            x,
+            position_ids,
+            past_key_value_states,
+            use_cache,
+            **attn_kwargs,
         )
 
         if only_last_token:
             output = output[:, -1, :]
         preds = self.head(output)
+        preds = preds / self.config.logits_scaling
 
         if use_cache:
             return preds, cache
-        return preds
+        else:
+            return preds
 
 
 _ARCHITECTURE_NAME = "gpt_oss"
