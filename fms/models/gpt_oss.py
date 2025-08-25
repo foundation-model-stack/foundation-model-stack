@@ -43,7 +43,7 @@ class GptOssConfig(ModelConfig):
     output_router_logits = False
     use_cache = True
     layer_types = None
-    pad_id = 199999
+    pad_id: int = -1
     nheads: int = 64
     nlayers: int = 24
     dim: int = 2880
