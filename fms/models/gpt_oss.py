@@ -61,11 +61,6 @@ class GptOssConfig(ModelConfig):
 
 
 class GptOssBlock(nn.Module):
-    """
-
-    Args:
-        nn (_type_): _description_
-    """
 
     def __init__(self, config: GptOssConfig, rotary_emb: RotaryEmbedding):
         super(GptOssBlock, self).__init__()

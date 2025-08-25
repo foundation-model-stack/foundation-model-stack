@@ -35,7 +35,6 @@ class GptOssFixtures(ConfigFixtureMixin, ModelFixtureMixin):
             nlayers=2,
             hidden_dim=56,
             num_experts=8,
-            top_k_experts=2,
         )
 
 
