@@ -55,6 +55,8 @@ class GptOssConfig(ModelConfig):
     hidden_grow_factor: float = hidden_dim / emb_dim
     multiple_of: int = 256
     embedding_multiplier: float = 1.0
+    residual_multiplier: float = 1.0
+    
 
 
 class GptOssBlock(nn.Module):
