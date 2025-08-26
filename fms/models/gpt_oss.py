@@ -473,13 +473,30 @@ def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]
             new_name = re.sub(pattern, repl, new_name)
         new_sd[new_name] = param
 
+        if "w1" in new_name or "w2" in new_name or "w3" in new_name:
+            gate_name = re.sub(r"w\d", "gate", name) + ".weight"
+            if gate_name not in input_sd:
+                missing_weights = [
+                    gate_name,
+                    re.sub(r"w\d", "w1", name),
+                    re.sub(r"w\d", "w2", name),
+                    re.sub(r"w\d", "w3", name),
+                ]
+                missing_weights = [w for w in missing_weights if w != name]
+                raise ValueError(f"Missing {missing_weights}")
+            num_experts = input_sd[gate_name].size(0)
+            temp = new_sd[new_name]
+            new_sd[new_name] = temp.reshape(
+                num_experts, temp.size(0) // num_experts, temp.size(1)
+            ).contiguous()
+
     for key in list(new_sd.keys()):
         if key not in new_sd:
             continue
         if "gate" in key:
             new_sd[key] = new_sd[key].contiguous()
         if "w2" in key:
-            new_sd[key] = new_sd[key].contiguous()
+            new_sd[key] = new_sd[key].transpose(1, 2).contiguous()
 
     return new_sd
 
