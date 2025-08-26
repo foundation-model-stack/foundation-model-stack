@@ -24,6 +24,7 @@ from fms.modules.positions import RotaryEmbedding
 
 from fms.modules.ssm import RMSNormGated
 
+
 @dataclass
 class GptOssConfig(ModelConfig):
     num_experts: int = 128
@@ -226,13 +227,6 @@ class GptOssHeadless(nn.Module):
         cached_freqs: dict[Optional[torch.device], dict[int, torch.Tensor]],
         max_seq_len_cached: dict[Optional[torch.device], int],
     ):
-        """_summary_
-
-        Args:
-            cached_freqs (dict[Optional[torch.device], dict[int, torch.Tensor]]): _description_
-            max_seq_len_cached (dict[Optional[torch.device], int]): _description_
-        """
-        # remove meta tensors from cached_freqs
         for dev in list(cached_freqs.keys()):
             for alp in list(cached_freqs[dev].keys()):
                 if cached_freqs[dev][alp].device == torch.device("meta"):
@@ -388,6 +382,8 @@ _20b_config = GptOssConfig()
 
 
 def _gpt_oss_factory_factory(config):
+    print("_gpt_oss_factory_factory(config)")
+
     def factory(**kwargs):
         return GptOss(config, **kwargs)
 
@@ -429,18 +425,6 @@ serialization.register_adapter_step(_architecture_name, "weight_fusion", _weight
 def _hf_gptq_gpt_oss_check(
     input_sd: Mapping[str, Any], model_config: Optional[GptOssConfig] = None, **kwargs
 ) -> Mapping[str, Any]:
-    """_summary_
-
-    Args:
-        input_sd (Mapping[str, Any]): _description_
-        model_config (Optional[GptOssConfig], optional): _description_. Defaults to None.
-
-    Raises:
-        ValueError: _description_
-
-    Returns:
-        Mapping[str, Any]: _description_
-    """
     has_fused_weights = True
     linear_type = "torch_linear"
     if model_config:
@@ -451,7 +435,7 @@ def _hf_gptq_gpt_oss_check(
 
     if "gptq" in linear_type and has_fused_weights:
         raise ValueError(
-            "GPTQ HF Qwen checkpoints cannot be loaded into a model with fused weights"
+            "GPTQ HF GptOss checkpoints cannot be loaded into a model with fused weights"
         )
 
     return input_sd
@@ -461,20 +445,8 @@ serialization.register_adapter_step(
     _architecture_name, "hf_gptq_fusion_check", _hf_gptq_gpt_oss_check
 )
 
-import os  # noqa: E402
-
-KWR_DEBUG = len(os.getenv("KWR_DEBUG", "")) > 0
-
 
 def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]:
-    """_summary_
-
-    Args:
-        input_sd (Mapping[str, Any]): _description_
-
-    Returns:
-        Mapping[str, Any]: _description_
-    """
     replacements = [
         (r"^lm_head.weight", "head.weight"),
         (r"^model.embed_tokens.weight", "base_model.embedding.weight"),
@@ -547,14 +519,6 @@ serialization.register_adapter_step(
 
 
 def _get_rope_params(linear_type: str) -> list[str]:
-    """_summary_
-
-    Args:
-        linear_type (str): _description_
-
-    Returns:
-        list[str]: _description_
-    """
     if "gptq" in linear_type:
         return ["qweight", "scales", "qzeros", "bias"]
     # torch.nn.Linear
@@ -564,15 +528,6 @@ def _get_rope_params(linear_type: str) -> list[str]:
 def _hf_to_fms_rope(
     input_sd: Mapping[str, Any], model_config: Optional[GptOssConfig] = None, **kwargs
 ) -> Mapping[str, Any]:
-    """_summary_
-
-    Args:
-        input_sd (Mapping[str, Any]): _description_
-        model_config (Optional[GptOssConfig], optional): _description_. Defaults to None.
-
-    Returns:
-        Mapping[str, Any]: _description_
-    """
     new_sd = {}
 
     if model_config:
