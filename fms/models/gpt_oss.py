@@ -20,7 +20,7 @@ from fms.utils.config import ModelConfig
 
 from fms.modules.feedforward import MOEFeedForward
 from fms.modules.feedforward import GatedLinearUnit
-from fms.modules.gpt_rmsnorm import GptOssRMSNorm
+from fms.modules.layernorm import LayerNormParameterized
 from fms.modules.positions import RotaryEmbedding
 
 
@@ -67,8 +67,22 @@ class GptOssBlock(nn.Module):
         emb_kq = self.config.head_dim
         emb_v = self.config.head_dim
 
-        self.ln = GptOssRMSNorm(config.emb_dim, eps=config.norm_eps)
-        self.ff_ln = GptOssRMSNorm(config.emb_dim, eps=config.norm_eps)
+        self.ln = LayerNormParameterized(
+            self.config.emb_dim,
+            elementwise_scale=True,
+            elementwise_shift=False,
+            use_mean=False,
+            eps=self.config.norm_eps,
+            use_high_precision_pow=True,
+        )
+        self.ff_ln = LayerNormParameterized(
+            self.config.emb_dim,
+            elementwise_scale=True,
+            elementwise_shift=False,
+            use_mean=False,
+            eps=self.config.norm_eps,
+            use_high_precision_pow=True,
+        )
 
         if self.config.kvheads == 0:
             kvheads = self.config.nheads
@@ -190,9 +204,13 @@ class GptOssHeadless(nn.Module):
             layers.append(block)
         self.layers = nn.ModuleList(layers)
 
-        dec_norm = GptOssRMSNorm(
-            config.emb_dim,
-            eps=config.norm_eps,
+        dec_norm = LayerNormParameterized(
+            self.config.emb_dim,
+            elementwise_scale=True,
+            elementwise_shift=False,
+            use_mean=False,
+            eps=self.config.norm_eps,
+            use_high_precision_pow=True,
         )
         self.dec_norm = self.distributed_strategy.distribute_module(
             dec_norm, final_layers=True
