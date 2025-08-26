@@ -382,8 +382,6 @@ _20b_config = GptOssConfig()
 
 
 def _gpt_oss_factory_factory(config):
-    print("_gpt_oss_factory_factory(config)")
-
     def factory(**kwargs):
         return GptOss(config, **kwargs)
 
