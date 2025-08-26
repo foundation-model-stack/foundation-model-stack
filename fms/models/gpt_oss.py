@@ -191,7 +191,7 @@ class GptOssHeadless(nn.Module):
         self.layers = nn.ModuleList(layers)
 
         dec_norm = RMSNormGated(config.emb_dim, eps=config.norm_eps)
-        
+
         self.dec_norm = self.distributed_strategy.distribute_module(
             dec_norm, final_layers=True
         )
@@ -383,7 +383,7 @@ class GptOss(nn.Module):
             return preds
 
 
-_ARCHITECTURE_NAME = "gpt_oss"
+_architecture_name = "gpt_oss"
 _20b_config = GptOssConfig()
 
 
@@ -394,14 +394,14 @@ def _gpt_oss_factory_factory(config):
     return factory
 
 
-models.register_model(_ARCHITECTURE_NAME, "20b", _gpt_oss_factory_factory(_20b_config))
+models.register_model(_architecture_name, "20b", _gpt_oss_factory_factory(_20b_config))
 
 
 # =============== Serialization ==================
 
 
 serialization.register_adapter_step(
-    _ARCHITECTURE_NAME,
+    _architecture_name,
     "swiglu_unfused_to_fused",
     serialization._mlp_glu_unfused_to_fused_adapter_step,
 )
@@ -423,7 +423,7 @@ def _weight_fusion(
     return new_sd
 
 
-serialization.register_adapter_step(_ARCHITECTURE_NAME, "weight_fusion", _weight_fusion)
+serialization.register_adapter_step(_architecture_name, "weight_fusion", _weight_fusion)
 
 
 def _hf_gptq_gpt_oss_check(
@@ -458,7 +458,7 @@ def _hf_gptq_gpt_oss_check(
 
 
 serialization.register_adapter_step(
-    _ARCHITECTURE_NAME, "hf_gptq_fusion_check", _hf_gptq_gpt_oss_check
+    _architecture_name, "hf_gptq_fusion_check", _hf_gptq_gpt_oss_check
 )
 
 import os  # noqa: E402
@@ -542,7 +542,7 @@ def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]
 
 
 serialization.register_adapter_step(
-    _ARCHITECTURE_NAME, "hf_to_fms_names", _hf_to_fms_names
+    _architecture_name, "hf_to_fms_names", _hf_to_fms_names
 )
 
 
@@ -627,11 +627,11 @@ def _hf_to_fms_rope(
 
 
 serialization.register_adapter_step(
-    _ARCHITECTURE_NAME, "hf_to_fms_rope", _hf_to_fms_rope
+    _architecture_name, "hf_to_fms_rope", _hf_to_fms_rope
 )
 
 serialization.register_adapter(
-    _ARCHITECTURE_NAME,
+    _architecture_name,
     "hf",
     ["hf_to_fms_names", "hf_to_fms_rope", "hf_gptq_fusion_check", "weight_fusion"],
 )
