@@ -473,6 +473,16 @@ def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]
             new_name = re.sub(pattern, repl, new_name)
         new_sd[new_name] = param
 
+        if "gate" in new_name:
+            weight_name = name.replace("gate", "w1")[:-7]
+            if weight_name not in input_sd:
+                missing_weights = [
+                    name.replace("gate", "w1")[:-7],
+                    name.replace("gate", "w2")[:-7],
+                    name.replace("gate", "w3")[:-7],
+                ]
+                raise ValueError(f"Missing {missing_weights}")
+
         if "w1" in new_name or "w2" in new_name or "w3" in new_name:
             gate_name = re.sub(r"w\d", "gate", name) + ".weight"
             if gate_name not in input_sd:
