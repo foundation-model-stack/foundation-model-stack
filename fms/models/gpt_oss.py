@@ -490,13 +490,13 @@ def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]
                 continue
             elif "blocks" in name:
                 # deal with packed weights
-                blocks = new_sd[key]
-                scales = new_sd[key.replace("blocks", "scales")]
+                blocks = new_sd[name]
+                scales = new_sd[name.replace("blocks", "scales")]
                 new_key = new_sd.replace(".blocks", "")
                 unpacked_tensors = _convert_moe_packed_tensors(blocks, scales, dtype=torch.bfloat16)
                 new_sd[new_key] = unpacked_tensors
             else:
-                raise (f"Unidentified {key}, please double check the state dict")
+                raise (f"Unidentified {name}, please double check the state dict")
         new_name = name
         for pattern, repl in replacements:
             new_name = re.sub(pattern, repl, new_name)
