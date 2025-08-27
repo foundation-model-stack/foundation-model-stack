@@ -2,6 +2,7 @@ name: Publish Python 🐍 distribution 📦 to PyPI
 on:
   release:
     types: [published]
+  workflow_dispatch:  # Manual trigger
 
 jobs:
   build:
@@ -48,4 +49,26 @@ jobs:
       - name: Publish distribution 📦 to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
+          verbose: true
+
+  publish-to-testpypi:
+    name: Test Publish Python 🐍 distribution 📦 to TestPyPI
+    needs: build
+    runs-on: ubuntu-latest
+    environment: 
+      name: pypi
+      url: https://pypi.org/project/ibm-fms
+    permissions:
+      id-token: write  # Required for Trusted Publishing
+    if: github.event_name == 'workflow_dispatch'
+    steps:
+      - name: Download all the dists
+        uses: actions/download-artifact@v4
+        with:
+          name: python-package-distributions
+          path: dist/
+      - name: Publish distribution 📦 to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
           verbose: true
