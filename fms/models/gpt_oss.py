@@ -24,6 +24,24 @@ from fms.modules.positions import RotaryEmbedding
 
 from fms.modules.ssm import RMSNormGated
 
+FP4_VALUES = [
+    +0.0,
+    +0.5,
+    +1.0,
+    +1.5,
+    +2.0,
+    +3.0,
+    +4.0,
+    +6.0,
+    -0.0,
+    -0.5,
+    -1.0,
+    -1.5,
+    -2.0,
+    -3.0,
+    -4.0,
+    -6.0,
+]
 
 @dataclass
 class GptOssConfig(ModelConfig):
@@ -455,50 +473,42 @@ def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]
         (r"self_attn\.q_proj", "attn.in_proj.query"),
         (r"self_attn\.out_proj", "attn.dense"),
         (r"self_attn\.o_proj", "attn.dense"),
-        (r"mlp\.experts\.gate_up_proj_scales", "ff_sub_layer.cond_ffn.w1"),
+        (r"mlp\.experts\.gate_up_proj_scales", "ff_sub_layer.cond_ffn.w13"),
         (r"mlp\.experts\.gate_down_proj_scales", "ff_sub_layer.cond_ffn.w2"),
-        (r"mlp\.experts\.up_proj_bias", "ff_sub_layer.cond_ffn.w1.bias"),
-        (r"mlp\.experts\.down_proj_bias", "ff_sub_layer.cond_ffn.w2.bias"),
+        (r"mlp\.experts\.up_proj_bias", "ff_sub_layer.cond_ffn.w1_bias"),
+        (r"mlp\.experts\.down_proj_bias", "ff_sub_layer.cond_ffn.w2_bias"),
         (r"mlp\.router", "ff_sub_layer.gate"),
         (r"input_layernorm", "ln"),
         (r"post_attention_layernorm", "ff_ln"),
-        (r"sinks", "attn"),
         (r"^norm", "base_model.dec_norm"),
         (r"^layers", "base_model.layers"),
     ]
     new_sd = {}
     for name, param in input_sd.items():
+        if re.search("gate_up_proj|down_proj", name) and "bias" not in name:
+            if "scales" in name:
+                continue
+            elif "blocks" in name:
+                # deal with packed weights
+                blocks = new_sd[key]
+                scales = new_sd[key.replace("blocks", "scales")]
+                new_key = new_sd.replace(".blocks", "")
+                unpacked_tensors = _convert_moe_packed_tensors(blocks, scales, dtype=torch.bfloat16)
+                new_sd[new_key] = unpacked_tensors
+            else:
+                raise (f"Unidentified {key}, please double check the state dict")
         new_name = name
         for pattern, repl in replacements:
             new_name = re.sub(pattern, repl, new_name)
         new_sd[new_name] = param
 
-        if "gate" in new_name:
-            weight_name = name.replace("gate", "w1")[:-7]
-            if weight_name not in input_sd:
-                missing_weights = [
-                    name.replace("gate", "w1")[:-7],
-                    name.replace("gate", "w2")[:-7],
-                    name.replace("gate", "w3")[:-7],
-                ]
-                raise ValueError(f"Missing {missing_weights}")
-
-        if "w1" in new_name or "w2" in new_name or "w3" in new_name:
-            gate_name = re.sub(r"w\d", "gate", name) + ".weight"
-            if gate_name not in input_sd:
-                missing_weights = [
-                    gate_name,
-                    re.sub(r"w\d", "w1", name),
-                    re.sub(r"w\d", "w2", name),
-                    re.sub(r"w\d", "w3", name),
-                ]
-                missing_weights = [w for w in missing_weights if w != name]
-                raise ValueError(f"Missing {missing_weights}")
-            num_experts = input_sd[gate_name].size(0)
-            temp = new_sd[new_name]
-            new_sd[new_name] = temp.reshape(
-                num_experts, temp.size(0) // num_experts, temp.size(1)
-            ).contiguous()
+    for key in list(new_sd.keys()):
+        if key not in new_sd:
+            continue
+        if "gate" in key:
+            new_sd[key] = new_sd[key].contiguous()
+        if "w2" in key:
+            new_sd[key] = new_sd[key].transpose(0, 1).contiguous() 
 
     return new_sd
 
@@ -569,6 +579,54 @@ def _hf_to_fms_rope(
             new_sd[name] = param
 
     return new_sd
+
+
+def _convert_moe_packed_tensors(
+    blocks,
+    scales,
+    *,
+    dtype: torch.dtype = torch.bfloat16,
+    rows_per_chunk: int = 32768 * 1024,
+) -> torch.Tensor:
+    """
+    TODO this needs to be documented
+    """
+    import math
+
+    scales = scales.to(torch.int32) - 127
+
+    assert blocks.shape[:-1] == scales.shape, f"{blocks.shape=} does not match {scales.shape=}"
+
+    lut = torch.tensor(FP4_VALUES, dtype=dtype, device=blocks.device)
+
+    *prefix_shape, G, B = blocks.shape
+    rows_total = math.prod(prefix_shape) * G
+
+    blocks = blocks.reshape(rows_total, B)
+    scales = scales.reshape(rows_total, 1)
+
+    out = torch.empty(rows_total, B * 2, dtype=dtype, device=blocks.device)
+
+    for r0 in range(0, rows_total, rows_per_chunk):
+        r1 = min(r0 + rows_per_chunk, rows_total)
+
+        blk = blocks[r0:r1]
+        exp = scales[r0:r1]
+
+        # nibble indices -> int64
+        idx_lo = (blk & 0x0F).to(torch.long)
+        idx_hi = (blk >> 4).to(torch.long)
+
+        sub = out[r0:r1]
+        sub[:, 0::2] = lut[idx_lo]
+        sub[:, 1::2] = lut[idx_hi]
+
+        torch.ldexp(sub, exp, out=sub)
+        del idx_lo, idx_hi, blk, exp
+
+    out = out.reshape(*prefix_shape, G, B * 2).view(*prefix_shape, G * B * 2)
+    out = out.to(torch.float8_e5m2).permute(0, 2, 1).contiguous()
+    return out
 
 
 serialization.register_adapter_step(
