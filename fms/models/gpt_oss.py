@@ -473,13 +473,6 @@ def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]
             new_name = re.sub(pattern, repl, new_name)
         new_sd[new_name] = param
 
-        if "w1" in new_name or "w2" in new_name or "w3" in new_name:
-            num_experts = new_sd[new_name].size(0)
-            temp = new_sd[new_name]
-            new_sd[new_name] = temp.reshape(
-                num_experts, temp.size(0) // num_experts, temp.size(1)
-            ).contiguous()
-
     for key in list(new_sd.keys()):
         if key not in new_sd:
             continue
