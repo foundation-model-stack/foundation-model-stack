@@ -32,7 +32,7 @@ def convert_to_hf(
             num_hidden_layers=hf_config.nlayers,
             num_attention_heads=hf_config.nheads,
             num_key_value_heads=hf_config.kvheads,
-            max_position_embedings=hf_config.max_expected_seq_len,
+            max_position_embeddings=hf_config.max_expected_seq_len,
             rms_norm_eps=hf_config.norm_eps,
             bos_token_id=hf_config.bos_token_id,
             eos_token_id=hf_config.eos_token_id,
