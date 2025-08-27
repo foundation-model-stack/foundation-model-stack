@@ -474,9 +474,7 @@ def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]
         new_sd[new_name] = param
 
         if "w1" in new_name or "w2" in new_name or "w3" in new_name:
-            gate_name = re.sub(r"w\d", "gate", name) + ".weight"
-
-            num_experts = input_sd[gate_name].size(0)
+            num_experts = input_sd[new_name].size(0)
             temp = new_sd[new_name]
             new_sd[new_name] = temp.reshape(
                 num_experts, temp.size(0) // num_experts, temp.size(1)
