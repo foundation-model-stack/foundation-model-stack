@@ -478,10 +478,8 @@ def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]
         (r"self_attn\.v_proj", "attn.in_proj.value"),
         (r"self_attn\.q_proj", "attn.in_proj.query"),
         (r"self_attn\.o_proj", "attn.dense"),
-        (r"mlp\.experts\.gate_up_proj_scales", "ff_sub_layer.cond_ffn.w13"),
-        (r"mlp\.experts\.gate_down_proj_scales", "ff_sub_layer.cond_ffn.w2"),
-        (r"mlp\.experts\.up_proj_bias", "ff_sub_layer.cond_ffn.w1_bias"),
-        (r"mlp\.experts\.down_proj_bias", "ff_sub_layer.cond_ffn.w2_bias"),
+        (r"mlp\.experts\.gate_up_proj_blocks", "ff_sub_layer.cond_ffn.w1"),
+        (r"mlp\.experts\.gate_down_proj_blocks", "ff_sub_layer.cond_ffn.w2"),
         (r"mlp\.router", "ff_sub_layer.gate"),
         (r"input_layernorm", "ln"),
         (r"post_attention_layernorm", "ff_ln"),
@@ -489,6 +487,8 @@ def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]
     ]
     new_sd = {}
     for name, param in input_sd.items():
+        print("name in input_sd")
+        print(name)
         if re.search("gate_up_proj|down_proj", name) and "bias" not in name:
             if "scales" in name:
                 continue
@@ -503,13 +503,15 @@ def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]
                     blocks, scales, dtype=torch.bfloat16
                 )
                 new_sd[new_key] = unpacked_tensors
+                del input_sd[name]
             else:
                 raise (f"Unidentified {name}, please double check the state dict")
         new_name = name
         for pattern, repl in replacements:
             new_name = re.sub(pattern, repl, new_name)
         new_sd[new_name] = param
-
+        print("new_sd[new_name]")
+        print(new_name)
     return new_sd
 
 
