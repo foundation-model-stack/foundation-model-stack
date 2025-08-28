@@ -471,12 +471,10 @@ def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]
     replacements = [
         (r"^lm_head.weight", "head.weight"),
         (r"^model.embed_tokens.weight", "base_model.embedding.weight"),
-        (r"^model.final_layernorm", "base_model.dec_norm"),
         (r"^model.layers", "base_model.layers"),
         (r"self_attn\.k_proj", "attn.in_proj.key"),
         (r"self_attn\.v_proj", "attn.in_proj.value"),
         (r"self_attn\.q_proj", "attn.in_proj.query"),
-        (r"self_attn\.out_proj", "attn.dense"),
         (r"self_attn\.o_proj", "attn.dense"),
         (r"mlp\.experts\.gate_up_proj_scales", "ff_sub_layer.cond_ffn.w13"),
         (r"mlp\.experts\.gate_down_proj_scales", "ff_sub_layer.cond_ffn.w2"),
@@ -485,8 +483,7 @@ def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]
         (r"mlp\.router", "ff_sub_layer.gate"),
         (r"input_layernorm", "ln"),
         (r"post_attention_layernorm", "ff_ln"),
-        (r"^norm", "base_model.dec_norm"),
-        (r"^layers", "base_model.layers"),
+        (r"^model.norm", "base_model.dec_norm"),
     ]
     new_sd = {}
     for name, param in input_sd.items():
@@ -587,9 +584,6 @@ def _convert_moe_packed_tensors(
     dtype: torch.dtype = torch.bfloat16,
     rows_per_chunk: int = 32768 * 1024,
 ) -> torch.Tensor:
-    """
-    TODO this needs to be documented
-    """
     import math
 
     scales = scales.to(torch.int32) - 127
