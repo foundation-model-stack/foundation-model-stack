@@ -43,6 +43,7 @@ FP4_VALUES = [
     -6.0,
 ]
 
+
 @dataclass
 class GptOssConfig(ModelConfig):
     num_experts: int = 128
@@ -386,10 +387,10 @@ class GptOss(nn.Module):
 
         if only_last_token:
             output = output[:, -1, :]
-        
+
         if output.dtype != self.head.bias.dtype:
             output = output.to(self.head.bias.dtype)
-            
+
         preds = self.head(output)
         preds = preds / self.config.logits_scaling
 
@@ -497,7 +498,9 @@ def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]
                 blocks = input_sd[name]
                 scales = input_sd[name.replace("blocks", "scales")]
                 new_key = name.replace(".blocks", "")
-                unpacked_tensors = _convert_moe_packed_tensors(blocks, scales, dtype=torch.bfloat16)
+                unpacked_tensors = _convert_moe_packed_tensors(
+                    blocks, scales, dtype=torch.bfloat16
+                )
                 new_sd[new_key] = unpacked_tensors
             else:
                 raise (f"Unidentified {name}, please double check the state dict")
@@ -591,7 +594,9 @@ def _convert_moe_packed_tensors(
 
     scales = scales.to(torch.int32) - 127
 
-    assert blocks.shape[:-1] == scales.shape, f"{blocks.shape=} does not match {scales.shape=}"
+    assert blocks.shape[:-1] == scales.shape, (
+        f"{blocks.shape=} does not match {scales.shape=}"
+    )
 
     lut = torch.tensor(FP4_VALUES, dtype=dtype, device=blocks.device)
 

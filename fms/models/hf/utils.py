@@ -343,9 +343,9 @@ def _infer_model_configuration(
             ):
                 ignore_patterns = ["*.safetensors"]
                 allow_patterns.append("*.pt")
-            elif (
-                isinstance(model_id_or_path, str)
-                and model_id_or_path.startswith("mistralai/Mistral")):
+            elif isinstance(model_id_or_path, str) and model_id_or_path.startswith(
+                "mistralai/Mistral"
+            ):
                 ignore_patterns = ["consolidated.safetensors"]
                 allow_patterns.append("*.safetensors*")
             else:
