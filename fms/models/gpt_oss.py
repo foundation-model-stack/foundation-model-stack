@@ -496,7 +496,9 @@ def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]
                 # deal with packed weights
                 blocks = input_sd[name]
                 scales = input_sd[name.replace("blocks", "scales")]
+                print("new name blocks | scales")
                 new_key = name.replace(".blocks", "")
+                print(new_key)
                 unpacked_tensors = _convert_moe_packed_tensors(
                     blocks, scales, dtype=torch.bfloat16
                 )
