@@ -24,7 +24,7 @@ jobs:
       id: cache-venv-restore
       with:
         path: ./.venv/
-        key: ${{ runner.os }}-${{ steps.setup_python.outputs.python-version }}-venv-${{ hashFiles('*requirements.txt') }}
+        key: ${{ runner.os }}-${{ steps.setup_python.outputs.python-version }}-venv-${{ hashFiles('pyproject.toml') }}
         restore-keys: |
           ${{ runner.os }}-${{ steps.setup_python.outputs.python-version }}-venv-
     - name: Install dependencies

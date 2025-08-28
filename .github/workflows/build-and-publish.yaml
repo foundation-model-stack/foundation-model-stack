@@ -9,7 +9,7 @@ jobs:
     name: Build distribution 📦
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           persist-credentials: false
           fetch-depth: 0 # Fetch tags for setuptools_scm
@@ -41,7 +41,7 @@ jobs:
     if: github.event_name == 'release'
     steps:
       - name: Download all the dists
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: python-package-distributions
           path: dist/
@@ -57,10 +57,10 @@ jobs:
     runs-on: ubuntu-latest
     environment: 
       name: pypi
-      url: https://pypi.org/project/ibm-fms
+      url: https://test.pypi.org/project/ibm-fms/
     permissions:
       id-token: write  # Required for Trusted Publishing
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' # triggered by manually run workflow
     steps:
       - name: Download all the dists
         uses: actions/download-artifact@v4
