@@ -386,6 +386,10 @@ class GptOss(nn.Module):
 
         if only_last_token:
             output = output[:, -1, :]
+        
+        if output.dtype != self.head.bias.dtype:
+            output = output.to(self.head.bias.dtype)
+            
         preds = self.head(output)
         preds = preds / self.config.logits_scaling
 
@@ -501,14 +505,6 @@ def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]
         for pattern, repl in replacements:
             new_name = re.sub(pattern, repl, new_name)
         new_sd[new_name] = param
-
-    for key in list(new_sd.keys()):
-        if key not in new_sd:
-            continue
-        if "gate" in key:
-            new_sd[key] = new_sd[key].contiguous()
-        if "w2" in key:
-            new_sd[key] = new_sd[key].transpose(0, 1).contiguous() 
 
     return new_sd
 
