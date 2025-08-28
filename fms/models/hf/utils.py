@@ -165,8 +165,8 @@ def _map_model_config(architecture, config):
         )
         rope_theta = getattr(config, "rope_theta", None)
         if rope_theta is not None:
-            config_params["rope_theta"] = rope_theta
-            config_params["rope_base"] = config.rope_theta
+            # FMS canonical name is rope_base; avoid setting rope_theta simultaneously
+            config_params["rope_base"] = rope_theta
         rope_scaling = getattr(config, "rope_scaling", None)
         if rope_scaling is not None:
             config_params["rope_scaling"] = rope_scaling

@@ -42,7 +42,7 @@ _fms_to_hf_adapt_map = {
     GPTBigCode: HFAdaptedGPTBigCodeForCausalLM,
     GPTBigCodeHeadless: HFAdaptedGPTBigCodeHeadless,
     GptOss: HFAdaptedGptOssForCausalLM,
-    GptOssHeadless: HFAdaptedGPTBigCodeHeadless,
+    GptOssHeadless: HFAdaptedGptOssHeadless,
     RoBERTa: HFAdaptedRoBERTaForMaskedLM,
     RoBERTaHeadless: HFAdaptedRoBERTaHeadless,
     Mixtral: HFAdaptedMixtralForCausalLM,

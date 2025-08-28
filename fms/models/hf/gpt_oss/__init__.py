@@ -11,7 +11,7 @@ def convert_to_hf(
     fms_hf_model: HFAdaptedGptOssForCausalLM,
 ) -> GptOssForCausalLM:
     """
-    Convert an HF-Adapted FMS Mixtral model to an HF model
+    Convert an HF-Adapted FMS GptOss model to an HF model
 
     Parameters
     ----------
@@ -53,6 +53,8 @@ def convert_to_hf(
                 fms_hf_layer.attn.in_proj.qkv_fused.weight,
                 fms_hf_layer.attn.in_proj.splits,
             )
+            # Expect splits == [q, k, v] and RoPE interleaving [even, odd] per head.
+            assert len(fms_hf_layer.attn.in_proj.splits) == 3, "Expected [q,k,v] fused layout"
 
             # self attn (+ HF RoPE transpose)
             hf_q = (

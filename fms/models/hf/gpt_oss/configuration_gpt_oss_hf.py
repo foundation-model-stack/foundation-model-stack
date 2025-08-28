@@ -54,10 +54,7 @@ class HFAdaptedGptOssConfig(GptOssConfig):
         self.sliding_window = sliding_window
         self.top_k_experts = top_k_experts
         # for backward compatibility
-        if kvheads is None:
-            num_key_value_heads = num_attention_heads
-
-        self.kvheads = num_key_value_heads
+        self.kvheads = num_attention_heads if kvheads is None else kvheads
         self.activation_fn = activation_fn
         self.initializer_range = initializer_range
         self.norm_eps = norm_eps
