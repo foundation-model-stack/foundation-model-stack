@@ -388,8 +388,8 @@ class GptOss(nn.Module):
         if only_last_token:
             output = output[:, -1, :]
 
-        if output.dtype != self.head.bias.dtype:
-            output = output.to(self.head.bias.dtype)
+        if output.dtype != self.head.weight.dtype:
+            output = output.to(self.head.weight.dtype)
 
         preds = self.head(output)
         preds = preds / self.config.logits_scaling
