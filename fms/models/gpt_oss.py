@@ -487,8 +487,8 @@ def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]
     ]
     new_sd = {}
     for name, param in input_sd.items():
-        print("name in input_sd")
-        print(name)
+        new_name = name
+        unpacked_tensors = None
         if re.search("gate_up_proj|down_proj", name) and "bias" not in name:
             if "scales" in name:
                 continue
@@ -497,21 +497,16 @@ def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]
                 blocks = input_sd[name]
                 scales = input_sd[name.replace("blocks", "scales")]
                 print("new name blocks | scales")
-                new_key = name.replace(".blocks", "")
-                print(new_key)
+                new_name = name.replace(".blocks", "")
+                print(new_name)
                 unpacked_tensors = _convert_moe_packed_tensors(
                     blocks, scales, dtype=torch.bfloat16
                 )
-                new_sd[new_key] = unpacked_tensors
-                del input_sd[name]
-            else:
-                raise (f"Unidentified {name}, please double check the state dict")
-        new_name = name
         for pattern, repl in replacements:
             new_name = re.sub(pattern, repl, new_name)
-        new_sd[new_name] = param
-        print("new_sd[new_name]")
-        print(new_name)
+        new_sd[new_name] = unpacked_tensors if unpacked_tensors else param
+    print("new_sd keys (all)")
+    print(new_sd.keys())
     return new_sd
 
 

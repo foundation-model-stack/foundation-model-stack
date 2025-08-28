@@ -80,12 +80,7 @@ def convert_to_hf(
                 oss_hf_layer.block_sparse_moe.experts
             ):
                 expert_layer.w1.weight.copy_(
-                    fms_hf_layer.ff_sub_layer.cond_ffn.w13.chunk(2, dim=1)[0][
-                        expert_idx
-                    ]
-                )
-                expert_layer.w3.weight.copy_(
-                    fms_hf_layer.ff_sub_layer.cond_ffn.w13.chunk(2, dim=1)[1][
+                    fms_hf_layer.ff_sub_layer.cond_ffn.w1.chunk(2, dim=1)[0][
                         expert_idx
                     ]
                 )
