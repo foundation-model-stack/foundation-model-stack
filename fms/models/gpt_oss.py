@@ -389,9 +389,11 @@ class GptOss(nn.Module):
             output = output[:, -1, :]
 
         if output.dtype != self.head.weight.dtype:
-            output = output.to(self.head.weight.dtype)
+            output_dtype = output.to(self.head.weight.dtype)
+            preds = self.head(output_dtype)
+        else:
+            preds = self.head(output)
 
-        preds = self.head(output)
         preds = preds / self.config.logits_scaling
 
         if use_cache:
