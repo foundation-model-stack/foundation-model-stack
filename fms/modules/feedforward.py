@@ -607,6 +607,8 @@ class TPConditionalFeedForward(ConditionalFeedForward, TPModule):
     ):
         # 1. Grab the weights from tensor_values
         used_keys: Set[str] = set()
+        print(" def load_weights class TPConditionalFeedForward(ConditionalFeedForward, TPModule): ")
+        print(used_keys.keys())
         w13_weight = self._get_sd_weight(tensor_values, used_keys, ["w13"])
         w2_weight = self._get_sd_weight(tensor_values, used_keys, ["w2"])
 
