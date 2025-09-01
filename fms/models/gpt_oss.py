@@ -440,7 +440,7 @@ def _weight_fusion(
         for key in list(new_sd.keys()):
             if key not in new_sd:
                 continue
-            if "w1" in key:
+            if "w1" in key and "_bias" not in key:
                 fused_name = key.replace("w1", "w13")
                 new_sd[fused_name] = new_sd[key]
                 del new_sd[key]
