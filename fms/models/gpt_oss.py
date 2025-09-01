@@ -440,11 +440,6 @@ def _weight_fusion(
         for key in list(new_sd.keys()):
             if key not in new_sd:
                 continue
-            if "w1" in key and "_bias" not in key:
-                fused_name = key.replace("w1", "w13")
-                new_sd[fused_name] = torch.cat([new_sd[key], new_sd[key]], dim=1)
-                del new_sd[key]
-
         new_sd = dict(serialization._attn_unfused_to_fused_step(new_sd))
 
     return new_sd
