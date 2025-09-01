@@ -622,7 +622,6 @@ class MultiHeadAttention(nn.Module):
         self.linear_config = linear_config
         self.scale_factor = scale_factor
         self.has_sinks = has_sinks
-        self.sink
 
         self.in_proj: QKV = (FusedQKV if self.fused else UnfusedQKV)(
             self.emb_dim,
