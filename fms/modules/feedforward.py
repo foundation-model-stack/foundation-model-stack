@@ -481,29 +481,12 @@ class ConditionalFeedForward(nn.Module):
         self.num_experts = num_experts
         self.dim = dim
         self.intermediate_size = intermediate_size
-        self.w13 = (
-            nn.Parameter(torch.empty(num_experts, 2 * intermediate_size, dim))
-            if not use_bias
-            else None
-        )
-        self.w1 = (
-            nn.Parameter(torch.empty(num_experts, 2 * intermediate_size, dim))
-            if use_bias
-            else None
-        )
+        self.w13 = nn.Parameter(torch.empty(num_experts, 2 * intermediate_size, dim))
         self.w2 = nn.Parameter(torch.empty(num_experts, dim, intermediate_size))
         self.use_bias = use_bias
         self.bias = nn.Parameter(torch.empty(self.num_experts)) if use_bias else None
-        self.w1_bias = (
-            torch.nn.Parameter(torch.empty(num_experts, 2 * intermediate_size, dim))
-            if use_bias
-            else None
-        )
-        self.w2_bias = (
-            torch.nn.Parameter(torch.empty(num_experts, dim, intermediate_size))
-            if use_bias
-            else None
-        )
+        self.w13_bias = torch.nn.Parameter(torch.empty(num_experts, 2 * intermediate_size, dim))
+        self.w2_bias = torch.nn.Parameter(torch.empty(num_experts, dim, intermediate_size))
 
     def reset_parameters(self):
         for param in ["w13", "w2"]:
@@ -543,7 +526,7 @@ class ConditionalFeedForward(nn.Module):
 
         if self.use_bias:
             # MLP #1
-            self.w13 = self.w13 + self.w1_bias
+            self.w13 = self.w13 + self.w13_bias
 
             # MLP #2
             self.w2 = self.w2 + self.w2_bias
