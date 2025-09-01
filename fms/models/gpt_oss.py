@@ -102,10 +102,11 @@ class GptOssBlock(nn.Module):
             self.config.nheads,
             kvheads,
             p_dropout=self.config.p_dropout,
-            use_bias=False,
+            use_bias=True,
             position_encoder=rotary_emb,
             fused=self.config.fused_weights,
             linear_config=self.config.linear_config,
+            has_sinks=True,
         )
 
         if self.config.p_dropout != 0:
@@ -116,6 +117,7 @@ class GptOssBlock(nn.Module):
             self.config.top_k_experts,
             self.config.hidden_dim,
             self.config.hidden_dim,
+            use_bias=True,
         )
 
         if self.config.p_dropout != 0:
@@ -435,9 +437,16 @@ def _weight_fusion(
 
     new_sd = input_sd
     if has_fused_weights:
-        new_sd = serialization._mlp_glu_unfused_to_fused_adapter_step(
-            serialization._attn_unfused_to_fused_step(new_sd)
-        )
+        for key in list(new_sd.keys()):
+            if key not in new_sd:
+                continue
+            if "w1" in key:
+                fused_name = key.replace("w1", "w13")
+                new_sd[fused_name] = new_sd[key]
+                del new_sd[key]
+
+        new_sd = dict(serialization._attn_unfused_to_fused_step(new_sd))
+
     return new_sd
 
 
@@ -477,12 +486,18 @@ def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]
         (r"self_attn\.v_proj", "attn.in_proj.value"),
         (r"self_attn\.q_proj", "attn.in_proj.query"),
         (r"self_attn\.o_proj", "attn.dense"),
-        (r"mlp\.experts\.gate_up_proj_blocks", "ff_sub_layer.cond_ffn.w1"),
-        (r"mlp\.experts\.gate_down_proj_blocks", "ff_sub_layer.cond_ffn.w2"),
-        (r"mlp\.router", "ff_sub_layer.gate"),
+        (r"mlp.experts.gate_up_proj_blocks", "ff_sub_layer.cond_ffn.w1"),
+        (r"mlp.experts.down_proj_blocks", "ff_sub_layer.cond_ffn.w2"),
+        (r"mlp.router", "ff_sub_layer.gate"),
         (r"input_layernorm", "ln"),
         (r"post_attention_layernorm", "ff_ln"),
         (r"^model.norm", "base_model.dec_norm"),
+    ]
+    gpt_oss_experts_specific = [
+        (r"mlp.experts.gate_up_proj_blocks", "ff_sub_layer.cond_ffn.w1"),
+        (r"mlp.experts.down_proj_blocks", "ff_sub_layer.cond_ffn.w2"),
+        (r"mlp.experts.gate_up_proj_bias", "ff_sub_layer.cond_ffn.w1_bias"),
+        (r"mlp.experts.down_proj_bias", "ff_sub_layer.cond_ffn.w2_bias"),
     ]
     new_sd = {}
     for name, param in input_sd.items():
@@ -495,17 +510,19 @@ def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]
                 # deal with packed weights
                 blocks = input_sd[name]
                 scales = input_sd[name.replace("blocks", "scales")]
-                print("new name blocks | scales")
                 new_name = name.replace(".blocks", "")
-                print(new_name)
                 unpacked_tensors = _convert_moe_packed_tensors(
                     blocks, scales, dtype=torch.bfloat16
                 )
         for pattern, repl in replacements:
             new_name = re.sub(pattern, repl, new_name)
+
+        if re.search("gate_up_proj|down_proj", new_name) and re.search(
+            "base_model.layers", new_name
+        ):
+            for pattern, repl in gpt_oss_experts_specific:
+                new_name = re.sub(pattern, repl, new_name)
         new_sd[new_name] = unpacked_tensors if unpacked_tensors is not None else param
-    print("new_sd keys (all)")
-    print(new_sd.keys())
     return new_sd
 
 

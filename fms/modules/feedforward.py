@@ -470,13 +470,28 @@ class ConditionalFeedForward(nn.Module):
         The intermediate size for the expert networks.
     """
 
-    def __init__(self, num_experts: int, dim: int, intermediate_size: int):
+    def __init__(
+        self,
+        num_experts: int,
+        dim: int,
+        intermediate_size: int,
+        use_bias: bool = False,
+    ):
         super().__init__()
         self.num_experts = num_experts
         self.dim = dim
         self.intermediate_size = intermediate_size
         self.w13 = nn.Parameter(torch.empty(num_experts, 2 * intermediate_size, dim))
         self.w2 = nn.Parameter(torch.empty(num_experts, dim, intermediate_size))
+        self.use_bias = use_bias
+
+        if use_bias:
+            self.w1_bias = torch.nn.Parameter(
+                torch.empty(num_experts, 2 * intermediate_size, dim)
+            )
+            self.w2_bias = torch.nn.Parameter(
+                torch.empty(num_experts, dim, intermediate_size)
+            )
 
     def reset_parameters(self):
         for param in ["w13", "w2"]:
@@ -513,6 +528,13 @@ class ConditionalFeedForward(nn.Module):
             expert_block_mapping,
             total_padded_tokens,
         ) = triton_ops.moe_align_block_size(expert_indices, padding_size, E)
+
+        if self.use_bias:
+            # MLP #1
+            self.w13 = self.w13 + self.w1_bias
+
+            # MLP #2
+            self.w2 = self.w2 + self.w2_bias
 
         x1, x3 = (
             torch.ops.moe.moe_mm(
@@ -640,10 +662,13 @@ class MOEFeedForward(nn.Module):
         num_activated_experts: int,
         dim: int,
         intermediate_size: int,
+        use_bias: bool = False,
     ) -> None:
         super().__init__()
-        self.gate = nn.Linear(dim, num_experts, bias=False)
-        self.cond_ffn = ConditionalFeedForward(num_experts, dim, intermediate_size)
+        self.gate = nn.Linear(dim, num_experts, bias=use_bias)
+        self.cond_ffn = ConditionalFeedForward(
+            num_experts, dim, intermediate_size, use_bias=use_bias
+        )
         self.dim = dim
         self.num_activated_experts = num_activated_experts
 
@@ -670,4 +695,5 @@ class MOEFeedForward(nn.Module):
         expert_outs = self.cond_ffn(x, expert_indices)
         int_v1 = torch.einsum("tai,ta -> ti", expert_outs, expert_weights)
         int_v2 = int_v1.view(B, S, self.dim)
+
         return int_v2

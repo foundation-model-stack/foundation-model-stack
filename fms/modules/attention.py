@@ -259,6 +259,30 @@ def _sdpa_compute_op(
         torch.backends.cuda.enable_mem_efficient_sdp(__sdpa_previous_mem_efficient)
         torch.backends.cuda.enable_math_sdp(__sdpa_previous_math)
 
+    if attn_kwargs.get("sinks"):
+        key_states = repeat_kv(key_cache, nn.num_key_value_groups)
+        value_states = repeat_kv(value_cache, nn.num_key_value_groups)
+        attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scale_factor
+        if attn_mask is not None:
+            causal_mask = attn_mask[:, :, :, : key_states.shape[-2]]
+            attn_weights = attn_weights + causal_mask
+
+        sinks = nn.sinks.reshape(1, -1, 1, 1).expand(
+            query.shape[0], -1, query.shape[-2], -1
+        )
+        combined_logits = torch.cat([attn_weights, sinks], dim=-1)
+
+        # This was not in the original implementation and slightly affect results; it prevents overflow in BF16/FP16
+        # when training with bsz>1 we clamp max values.
+
+        combined_logits = (
+            combined_logits - combined_logits.max(dim=-1, keepdim=True).values
+        )
+        probs = F.softmax(combined_logits, dim=-1, dtype=combined_logits.dtype)
+        scores = probs[..., :-1]  # we drop the sink here
+        attn_weights = nn.functional.dropout(scores, p=p_dropout, training=nn.training)
+        attn = torch.matmul(attn_weights, value_states)
+
     # attn: bs x seq_len x nheads*emb_v_per_head
     # attn: b x h x qlen x ds
     # attn after permute: b x qlen x h x ds
@@ -310,6 +334,20 @@ def get_attention_type(**attn_kwargs: Unpack[AttentionKwargs]) -> dict[str, Call
         raise KeyError(f"The attention {attn_name} is not registered")
 
     return __type_factory_map[attn_name]
+
+
+def repeat_kv(hidden_states: torch.Tensor, n_rep: int) -> torch.Tensor:
+    """
+    This is the equivalent of torch.repeat_interleave(x, dim=1, repeats=n_rep). The hidden states go from (batch,
+    num_key_value_heads, seqlen, head_dim) to (batch, num_attention_heads, seqlen, head_dim)
+    """
+    batch, num_key_value_heads, slen, head_dim = hidden_states.shape
+    if n_rep == 1:
+        return hidden_states
+    hidden_states = hidden_states[:, :, None, :, :].expand(
+        batch, num_key_value_heads, n_rep, slen, head_dim
+    )
+    return hidden_states.reshape(batch, num_key_value_heads * n_rep, slen, head_dim)
 
 
 class QKV(nn.Module, metaclass=abc.ABCMeta):
@@ -570,6 +608,7 @@ class MultiHeadAttention(nn.Module):
         fused: bool = True,
         linear_config: Optional[Mapping[str, Any]] = None,
         scale_factor: Optional[float] = None,
+        has_sinks: bool = False,
     ):
         super(MultiHeadAttention, self).__init__()
         self.nheads = nheads
@@ -582,6 +621,7 @@ class MultiHeadAttention(nn.Module):
         self.fused = fused
         self.linear_config = linear_config
         self.scale_factor = scale_factor
+        self.has_sinks = has_sinks
 
         self.in_proj: QKV = (FusedQKV if self.fused else UnfusedQKV)(
             self.emb_dim,
@@ -665,6 +705,7 @@ class MultiHeadAttention(nn.Module):
             queries, keys = self.position_encoder.adjusted_qk(
                 queries, keys, position_ids, past_key_value_state, use_cache
             )
+        attn_kwargs.update({"sinks": self.has_sinks})
 
         attn_compute_dict = get_attention_type(**attn_kwargs)
 
