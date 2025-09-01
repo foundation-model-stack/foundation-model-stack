@@ -66,7 +66,6 @@ class GptOssConfig(ModelConfig):
     pad_id: int = -1
     nheads: int = 64
     nlayers: int = 24
-    dim: int = 2880
     norm_eps: float = 1e-05
     kvheads: int = 8
     p_dropout: float = 0.0
@@ -115,7 +114,7 @@ class GptOssBlock(nn.Module):
         self.ff_sub_layer = MOEFeedForward(
             self.config.num_experts,
             self.config.top_k_experts,
-            self.config.dim,
+            self.config.hidden_dim,
             self.config.hidden_dim,
         )
 
