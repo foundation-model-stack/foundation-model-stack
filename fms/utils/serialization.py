@@ -655,7 +655,7 @@ def _load_partial_state_dict(
 
                     if "_bias" in key:
                         tensor_value.to(param.shape())
-                
+
                 param.copy_(tensor_value, non_blocking=True)
 
             elif tp_module is not None and tp_module not in seen_tp_modules:

@@ -235,10 +235,7 @@ class GptOssHeadless(nn.Module):
 
         # Call reset_parameters for relevant sub-layers
         for m in self.modules():
-            if (
-                isinstance(m, MultiHeadAttention)
-                or isinstance(m, MOEFeedForward)
-            ):
+            if isinstance(m, MultiHeadAttention) or isinstance(m, MOEFeedForward):
                 m.reset_parameters()
 
     def _clean_up_rot_emb_cache(

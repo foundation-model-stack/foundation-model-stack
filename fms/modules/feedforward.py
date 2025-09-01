@@ -481,7 +481,16 @@ class ConditionalFeedForward(nn.Module):
         self.num_experts = num_experts
         self.dim = dim
         self.intermediate_size = intermediate_size
-        self.w13 = nn.Parameter(torch.empty(num_experts, 2 * intermediate_size, dim))
+        self.w13 = (
+            nn.Parameter(torch.empty(num_experts, 2 * intermediate_size, dim))
+            if not use_bias
+            else None
+        )
+        self.w1 = (
+            nn.Parameter(torch.empty(num_experts, 2 * intermediate_size, dim))
+            if use_bias
+            else None
+        )
         self.w2 = nn.Parameter(torch.empty(num_experts, dim, intermediate_size))
         self.use_bias = use_bias
         self.bias = nn.Parameter(torch.empty(self.num_experts)) if use_bias else None
@@ -607,8 +616,6 @@ class TPConditionalFeedForward(ConditionalFeedForward, TPModule):
     ):
         # 1. Grab the weights from tensor_values
         used_keys: Set[str] = set()
-        print(" def load_weights class TPConditionalFeedForward(ConditionalFeedForward, TPModule): ")
-        print(used_keys.keys())
         w13_weight = self._get_sd_weight(tensor_values, used_keys, ["w13"])
         w2_weight = self._get_sd_weight(tensor_values, used_keys, ["w2"])
 
