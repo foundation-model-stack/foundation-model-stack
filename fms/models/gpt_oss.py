@@ -237,7 +237,6 @@ class GptOssHeadless(nn.Module):
         for m in self.modules():
             if (
                 isinstance(m, MultiHeadAttention)
-                or isinstance(m, GatedLinearUnit)
                 or isinstance(m, MOEFeedForward)
             ):
                 m.reset_parameters()

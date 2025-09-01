@@ -605,6 +605,7 @@ def _load_partial_state_dict(
     unused_keys_tp = None
     seen_tp_modules = set()
     for key, tensor_value in state_dict.items():
+        print(key)
         target_module = model
         # Find where to put the weight and decide whether it needs TP'ing
         key_steps = key.split(".")
@@ -643,6 +644,7 @@ def _load_partial_state_dict(
 
                 # cast module parameter to non-meta device
                 if param.device == torch.device("meta"):
+                    print(f"target_module {target_module}")
                     param = _move_to_real_device(
                         param=param,
                         real_device=tensor_value.device,
@@ -650,6 +652,10 @@ def _load_partial_state_dict(
                     )
                     setattr(target_module, key_steps[-1], param)
                     param = getattr(target_module, key_steps[-1])
+
+                    if "_bias" in key:
+                        tensor_value.to(param.shape())
+                
                 param.copy_(tensor_value, non_blocking=True)
 
             elif tp_module is not None and tp_module not in seen_tp_modules:

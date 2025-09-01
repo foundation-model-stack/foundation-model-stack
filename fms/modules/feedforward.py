@@ -484,14 +484,17 @@ class ConditionalFeedForward(nn.Module):
         self.w13 = nn.Parameter(torch.empty(num_experts, 2 * intermediate_size, dim))
         self.w2 = nn.Parameter(torch.empty(num_experts, dim, intermediate_size))
         self.use_bias = use_bias
-
-        if use_bias:
-            self.w1_bias = torch.nn.Parameter(
-                torch.empty(num_experts, 2 * intermediate_size, dim)
-            )
-            self.w2_bias = torch.nn.Parameter(
-                torch.empty(num_experts, dim, intermediate_size)
-            )
+        self.bias = nn.Parameter(torch.empty(self.num_experts)) if use_bias else None
+        self.w1_bias = (
+            torch.nn.Parameter(torch.empty(num_experts, 2 * intermediate_size, dim))
+            if use_bias
+            else None
+        )
+        self.w2_bias = (
+            torch.nn.Parameter(torch.empty(num_experts, dim, intermediate_size))
+            if use_bias
+            else None
+        )
 
     def reset_parameters(self):
         for param in ["w13", "w2"]:
