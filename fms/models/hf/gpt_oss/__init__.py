@@ -54,7 +54,9 @@ def convert_to_hf(
                 fms_hf_layer.attn.in_proj.splits,
             )
             # Expect splits == [q, k, v] and RoPE interleaving [even, odd] per head.
-            assert len(fms_hf_layer.attn.in_proj.splits) == 3, "Expected [q,k,v] fused layout"
+            assert len(fms_hf_layer.attn.in_proj.splits) == 3, (
+                "Expected [q,k,v] fused layout"
+            )
 
             # self attn (+ HF RoPE transpose)
             hf_q = (
@@ -80,9 +82,7 @@ def convert_to_hf(
                 oss_hf_layer.block_sparse_moe.experts
             ):
                 expert_layer.w1.weight.copy_(
-                    fms_hf_layer.ff_sub_layer.cond_ffn.w1.chunk(2, dim=1)[0][
-                        expert_idx
-                    ]
+                    fms_hf_layer.ff_sub_layer.cond_ffn.w1.chunk(2, dim=1)[0][expert_idx]
                 )
                 expert_layer.w2.weight.copy_(
                     fms_hf_layer.ff_sub_layer.cond_ffn.w2[expert_idx]

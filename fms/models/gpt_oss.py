@@ -503,7 +503,7 @@ def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]
                 )
         for pattern, repl in replacements:
             new_name = re.sub(pattern, repl, new_name)
-        new_sd[new_name] = unpacked_tensors if unpacked_tensors else param
+        new_sd[new_name] = unpacked_tensors if unpacked_tensors is not None else param
     print("new_sd keys (all)")
     print(new_sd.keys())
     return new_sd
