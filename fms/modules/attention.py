@@ -224,6 +224,8 @@ def _sdpa_compute_op(
         values_e = value_cache
 
     attn_algorithm = attn_kwargs.get("attn_algorithm", None)
+    attn_sinks = attn_kwargs.get("sinks", None)
+
     if attn_algorithm:
         # Pick which fused attn kernels will run.
         use_flash = attn_algorithm == "flash"
@@ -259,15 +261,19 @@ def _sdpa_compute_op(
         torch.backends.cuda.enable_mem_efficient_sdp(__sdpa_previous_mem_efficient)
         torch.backends.cuda.enable_math_sdp(__sdpa_previous_math)
 
-    if attn_kwargs.get("sinks"):
-        key_states = repeat_kv(key_cache, nn.num_key_value_groups)
-        value_states = repeat_kv(value_cache, nn.num_key_value_groups)
-        attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scale_factor
+    if attn_sinks:
+        query_states = query.transpose(1, 2)
+        key_states = key_cache.transpose(1, 2)
+        value_states = value_cache.transpose(1, 2)
+        num_key_value_groups = nheads // kvheads
+        key_states = repeat_kv(key_states, num_key_value_groups)
+        value_states = repeat_kv(value_states, num_key_value_groups)
+        attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) * scale_factor
         if attn_mask is not None:
             causal_mask = attn_mask[:, :, :, : key_states.shape[-2]]
             attn_weights = attn_weights + causal_mask
 
-        sinks = nn.sinks.reshape(1, -1, 1, 1).expand(
+        sinks = attn_sinks.reshape(1, -1, 1, 1).expand(
             query.shape[0], -1, query.shape[-2], -1
         )
         combined_logits = torch.cat([attn_weights, sinks], dim=-1)
@@ -711,7 +717,8 @@ class MultiHeadAttention(nn.Module):
             queries, keys = self.position_encoder.adjusted_qk(
                 queries, keys, position_ids, past_key_value_state, use_cache
             )
-        attn_kwargs.update({"sinks": self.has_sinks})
+        if self.has_sinks:
+            attn_kwargs.update({"sinks": self.sinks})
 
         attn_compute_dict = get_attention_type(**attn_kwargs)
 
