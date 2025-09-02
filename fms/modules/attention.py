@@ -261,7 +261,7 @@ def _sdpa_compute_op(
         torch.backends.cuda.enable_mem_efficient_sdp(__sdpa_previous_mem_efficient)
         torch.backends.cuda.enable_math_sdp(__sdpa_previous_math)
 
-    if attn_sinks:
+    if attn_sinks is not None:
         query_states = query.transpose(1, 2)
         key_states = key_cache.transpose(1, 2)
         value_states = value_cache.transpose(1, 2)
@@ -666,7 +666,7 @@ class MultiHeadAttention(nn.Module):
         return TPMultiHeadAttention.import_module(self, group)
     
     def is_parameter_initialized(self, param: nn.Parameter):
-        return (param is not None and param.device != "meta")
+        return (param is not None and param.device != torch.device("meta"))
 
     def forward(
         self,
