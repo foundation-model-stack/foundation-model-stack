@@ -477,6 +477,7 @@ def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]
         (r"self_attn.v_proj", "attn.in_proj.value"),
         (r"self_attn.q_proj", "attn.in_proj.query"),
         (r"self_attn.o_proj", "attn.dense"),
+        (r"self_attn.sinks", "attn.sinks"),
         (r"mlp.experts.gate_up_proj_blocks", "ff_sub_layer.cond_ffn.w13"),
         (r"mlp.experts.down_proj_blocks", "ff_sub_layer.cond_ffn.w2"),
         (r"mlp.router", "ff_sub_layer.gate"),

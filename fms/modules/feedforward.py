@@ -487,6 +487,12 @@ class ConditionalFeedForward(nn.Module):
         self.w13_bias = torch.nn.Parameter(torch.empty(num_experts, 2 * intermediate_size, dim))
         self.w2_bias = torch.nn.Parameter(torch.empty(num_experts, dim, intermediate_size))
 
+        assert self.is_parameter_initialized(self.w13), "Loaded w13"
+        assert self.is_parameter_initialized(self.w2), "Loaded w2"
+        assert self.is_parameter_initialized(self.w13_bias), "Loaded w13_bias"
+        assert self.is_parameter_initialized(self.w2_bias), "Loaded w2_bias"
+
+
     def reset_parameters(self):
         for param in ["w13", "w2"]:
             nn.init.trunc_normal_(
@@ -494,6 +500,9 @@ class ConditionalFeedForward(nn.Module):
                 mean=0.0,
                 std=0.02,
             )
+
+    def is_parameter_initialized(self, param: nn.Parameter):
+        return (param is not None and param.device != "meta")
 
     def to_tp(self, group: ProcessGroup) -> "TPConditionalFeedForward":
         return TPConditionalFeedForward.import_module(self, group)

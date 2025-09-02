@@ -634,6 +634,7 @@ class MultiHeadAttention(nn.Module):
         )
 
         self.sinks = nn.Parameter(torch.empty(self.nheads))
+        assert self.is_parameter_initialized(self.sinks), "Loaded sinks"
 
         self.dense = get_linear(
             self.nheads * self.emb_v_per_head,
@@ -657,6 +658,9 @@ class MultiHeadAttention(nn.Module):
 
     def to_tp(self, group: ProcessGroup) -> "TPMultiHeadAttention":
         return TPMultiHeadAttention.import_module(self, group)
+    
+    def is_parameter_initialized(self, param: nn.Parameter):
+        return (param is not None and param.device != "meta")
 
     def forward(
         self,
