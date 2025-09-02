@@ -666,7 +666,7 @@ class MultiHeadAttention(nn.Module):
         return TPMultiHeadAttention.import_module(self, group)
     
     def is_parameter_initialized(self, param: nn.Parameter):
-        return (param is not None and param.device != torch.device("meta"))
+        return (param is not None and isinstance(param, nn.Parameter))
 
     def forward(
         self,

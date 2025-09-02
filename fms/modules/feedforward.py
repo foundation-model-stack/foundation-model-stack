@@ -502,7 +502,7 @@ class ConditionalFeedForward(nn.Module):
             )
 
     def is_parameter_initialized(self, param: nn.Parameter):
-        return (param is not None and param.device != torch.device("meta"))
+        return (param is not None and isinstance(param, nn.Parameter))
 
     def to_tp(self, group: ProcessGroup) -> "TPConditionalFeedForward":
         return TPConditionalFeedForward.import_module(self, group)

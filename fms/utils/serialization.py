@@ -664,9 +664,6 @@ def _load_partial_state_dict(
                     )
                     setattr(target_module, key_steps[-1], param)
                     param = getattr(target_module, key_steps[-1])
-                    if not param.device == torch.device("meta"):
-                        print(key)
-                        print(key_steps)
                     if "cond_ffn" in key or "_bias" in key or "sinks" in key:
                         tensor_value.to(param.shape())
 
