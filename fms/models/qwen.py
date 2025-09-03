@@ -11,7 +11,7 @@ import logging
 import math
 import re
 from dataclasses import dataclass
-from typing import Any, Mapping, Optional, Tuple
+from typing import Any, Dict, Mapping, Optional, Tuple
 
 import torch
 from torch import nn
@@ -32,6 +32,14 @@ from fms.utils.config import ModelConfig
 
 
 logger = logging.getLogger(__name__)
+# Create global logger with my special formatting
+LOGFMT = "[%(asctime)s.%(msecs)03d] %[name]s - %(levelname)s: %(message)s " + (
+                "[%(filename)s(%(funcName)s:%(lineno)d)]")
+FORMATTER = logging.Formatter(LOGFMT)
+CH = logging.StreamHandler()
+CH.setFormatter(FORMATTER)
+logger.addHandler(CH)
+logger.setLevel(logging.INFO)
 
 
 """
@@ -647,8 +655,26 @@ serialization.register_adapter_step(
     _ARCHITECTURE_NAME, "hf_gptq_fusion_check", _hf_gptq_qwen_check
 )
 
+
+import atexit  # noqa: E402
 import os  # noqa: E402
 KWR_DEBUG = len(os.getenv("KWR_DEBUG", "")) > 0
+mapping_dict: Dict[str, str] = {}
+if KWR_DEBUG:
+    def mapping_dict_cleanup() -> None:
+        """
+        This function will be called automatically when the script exits.
+        """
+        # print("mapping_dict:")
+        logger.info("mapping_dict:")
+        size = len(mapping_dict)  # noqa: F821
+        # print(f"serialization.py:mapping_dict() >>> mapping_dict:/{size}")
+        logger.info("serialization.py:mapping_dict() >>> mapping_dict:/%d", size)
+        for key in sorted(mapping_dict.keys()):  # noqa: F821
+            # print(f"  {key:<60} : {mapping_dict[key]}")  # noqa: F821
+            logger.info(f"  {key:<60} : {mapping_dict[key]}")
+    atexit.register(mapping_dict_cleanup)
+
 
 def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]:
     """_summary_
@@ -659,6 +685,7 @@ def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]
     Returns:
         Mapping[str, Any]: _description_
     """
+    # base_model.layers.3.attn.in_proj.q_norm.weight
     replacements = [
         (r"^lm_head.weight", "head.weight"),
         (r"^model.embed_tokens.weight", "base_model.embedding.weight"),
@@ -667,7 +694,7 @@ def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]
         (r"self_attn\.k_proj", "attn.in_proj.key"),
         (r"self_attn\.v_proj", "attn.in_proj.value"),
         (r"self_attn\.q_proj", "attn.in_proj.query"),
-        (r"self_attn\.o_proj", "attn.dense"),
+        (r"self_attn\.o_proj", "attn.dense"),       
         (r"mlp\.gate_proj", "ff_sub_layer.wg"),
         (r"mlp\.up_proj", "ff_sub_layer.w1"),
         (r"mlp\.down_proj", "ff_sub_layer.w2"),
@@ -682,6 +709,11 @@ def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]
         for pattern, repl in replacements:
             new_name = re.sub(pattern, repl, new_name)
         new_sd[new_name] = param
+        if KWR_DEBUG:
+            if name in mapping_dict:
+                logger.warning("key '%s'' already in mapping_dict", name)
+            else:
+                mapping_dict[name] = new_name
     return new_sd
 
 
