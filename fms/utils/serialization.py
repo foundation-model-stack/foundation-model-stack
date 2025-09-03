@@ -524,13 +524,13 @@ def load_state_dict_into_model(
                 # txt += f"KWR_DEBUG:   partial_sd={partial_sd}\n"
                 txt += f"KWR_DEBUG:    type(partial_sd)={type(partial_sd)}\n"
                 for key in sorted(partial_sd.keys()):
-                    txt += f"KWR_DEBUG:        {key}"
+                    txt += f"KWR_DEBUG:        {key}\n"
                 txt += f"KWR_DEBUG:    type(remaining_keys)={type(remaining_keys)}\n"
                 for key in sorted(remaining_keys):
-                    txt += f"KWR_DEBUG:        {key}"
+                    txt += f"KWR_DEBUG:        {key}\n"
                 txt += f"KWR_DEBUG:    type(adapter_kwargs)={type(adapter_kwargs)}"
                 for key in sorted(adapter_kwargs):
-                    txt += f"KWR_DEBUG:        {key:<50}: {adapter_kwargs[key]}"
+                    txt += f"KWR_DEBUG:        {key:<50}: {adapter_kwargs[key]}\n"
                 print(txt, flush=True)
             for neighbor in neighbors:
                 partial_sd[neighbor] = state_dict[neighbor]
