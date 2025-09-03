@@ -7,6 +7,7 @@ Part of code to support Qwen3 models
 # pylint: disable=unknown-option-value,protected-access
 # pylint: disable=unused-argument
 
+import logging
 import math
 import re
 from dataclasses import dataclass
@@ -29,6 +30,7 @@ from fms.utils import serialization
 from fms.utils.activation import str_to_activation
 from fms.utils.config import ModelConfig
 
+logger = logging.getLogger(__name__)
 
 """
 ======= Mapping =======

@@ -513,16 +513,19 @@ def load_state_dict_into_model(
                 continue
             used_keys.add(key)
             partial_sd = {key: state_dict[key]}
-            if KWR_DEBUG:
-                print(f"KWR_DEBUG: key={key} initial_device={initial_device} partial_sd={partial_sd}", flush=True)
-                print(f"KWR_DEBUG: adapter_kwargs={adapter_kwargs}", flush=True)
+  
             # Find neighbors to the key. If the adapter requires a neighbor and
             # this function doesn't find it, it will crash.
             remaining_keys = sd_keys.difference(used_keys)
             neighbors = _find_key_neighbors(key, remaining_keys)
             if KWR_DEBUG:
-                print(f"KWR_DEBUG: key={key} remaining_keys={remaining_keys}", flush=True)
-                print(f"KWR_DEBUG: key={key} neighbors={neighbors}", flush=True)
+                txt = f"KWR_DEBUG: key={key}\n"
+                txt += f"KWR_DEBUG:    initial_device={initial_device}\n"
+                # txt += f"KWR_DEBUG:   partial_sd={partial_sd}\n"
+                txt += f"KWR_DEBUG:    type(partial_sd)={type(partial_sd)}\n"
+                txt += f"KWR_DEBUG:    type(remaining_keys)={type(remaining_keys)}\n"
+                txt += f"KWR_DEBUG:    type(adapter_kwargs)={type(adapter_kwargs)}"
+                print(txt, flush=True)
             for neighbor in neighbors:
                 partial_sd[neighbor] = state_dict[neighbor]
                 used_keys.add(neighbor)
