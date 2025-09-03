@@ -499,10 +499,11 @@ def load_state_dict_into_model(
     if hasattr(model, "config"):
         adapter_kwargs["model_config"] = model.config
     if KWR_DEBUG:
-        size = len(adapter_kwargs)
-        txt = f"KWR_DEBUG: type(adapter_kwargs)={type(adapter_kwargs)}/{size}\n"
-        for key in sorted(adapter_kwargs):
-            txt += f"KWR_DEBUG:   {key:<50}: {adapter_kwargs[key]}\n"
+        txt = f"KWR_DEBUG: type(model.config)={type(model.config)}/{size}\n"
+        tmp = str(model.config).split(", ")
+        for kvpair in tmp:
+            txt += "KWR_DEBUG:   ${kvpair}"
+        txt += f"KWR_DEBUG:   {model.config}\n"
         print(txt)
 
     # 2. Decide if model needs sharding and how (for now only TP)
