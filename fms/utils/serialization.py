@@ -502,9 +502,8 @@ def load_state_dict_into_model(
         txt = f"KWR_DEBUG: type(model.config)={type(model.config)}\n"
         tmp = str(model.config).split(", ")
         for kvpair in tmp:
-            txt += "KWR_DEBUG:   ${kvpair}"
-        txt += f"KWR_DEBUG:   {model.config}\n"
-        print(txt)
+            txt += f"KWR_DEBUG:   {kvpair}\n"
+        print(txt[:-1])
 
     # 2. Decide if model needs sharding and how (for now only TP)
     needs_tp_sharding = checkpoint_sharding != "tp" and distributed_strategy == "tp"
