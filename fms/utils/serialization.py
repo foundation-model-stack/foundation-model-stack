@@ -533,13 +533,10 @@ def load_state_dict_into_model(
                     txt += f"KWR_DEBUG:        {key}\n"
                 size = len(remaining_keys)
                 txt += f"KWR_DEBUG:    type(remaining_keys)={type(remaining_keys)}/{size}\n"
-                for key in sorted(remaining_keys):
-                    txt += f"KWR_DEBUG:        {key}\n"
-                # size = len(adapter_kwargs)
-                # txt += f"KWR_DEBUG:    type(adapter_kwargs)={type(adapter_kwargs)}/{size}\n"
-                # for key in sorted(adapter_kwargs):
-                #     txt += f"KWR_DEBUG:        {key:<50}: {adapter_kwargs[key]}\n"
-                print(txt, flush=True)
+                if size <= 10:
+                    for key in sorted(remaining_keys):
+                        txt += f"KWR_DEBUG:        {key}\n"
+                print(txt[:-1], flush=True)
             for neighbor in neighbors:
                 partial_sd[neighbor] = state_dict[neighbor]
                 used_keys.add(neighbor)
