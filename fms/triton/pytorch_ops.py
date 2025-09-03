@@ -98,6 +98,8 @@ def moe_align_block_size(
 def moe_mm(
     input: torch.Tensor,
     moe_matrix: torch.Tensor,
+    use_bias: bool,
+    moe_bias_matrix: torch.Tensor,
     token_expert_mapping: torch.Tensor,
     padded_token_ids_per_block: torch.Tensor,
     expert_block_mapping: torch.Tensor,
@@ -130,6 +132,8 @@ def moe_mm(
 def moe_mm_meta(
     input: torch.Tensor,
     moe_matrix: torch.Tensor,
+    use_bias: bool,
+    moe_bias_matrix: torch.Tensor,
     token_expert_mapping: torch.Tensor,
     padded_token_ids_per_block: torch.Tensor,
     expert_block_mapping: torch.Tensor,
