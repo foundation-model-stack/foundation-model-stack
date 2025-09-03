@@ -205,7 +205,8 @@ def moe_mm_cpu(
             mask = token_expert_mapping == i
             if mask.sum():
                 moe_index = moe_matrix[i].to(dtype=a.dtype)
-                out[mask] = a[mask] @ moe_index.transpose(0, 1) + moe_bias_matrix[i]
+                moe_bias_index = moe_bias_matrix[i].to(dtype=a.dtype)
+                out[mask] = a[mask] @ moe_index.transpose(0, 1) + moe_bias_index
         return out.view(M, A, moe_matrix.shape[1])
     else:
         for i in range(moe_matrix.shape[0]):
