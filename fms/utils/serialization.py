@@ -453,7 +453,7 @@ qwen3_msg = False
 _load_cnt = 0
 KWR_SKIP = len(os.getenv("KWR_SKIP", "")) > 0
 # print(f"KWR_DEBUG={KWR_DEBUG} KWR_SKIP={KWR_SKIP}", flush=True)
-logger.info("KWR_DEBUG=%s KWR_SKIP=%s", str(KWR_DEBUG), str(KWR_SKIP))
+logger.info(f"KWR_DEBUG={KWR_DEBUG} KWR_SKIP={KWR_SKIP}")
 
 import atexit  # noqa: E402
 if KWR_DEBUG:
