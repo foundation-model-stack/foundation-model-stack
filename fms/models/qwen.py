@@ -30,9 +30,6 @@ from fms.utils.activation import str_to_activation
 from fms.utils.config import ModelConfig
 
 
-logger = logging.getLogger(__name__)
-
-
 """
 ======= Mapping =======
     # These are independent of model (except architecture)
