@@ -560,11 +560,6 @@ def load_state_dict_into_model(
             del partial_sd
             del fms_partial_sd
 
-    if KWR_DEBUG:
-        print("KWR_DEBUG: unused_keys:", flush=True)
-        for key in sorted(unused_keys):
-            print("f  {key}", flush=True)
-
     if unused_keys and rank == 0:
         # TODO: start using logger?
         cnt = len(unused_keys)
