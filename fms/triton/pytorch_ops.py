@@ -2,6 +2,7 @@ from typing import Tuple
 
 import torch
 from torch.library import custom_op
+from torch.nn import functional as F
 
 
 def moe_align_block_size(
@@ -200,17 +201,14 @@ def moe_mm_cpu(
     out = torch.zeros(T * topk, moe_matrix.shape[1], dtype=a.dtype, device=a.device)
 
     token_expert_mapping = token_expert_mapping.view(-1)
-    if use_bias:
-        for i in range(moe_matrix.shape[0]):
-            mask = token_expert_mapping == i
-            if mask.sum():
-                moe_index = moe_matrix[i].to(dtype=a.dtype)
-                moe_bias_index = moe_bias_matrix[i].to(dtype=a.dtype)
-                out[mask] = a[mask] @ moe_index.transpose(0, 1) + moe_bias_index
-        return out.view(M, A, moe_matrix.shape[1])
-    else:
-        for i in range(moe_matrix.shape[0]):
-            mask = token_expert_mapping == i
-            if mask.sum():
-                out[mask] = a[mask] @ moe_index.transpose(0, 1)
-        return out.view(M, A, moe_matrix.shape[1])
+
+    for i in range(moe_matrix.shape[0]):
+        mask = token_expert_mapping == i
+        if mask.sum():
+            moe_index = moe_matrix[i].to(dtype=a.dtype)  # shape: [output_dim, D]
+            if use_bias:
+                moe_bias_index = moe_bias_matrix[i].to(dtype=a.dtype)  # shape: [output_dim]
+                out[mask] = F.linear(a[mask], moe_index, bias=moe_bias_index)
+            else:
+                out[mask] = F.linear(a[mask], moe_index, bias=None)
+    return out.view(M, A, moe_matrix.shape[1])
