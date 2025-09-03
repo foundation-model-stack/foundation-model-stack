@@ -317,7 +317,12 @@ def _sdpa_compute_op(
         combined_logits = (
             combined_logits - combined_logits.max(dim=-1, keepdim=True).values
         )
+
+        combined_logits = combined_logits.clamp(min=-1e9, max=1e9)
+
         probs = F.softmax(combined_logits, dim=-1, dtype=combined_logits.dtype)
+        probs = torch.clamp(probs, min=0.0, max=1.0)
+
         scores = probs[..., :-1]  # we drop the sink here
         attn_weights = nn.functional.dropout(scores, p=p_dropout, training=training)
 

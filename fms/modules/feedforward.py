@@ -535,16 +535,13 @@ class ConditionalFeedForward(nn.Module):
             total_padded_tokens,
         ) = triton_ops.moe_align_block_size(expert_indices, padding_size, E)
 
-        if self.use_bias:
-            # MLP #1
-            print("w13 bias", self.w13_bias.shape)
-            # MLP #2
-            print("w2 bias", self.w2_bias)
 
         x1, x3 = (
             torch.ops.moe.moe_mm(
                 x,
                 self.w13,
+                self.use_bias,
+                self.w13_bias,
                 expert_indices,
                 padded_token_ids_per_block,
                 expert_block_mapping,
@@ -558,6 +555,8 @@ class ConditionalFeedForward(nn.Module):
         return torch.ops.moe.moe_mm(
             F.silu(x1) * x3,
             self.w2,
+            self.use_bias,
+            self.w2_bias,
             expert_indices,
             padded_token_ids_per_block,
             expert_block_mapping,
