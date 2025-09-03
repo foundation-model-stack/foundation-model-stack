@@ -498,6 +498,12 @@ def load_state_dict_into_model(
     adapter_kwargs = {}
     if hasattr(model, "config"):
         adapter_kwargs["model_config"] = model.config
+    if KWR_DEBUG:
+        size = len(adapter_kwargs)
+        txt = f"KWR_DEBUG: type(adapter_kwargs)={type(adapter_kwargs)}/{size}\n"
+        for key in sorted(adapter_kwargs):
+            txt += f"KWR_DEBUG:   {key:<50}: {adapter_kwargs[key]}\n"
+        print(txt)
 
     # 2. Decide if model needs sharding and how (for now only TP)
     needs_tp_sharding = checkpoint_sharding != "tp" and distributed_strategy == "tp"
@@ -521,16 +527,18 @@ def load_state_dict_into_model(
             if KWR_DEBUG:
                 txt = f"KWR_DEBUG: key={key}\n"
                 txt += f"KWR_DEBUG:    initial_device={initial_device}\n"
-                # txt += f"KWR_DEBUG:   partial_sd={partial_sd}\n"
-                txt += f"KWR_DEBUG:    type(partial_sd)={type(partial_sd)}\n"
+                size = len(partial_sd)
+                txt += f"KWR_DEBUG:    type(partial_sd)={type(partial_sd)}/{size}\n"
                 for key in sorted(partial_sd.keys()):
                     txt += f"KWR_DEBUG:        {key}\n"
-                txt += f"KWR_DEBUG:    type(remaining_keys)={type(remaining_keys)}\n"
+                size = len(remaining_keys)
+                txt += f"KWR_DEBUG:    type(remaining_keys)={type(remaining_keys)}/{size}\n"
                 for key in sorted(remaining_keys):
                     txt += f"KWR_DEBUG:        {key}\n"
-                txt += f"KWR_DEBUG:    type(adapter_kwargs)={type(adapter_kwargs)}"
-                for key in sorted(adapter_kwargs):
-                    txt += f"KWR_DEBUG:        {key:<50}: {adapter_kwargs[key]}\n"
+                # size = len(adapter_kwargs)
+                # txt += f"KWR_DEBUG:    type(adapter_kwargs)={type(adapter_kwargs)}/{size}\n"
+                # for key in sorted(adapter_kwargs):
+                #     txt += f"KWR_DEBUG:        {key:<50}: {adapter_kwargs[key]}\n"
                 print(txt, flush=True)
             for neighbor in neighbors:
                 partial_sd[neighbor] = state_dict[neighbor]
