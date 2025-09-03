@@ -484,14 +484,17 @@ class ConditionalFeedForward(nn.Module):
         self.w13 = nn.Parameter(torch.empty(num_experts, 2 * intermediate_size, dim))
         self.w2 = nn.Parameter(torch.empty(num_experts, dim, intermediate_size))
         self.use_bias = use_bias
-        self.w13_bias = torch.nn.Parameter(torch.empty(num_experts, 2 * intermediate_size, dim))
-        self.w2_bias = torch.nn.Parameter(torch.empty(num_experts, dim, intermediate_size))
+        self.w13_bias = torch.nn.Parameter(
+            torch.empty(num_experts, 2 * intermediate_size, dim)
+        )
+        self.w2_bias = torch.nn.Parameter(
+            torch.empty(num_experts, dim, intermediate_size)
+        )
 
         assert self.is_parameter_initialized(self.w13), "Loaded w13"
         assert self.is_parameter_initialized(self.w2), "Loaded w2"
         assert self.is_parameter_initialized(self.w13_bias), "Loaded w13_bias"
         assert self.is_parameter_initialized(self.w2_bias), "Loaded w2_bias"
-
 
     def reset_parameters(self):
         for param in ["w13", "w2"]:
@@ -502,7 +505,7 @@ class ConditionalFeedForward(nn.Module):
             )
 
     def is_parameter_initialized(self, param: nn.Parameter):
-        return (param is not None and isinstance(param, nn.Parameter))
+        return param is not None and isinstance(param, nn.Parameter)
 
     def to_tp(self, group: ProcessGroup) -> "TPConditionalFeedForward":
         return TPConditionalFeedForward.import_module(self, group)
@@ -534,10 +537,9 @@ class ConditionalFeedForward(nn.Module):
 
         if self.use_bias:
             # MLP #1
-            self.w13 = self.w13 + self.w13_bias
-
+            print("w13 bias", self.w13_bias.shape)
             # MLP #2
-            self.w2 = self.w2 + self.w2_bias
+            print("w2 bias", self.w2_bias)
 
         x1, x3 = (
             torch.ops.moe.moe_mm(

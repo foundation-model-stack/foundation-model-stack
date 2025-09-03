@@ -549,16 +549,16 @@ def load_state_dict_into_model(
                 if partial_sd[psd_key].device != initial_device:
                     partial_sd[psd_key] = partial_sd[psd_key].to(device=initial_device)
             fms_partial_sd = adapter(partial_sd, **adapter_kwargs)
-            
+
             unused_keys_partial = _load_partial_state_dict(
                 model=model,
                 state_dict=fms_partial_sd,
                 needs_tp_sharding=needs_tp_sharding,
                 dtype=dtype,
-            ) 
+            )
 
             unused_keys.update(unused_keys_partial)
-           
+
             to_remove = set()
 
             for u_key in unused_keys:
@@ -566,7 +566,7 @@ def load_state_dict_into_model(
                     to_remove.add(u_key)
 
             unused_keys -= to_remove
-            
+
             # Be agressive in removing weights to save as much memory as possible
             for p_key in partial_sd.keys():
                 if isinstance(state_dict, ChainMap):
@@ -641,10 +641,8 @@ def _load_partial_state_dict(
                 if isinstance(target_module, TPModule):
                     tp_module = target_module
                     tp_prefix = prefix
-                    
+
             except AttributeError:
-                print("AttributeError:")
-                print(key)
                 unused_keys.add(key)
                 break
 

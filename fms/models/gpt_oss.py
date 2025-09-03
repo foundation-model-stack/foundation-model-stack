@@ -95,17 +95,20 @@ class GptOssBlock(nn.Module):
             kvheads = self.config.kvheads
             assert self.config.nheads % self.config.kvheads == 0
 
+        scale_factor = 1.0 / math.sqrt(self.config.head_dim)
+
         self.attn = MultiHeadAttention(
-            self.config.emb_dim,
-            emb_kq,
-            emb_v,
-            self.config.nheads,
-            kvheads,
+            emb_dim=self.config.emb_dim,
+            emb_kq=emb_kq,
+            emb_v=emb_v,
+            nheads=self.config.nheads,
+            kvheads=kvheads,
             p_dropout=self.config.p_dropout,
             use_bias=True,
             position_encoder=rotary_emb,
             fused=self.config.fused_weights,
             linear_config=self.config.linear_config,
+            scale_factor=scale_factor,
             has_sinks=True,
         )
 
