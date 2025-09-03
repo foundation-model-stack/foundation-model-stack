@@ -499,7 +499,7 @@ def load_state_dict_into_model(
     if hasattr(model, "config"):
         adapter_kwargs["model_config"] = model.config
     if KWR_DEBUG:
-        txt = f"KWR_DEBUG: type(model.config)={type(model.config)}/{size}\n"
+        txt = f"KWR_DEBUG: type(model.config)={type(model.config)}\n"
         tmp = str(model.config).split(", ")
         for kvpair in tmp:
             txt += "KWR_DEBUG:   ${kvpair}"
