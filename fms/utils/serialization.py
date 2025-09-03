@@ -1,5 +1,4 @@
 import collections
-import logging
 import os
 import re
 from collections import ChainMap
@@ -11,16 +10,6 @@ from typing import Any, Callable, Mapping, MutableMapping, Optional, Set, Union
 import torch
 
 from fms.modules.tp import TPModule
-
-logger = logging.getLogger(__name__)
-# Create global logger with my special formatting
-LOGFMT = "[%(asctime)s.%(msecs)03d] %[name]s - %(levelname)s: %(message)s " + (
-                "[%(filename)s(%(funcName)s:%(lineno)d)]")
-FORMATTER = logging.Formatter(LOGFMT)
-CH = logging.StreamHandler()
-CH.setFormatter(FORMATTER)
-logger.addHandler(CH)
-logger.setLevel(logging.INFO)
 
 
 __adapters: MutableMapping[
@@ -452,8 +441,8 @@ KWR_DEBUG = len(os.getenv("KWR_DEBUG", "")) > 0
 qwen3_msg = False
 _load_cnt = 0
 KWR_SKIP = len(os.getenv("KWR_SKIP", "")) > 0
-# print(f"KWR_DEBUG={KWR_DEBUG} KWR_SKIP={KWR_SKIP}", flush=True)
-logger.info(f"KWR_DEBUG={KWR_DEBUG} KWR_SKIP={KWR_SKIP}")
+print(f"KWR_DEBUG={KWR_DEBUG} KWR_SKIP={KWR_SKIP}", flush=True)
+
 
 import atexit  # noqa: E402
 if KWR_DEBUG:
@@ -461,8 +450,7 @@ if KWR_DEBUG:
         """
         This function will be called automatically when the script exits.
         """
-        # print(f"serialization.py:_load_cnt() >>> {_load_cnt}", flush=True)
-        logger.info(f"serialization.py:_load_cnt() >>> {_load_cnt}")
+        print(f"serialization.py:_load_cnt() >>> {_load_cnt}", flush=True)
     atexit.register(load_state_dict_cleanup)
 
 
@@ -526,19 +514,15 @@ def load_state_dict_into_model(
             used_keys.add(key)
             partial_sd = {key: state_dict[key]}
             if KWR_DEBUG:
-                # print(f"KWR_DEBUG: key={key} initial_device={initial_device} partial_sd={partial_sd}", flush=True)
-                # print(f"KWR_DEBUG: adapter_kwargs={adapter_kwargs}", flush=True)
-                logger.info(f"KWR_DEBUG: key={key} initial_device={initial_device} partial_sd={partial_sd}")
-                logger.info(f"KWR_DEBUG: adapter_kwargs={adapter_kwargs}")
+                print(f"KWR_DEBUG: key={key} initial_device={initial_device} partial_sd={partial_sd}", flush=True)
+                print(f"KWR_DEBUG: adapter_kwargs={adapter_kwargs}", flush=True)
             # Find neighbors to the key. If the adapter requires a neighbor and
             # this function doesn't find it, it will crash.
             remaining_keys = sd_keys.difference(used_keys)
             neighbors = _find_key_neighbors(key, remaining_keys)
             if KWR_DEBUG:
-                # print(f"KWR_DEBUG: key={key} remaining_keys={remaining_keys}", flush=True)
-                # print(f"KWR_DEBUG: key={key} neighbors={neighbors}", flush=True)
-                logger.info(f"KWR_DEBUG: key={key} remaining_keys={remaining_keys}")
-                logger.info(f"KWR_DEBUG: key={key} neighbors={neighbors}")
+                print(f"KWR_DEBUG: key={key} remaining_keys={remaining_keys}", flush=True)
+                print(f"KWR_DEBUG: key={key} neighbors={neighbors}", flush=True)
             for neighbor in neighbors:
                 partial_sd[neighbor] = state_dict[neighbor]
                 used_keys.add(neighbor)
@@ -560,8 +544,7 @@ def load_state_dict_into_model(
                 # Only print skipping unused_keys.update() once if KWR_SKIP is set
                 msg ="skipping all calls to unused_keys.update() in 'serialization.py:load_state_dict_into_model()' because "
                 msg += f"architecture is '{architecture}'"
-                # print(msg, flush=True)
-                logger.info(msg)
+                print(msg, flush=True)
                 qwen3_msg = True  # noqa: F841
             elif KWR_SKIP is False:
                 # Still want to do even if arch  is qwen3
@@ -578,11 +561,9 @@ def load_state_dict_into_model(
             del fms_partial_sd
 
     if KWR_DEBUG:
-        # print("KWR_DEBUG: unused_keys:", flush=True)
-        logger.info("KWR_DEBUG: unused_keys:")
+        print("KWR_DEBUG: unused_keys:", flush=True)
         for key in sorted(unused_keys):
-            # print("f  {key}", flush=True)
-            logger.info("f  {key}")
+            print("f  {key}", flush=True)
 
     if unused_keys and rank == 0:
         # TODO: start using logger?

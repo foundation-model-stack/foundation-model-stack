@@ -7,7 +7,6 @@ Part of code to support Qwen3 models
 # pylint: disable=unknown-option-value,protected-access
 # pylint: disable=unused-argument
 
-import logging
 import math
 import re
 from dataclasses import dataclass
@@ -32,14 +31,6 @@ from fms.utils.config import ModelConfig
 
 
 logger = logging.getLogger(__name__)
-# Create global logger with my special formatting
-LOGFMT = "[%(asctime)s.%(msecs)03d] %[name]s - %(levelname)s: %(message)s " + (
-                "[%(filename)s(%(funcName)s:%(lineno)d)]")
-FORMATTER = logging.Formatter(LOGFMT)
-CH = logging.StreamHandler()
-CH.setFormatter(FORMATTER)
-logger.addHandler(CH)
-logger.setLevel(logging.INFO)
 
 
 """
@@ -665,14 +656,11 @@ if KWR_DEBUG:
         """
         This function will be called automatically when the script exits.
         """
-        # print("mapping_dict:")
-        logger.info("mapping_dict:")
+        print("mapping_dict:")
         size = len(mapping_dict)  # noqa: F821
-        # print(f"serialization.py:mapping_dict() >>> mapping_dict:/{size}")
-        logger.info("serialization.py:mapping_dict() >>> mapping_dict:/%d", size)
+        print(f"serialization.py:mapping_dict() >>> mapping_dict:/{size}")
         for key in sorted(mapping_dict.keys()):  # noqa: F821
-            # print(f"  {key:<60} : {mapping_dict[key]}")  # noqa: F821
-            logger.info(f"  {key:<60} : {mapping_dict[key]}")
+            print(f"  {key:<60} : {mapping_dict[key]}", flush=True)  # noqa: F821
     atexit.register(mapping_dict_cleanup)
 
 
@@ -711,7 +699,7 @@ def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]
         new_sd[new_name] = param
         if KWR_DEBUG:
             if name in mapping_dict:
-                logger.warning("key '%s'' already in mapping_dict", name)
+                print(f"key '{name}' already in mapping_dict")
             else:
                 mapping_dict[name] = new_name
     return new_sd
