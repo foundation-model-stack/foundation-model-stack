@@ -533,7 +533,7 @@ def load_state_dict_into_model(
                     txt += f"KWR_DEBUG:        {key}\n"
                 size = len(remaining_keys)
                 txt += f"KWR_DEBUG:    type(remaining_keys)={type(remaining_keys)}/{size}\n"
-                if size <= 10:
+                if size <= 1000:
                     for key in sorted(remaining_keys):
                         txt += f"KWR_DEBUG:        {key}\n"
                 print(txt[:-1], flush=True)
