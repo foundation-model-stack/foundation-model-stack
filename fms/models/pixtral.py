@@ -433,16 +433,13 @@ def _hf_to_fms_rope(
     new_sd = {}
 
     if model_config:
-        head_size = model_config.emb_dim // model_config.nheads
+        head_size = model_config.hidden_size // model_config.nheads
         linear_type_str = "torch_linear"
-        if model_config.linear_config:
-            linear_type_str = get_linear_type(
-                model_config.linear_config,
-                module_name=None,  # if callable, linear_type should return default str
-            )
+        if hasattr(model_config, 'linear_config') and model_config.linear_config:
+            linear_type_str = model_config.linear_config["linear_type"]
     else:
         logger.warning("Missing model_config, assuming defaults for head_size")
-        head_size = 128  # Good default for most models
+        head_size = 64  # Good default for most models
         linear_type_str = "torch_linear"
 
     rope_params = _get_rope_params(linear_type_str)
