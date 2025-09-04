@@ -167,6 +167,8 @@ def moe_mm_setup_context(ctx, inputs, output):
     (
         input_,
         moe_matrix,
+        use_bias,
+        moe_bias_matrix,
         token_expert_mapping,
         padded_token_ids_per_block,
         expert_block_mapping,
@@ -196,7 +198,7 @@ def moe_mm_cpu(
 ):
     T, D = input.shape
     M, A = token_expert_mapping.shape
-
+    assert torch.isfinite(input).all(), f"input has NaNs: {input}"
     a = input.view(T, -1, D).repeat(1, topk, 1).reshape(-1, D)
     out = torch.zeros(T * topk, moe_matrix.shape[1], dtype=a.dtype, device=a.device)
 
@@ -217,7 +219,8 @@ def moe_mm_cpu(
 
             if use_bias:
                 moe_bias_index = moe_bias_matrix[i].to(dtype=a.dtype)  # [out_features]
+                print("moe_bias_index.shape:", moe_bias_index.shape if use_bias else "No bias")
                 out[mask] = F.linear(a[mask], moe_index, bias=moe_bias_index)
             else:
-                out[mask] = F.linear(a[mask], moe_index, bias=None)
+                out[mask] = a[mask] @ moe_index.transpose(0, 1)
     return out.view(M, A, moe_matrix.shape[1])

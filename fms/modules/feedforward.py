@@ -1,8 +1,10 @@
 from typing import Any, Mapping, Optional, Set
+import math
 
 import torch
 import torch.distributed
 import torch.nn as nn
+import torch.nn.init as init
 import torch.nn.functional as F
 from torch.distributed.distributed_c10d import ProcessGroup
 
@@ -485,11 +487,16 @@ class ConditionalFeedForward(nn.Module):
         self.w2 = nn.Parameter(torch.empty(num_experts, dim, intermediate_size))
         self.use_bias = use_bias
         self.w13_bias = torch.nn.Parameter(
-            torch.empty(num_experts, 2 * intermediate_size, dim)
-        )
+            torch.empty(num_experts, 2 * intermediate_size)
+         )
         self.w2_bias = torch.nn.Parameter(
-            torch.empty(num_experts, dim, intermediate_size)
-        )
+            torch.empty(num_experts, intermediate_size)
+         )
+ 
+        init.kaiming_uniform_(self.w13, a=math.sqrt(5))
+        init.kaiming_uniform_(self.w2, a=math.sqrt(5))
+        init.zeros_(self.w13_bias)
+        init.zeros_(self.w2_bias)
 
         assert self.is_parameter_initialized(self.w13), "Loaded w13"
         assert self.is_parameter_initialized(self.w2), "Loaded w2"
