@@ -697,7 +697,7 @@ def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]
             new_name = re.sub(pattern, repl, new_name)
         new_sd[new_name] = param
         if ".ff_sub_layer" in new_name:
-            print(f">>> .ff_sub_layer{name:<50}: {new_name}")
+            print(f">>> .ff_sub_layer: {name:<50} --> {new_name}")
         if KWR_DEBUG:
             if name in mapping_dict:
                 print(f"key '{name}' already in mapping_dict")
