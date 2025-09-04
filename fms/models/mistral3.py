@@ -14,7 +14,6 @@ from fms.distributed.strategy import (
 from fms.utils.config import ModelConfig
 from fms.utils import serialization
 from fms.models.mistral import MistralConfig
-from fms.models.pixtral import PixtralVisionConfig
 
 from fms import models
 from fms.utils.activation import str_to_activation
@@ -590,69 +589,151 @@ def _get_rope_params(linear_type: str) -> list[str]:
         return ["weight", "bias"]
 
 def _hf_to_fms_rope(
-    input_sd: Mapping[str, Any],
-    model_config=None,
-    **kwargs,
+    input_sd: Mapping[str, Any], model_config: Optional[Mistral3Config] = None, **kwargs
 ) -> Mapping[str, Any]:
+    """
+    Convert HuggingFace Mistral3 RoPE implementation to FMS format.
+    
+    Mistral3 has two models:
+    - Language model (text decoder)
+    - Vision model (vision encoder)
+    
+    The config is hierarchical, with text_config and vision_config.
+    We need to handle RoPE mapping for both models.
+    """
     new_sd = {}
-    if model_config:
-        model_config = model_config.text_config
+    
+    # Default values for language model 
+    lang_head_size = 160
+    lang_linear_type = "torch_linear"
+
+    
+    # Default values for vision model 
+    vision_head_size = 64
+    vision_linear_type = "torch_linear"
+
 
     if model_config:
-        head_size = model_config.emb_dim // model_config.nheads
-        linear_type_str = "torch_linear"
-        if model_config.linear_config:
-            linear_type_str = get_linear_type(
-                model_config.linear_config,
-                module_name=None,  # if callable, linear_type should return default str
-            )
+        # Handle language model RoPE parameters
+        if hasattr(model_config, 'text_config'):
+            text_config = model_config.text_config
+            
+            # We will check head_dim first, else calculate from hidden_size and nheads
+            if hasattr(text_config, 'head_dim'):
+                lang_head_size = text_config.head_dim
+            elif hasattr(text_config, 'hidden_size') and hasattr(text_config, 'nheads'):
+                lang_head_size = text_config.hidden_size // text_config.nheads
+            else:
+                # Default fallback
+                lang_head_size = 160
+                logger.warning("Could not determine head_size from text_config, using default 160")
+            
+            # Check for linear_config in language model
+            lang_linear_type = "torch_linear"
+            if hasattr(text_config, 'linear_config') and hasattr(text_config.linear_config, 'linear_type') :
+                lang_linear_type = text_config.linear_config.get("linear_type", "torch_linear")
+            
+        else:
+            logger.warning("Missing text_config, assuming defaults for head_size and linear_type")
+            
+        # Handle vision model RoPE parameters
+        if hasattr(model_config, 'vision_config'):
+            vision_config = model_config.vision_config
+            
+            # Check head_dim first, then calculate from hidden_size and num_attention_heads
+            if hasattr(vision_config, 'head_dim'):
+                vision_head_size = vision_config.head_dim
+            elif hasattr(vision_config, 'hidden_size') and hasattr(vision_config, 'nheads'):
+                vision_head_size = vision_config.hidden_size // vision_config.nheads
+            else:
+                # Default fallback for vision
+                vision_head_size = 64
+                logger.warning("Could not determine head_size from vision_config, using default 64")
+            
+            # Check for linear_config in vision model
+            vision_linear_type = "torch_linear"
+            if hasattr(vision_config, 'linear_config') and hasattr(vision_config.linear_config, 'linear_type') :
+                vision_linear_type = vision_config.linear_config.get("linear_type", "torch_linear")
+            
+        else:
+            logger.warning("Missing vision_config, assuming defaults for head_size and linear_type")
+            
     else:
-        logger.warning("Missing model_config, assuming defaults for head_size")
-        head_size = 128  # Good default for most models
-        linear_type_str = "torch_linear"
+        # No config provided, use defaults
+        logger.warning("Missing model_config, assuming defaults for both language and vision models")
 
-    rope_params = _get_rope_params(linear_type_str)
-    trans_required_pattern = re.compile(
-        f"language_model.base_model.layers.[0-9]+.attn.in_proj.(query|key).({'|'.join(rope_params)})"
+
+    # Get RoPE parameters for language model
+    lang_rope_params = _get_rope_params(lang_linear_type)
+    # Pattern for language model attention layers
+    trans_required_pattern_lang = re.compile(
+        f"language_model.base_model.layers.[0-9]+.attn.in_proj.(query|key).({'|'.join(lang_rope_params)})"
     )
+
+    # Get RoPE parameters for vision model
+    vision_rope_params = _get_rope_params(vision_linear_type)
+    # Pattern for vision model attention layers
+    trans_required_pattern_vision = re.compile(
+        f"vision_tower.transformer.layers.[0-9]+.attn.in_proj.(query|key).({'|'.join(vision_rope_params)})"
+    )
+
+    
+    # hf -> fms requires a transpose operation for the query and key
+    # weight and bias parameters for Llama models
+    # This transpose is due to the different implementation of RoPE in
+    # HF and FMS. While FMS follows the original RoPE paper
+    # (https://arxiv.org/abs/2104.09864), HF has its own implementation
+    # that doesn't respect the order of outputs. This is OK as long as you
+    # rearrange the weights of the query and key projections, as the
+    # combination projection + RoPE ends up producing the same outputs.
+    # Therefore, to make FMS produce the correct order of outputs when
+    # loading from an HF checkpoint, we need to undo the transformation
+    # that HF does from the original Meta weights:
+    
     for name, param in input_sd.items():
-        # hf -> fms requires a transpose operation for the query and key
-        # weight and bias parameters for Llama models
-        # This transpose is due to the different implementation of RoPE in
-        # HF and FMS. While FMS follows the original RoPE paper
-        # (https://arxiv.org/abs/2104.09864), HF has its own implementation
-        # that doesn't respect the order of outputs. This is OK as long as you
-        # rearrange the weights of the query and key projections, as the
-        # combination projection + RoPE ends up producing the same outputs.
-        # Therefore, to make FMS produce the correct order of outputs when
-        # loading from an HF checkpoint, we need to undo the transformation
-        # that HF does from the original Meta weights
-        is_gptq_2d_qparam = "gptq" in linear_type_str and param.dim() == 2
-        if bool(trans_required_pattern.match(name)) and param.numel() > 1:
-            temp = param
-            if is_gptq_2d_qparam:
-                # GPTQ qweights are [in_feat, out_feat] (unlike usual [out_feat, in_feat])
-                # and are fully transposed before & after process.
-                # GPTQ scales and qzeros are also transposed accordingly
-                temp = temp.transpose(0, 1)
-            # num_heads is used in the transformation required for hf->fms
-            # can't be precomputed because q and k might have different num_heads
-            num_heads = temp.size(0) // head_size
-
-            if temp.dim() == 2:  # weight
-                temp_view = temp.view(num_heads, 2, -1, temp.size(1))
-            else:  # 1-dim parameters
-                temp_view = temp.view(num_heads, 2, -1)
-            temp = temp_view.transpose(1, 2).reshape(*temp.size())
-
-            if is_gptq_2d_qparam:
-                temp = temp.transpose(0, 1)
-
-            new_sd[name] = temp
+        # Check if this parameter requires RoPE transformation for language model
+        if trans_required_pattern_lang.match(name):
+            # Apply RoPE transformation for language model
+            new_sd[name] = _rope_transpose(param, lang_head_size, lang_linear_type )
+        elif trans_required_pattern_vision.match(name):
+            # Apply RoPE transformation for vision model
+            param = _rope_transpose(param, vision_head_size, vision_linear_type)
         else:
             new_sd[name] = param
 
     return new_sd
+
+
+def _rope_transpose(param: torch.Tensor, head_size: int, linear_type) -> torch.Tensor:
+    """
+    Transpose parameters for RoPE conversion between HF and FMS formats.
+    
+    Args:
+        param: The parameter tensor to transpose
+        head_size: Size of each attention head
+        linear_type: linear type
+    
+    Returns:
+        Transposed parameter tensor
+    """
+    if "gptq" in linear_type and param.dim() == 2:
+        # GPTQ qweights are [in_feat, out_feat] (unlike usual [out_feat, in_feat])
+        # and are fully transposed before & after process
+        param = param.transpose(0, 1)
+
+    # num_heads is used in the transformation required for hf->fms
+    # can't be precomputed because q and k might have different num_heads
+    num_heads = param.size(0) // head_size
+
+    if param.dim() == 2:  # weight
+        param_view = param.view(num_heads, 2, -1, param.size(1))
+    else:  # bias
+        param_view = param.view(num_heads, 2, -1)
+    param = param_view.transpose(1, 2).reshape(*param.size())
+
+    if "gptq" in linear_type and param.dim() == 2:
+        param = param.transpose(0, 1)
+    return param
 
 serialization.register_adapter_step(
     _architecture_name, "hf_to_fms_rope", _hf_to_fms_rope
@@ -697,9 +778,9 @@ def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]
         (r"feed_forward\.gate_proj", "ff_sub_layer.wg"),
         (r"feed_forward\.up_proj", "ff_sub_layer.w1"),
         (r"feed_forward\.down_proj","ff_sub_layer.w2"),
-        (r"attention\.q_proj", "attn.in_proj.query"),
         (r"attention\.k_proj", "attn.in_proj.key"),
         (r"attention\.v_proj", "attn.in_proj.value"),
+        (r"attention\.q_proj", "attn.in_proj.query"),
         (r"attention\.o_proj", "attn.dense"),   
 
 
@@ -718,10 +799,8 @@ serialization.register_adapter_step(
     _architecture_name, "hf_to_fms_names", _hf_to_fms_names
 )
 
-
-
 serialization.register_adapter(
     _architecture_name,
     "hf",
-    ["hf_to_fms_names", "weight_fusion"],
+    ["hf_to_fms_names", "hf_to_fms_rope", "weight_fusion"],
 )
