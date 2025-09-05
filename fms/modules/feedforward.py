@@ -542,6 +542,8 @@ class ConditionalFeedForward(nn.Module):
             total_padded_tokens,
         ) = triton_ops.moe_align_block_size(expert_indices, padding_size, E)
 
+        assert torch.isfinite(x).all(), "NaNs before MoE"
+
         x1, x3 = (
             torch.ops.moe.moe_mm(
                 x,
