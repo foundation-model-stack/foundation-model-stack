@@ -118,7 +118,7 @@ class GptOssBlock(nn.Module):
         self.ff_sub_layer = MOEFeedForward(
             self.config.num_experts,
             self.config.top_k_experts,
-            self.config.emb_dim // self.config.nheads,
+            self.config.head_dim,
             self.config.hidden_dim,
             use_bias=True,
         )
@@ -195,7 +195,7 @@ class GptOssHeadless(nn.Module):
         rope_scaling = {"rope_type": "regular"}
 
         self.rot_emb = RotaryEmbedding(
-            dim=self.config.emb_dim // self.config.nheads,
+            dim=self.config.head_dim,
             scaling=rope_scaling,
             max_seq_len=self.config.max_expected_seq_len,
             ratio=self.config.rope_base,
