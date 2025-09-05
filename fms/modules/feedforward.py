@@ -483,8 +483,8 @@ class ConditionalFeedForward(nn.Module):
         self.num_experts = num_experts
         self.dim = dim
         self.intermediate_size = intermediate_size
-        self.w13 = nn.Parameter(torch.empty(num_experts, 2 * intermediate_size, dim))
-        self.w2 = nn.Parameter(torch.empty(num_experts, dim, intermediate_size))
+        self.w13 = nn.Parameter(torch.empty(num_experts, 2 * intermediate_size, dim)) if not use_bias else nn.Parameter(torch.empty(num_experts, intermediate_size, 2 * intermediate_size))
+        self.w2 = nn.Parameter(torch.empty(num_experts, dim, intermediate_size)) if not use_bias else nn.Parameter(torch.empty(num_experts, intermediate_size, intermediate_size))
         self.use_bias = use_bias
         self.w13_bias = torch.nn.Parameter(
             torch.empty(num_experts, 2 * intermediate_size)
@@ -519,7 +519,10 @@ class ConditionalFeedForward(nn.Module):
 
     def forward(self, x: torch.Tensor, expert_indices: torch.Tensor) -> torch.Tensor:
         # Check constraints.
-        assert x.shape[1] == self.w13.shape[2], "Hidden size mismatch"
+        if not self.use_bias:
+            assert x.shape[1] == self.w13.shape[2], "Hidden size mismatch"
+        else:
+            assert x.shape[1] == self.w13.shape[1], "Hidden size mismatch"
         assert x.is_contiguous(), "Hidden_states must be contiguous"
         assert self.w13.is_contiguous(), "Expert weights 1 must be contiguous"
         assert self.w2.is_contiguous(), "Expert weights 2 must be contiguous"
@@ -677,11 +680,13 @@ class MOEFeedForward(nn.Module):
         use_bias: bool = False,
     ) -> None:
         super().__init__()
-        self.gate = nn.Linear(dim, num_experts, bias=use_bias)
         self.cond_ffn = ConditionalFeedForward(
             num_experts, dim, intermediate_size, use_bias=use_bias
         )
         self.dim = dim
+        self.gate = nn.Linear(dim, num_experts, bias=use_bias) if not use_bias else nn.Linear(intermediate_size, num_experts, bias=use_bias)
+        self.use_bias = use_bias
+        self.intermediate_size = intermediate_size
         self.num_activated_experts = num_activated_experts
 
     def reset_parameters(self):
@@ -695,7 +700,9 @@ class MOEFeedForward(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         B, S = x.shape[:2]
-        x = x.view(-1, self.dim)
+
+        x = x.view(-1, self.dim) if not self.use_bias else x.view(-1, self.intermediate_size)
+        
         # T = num_tokens, E = num_experts, D = hidden dim, A = activated experts
         # x: [T, D]
         scores = self.gate(x)  # [T, E]

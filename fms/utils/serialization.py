@@ -662,9 +662,7 @@ def _load_partial_state_dict(
                     )
                     setattr(target_module, key_steps[-1], param)
                     param = getattr(target_module, key_steps[-1])
-                    if "cond_ffn" in key or "_bias" in key or "sinks" in key:
-                        tensor_value.to(param.shape())
-
+                    
                 param.copy_(tensor_value, non_blocking=True)
 
             elif tp_module is not None and tp_module not in seen_tp_modules:
