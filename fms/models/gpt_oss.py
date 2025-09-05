@@ -632,7 +632,7 @@ def _convert_moe_packed_tensors(
         del idx_lo, idx_hi, blk, exp
 
     out = out.reshape(*prefix_shape, G, B * 2).view(*prefix_shape, G * B * 2)
-    out = out.to(torch.float8_e5m2).permute(0, 2, 1).contiguous()
+    out = out.to(torch.bfloat16).contiguous()
     return out
 
 

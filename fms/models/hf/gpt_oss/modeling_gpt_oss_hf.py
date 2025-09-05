@@ -66,7 +66,7 @@ class HFAdaptedGptOssHeadless(HFDecoderModelArchitecture):
             embedding = model.base_model.embedding if embedding is None else embedding
 
         # these are now huggingface compatible
-        decoder = HFAdaptedGptOssHeadless(decoder, config)
+        decoder = HFAdapterGptOssDecoder(decoder, config)
         super().__init__(decoder, embedding, config, *args, **kwargs)
 
 

@@ -202,33 +202,32 @@ def moe_mm_cpu(
     a = input.view(T, -1, D).repeat(1, topk, 1).reshape(-1, D)
     out = torch.zeros(T * topk, moe_matrix.shape[1], dtype=a.dtype, device=a.device)
 
-    if use_bias:
-        example_moe_index = moe_matrix[0]
-        if example_moe_index.shape[0] == D:
-            example_moe_index = example_moe_index.T
-        out_features = example_moe_index.shape[0]
-
-        out = torch.zeros(T * topk, out_features, dtype=a.dtype, device=a.device)
-
     token_expert_mapping = token_expert_mapping.view(-1)
+
+    if use_bias:
+        token_expert_mapping = token_expert_mapping.view(-1, 1).expand(-1, topk).reshape(-1)
+        moe_index = moe_matrix[0]
+        if moe_index.shape[0] == D:
+            moe_index = moe_index.T
+        out_features = moe_index.shape[0]
+        out = torch.zeros(T * topk, out_features, dtype=a.dtype, device=a.device)
 
     for i in range(moe_matrix.shape[0]):
         mask = token_expert_mapping == i
         if mask.sum():
-            if moe_index.shape[0] == a.shape[1]:  # [D, out_features]
-                moe_index = moe_index.T
-            elif moe_index.shape[1] != a.shape[1]:
-                raise ValueError(
-                    f"Shape mismatch: a.shape[1] = {a.shape[1]}, but moe_index.shape = {moe_index.shape}"
-                )
-
             if use_bias:
-                moe_bias_index = moe_bias_matrix[i].to(dtype=a.dtype)
-                if moe_bias_index.shape[0] != moe_index.shape[0]:
+                moe_index = moe_matrix[i]
+                if moe_bias_matrix[i].shape[0] != moe_index.shape[0]:
                     raise ValueError(
-                        f"Bias shape mismatch: bias {moe_bias_index.shape[0]} vs weight {moe_index.shape}"
+                        f"Bias shape mismatch: bias {moe_bias_matrix[i].shape[0]} vs weight {moe_index.shape}"
                     )
-                out[mask] = F.linear(a[mask], moe_index, bias=moe_bias_index)
+                out[mask] = F.linear(a[mask], moe_index.to(dtype=a.dtype), bias=moe_bias_matrix[i].to(dtype=a.dtype))
+                print(f"T={T}, topk={topk}, out_features={out.shape[-1]}")
+                print(f"out.shape = {out.shape}, numel = {out.numel()}, expected reshape = ({T}, {topk}, {out.shape[-1]})")
             else:
                 out[mask] = a[mask] @ moe_matrix[i].transpose(0, 1)
-    return out.view(M, A, moe_matrix.shape[1])
+
+    if use_bias:
+        return out.view(T, topk, -1)
+    else:
+        return out.view(M, A, moe_matrix.shape[1])
