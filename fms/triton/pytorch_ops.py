@@ -200,12 +200,11 @@ def moe_mm_cpu(
     M, A = token_expert_mapping.shape
     assert torch.isfinite(input).all(), f"input has NaNs: {input}"
     a = input.view(T, -1, D).repeat(1, topk, 1).reshape(-1, D)
-    out = torch.zeros(T * topk, moe_matrix.shape[1], dtype=a.dtype, device=a.device)
+    out = torch.zeros(T * topk, out_features, dtype=a.dtype, device=a.device)
 
     token_expert_mapping = token_expert_mapping.view(-1)
 
     if use_bias:
-        token_expert_mapping = token_expert_mapping.view(-1, 1).expand(-1, topk).reshape(-1)
         moe_index = moe_matrix[0]
         if moe_index.shape[0] == D:
             moe_index = moe_index.T
@@ -221,9 +220,15 @@ def moe_mm_cpu(
                     raise ValueError(
                         f"Bias shape mismatch: bias {moe_bias_matrix[i].shape[0]} vs weight {moe_index.shape}"
                     )
-                out[mask] = F.linear(a[mask], moe_index.to(dtype=a.dtype), bias=moe_bias_matrix[i].to(dtype=a.dtype))
+                out[mask] = F.linear(
+                    a[mask],
+                    moe_index.to(dtype=a.dtype),
+                    bias=moe_bias_matrix[i].to(dtype=a.dtype),
+                )
                 print(f"T={T}, topk={topk}, out_features={out.shape[-1]}")
-                print(f"out.shape = {out.shape}, numel = {out.numel()}, expected reshape = ({T}, {topk}, {out.shape[-1]})")
+                print(
+                    f"out.shape = {out.shape}, numel = {out.numel()}, expected reshape = ({T}, {topk}, {out.shape[-1]})"
+                )
             else:
                 out[mask] = a[mask] @ moe_matrix[i].transpose(0, 1)
 

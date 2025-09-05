@@ -483,16 +483,26 @@ class ConditionalFeedForward(nn.Module):
         self.num_experts = num_experts
         self.dim = dim
         self.intermediate_size = intermediate_size
-        self.w13 = nn.Parameter(torch.empty(num_experts, 2 * intermediate_size, dim)) 
-        self.w2 = nn.Parameter(torch.empty(num_experts, dim, intermediate_size))
+        self.w13 = (
+            nn.Parameter(torch.empty(num_experts, 2 * intermediate_size, dim))
+            if not use_bias
+            else nn.Parameter(
+                torch.empty(num_experts, 2 * intermediate_size, intermediate_size)
+            )
+        )
+        self.w2 = (
+            nn.Parameter(torch.empty(num_experts, dim, intermediate_size))
+            if not use_bias
+            else nn.Parameter(
+                torch.empty(num_experts, intermediate_size, intermediate_size)
+            )
+        )
         self.use_bias = use_bias
         self.w13_bias = torch.nn.Parameter(
             torch.empty(num_experts, 2 * intermediate_size)
-         )
-        self.w2_bias = torch.nn.Parameter(
-            torch.empty(num_experts, intermediate_size)
-         )
- 
+        )
+        self.w2_bias = torch.nn.Parameter(torch.empty(num_experts, intermediate_size))
+
         init.kaiming_uniform_(self.w13, a=math.sqrt(5))
         init.kaiming_uniform_(self.w2, a=math.sqrt(5))
         init.zeros_(self.w13_bias)
@@ -684,7 +694,11 @@ class MOEFeedForward(nn.Module):
             num_experts, dim, intermediate_size, use_bias=use_bias
         )
         self.dim = dim
-        self.gate = nn.Linear(dim, num_experts, bias=use_bias) if not use_bias else nn.Linear(intermediate_size, num_experts, bias=use_bias)
+        self.gate = (
+            nn.Linear(dim, num_experts, bias=use_bias)
+            if not use_bias
+            else nn.Linear(intermediate_size, num_experts, bias=use_bias)
+        )
         self.use_bias = use_bias
         self.intermediate_size = intermediate_size
         self.num_activated_experts = num_activated_experts
@@ -701,8 +715,12 @@ class MOEFeedForward(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         B, S = x.shape[:2]
 
-        x = x.view(-1, self.dim) if not self.use_bias else x.view(-1, self.intermediate_size)
-        
+        x = (
+            x.view(-1, self.dim)
+            if not self.use_bias
+            else x.view(-1, self.intermediate_size)
+        )
+
         # T = num_tokens, E = num_experts, D = hidden dim, A = activated experts
         # x: [T, D]
         scores = self.gate(x)  # [T, E]
