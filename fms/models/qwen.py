@@ -650,16 +650,20 @@ import atexit  # noqa: E402
 import os  # noqa: E402
 KWR_DEBUG = len(os.getenv("KWR_DEBUG", "")) > 0
 mapping_dict: Dict[str, str] = {}
+no_mapping_dict: Dict[str, int] = {}
 if KWR_DEBUG:
     def mapping_dict_cleanup() -> None:
         """
         This function will be called automatically when the script exits.
         """
-        print("mapping_dict:")
         size = len(mapping_dict)  # noqa: F821
-        print(f"serialization.py:mapping_dict() >>> mapping_dict:/{size}")
+        print(f"qwen3.py:_hf_to_fms_names():mapping_dict()/{size}", flush=True)
         for key in sorted(mapping_dict.keys()):  # noqa: F821
             print(f"  {key:<60} : {mapping_dict[key]}", flush=True)  # noqa: F821
+        size = len(no_mapping_dict)  # noqa: F821
+        print(f"qwen3.py:_hf_to_fms_names():no_mapping_dict()/{size}", flush=True)
+        for key in sorted(no_mapping_dict.keys()):  # noqa: F821
+            print(f"  {key:<60} : {no_mapping_dict[key]}", flush=True)  # noqa: F821
     atexit.register(mapping_dict_cleanup)
 
 
@@ -690,6 +694,7 @@ def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]
         (r"self_attn\.k_norm", "attn.in_proj.k_norm"),
         (r"self_attn\.q_norm", "attn.in_proj.q_norm"),
     ]
+    global mapping_dict
     new_sd = {}
     for name, param in input_sd.items():
         new_name = name
@@ -697,8 +702,13 @@ def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]
             new_name = re.sub(pattern, repl, new_name)
         new_sd[new_name] = param
         if KWR_DEBUG:
+            if new_name == name:
+                if name in no_mapping_dict:
+                    no_mapping_dict[name] += 1
+                else:
+                    no_mapping_dict[name] = 1
             if name in mapping_dict:
-                print(f"key '{name}' already in mapping_dict")
+                print(f"[WARNING]: key '{name}' already in mapping_dict")
             else:
                 mapping_dict[name] = new_name
     return new_sd
