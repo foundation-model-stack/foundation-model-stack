@@ -200,7 +200,7 @@ def moe_mm_cpu(
     M, A = token_expert_mapping.shape
     assert torch.isfinite(input).all(), f"input has NaNs: {input}"
     a = input.view(T, -1, D).repeat(1, topk, 1).reshape(-1, D)
-    out = torch.zeros(T * topk, out_features, dtype=a.dtype, device=a.device)
+    out = torch.zeros(T * topk, moe_matrix.shape[1], dtype=a.dtype, device=a.device)
 
     token_expert_mapping = token_expert_mapping.view(-1)
 
@@ -208,9 +208,7 @@ def moe_mm_cpu(
         moe_index = moe_matrix[0]
         if moe_index.shape[0] == D:
             moe_index = moe_index.T
-        out_features = moe_index.shape[0]
-        out = torch.zeros(T * topk, out_features, dtype=a.dtype, device=a.device)
-
+        
     for i in range(moe_matrix.shape[0]):
         mask = token_expert_mapping == i
         if mask.sum():

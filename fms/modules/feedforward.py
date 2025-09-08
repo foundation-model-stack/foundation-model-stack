@@ -529,10 +529,7 @@ class ConditionalFeedForward(nn.Module):
 
     def forward(self, x: torch.Tensor, expert_indices: torch.Tensor) -> torch.Tensor:
         # Check constraints.
-        if not self.use_bias:
-            assert x.shape[1] == self.w13.shape[2], "Hidden size mismatch"
-        else:
-            assert x.shape[1] == self.w13.shape[1], "Hidden size mismatch"
+        assert x.shape[1] == self.w13.shape[2], "Hidden size mismatch"
         assert x.is_contiguous(), "Hidden_states must be contiguous"
         assert self.w13.is_contiguous(), "Expert weights 1 must be contiguous"
         assert self.w2.is_contiguous(), "Expert weights 2 must be contiguous"
