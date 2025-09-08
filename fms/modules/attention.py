@@ -288,7 +288,6 @@ def _sdpa_compute_op(
         key_s = repeat_kv(
             key_states, n_rep
         )  # shape: [batch, num_query_heads, seq_len, head_dim]
-        value_s = repeat_kv(value_states, n_rep)
 
         attn_weights = torch.matmul(query_s, key_s.transpose(-2, -1)) * scale_factor
         if attn_mask is not None:

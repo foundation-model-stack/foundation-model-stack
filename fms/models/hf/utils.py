@@ -345,7 +345,6 @@ def _infer_model_configuration(
             elif (
                 isinstance(model_id_or_path, str)
                 and model_id_or_path.startswith("mistralai/Mistral")
-                or model_id_or_path.startswith("openai/gpt-oss-20b")
             ):
                 ignore_patterns = ["consolidated.safetensors"]
                 allow_patterns.append("*.safetensors*")
