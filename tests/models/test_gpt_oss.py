@@ -27,14 +27,22 @@ class GptOssFixtures(ConfigFixtureMixin, ModelFixtureMixin):
     @pytest.fixture(scope="class", autouse=True)
     def config(self) -> ModelConfig:
         return GptOssConfig(
-            src_vocab_size=384,
-            dim=16,
-            norm_eps=1e-05,
-            nheads=4,
-            kvheads=1,
-            nlayers=2,
-            hidden_dim=56,
-            num_experts=8,
+            num_experts=128,
+            emb_dim=2880,
+            head_dim=64,
+            num_attention_heads=64,
+            sliding_window=128,
+            rope_base=150000.0,
+            tie_heads=False,
+            activation_fn= "silu",
+            max_expected_seq_len=131072,
+            top_k_experts=4,
+            output_router_logits=False,
+            layer_types=None,
+            pad_id=-1,
+            nheads=64,
+            nlayers=24,
+            kvheads=8,
         )
 
 
