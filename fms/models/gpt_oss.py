@@ -19,7 +19,6 @@ from fms.utils import serialization
 from fms.utils.config import ModelConfig
 
 from fms.modules.feedforward import MOEFeedForward
-from fms.modules.feedforward import GatedLinearUnit
 from fms.modules.positions import RotaryEmbedding
 
 from fms.modules.ssm import RMSNormGated
@@ -49,7 +48,6 @@ class GptOssConfig(ModelConfig):
     num_experts: int = 128
     src_vocab_size: int = 201088
     emb_dim: int = 2880
-    hidden_dim: int = 2880
     head_dim: int = 64
     num_attention_heads: int = 64
     sliding_window: int = 128
@@ -61,7 +59,6 @@ class GptOssConfig(ModelConfig):
     top_k_experts = 4
     router_aux_loss_coef: float = 0.9
     output_router_logits = False
-    use_cache = True
     layer_types = None
     pad_id: int = -1
     nheads: int = 64
@@ -71,7 +68,7 @@ class GptOssConfig(ModelConfig):
     p_dropout: float = 0.0
     fused_weights: bool = True
     linear_config: Optional[Mapping[str, Any]] = None
-    hidden_grow_factor: float = hidden_dim / emb_dim
+    hidden_grow_factor: float = 1.0
     multiple_of: int = 256
     embedding_multiplier: float = 1.0
     residual_multiplier: float = 1.0
@@ -119,7 +116,7 @@ class GptOssBlock(nn.Module):
             self.config.num_experts,
             self.config.top_k_experts,
             self.config.head_dim,
-            self.config.hidden_dim,
+            self.config.emb_dim,
             use_bias=True,
         )
 
