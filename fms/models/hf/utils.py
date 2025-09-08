@@ -144,6 +144,7 @@ def _map_model_config(architecture, config):
         config_params["emb_dim"] = config.hidden_size
         config_params["max_expected_seq_len"] = config.n_positions
     elif architecture == "GptOssForCausalLM":
+        inner_dim = config.intermediate_size
         architecture = "gpt_oss"
         config_params["attn_bias"] = config.attention_bias
         config_params["p_dropout"] = config.attention_dropout
