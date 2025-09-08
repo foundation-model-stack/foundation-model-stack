@@ -277,11 +277,6 @@ def _sdpa_compute_op(
         adjusted_q_heads = num_key_value_heads * (
             query_states.shape[1] // num_key_value_heads
         )
-
-        print(
-            f"Adjusting query heads from {query_states.shape[1]} → {adjusted_q_heads}"
-        )
-
         query_s = query_states[:, :adjusted_q_heads]
 
         num_query_heads = query_s.shape[1]
@@ -294,12 +289,6 @@ def _sdpa_compute_op(
             key_states, n_rep
         )  # shape: [batch, num_query_heads, seq_len, head_dim]
         value_s = repeat_kv(value_states, n_rep)
-
-        print("query_s:", query_s.shape)
-        print("key_s:", key_s.shape)
-        print("key_s T:", key_s.transpose(-2, -1).shape)
-        print("sinks:", attn_sinks.shape)
-        print("scale:", scale_factor)
 
         attn_weights = torch.matmul(query_s, key_s.transpose(-2, -1)) * scale_factor
         if attn_mask is not None:
@@ -325,10 +314,6 @@ def _sdpa_compute_op(
 
         scores = probs[..., :-1]  # we drop the sink here
         attn_weights = nn.functional.dropout(scores, p=p_dropout, training=training)
-
-        print("attn_weights:", attn_weights.shape)
-        print("sinks:", sinks.shape)
-        print("combined_logits:", combined_logits.shape)
 
         value_states = repeat_kv_heads(value_states, num_key_value_heads, n_rep)
 
@@ -829,7 +814,6 @@ class MultiHeadAttention(nn.Module):
             )
 
         if self.has_sinks:
-            print("attn", attn.shape)
             batch_size, q_len, num_query_heads, emb_v_per_head = attn.shape
 
             attn = attn.view(batch_size, q_len, num_query_heads * emb_v_per_head)

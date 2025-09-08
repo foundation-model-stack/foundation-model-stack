@@ -660,9 +660,6 @@ def _load_partial_state_dict(
                         real_device=tensor_value.device,
                         dtype=tensor_value.dtype if dtype is None else dtype,
                     )
-                    print(f"Key = {key}")
-                    print(f"param.shape = {param.shape}")
-                    print(f"tensor_value.shape = {tensor_value.shape}")
                     setattr(target_module, key_steps[-1], param)
                     param = getattr(target_module, key_steps[-1])
 

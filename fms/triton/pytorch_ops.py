@@ -228,10 +228,6 @@ def moe_mm_cpu(
                     moe_index.to(dtype=a.dtype),
                     bias=moe_bias_matrix[i].to(dtype=a.dtype),
                 )
-                print(f"T={T}, topk={topk}, out_features={out.shape[-1]}")
-                print(
-                    f"out.shape = {out.shape}, numel = {out.numel()}, expected reshape = ({T}, {topk}, {out.shape[-1]})"
-                )
             else:
                 out[mask] = a[mask] @ moe_matrix[i].transpose(0, 1)
 
