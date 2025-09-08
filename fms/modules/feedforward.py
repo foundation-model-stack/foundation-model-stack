@@ -552,7 +552,7 @@ class ConditionalFeedForward(nn.Module):
             total_padded_tokens,
         ) = triton_ops.moe_align_block_size(expert_indices, padding_size, E)
 
-        assert torch.isfinite(x).all(), "NaNs before MoE"
+        original_num_tokens = x.shape[0]
 
         x1, x3 = (
             torch.ops.moe.moe_mm(
@@ -566,6 +566,7 @@ class ConditionalFeedForward(nn.Module):
                 total_padded_tokens,
                 expert_indices.shape[1],
                 padding_size,
+                original_num_tokens,
             )
             .view(-1, N)
             .chunk(2, dim=1)
@@ -581,6 +582,7 @@ class ConditionalFeedForward(nn.Module):
             total_padded_tokens,
             1,
             padding_size,
+            original_num_tokens,
         )
 
 
@@ -726,8 +728,18 @@ class MOEFeedForward(nn.Module):
             expert_weights, self.num_activated_experts, dim=-1
         )  # [T, A], [T, A]
         expert_weights /= expert_weights.sum(dim=-1, keepdim=True)  # [T, A]
+
         expert_outs = self.cond_ffn(x, expert_indices)
+
+        if self.use_bias:
+            expert_outs = expert_outs.view(
+                B * S, expert_indices.shape[1], self.intermediate_size
+            )
+
         int_v1 = torch.einsum("tai,ta -> ti", expert_outs, expert_weights)
-        int_v2 = int_v1.view(B, S, self.dim)
+        if self.use_bias:
+            int_v2 = int_v1.view(B, S, self.intermediate_size)
+        else:
+            int_v2 = int_v1.view(B, S, self.dim)
 
         return int_v2

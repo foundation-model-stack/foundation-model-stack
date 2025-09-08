@@ -107,6 +107,7 @@ def moe_mm(
     total_padded_tokens: torch.Tensor,
     topk: int,
     padding_size: int,
+    original_num_tokens: int,
 ) -> torch.Tensor:
     from fms.triton.moe_kernel import invoke_fused_moe_kernel
 
@@ -124,6 +125,7 @@ def moe_mm(
         total_padded_tokens,
         topk,
         padding_size,
+        original_num_tokens,
     )
 
     return output
@@ -141,6 +143,7 @@ def moe_mm_meta(
     total_padded_tokens: torch.Tensor,
     topk: int,
     padding_size,
+    original_num_tokens: int,
 ):
     M, A = token_expert_mapping.shape
     _, N, _ = moe_matrix.shape
@@ -175,6 +178,7 @@ def moe_mm_setup_context(ctx, inputs, output):
         total_padded_tokens,
         topk,
         padding_size,
+        original_num_tokens,
     ) = inputs
     ctx.save_for_backward(input_)
     pass
@@ -195,6 +199,7 @@ def moe_mm_cpu(
     total_padded_tokens: torch.Tensor,
     topk: int,
     padding_size,
+    original_num_tokens: int,
 ):
     T, D = input.shape
     M, A = token_expert_mapping.shape
@@ -208,7 +213,7 @@ def moe_mm_cpu(
         moe_index = moe_matrix[0]
         if moe_index.shape[0] == D:
             moe_index = moe_index.T
-        
+
     for i in range(moe_matrix.shape[0]):
         mask = token_expert_mapping == i
         if mask.sum():
@@ -231,6 +236,6 @@ def moe_mm_cpu(
                 out[mask] = a[mask] @ moe_matrix[i].transpose(0, 1)
 
     if use_bias:
-        return out.view(T, topk, -1)
+        return out.view(original_num_tokens, topk, -1)
     else:
         return out.view(M, A, moe_matrix.shape[1])

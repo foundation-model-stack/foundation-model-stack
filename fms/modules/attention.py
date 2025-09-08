@@ -838,7 +838,7 @@ class MultiHeadAttention(nn.Module):
 
             if current_dim < expected_dim:
                 pad_width = expected_dim - current_dim
-            attn = F.pad(attn, (0, pad_width))  # pad on the last dimension
+                attn = F.pad(attn, (0, pad_width))  # pad on the last dimension
 
         else:
             attn = attn.view(batch_size, q_len, self.nheads * self.emb_v_per_head)
