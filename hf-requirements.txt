@@ -1,8 +1,0 @@
-# Used to install pinned dependencies
-# Useful for dev/test jobs caches
-# Must be kept in sync with setup.py
-
--r requirements.txt
-
-numpy # Needed by transformers
-transformers==4.48.3
