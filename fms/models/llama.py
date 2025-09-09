@@ -1,4 +1,3 @@
-
 import logging
 import math
 import re
@@ -705,6 +704,7 @@ def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]
 
 
 serialization.register_adapter_step("llama", "hf_to_fms_names", _hf_to_fms_names)
+
 
 def _get_rope_params(linear_type: str) -> list[str]:
     if "gptq" in linear_type:
