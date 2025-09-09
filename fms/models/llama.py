@@ -1,4 +1,6 @@
+
 import logging
+import math
 import re
 from dataclasses import dataclass, field
 from typing import Any, Mapping, Optional, Tuple
@@ -12,14 +14,15 @@ from fms.distributed.strategy import (
     DistributedStrategy,
     NoOpStrategy,
     TensorParallelStrategy,
+    UniformModelParallelStrategy,
 )
 from fms.modules.attention import (
     AttentionKwargs,
     MultiHeadAttention,
     get_attention_type,
 )
-from fms.modules.embedding import WordEmbedding
 from fms.modules.feedforward import GatedLinearUnit
+from fms.modules.head import LinearClassificationHead
 from fms.modules.layernorm import LayerNormParameterized
 from fms.modules.linear import get_linear_type
 from fms.modules.positions import RotaryEmbedding
@@ -166,14 +169,14 @@ class LLaMABlock(nn.Module):
             return x
 
 
-class LLaMA(nn.Module):
+class LLaMAHeadless(nn.Module):
     def __init__(
         self,
         config: Optional[LLaMAConfig] = None,
         distributed_strategy: DistributedStrategy = NoOpStrategy,
         **kwargs,
     ):
-        super(LLaMA, self).__init__()
+        super(LLaMAHeadless, self).__init__()
         if config is not None:
             self.config = config
         else:
@@ -185,28 +188,20 @@ class LLaMA(nn.Module):
         self.pad_id = self.config.pad_id
         self.max_expected_seq_len = self.config.max_expected_seq_len
 
-        shared = WordEmbedding(
-            self.config.src_vocab_size,
-            self.config.emb_dim,
-            padding_idx=self.config.pad_id,
-            abs_pos=False,
-            reversible=True,
-            tie_weights=self.config.tie_heads,
-            bias=False,
-        )
+        embedding = nn.Embedding(self.config.src_vocab_size, self.config.emb_dim)
 
         # TP does not work with tied weights
         if (
             not isinstance(self.distributed_strategy, TensorParallelStrategy)
             or not self.config.tie_heads
         ):
-            self.shared = self.distributed_strategy.distribute_module(shared)
+            self.embedding = self.distributed_strategy.distribute_module(embedding)
         else:
             logger.warning(
                 "You're using TP on a model with tied weights between head and embedding. "
                 "The tied weights won't be sharded, which can result in unexpected OOMs."
             )
-            self.shared = shared
+            self.embedding = embedding
 
         self.rot_emb = RotaryEmbedding(
             dim=self.config.emb_dim // self.config.nheads,
@@ -247,19 +242,34 @@ class LLaMA(nn.Module):
         return self.config
 
     @classmethod
-    def from_config(cls, config: LLaMAConfig) -> "LLaMA":
+    def from_config(cls, config: LLaMAConfig) -> "LLaMAHeadless":
         return cls(config)
 
     def reset_parameters(self):
+        assert isinstance(self.embedding, torch.nn.Embedding)
+        nn.init.trunc_normal_(
+            self.embedding.weight, mean=0.0, std=self.config.emb_dim**-0.5
+        )
+
         # Call reset_parameters for relevant sub-layers
         for m in self.modules():
             if (
                 isinstance(m, MultiHeadAttention)
-                or isinstance(m, WordEmbedding)
                 or isinstance(m, GatedLinearUnit)
                 or isinstance(m, LayerNormParameterized)
             ):
                 m.reset_parameters()
+
+        # RoPE init
+        if isinstance(self.distributed_strategy, UniformModelParallelStrategy):
+            for dev_idx in set(self.distributed_strategy.layer_to_device):
+                self.rot_emb.compute_freqs_cis(
+                    torch.device("cuda", dev_idx), self.config.max_expected_seq_len
+                )
+        else:
+            self.rot_emb.compute_freqs_cis(
+                self.embedding.weight.device, self.config.max_expected_seq_len
+            )
 
     def validate_reset_parameters(self):
         # Verifies that the above self.reset_parameters() executed correctly.
@@ -277,22 +287,24 @@ class LLaMA(nn.Module):
                 assert p.isnan().int().sum() == 0
                 assert p.isinf().int().sum() == 0
             for m in self.modules():
-                if isinstance(LayerNormParameterized):
+                if isinstance(m, LayerNormParameterized):
                     if m.elementwise_scale:
                         assert m.weight.sum() == m.weight.numel()
                     if m.elementwise_shift:
                         assert m.bias.add(1).sum() == m.bias.numel()
-                elif isinstance(WordEmbedding):
-                    check_close(m.emb.weight)
-                    check_close(m.head.weight)
-                elif isinstance(GatedLinearUnit):
+                elif isinstance(m, nn.Embedding):
+                    check_close(m.weight)
+                elif isinstance(m, GatedLinearUnit):
                     check_close(m.w1.weight)
                     check_close(m.w2.weight)
                     check_close(m.wg.weight)
-                elif isinstance(MultiHeadAttention):
-                    check_close(m.query.weight)
-                    check_close(m.key.weight)
-                    check_close(m.value.weight)
+                elif isinstance(m, MultiHeadAttention):
+                    if m.fused:
+                        check_close(m.in_proj.qkv_fused.weight)
+                    else:
+                        check_close(m.in_proj.query.weight)
+                        check_close(m.in_proj.key.weight)
+                        check_close(m.in_proj.value.weight)
                     check_close(m.dense.weight)
 
     def _clean_up_rot_emb_cache(
@@ -312,15 +324,6 @@ class LLaMA(nn.Module):
     def post_init(self):
         # This function is called in `get_model` after the model is
         # fully initalized on the correct device
-
-        # if this model ties weights, they are tied here
-        if self.config.tie_heads:
-            # handle assignment of non-meta weights to meta parameters
-            if self.shared.head.weight.device == torch.device("meta"):
-                self.shared.head.weight = self.shared.emb.weight
-            else:
-                self.shared.emb.weight = self.shared.head.weight
-
         self._clean_up_rot_emb_cache(
             self.rot_emb.cached_freqs,
             self.rot_emb.max_seq_len_cached,
@@ -333,7 +336,7 @@ class LLaMA(nn.Module):
         ):
             self.rot_emb.compute_freqs_cis(device, self.config.max_expected_seq_len)
 
-    def _helper(
+    def forward(
         self,
         x_in,
         position_ids=None,
@@ -347,7 +350,7 @@ class LLaMA(nn.Module):
         # bias: nheads x seq_len x seq_len
         if past_key_value_states is None or len(past_key_value_states) == 0:
             past_key_value_states = [None for _ in range(len(self.layers))]
-        x_in = self.shared(x_in)
+        x_in = self.embedding(x_in)
 
         # this is the output cache for all the decoder layers
         present_key_value_states = []
@@ -364,7 +367,6 @@ class LLaMA(nn.Module):
             if use_cache:
                 x_in, present_key_value_state = output
                 present_key_value_states.append(present_key_value_state)
-
             else:
                 x_in = output
 
@@ -374,6 +376,84 @@ class LLaMA(nn.Module):
             dec_out = self.dropout(dec_out)
 
         return dec_out, present_key_value_states
+
+
+class LLaMA(nn.Module):
+    def __init__(
+        self,
+        config: Optional[LLaMAConfig] = None,
+        distributed_strategy: DistributedStrategy = NoOpStrategy,
+        **kwargs,
+    ):
+        super(LLaMA, self).__init__()
+        if config is not None:
+            self.config = config
+        else:
+            self.config = LLaMAConfig()
+        self.config = self.config.updated(**kwargs)
+        self.distributed_strategy = distributed_strategy
+
+        self.base_model = LLaMAHeadless(self.config, self.distributed_strategy)
+        head = LinearClassificationHead(
+            self.config.emb_dim, self.config.src_vocab_size, bias=False
+        )
+        if self.config.tie_heads:
+            assert isinstance(self.base_model.embedding, torch.nn.Embedding)
+            head.weight = self.base_model.embedding.weight
+
+        # TP does not work with tied weights
+        if (
+            not isinstance(self.distributed_strategy, TensorParallelStrategy)
+            or not self.config.tie_heads
+        ):
+            self.head = self.distributed_strategy.distribute_module(head)
+        else:
+            self.head = head
+
+    def get_config(self) -> LLaMAConfig:
+        return self.config
+
+    @classmethod
+    def from_config(cls, config: LLaMAConfig) -> "LLaMA":
+        return cls(config)
+
+    def reset_parameters(self):
+        # Call reset_parameters for relevant sub-layers
+        assert isinstance(self.head, torch.nn.Linear)
+        self.head.weight.data.normal_(
+            0,
+            1 / math.sqrt(math.sqrt(self.config.emb_dim * self.config.src_vocab_size)),
+        )
+        self.base_model.reset_parameters()
+
+    def validate_reset_parameters(self):
+        # Verifies that the above self.reset_parameters() executed correctly.
+        # This may not always be the case for distributed settings with sharded tensors,
+        # such as FSDP or TP. Note that performing this check may require unsharding /
+        # re-materializing the full model on a single rank to access the underlying tensors.
+        tolerance = 1e-3
+
+        def check_close(x):
+            assert x.mean().abs() < tolerance
+            assert x.std().sub(0.02).abs() < tolerance
+
+        with torch.no_grad():
+            for p in self.parameters():
+                assert p.isnan().int().sum() == 0
+                assert p.isinf().int().sum() == 0
+            self.base_model.validate_reset_parameters()
+            check_close(self.head.weight)
+
+    def post_init(self):
+        self.base_model.post_init()
+
+        # if this model ties weights, they are tied here
+        if self.config.tie_heads:
+            # handle assignment of non-meta weights to meta parameters
+            if self.head.weight.device == torch.device("meta"):
+                self.head.weight = self.base_model.embedding.weight
+            else:
+                self.base_model.embedding.weight = self.head.weight
 
     def forward(
         self,
@@ -390,13 +470,13 @@ class LLaMA(nn.Module):
             past_key_value_states=past_key_value_states,
             **attn_kwargs,
         )
-        output, cache = self._helper(
+        output, cache = self.base_model(
             x, position_ids, past_key_value_states, use_cache, **attn_kwargs
         )
 
         if last_n_tokens > 0:
             output = output[:, -last_n_tokens:, :]
-        preds = self.shared(output, reverse=True)
+        preds = self.head(output)
 
         if use_cache:
             return preds, cache
@@ -507,6 +587,7 @@ models.register_model(
     "granite.code-3b",
     _llama_factory_factory((_granite_3b_code_config)),
 )
+
 models.register_model(
     _architecture_name,
     "granite.code-8b",
@@ -570,10 +651,10 @@ serialization.register_adapter_step(
 
 def _meta_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]:
     replacements = [
-        (r"^tok_embeddings", "shared.emb"),
-        (r"^norm", "dec_norm"),
-        (r"^output", "shared.head"),
-        (r"^layers", "layers"),
+        (r"^tok_embeddings", "base_model.embedding"),
+        (r"^norm", "base_model.dec_norm"),
+        (r"^output", "head"),
+        (r"^layers", "base_model.layers"),
         (r"\.attention\.", ".attn."),
         (r"attn\.wq", "attn.in_proj.query"),
         (r"attn\.wk", "attn.in_proj.key"),
@@ -600,10 +681,10 @@ serialization.register_adapter_step("llama", "meta_to_fms_names", _meta_to_fms_n
 
 def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]:
     replacements = [
-        (r"^lm_head.weight", "shared.head.weight"),
-        (r"^model.embed_tokens.weight", "shared.emb.weight"),
-        (r"^model.norm", "dec_norm"),
-        (r"^model.layers", "layers"),
+        (r"^lm_head.weight", "head.weight"),
+        (r"^model.embed_tokens.weight", "base_model.embedding.weight"),
+        (r"^model.norm", "base_model.dec_norm"),
+        (r"^model.layers", "base_model.layers"),
         (r"self_attn\.k_proj", "attn.in_proj.key"),
         (r"self_attn\.v_proj", "attn.in_proj.value"),
         (r"self_attn\.q_proj", "attn.in_proj.query"),
@@ -624,7 +705,6 @@ def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]
 
 
 serialization.register_adapter_step("llama", "hf_to_fms_names", _hf_to_fms_names)
-
 
 def _get_rope_params(linear_type: str) -> list[str]:
     if "gptq" in linear_type:
@@ -699,7 +779,6 @@ def _hf_to_fms_rope(
 
 
 serialization.register_adapter_step("llama", "hf_to_fms_rope", _hf_to_fms_rope)
-
 
 serialization.register_adapter("llama", "meta", ["meta_to_fms_names", "weight_fusion"])
 serialization.register_adapter(
