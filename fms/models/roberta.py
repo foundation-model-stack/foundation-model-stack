@@ -505,7 +505,22 @@ _base_questionanswering_config = RoBERTaQuestionAnsweringConfig(
     num_classes=2,
 )
 
+# BERT for Masked Language
+_bert_base_config = RoBERTaConfig(
+    src_vocab_size=30522,
+    pad_id=0,
+)
+
+# BERT for 2-Class Classification
+_bert_base_classification_config_dict = copy.copy(_bert_base_config.__dict__)
+_bert_base_classification_config_dict["pooling"] = True
+_bert_base_classification_config = RoBERTaClassificationConfig(
+    **_bert_base_classification_config_dict, num_classes=2
+)
+
+
 _roberta_name = "roberta"
+_bert_name = "bert"
 
 
 def _roberta_factory_factory(config):
@@ -545,9 +560,22 @@ models.register_model(
     _roberta_question_answering_factory_factory(_base_questionanswering_config),
 )
 
+# BERT factories
+models.register_model(_bert_name, "base", _roberta_factory_factory(_bert_base_config))
+models.register_model(
+    _bert_name + "_classification",
+    "base",
+    _roberta_classification_factory_factory(_bert_base_classification_config),
+)
+
 
 serialization.register_adapter_step(
     _roberta_name,
+    "pre0.0.6_attn_unfused_to_fused",
+    serialization._pre006_attn_adapter_step,
+)
+serialization.register_adapter_step(
+    _bert_name,
     "pre0.0.6_attn_unfused_to_fused",
     serialization._pre006_attn_adapter_step,
 )
@@ -575,6 +603,10 @@ serialization.register_adapter_step(
     _roberta_name + "_question_answering",
     "weight_fusion",
     _weight_fusion,
+)
+serialization.register_adapter_step(_bert_name, "weight_fusion", _weight_fusion)
+serialization.register_adapter_step(
+    _bert_name + "_classification", "weight_fusion", _weight_fusion
 )
 
 
@@ -628,6 +660,49 @@ serialization.register_adapter_step(
     _roberta_name + "_question_answering", "hf_to_fms_names", _hf_to_fms_names
 )
 
+
+def _bert_hf_to_fms_names(hf_sd: Mapping[str, Any], **kwargs) -> Mapping[Any, Any]:
+    replacements = [
+        (r"^bert.embeddings.word_embeddings.weight", "base_model.embedding.weight"),
+        (
+            r"^bert.embeddings.position_embeddings.weight",
+            "base_model.position_embedding.weight",
+        ),
+        (r"^bert.embeddings.LayerNorm", "base_model.enc_norm"),
+        (r"^bert.encoder.layer", "base_model.layers"),
+        (r"attention\.output\.LayerNorm", "ln"),
+        (r"output\.LayerNorm", "ff_ln"),
+        (r"attention\.self\.key", "attn.in_proj.key"),
+        (r"attention\.self\.value", "attn.in_proj.value"),
+        (r"attention\.self\.query", "attn.in_proj.query"),
+        (r"attention\.output\.dense", "attn.dense"),
+        (r"intermediate\.dense", "ff_sub_layer.w1"),
+        (r"output\.dense", "ff_sub_layer.w2"),
+        (r"^cls\.predictions\.transform\.dense", "classification_head.dense"),
+        (r"^cls\.predictions\.transform\.LayerNorm", "classification_head.ln"),
+        (r"^cls\.predictions\.decoder", "classification_head.head"),
+        (r"^cls\.predictions\.bias", "classification_head.head.bias"),
+        (r"gamma", "weight"),
+        (r"beta", "bias"),
+        (r"^bert.pooler.dense", "classification_head.pooler_linear"),
+    ]
+    new_sd = {}
+    for name, param in hf_sd.items():
+        new_name = name
+        for pattern, repl in replacements:
+            new_name = re.sub(pattern, repl, new_name)
+        new_sd[new_name] = param
+
+    return new_sd
+
+
+serialization.register_adapter_step(
+    _bert_name, "hf_to_fms_names", _bert_hf_to_fms_names
+)
+serialization.register_adapter_step(
+    _bert_name + "_classification", "hf_to_fms_names", _bert_hf_to_fms_names
+)
+
 # Roberta adapters
 serialization.register_adapter(
     _roberta_name, "hf", ["hf_to_fms_names", "weight_fusion"]
@@ -640,4 +715,15 @@ serialization.register_adapter(
 )
 serialization.register_adapter(
     _roberta_name + "_question_answering", "hf", ["hf_to_fms_names", "weight_fusion"]
+)
+
+# BERT adapters
+serialization.register_adapter(
+    _bert_name, "hf", ["bert_hf_to_fms_names", "weight_fusion"]
+)
+serialization.register_adapter(
+    _bert_name, "fms.pre0.0.6", ["pre0.0.6_attn_unfused_to_fused", "weight_fusion"]
+)
+serialization.register_adapter(
+    _bert_name + "_classification", "hf", ["bert_hf_to_fms_names", "weight_fusion"]
 )
