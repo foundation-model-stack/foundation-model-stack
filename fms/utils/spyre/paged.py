@@ -76,7 +76,6 @@ def paged_attn_compute(
 
         keys_lst: list[torch.Tensor] = []
         values_lst: list[torch.Tensor] = []
-        print(block_table, start_pos, seq_len)
         for j in range(start_pos, seq_len):
             block_number = int(block_table[j // block_size])
             block_offset = j % block_size
