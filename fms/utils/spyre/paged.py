@@ -1,5 +1,4 @@
 import math
-import traceback
 from typing import List, Optional, Tuple
 
 from fms.modules.attention import (
@@ -101,10 +100,10 @@ def paged_attn_compute(
             values = torch.repeat_interleave(
                 values, num_query_heads // num_kv_heads, dim=1
             )
-        
+
         # Generate mask for prefix attention
         mask = torch.ones((1, 1, seq_len_q_i, seq_len_kv), dtype=torch.bool)
-        mask[:,:,:,-seq_len_q_i:] = torch.tril(mask[:,:,:,-seq_len_q_i:])
+        mask[:, :, :, -seq_len_q_i:] = torch.tril(mask[:, :, :, -seq_len_q_i:])
         mask = torch.where(mask.logical_not(), -torch.inf, 0.0)
 
         out = F.scaled_dot_product_attention(
