@@ -1,20 +1,29 @@
 import copy
+import logging
 import math
 import re
 from dataclasses import dataclass
-from typing import Any, Mapping, Optional
+from typing import Any, Mapping, Optional, Unpack
 
 import torch
-import torch.nn as nn
+from torch import nn
 
 from fms import models
 from fms.distributed.strategy import DistributedStrategy, NoOpStrategy
-from fms.modules.attention import MultiHeadAttention
+from fms.modules.attention import (
+    AttentionKwargs,
+    MultiHeadAttention,
+    SDPAAttentionKwargs,
+    get_attention_type,
+)
 from fms.modules.feedforward import FeedForwardBlock
 from fms.modules.head import MLPClassificationHead
 from fms.utils import serialization
 from fms.utils.activation import str_to_activation
 from fms.utils.config import ModelConfig
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -28,6 +37,7 @@ class RoBERTaConfig(ModelConfig):
     activation_fn: str = "gelu"
     classifier_activation_fn: str = "tanh"
     max_pos: int = 512
+    type_vocab_size: int = 1
     p_dropout: float = 0.1
     multiquery_attn: bool = False
     norm_eps: float = 1e-12
@@ -40,7 +50,14 @@ class RoBERTaConfig(ModelConfig):
 @dataclass
 class RoBERTaClassificationConfig(RoBERTaConfig):
     num_classes: int = 2
-    
+
+
+@dataclass
+class RoBERTaQuestionAnsweringConfig(RoBERTaConfig):
+    """Model configuration of RoBERTa for Question-Answering downstream task"""
+
+    num_classes: int = 2
+
 
 class RoBERTaBlock(nn.Module):
     def __init__(self, config: RoBERTaConfig):
@@ -77,19 +94,14 @@ class RoBERTaBlock(nn.Module):
     def forward(
         self,
         x: torch.Tensor,
-        *,
-        mask: Optional[torch.Tensor] = None,
-        attn_algorithm: Optional[str] = None,
+        **attn_kwargs: Unpack[AttentionKwargs],
     ):
         # first we do MHA
         residual = x
         # self attention
         x = self.attn(
             q=x,
-            mask=mask,
-            attn_algorithm=attn_algorithm,
-            is_self=True,
-            is_causal_mask=False,
+            **attn_kwargs,
         )
 
         # if self.config.p_dropout != 0:
@@ -129,7 +141,8 @@ class RoBERTaHeadless(nn.Module):
             ]
         )
 
-        # RoBERTa embeddings don't support TP as in many cases, the vocab size is not divisible by the world size
+        # RoBERTa embeddings don't support TP as in many cases the vocab size is
+        # not divisible by the world size
         self.embedding = self.distributed_strategy.distribute_module(
             nn.Embedding(self.config.src_vocab_size, self.config.emb_dim),
             final_layers=True,
@@ -138,6 +151,11 @@ class RoBERTaHeadless(nn.Module):
         self.position_embedding = self.distributed_strategy.distribute_module(
             nn.Embedding(self.config.max_pos, self.config.emb_dim),
             final_layers=True,
+        )
+
+        self.token_type_embeddings = nn.Embedding(
+            self.config.type_vocab_size,
+            self.config.emb_dim,
         )
 
         self.enc_norm = self.distributed_strategy.distribute_module(
@@ -155,6 +173,7 @@ class RoBERTaHeadless(nn.Module):
                 mean=0.0,
                 std=self.config.emb_dim**-0.5,
             )
+        nn.init.zeros_(self.token_type_embeddings.weight)
         for layer in self.layers:
             for sublayer in ["ln", "ff_ln", "attn", "ff_sub_layer"]:
                 getattr(layer, sublayer).reset_parameters()
@@ -163,16 +182,13 @@ class RoBERTaHeadless(nn.Module):
     def forward(
         self,
         x: torch.Tensor,
-        mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.Tensor] = None,
-        attn_algorithm: Optional[str] = None,
+        token_type_ids: Optional[torch.Tensor] = None,
+        **attn_kwargs: Unpack[SDPAAttentionKwargs],
     ):
-        # if mask is None:
-        #     if x is None:
-        #         raise ValueError("cannot create a mask when x is None")
-        #     pad_id: int = self.config.pad_id
-        #     is_pad = x == pad_id
-        #     mask = is_pad.unsqueeze(-1) == is_pad.unsqueeze(-2)
+        # We will need this as a default as this will make the assumption that is_causal_mask=False (will not create a causal mask in sdpa)
+        # If this was not provided, if attn_name is not given and no mask is given, we will end up with a causal mask
+        attn_kwargs["attn_name"] = attn_kwargs.get("attn_name", "sdpa_bidirectional")
 
         x_emb = self.embedding(x)
 
@@ -194,8 +210,19 @@ class RoBERTaHeadless(nn.Module):
         if self.config.pad_id is not None:
             position_out = position_out.mul(~is_pad.unsqueeze(-1))
 
-        # perform absolute position embedding
-        x = x_emb + position_out
+        # token_type_ids should be of size (bs, seq_len), same as input_ids.
+        # depending on task, it may be a zero tensor, but the embeddings may not be,
+        # especially if fine-tuned, returning non-zero token_type_out
+        if token_type_ids is None:
+            token_type_ids = torch.zeros(
+                x.size(),
+                dtype=torch.long,
+                device=x.device,
+            )
+        token_type_out = self.token_type_embeddings(token_type_ids)
+
+        # perform absolute position embedding, including token type embeddings
+        x = x_emb + token_type_out + position_out
 
         # layer norm
         x = self.enc_norm(x)
@@ -206,7 +233,7 @@ class RoBERTaHeadless(nn.Module):
 
         # layers
         for layer in self.layers:
-            x = layer(x, mask=mask, attn_algorithm=attn_algorithm)
+            x = layer(x, **attn_kwargs)
 
         return x
 
@@ -218,7 +245,7 @@ class RoBERTa(nn.Module):
         distributed_strategy: DistributedStrategy = NoOpStrategy,
         **kwargs,
     ):
-        super(RoBERTa, self).__init__()
+        super().__init__()
         if config is not None:
             self.config = config
         else:
@@ -228,7 +255,8 @@ class RoBERTa(nn.Module):
 
         self.base_model = RoBERTaHeadless(self.config, self.distributed_strategy)
 
-        # The head does not get TP-Wrapped as in many cases the vocab_size will not be divisible by the world size
+        # The head does not get TP-Wrapped as in many cases the vocab_size
+        # will not be divisible by the world size
         self.classification_head = self.distributed_strategy.distribute_module(
             MLPClassificationHead(
                 self.config.emb_dim,
@@ -245,18 +273,26 @@ class RoBERTa(nn.Module):
 
         # this model ties weights, so we tie here
         if self.config.tie_heads:
-            self.classification_head.head.weight = self.base_model.embedding.weight
+            self.classification_head.get_submodule(
+                "head"
+            ).weight = self.base_model.embedding.weight
 
     def forward(
         self,
         x: torch.Tensor,
-        mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.Tensor] = None,
-        attn_algorithm: Optional[str] = None,
+        token_type_ids: Optional[torch.Tensor] = None,
+        **attn_kwargs: Unpack[AttentionKwargs],
     ):
+        get_attention_type(**attn_kwargs)["validate_attn_kwargs"](
+            input_ids=x, position_ids=position_ids, **attn_kwargs
+        )
         # run through the encoder layers
         x = self.base_model(
-            x, mask=mask, position_ids=position_ids, attn_algorithm=attn_algorithm
+            x,
+            position_ids=position_ids,
+            token_type_ids=token_type_ids,
+            **attn_kwargs,
         )
 
         # run through classification head and project to vocab space
@@ -284,7 +320,8 @@ class RoBERTa(nn.Module):
             )
 
     def post_init(self):
-        # This function is called in `get_model` after the model is fully initalized in the correct device
+        # This function is called in `get_model` after the model is fully initalized
+        # on the correct device
 
         # if this model ties weights, so we tie here
         if self.config.tie_heads:
@@ -308,15 +345,19 @@ class RoBERTaForClassification(nn.Module):
         else:
             self.config = RoBERTaClassificationConfig()
         self.config = self.config.updated(**kwargs)
+
+        if self.config.tie_heads:
+            logger.warning(
+                "The model configuration set tie heads to True but this parameter will "
+                "be ignored for a QuestionAnswering task."
+            )
         self.distributed_strategy = distributed_strategy
 
         self.base_model = RoBERTaHeadless(self.config, self.distributed_strategy)
 
-        # The head does not get TP-Wrapped as in many cases the vocab_size will not be divisible by the world size
         self.classification_head = self.distributed_strategy.distribute_module(
             MLPClassificationHead(
                 self.config.emb_dim,
-                # number of classes is vocab size as this is predicting a masked token
                 num_classes=self.config.num_classes,
                 activation_fn=str_to_activation(self.config.activation_fn),
                 layer_norm=nn.LayerNorm(self.config.emb_dim, self.config.norm_eps),
@@ -332,14 +373,15 @@ class RoBERTaForClassification(nn.Module):
     def forward(
         self,
         x: torch.Tensor,
-        mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.Tensor] = None,
-        attn_algorithm: Optional[str] = None,
+        **attn_kwargs: Unpack[AttentionKwargs],
     ):
-        # run through the encoder layers
-        x = self.base_model(
-            x, mask=mask, position_ids=position_ids, attn_algorithm=attn_algorithm
+        get_attention_type(**attn_kwargs)["validate_attn_kwargs"](
+            input_ids=x, position_ids=position_ids, **attn_kwargs
         )
+
+        # run through the encoder layers
+        x = self.base_model(x, position_ids=position_ids, **attn_kwargs)
 
         # run through classification head and project to vocab space
         x = self.classification_head(x)
@@ -356,9 +398,84 @@ class RoBERTaForClassification(nn.Module):
 
     def reset_parameters(self):
         self.base_model.reset_parameters()
+        assert isinstance(self.classification_head.head, torch.nn.Linear)
         self.classification_head.head.weight.data.normal_(
             0,
             1 / math.sqrt(math.sqrt(self.config.emb_dim * self.config.src_vocab_size)),
+        )
+
+
+class RoBERTaForQuestionAnswering(nn.Module):
+    """Model architecture of RoBERTa for Question Answering downstream task"""
+
+    def __init__(
+        self,
+        config: Optional[RoBERTaQuestionAnsweringConfig] = None,
+        distributed_strategy: DistributedStrategy = NoOpStrategy,
+        **kwargs,
+    ):
+        super().__init__()
+        if config is not None:
+            self.config = config
+        else:
+            self.config = RoBERTaQuestionAnsweringConfig()
+        self.config = self.config.updated(**kwargs)
+        if self.config.tie_heads:
+            logger.warning(
+                "The model configuration set tie heads to True but this parameter will "
+                "be ignored for a QuestionAnswering task."
+            )
+        self.distributed_strategy = distributed_strategy
+
+        self.base_model = RoBERTaHeadless(self.config, self.distributed_strategy)
+
+        # output dimension ("num_classes") for QuestionAnswering is always 2
+        self.qa_head = nn.Linear(
+            in_features=self.config.emb_dim,
+            out_features=2,
+            bias=True,
+        )
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        position_ids: Optional[torch.Tensor] = None,
+        token_type_ids: Optional[torch.Tensor] = None,
+        **attn_kwargs: Unpack[AttentionKwargs],
+    ):
+        get_attention_type(**attn_kwargs)["validate_attn_kwargs"](
+            input_ids=x, position_ids=position_ids, **attn_kwargs
+        )
+
+        # run through the encoder layers
+        x = self.base_model(
+            x,
+            position_ids=position_ids,
+            token_type_ids=token_type_ids,
+            **attn_kwargs,
+        )
+
+        # run head and process outputs
+        logits = self.qa_head(x)
+        start_logits, end_logits = logits.split(1, dim=-1)
+        start_logits = start_logits.squeeze(-1).contiguous()
+        end_logits = end_logits.squeeze(-1).contiguous()
+        return (start_logits, end_logits)
+
+    @classmethod
+    def from_config(
+        cls, config: RoBERTaQuestionAnsweringConfig
+    ) -> "RoBERTaForQuestionAnswering":
+        return cls(config)
+
+    def get_config(self) -> RoBERTaQuestionAnsweringConfig:
+        return self.config
+
+    def reset_parameters(self):
+        self.base_model.reset_parameters()
+        self.qa_head.weight.data.normal_(
+            0,
+            1 / math.sqrt(math.sqrt(self.config.emb_dim * 2)),
         )
 
 
@@ -367,8 +484,10 @@ _micro_char_config = RoBERTaConfig(
     emb_dim=192, nheads=4, nlayers=5, max_pos=1024, src_vocab_size=256
 )
 
+# Roberta for Masked Language
 _base_config = RoBERTaConfig(tie_heads=True, norm_eps=1e-5, p_dropout=0.1)
 
+# Roberta for 2-Class Classification
 _base_classification_config_dict = copy.copy(_base_config.__dict__)
 _base_classification_config_dict["pooling"] = True
 _base_classification_config = RoBERTaClassificationConfig(
@@ -376,19 +495,30 @@ _base_classification_config = RoBERTaClassificationConfig(
     num_classes=2,
 )
 
+# Roberta for Question Answering
+_base_questionanswering_config_dict = copy.copy(_base_config.__dict__)
+_base_questionanswering_config_dict["tie_heads"] = False
+_base_questionanswering_config = RoBERTaQuestionAnsweringConfig(
+    **_base_questionanswering_config_dict,
+    num_classes=2,
+)
+
+# BERT for Masked Language
 _bert_base_config = RoBERTaConfig(
     src_vocab_size=30522,
     pad_id=0,
 )
 
+# BERT for 2-Class Classification
 _bert_base_classification_config_dict = copy.copy(_bert_base_config.__dict__)
 _bert_base_classification_config_dict["pooling"] = True
 _bert_base_classification_config = RoBERTaClassificationConfig(
-    **_bert_base_classification_config_dict,
-    num_classes=2,
+    **_bert_base_classification_config_dict, num_classes=2
 )
 
-_architecture_name = "roberta"
+
+_roberta_name = "roberta"
+_bert_name = "bert"
 
 
 def _roberta_factory_factory(config):
@@ -405,34 +535,45 @@ def _roberta_classification_factory_factory(config):
     return factory
 
 
+def _roberta_question_answering_factory_factory(config):
+    def factory(**kwargs):
+        return RoBERTaForQuestionAnswering(config, **kwargs)
 
+    return factory
+
+
+# Roberta factories
 models.register_model(
-    _architecture_name, "micro", _roberta_factory_factory(_micro_char_config)
+    _roberta_name, "micro", _roberta_factory_factory(_micro_char_config)
 )
+models.register_model(_roberta_name, "base", _roberta_factory_factory(_base_config))
 models.register_model(
-    _architecture_name, "base", _roberta_factory_factory(_base_config)
-)
-models.register_model(
-    "roberta_classification",
+    _roberta_name + "_classification",
     "base",
     _roberta_classification_factory_factory(_base_classification_config),
 )
-
-models.register_model("bert", "base", _roberta_factory_factory(_bert_base_config))
 models.register_model(
-    "bert_classification",
+    _roberta_name + "_question_answering",
+    "base",
+    _roberta_question_answering_factory_factory(_base_questionanswering_config),
+)
+
+# BERT factories
+models.register_model(_bert_name, "base", _roberta_factory_factory(_bert_base_config))
+models.register_model(
+    _bert_name + "_classification",
     "base",
     _roberta_classification_factory_factory(_bert_base_classification_config),
 )
 
 
 serialization.register_adapter_step(
-    _architecture_name,
+    _roberta_name,
     "pre0.0.6_attn_unfused_to_fused",
     serialization._pre006_attn_adapter_step,
 )
 serialization.register_adapter_step(
-    "bert",
+    _bert_name,
     "pre0.0.6_attn_unfused_to_fused",
     serialization._pre006_attn_adapter_step,
 )
@@ -452,10 +593,19 @@ def _weight_fusion(
     return new_sd
 
 
-serialization.register_adapter_step(_architecture_name, "weight_fusion", _weight_fusion)
-serialization.register_adapter_step("roberta_classification", "weight_fusion", _weight_fusion)
-serialization.register_adapter_step("bert", "weight_fusion", _weight_fusion)
-serialization.register_adapter_step("bert_classification", "weight_fusion", _weight_fusion)
+serialization.register_adapter_step(_roberta_name, "weight_fusion", _weight_fusion)
+serialization.register_adapter_step(
+    _roberta_name + "_classification", "weight_fusion", _weight_fusion
+)
+serialization.register_adapter_step(
+    _roberta_name + "_question_answering",
+    "weight_fusion",
+    _weight_fusion,
+)
+serialization.register_adapter_step(_bert_name, "weight_fusion", _weight_fusion)
+serialization.register_adapter_step(
+    _bert_name + "_classification", "weight_fusion", _weight_fusion
+)
 
 
 def _hf_to_fms_names(hf_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]:
@@ -464,6 +614,10 @@ def _hf_to_fms_names(hf_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]:
         (
             r"^roberta.embeddings.position_embeddings.weight",
             "base_model.position_embedding.weight",
+        ),
+        (
+            r"^roberta.embeddings.token_type_embeddings.weight",
+            "base_model.token_type_embeddings.weight",
         ),
         (r"^roberta.embeddings.LayerNorm", "base_model.enc_norm"),
         (r"^roberta.encoder.layer", "base_model.layers"),
@@ -480,6 +634,7 @@ def _hf_to_fms_names(hf_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]:
         (r"^lm_head\.decoder", "classification_head.head"),
         (r"^lm_head\.bias", "classification_head.head.bias"),
         (r"^roberta.pooler.dense", "classification_head.pooler_linear"),
+        (r"^qa_outputs", "qa_head"),  # only relevant to QuestionAnswering task
     ]
     new_sd = {}
     for name, param in hf_sd.items():
@@ -495,11 +650,12 @@ def _hf_to_fms_names(hf_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]:
     return new_sd
 
 
+serialization.register_adapter_step(_roberta_name, "hf_to_fms_names", _hf_to_fms_names)
 serialization.register_adapter_step(
-    _architecture_name, "hf_to_fms_names", _hf_to_fms_names
+    _roberta_name + "_classification", "hf_to_fms_names", _hf_to_fms_names
 )
 serialization.register_adapter_step(
-    "roberta_classification", "hf_to_fms_names", _hf_to_fms_names
+    _roberta_name + "_question_answering", "hf_to_fms_names", _hf_to_fms_names
 )
 
 
@@ -537,26 +693,35 @@ def _bert_hf_to_fms_names(hf_sd: Mapping[str, Any], **kwargs) -> Mapping[Any, An
 
     return new_sd
 
+
 serialization.register_adapter_step(
-    "bert", "bert_hf_to_fms_names", _bert_hf_to_fms_names
+    _bert_name, "hf_to_fms_names", _bert_hf_to_fms_names
 )
 serialization.register_adapter_step(
-    "bert_classification", "bert_hf_to_fms_names", _bert_hf_to_fms_names
+    _bert_name + "_classification", "hf_to_fms_names", _bert_hf_to_fms_names
 )
 
-
-serialization.register_adapter("roberta", "hf", ["hf_to_fms_names", "weight_fusion"])
+# Roberta adapters
 serialization.register_adapter(
-    "roberta", "fms.pre0.0.6", ["pre0.0.6_attn_unfused_to_fused", "weight_fusion"]
-)
-serialization.register_adapter("roberta_classification", "hf", ["hf_to_fms_names", "weight_fusion"])
-
-
-serialization.register_adapter("bert", "hf", ["bert_hf_to_fms_names", "weight_fusion"])
-serialization.register_adapter(
-    "bert", "fms.pre0.0.6", ["pre0.0.6_attn_unfused_to_fused", "weight_fusion"]
+    _roberta_name, "hf", ["hf_to_fms_names", "weight_fusion"]
 )
 serialization.register_adapter(
-    "bert_classification", "hf", ["bert_hf_to_fms_names", "weight_fusion"]
+    _roberta_name, "fms.pre0.0.6", ["pre0.0.6_attn_unfused_to_fused", "weight_fusion"]
 )
-serialization.register_adapter("bert_classification", "aiu-fms", ["weight_fusion"])
+serialization.register_adapter(
+    _roberta_name + "_classification", "hf", ["hf_to_fms_names", "weight_fusion"]
+)
+serialization.register_adapter(
+    _roberta_name + "_question_answering", "hf", ["hf_to_fms_names", "weight_fusion"]
+)
+
+# BERT adapters
+serialization.register_adapter(
+    _bert_name, "hf", ["bert_hf_to_fms_names", "weight_fusion"]
+)
+serialization.register_adapter(
+    _bert_name, "fms.pre0.0.6", ["pre0.0.6_attn_unfused_to_fused", "weight_fusion"]
+)
+serialization.register_adapter(
+    _bert_name + "_classification", "hf", ["bert_hf_to_fms_names", "weight_fusion"]
+)

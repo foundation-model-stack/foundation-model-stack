@@ -1,4 +1,4 @@
-from typing import Dict, List, Optional, Set
+from typing import Dict, Optional, Set
 
 import torch
 import torch.distributed
@@ -126,9 +126,9 @@ class TPLinearClassificationHead(LinearClassificationHead, TPModule):
     ):
         assert torch.distributed.is_initialized()
         rank, world_size = distributed.rank_and_world(group)
-        assert (
-            vocab_size % world_size == 0
-        ), "The number of tokens must be divisible by world size"
+        assert vocab_size % world_size == 0, (
+            "The number of tokens must be divisible by world size"
+        )
         LinearClassificationHead.__init__(
             self,
             emb_dim,
@@ -137,7 +137,7 @@ class TPLinearClassificationHead(LinearClassificationHead, TPModule):
             device=device,
             dtype=dtype,
         )
-        self.setup_tp(rank, world_size)
+        self.setup_tp(rank, group)
 
     @staticmethod
     def import_module(
@@ -160,24 +160,23 @@ class TPLinearClassificationHead(LinearClassificationHead, TPModule):
         # 1. Grab the weights from tensor_values
         used_keys: Set[str] = set()
         head_weight = self._get_sd_weight(tensor_values, used_keys, ["weight"])
-        if self.bias != None:
+        if self.bias is not None:
             head_bias = self._get_sd_weight(tensor_values, used_keys, ["bias"])
 
         # 2. Raise exceptions
-        if len(tensor_values) > (2 if self.bias != None else 1):
+        if len(tensor_values) > (2 if self.bias is not None else 1):
             unused_keys = set(tensor_values.keys()).difference(used_keys)
             raise AttributeError(f"Unused weight(s): {', '.join(unused_keys)}")
 
         # 3. Load and shard the weights
         self.sharded_copy(self.weight, head_weight, 0, [self.world_size])
-        if self.bias != None:
+        if self.bias is not None:
             self.sharded_copy(self.bias, head_bias, 0, [self.world_size])
 
     def forward(self, inp):
         # vocab_idx: b n d if reverse, else b n
-        inp_par = copy_to_tensor_model_parallel_region(inp)
+        inp_par = copy_to_tensor_model_parallel_region(inp, self.group)
         out_par = LinearClassificationHead.forward(self, inp_par)
-        # with ints this wasn't `torch.compile`ing
-        rank = torch.tensor(self.rank)
-        world_size = torch.tensor(self.world_size)
-        return all_gather_from_tensor_model_parallel_region(out_par, rank, world_size)
+        return all_gather_from_tensor_model_parallel_region(
+            out_par, self.rank, self.group
+        )

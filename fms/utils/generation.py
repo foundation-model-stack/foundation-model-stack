@@ -1,16 +1,24 @@
 import logging
 import time
-from typing import Any, Callable, List, MutableMapping, Optional, Tuple, Union
+from typing import Any, Callable, List, Optional, Tuple, Union
+from collections.abc import Iterable, MutableMapping
 
+from fms.modules.attention import get_attention_type
 import torch
 import torch.nn.functional as F
+
+from fms.modules.ssm import SSMCacheUnit
 
 
 logger = logging.getLogger(__name__)
 
 
 def pad_input_ids(
-    input_ids_list: List[torch.Tensor], min_pad_length: int = 0
+    input_ids_list: List[torch.Tensor],
+    min_pad_length: int = 0,
+    is_causal_mask=True,
+    padding_side="left",
+    position_ids_offset=0,
 ) -> Tuple[torch.Tensor, MutableMapping[str, Any]]:
     """
     Convert a list of Tensors to a rectangular tensor. Return extra padding kwargs for the position_ids and mask, since
@@ -23,6 +31,9 @@ def pad_input_ids(
     min_pad_length: int
         pad to a min length provided. If the min_pad_length is less than the largest input_ids in the input_ids_list,
         padding will be determined based on the largest length input_ids.
+    position_ids_offset: int
+        some models are trained with position_ids that do not start at 0 but at pad_id + 1. The default parameter
+        here will work for most models, but for example MPNet requires passing a real pad_id.
 
     Returns
     -------
@@ -45,26 +56,36 @@ def pad_input_ids(
 
         # Setting this to 0, however if 0 is the eos, we will end up truncating the output if using truncate_after_eos
         # once this workflow works for nested tensor, this can probably be removed
-        padded_input_ids_list.append(torch.cat((pads, input_ids_i)))
-
-        # computing this as it's lightweight but could potentially be skipped
-        mask_list.append(torch.cat((pads.bool(), non_pads)))
 
         pos_ids_pads = pads
         pos_ids_seq = torch.arange(
             0, seq_len, dtype=torch.long, device=input_ids_i.device
         )
-        position_ids_list.append(torch.cat((pos_ids_pads, pos_ids_seq)))
+        if padding_side == "left":
+            padded_input_ids_list.append(torch.cat((pads, input_ids_i)))
+            mask_list.append(torch.cat((pads.bool(), non_pads)))
+            position_ids_list.append(torch.cat((pos_ids_pads, pos_ids_seq)))
+        elif padding_side == "right":
+            padded_input_ids_list.append(torch.cat((input_ids_i, pads)))
+            mask_list.append(torch.cat((non_pads, pads.bool())))
+            position_ids_list.append(torch.cat((pos_ids_seq, pos_ids_pads)))
+        else:
+            raise NotImplementedError("padding_side must be 'right' or left'")
 
     input_ids = torch.stack(padded_input_ids_list)
     padding_kwargs = {}
     mask = torch.stack(mask_list)
+    mask = mask.unsqueeze(-1) == mask.unsqueeze(-2)
     # this is a causal mask for generation
-    mask = (mask.unsqueeze(-1) == mask.unsqueeze(-2)).tril()
+    if is_causal_mask:
+        mask = mask.tril()
     mask = torch.where(mask.logical_not(), -torch.inf, 0.0)
+
     padding_kwargs["mask"] = mask
+    # FIXME: this method should be per attn type (for now default it)
 
     position_ids = torch.stack(position_ids_list)
+    position_ids += position_ids_offset
     padding_kwargs["position_ids"] = position_ids
 
     return input_ids, padding_kwargs
@@ -75,19 +96,10 @@ def __update_padding_kwargs(
 ) -> MutableMapping[str, Any]:
     """Generic function to prepare any model specific keyword arguments"""
     # extend the attention mask
-    mask = model_specific_kwargs.get("mask", None)
-    if mask is not None:
-        # get the last row of the 3d mask
-        mask = mask[:, -1:, :]
-        # extend the mask one slot
-        mask = torch.cat(
-            (
-                mask,
-                torch.zeros(mask.size(0), 1, 1, device=mask.device),
-            ),
-            dim=2,
-        )
-        model_specific_kwargs["mask"] = mask
+    attn_op = get_attention_type(**model_specific_kwargs)
+
+    if "update_attn_kwargs" in attn_op:
+        model_specific_kwargs = attn_op["update_attn_kwargs"](**model_specific_kwargs)
 
     # extend the position_ids
     position_ids = model_specific_kwargs.get("position_ids", None)
@@ -103,27 +115,49 @@ def __update_padding_kwargs(
     return model_specific_kwargs
 
 
-def _make_cache_contiguous(past_key_value_states):
+def _make_cache_contiguous(
+    past_key_value_states: list[Iterable[torch.Tensor] | SSMCacheUnit],
+) -> list[Iterable[torch.Tensor] | SSMCacheUnit]:
     # kv updates are required for torch.compile with
     # mode='reduce-overhead'
-    n_kv_s: List[List[torch.Tensor]] = []
-    for layer_idx in range(len(past_key_value_states)):
-        n_kv_s.append([])
-        for tensor_idx in range(len(past_key_value_states[layer_idx])):
-            n_kv_s[layer_idx].append(
-                past_key_value_states[layer_idx][tensor_idx]
-                .clone(memory_format=torch.contiguous_format)
-                .detach()
+    n_kv_s: list[Iterable[torch.Tensor] | SSMCacheUnit] = []
+    for layer_cache in past_key_value_states:
+        if (
+            isinstance(layer_cache, Iterable)
+            and all(
+                [
+                    isinstance(cache_element, torch.Tensor)
+                    for cache_element in layer_cache
+                ]
             )
+            and any(
+                [not cache_element.is_contiguous() for cache_element in layer_cache]
+            )
+        ):
+            n_kv_s.append(
+                tuple(
+                    [
+                        cache_element.clone(
+                            memory_format=torch.contiguous_format
+                        ).detach()
+                        for cache_element in layer_cache
+                    ]
+                )
+            )
+        else:
+            n_kv_s.append(layer_cache)
     return n_kv_s
 
 
-def _make_cache_dynamic(past_key_value_states):
+def _make_cache_dynamic(
+    past_key_value_states: List[List[torch.Tensor]],
+) -> List[List[torch.Tensor]]:
     # kv updates are required for torch.compile with
     # mode='reduce-overhead'
     for layer in past_key_value_states:
-        for tensor in layer:
-            torch._dynamo.mark_dynamic(tensor, 2)
+        if isinstance(layer, Iterable):
+            for tensor in layer:
+                torch._dynamo.mark_dynamic(tensor, 2)
     return past_key_value_states
 
 
@@ -140,6 +174,12 @@ def generate(
     contiguous_cache: bool = False,
     eos_token_id: Optional[int] = None,
     timing: str = "",
+    prepare_model_inputs_hook: Optional[
+        Callable[
+            [int, torch.Tensor, MutableMapping[str, Any]],
+            Tuple[torch.Tensor, MutableMapping[str, Any]],
+        ]
+    ] = None,
     post_iteration_hook: Optional[
         Callable[
             [int, torch.Tensor, torch.Tensor, MutableMapping[str, Any]],
@@ -174,6 +214,10 @@ def generate(
             with the following information:
             - "per-token": Array with `max_new_tokens` time measurements (in s)
             - "e2e": Array with a single e2e generation loop time measurement (in s)
+        prepare_model_inputs_hook: a function that will get called immediately before model forward.
+            It must have the following signature: f(int generate_iteration, Tensor input_ids, Dict kwargs) ->
+            Tuple[Tensor input_ids, Dict kwargs]. If it is defined, will replace input_ids
+            and kwargs to next model forward based on the contents of the function.
         post_iteration_hook: a function that will get called after each iteration.
             It must have the following signature: f(int token_position, Tensor logits, Tensor next_val, Dict kwargs) ->
             Tuple[Tensor next_val, Dict kwargs]. If it is defined, will replace next_val
@@ -213,6 +257,8 @@ def generate(
         times: List[float] = []
         start_time = time.time()
 
+    eos_reached: bool = False
+
     for i in range(max_new_tokens):
         input_ids = next_input[:, -max_seq_len:]
 
@@ -220,6 +266,10 @@ def generate(
         # iteration 0 is the prefill step (cache has not been filled yet), so no need to extend the mask/position_ids
         if i > 0:
             kwargs = __update_padding_kwargs(use_cache, kwargs)
+
+        if prepare_model_inputs_hook is not None:
+            input_ids, kwargs = prepare_model_inputs_hook(i, input_ids, kwargs)
+
         output = model(input_ids, **kwargs)
         if use_cache:
             logits, past_key_value_states = output
@@ -237,7 +287,7 @@ def generate(
         else:
             logits = output
 
-        if not "only_last_token" in kwargs:
+        if "only_last_token" not in kwargs:
             logits = logits[:, -1, :]
 
         if do_sample:
@@ -263,7 +313,7 @@ def generate(
         if eos_token_id is not None:
             eos_found = torch.logical_or(eos_found, next_val == eos_token_id)
             if torch.sum(eos_found) == input_ids.shape[0]:
-                break
+                eos_reached = True
 
         if use_cache:
             next_input = next_val
@@ -276,6 +326,9 @@ def generate(
             current_token_time = time.time() - start_time
             times.append(current_token_time)
             start_time = time.time()
+
+        if eos_reached:
+            break
 
     if timing == "e2e":
         if input_ids.device.type == "cuda":

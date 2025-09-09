@@ -45,9 +45,7 @@ class RotaryEmbeddingTests(unittest.TestCase):
         )  # b s h e
         k = 2 * torch.tensor([[1, 0], [1, 0]], dtype=torch.float).unsqueeze(
             0
-        ).unsqueeze(
-            2
-        )  # b s h e
+        ).unsqueeze(2)  # b s h e
         rotary_embeddings = RotaryEmbedding(2, ratio=1, max_seq_len=2)
 
         qr, kr = rotary_embeddings.adjusted_qk(q, k)
@@ -87,7 +85,6 @@ class RotaryEmbeddingTests(unittest.TestCase):
         qr = qr.transpose(1, 2)  # b h s e
         kr = kr.transpose(1, 2)  # b h s e
 
-        orig_dotp = q @ k.transpose(2, 3)
         rotated_dotp = qr @ kr.transpose(2, 3)
 
         # If two pairs of k/q have the same dot product before rotation,
@@ -220,9 +217,9 @@ class RotaryEmbeddingTests(unittest.TestCase):
         q = torch.randn((B, S, H, DIM))
         k = torch.randn((B, S, H, DIM))
 
-        e = RotaryEmbedding(DIM, max_seq_len=S, ntk_scaling=False)
+        e = RotaryEmbedding(DIM, max_seq_len=S, scaling={})
         adj_q, adj_k = e.adjusted_qk(q, k)
-        ntk = RotaryEmbedding(DIM, max_seq_len=S, ntk_scaling=True)
+        ntk = RotaryEmbedding(DIM, max_seq_len=S, scaling={"rope_type": "ntk"})
         ntk_q, ntk_k = ntk.adjusted_qk(q, k)
 
         # <= max_seq_len, results should be the same with ntk_scaling.
@@ -231,7 +228,7 @@ class RotaryEmbeddingTests(unittest.TestCase):
 
         scaled_ratio = 10_000 / 2 ** (DIM / (DIM - 2))
         ntk = RotaryEmbedding(
-            DIM, max_seq_len=S / 2, ratio=scaled_ratio, ntk_scaling=True
+            DIM, max_seq_len=S / 2, ratio=scaled_ratio, scaling={"rope_type": "ntk"}
         )
         ntk_q, ntk_k = ntk.adjusted_qk(q, k)
         # being double the length is equivalent to being (approximately) half the base

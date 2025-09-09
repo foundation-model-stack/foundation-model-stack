@@ -97,6 +97,53 @@ def register_adapter(
     __adapters[architecture] = sources
 
 
+def extend_adapter(
+    architecture: str,
+    source: str,
+    adapter_steps: list[str],
+):
+    """
+    Extends an existing state dict adapter to the (de) serialization
+    API.
+
+    Args:
+    architecture: The name of the model architecture, e.g. 'llama'
+    source: A label representing the format of the weights to be converted.
+            E.g. 'hf'
+    adapter_steps: a list of registered steps to extend the adapter for an
+            architecture and source combination. This can be augmented with extra
+            steps if needed during call to _get_adapter()
+    """
+    sources: MutableMapping[str, Callable[[Mapping[str, Any]], Mapping[str, Any]]] = {}
+    if architecture not in __adapters or source not in __adapters[architecture]:
+        raise KeyError(
+            f"Source {source} must already be registered for architecture {architecture}"
+        )
+
+    orig_adapter_fn = __adapters[architecture][source]
+
+    # Create a new extended adapter for this source
+    step_functions = [orig_adapter_fn] + [
+        __adapter_steps[architecture][step] for step in adapter_steps
+    ]
+
+    def adapter_fn(initial_sd: Mapping[str, Any], **extra_kwargs) -> Mapping[str, Any]:
+        def reduce_fn(
+            state_dict: Mapping[str, Any],
+            step_func: Callable[[Mapping[str, Any]], Mapping[str, Any]],
+        ) -> Mapping[str, Any]:
+            return step_func(state_dict, **extra_kwargs)
+
+        return reduce(
+            reduce_fn,
+            step_functions,
+            initial_sd,
+        )
+
+    sources[source] = adapter_fn
+    __adapters[architecture] = sources
+
+
 def list_sources(architecture: str):
     """
     Lists available sources (attribute formats) of a model architecture.
@@ -263,16 +310,13 @@ def get_adapted(
 
 # `models` imports each model class, causing models and adapters to be registered.
 # down here to avoid circular dependencies.
-from fms import models
 
 
 def _get_safetensors_item(key, file: Path, device: torch.device) -> torch.Tensor:
     from safetensors import safe_open  # type: ignore[import-untyped]
 
     with torch.no_grad():
-        with safe_open(
-            file, framework="pt", device=str(device)
-        ) as model_weights:  # type: ignore[attr-defined]
+        with safe_open(file, framework="pt", device=str(device)) as model_weights:  # type: ignore[attr-defined]
             return model_weights.get_tensor(key)
 
 
@@ -323,7 +367,7 @@ def load_state_dict(
     if model_path is None or initial_device.type == "meta":
         return {}
     if checkpoint_sharding == "fsdp" and distributed_strategy not in ["fsdp", "hsdp"]:
-        raise ValueError(f"FSDP checkpoints can only be loaded into an FSDP model")
+        raise ValueError("FSDP checkpoints can only be loaded into an FSDP model")
     if checkpoint_sharding == "tp" and distributed_strategy != "tp":
         raise ValueError("TP checkpoints can only be loaded into a TP model")
 
@@ -345,7 +389,7 @@ def load_state_dict(
         elif source == "meta":
             glob_pattern_list = ["*.pth", "*.safetensors"]
         elif source == "hf":
-            glob_pattern_list = ["*.bin", "*.safetensors", "*.pt"]
+            glob_pattern_list = ["*.safetensors", "*.bin", "*.pt"]
         else:
             glob_pattern_list = ["*.safetensors", "*.pth", "*.bin"]
         for glob_pattern_possibility in glob_pattern_list:
@@ -358,14 +402,14 @@ def load_state_dict(
         checkpoints = [model_path]
 
     # Check if we found some files
-    assert (
-        len(checkpoints) > 0
-    ), f"Can't find the requested checkpoint data at {model_path}"
+    assert len(checkpoints) > 0, (
+        f"Can't find the requested checkpoint data at {model_path}"
+    )
 
     if checkpoint_sharding is not None and checkpoint_sharding != "layer":
-        assert world_size == len(
-            checkpoints
-        ), f"Loading a {checkpoint_sharding}-sharded checkpoint with len={len(checkpoints)} but world size is {world_size}"
+        assert world_size == len(checkpoints), (
+            f"Loading a {checkpoint_sharding}-sharded checkpoint with len={len(checkpoints)} but world size is {world_size}"
+        )
 
         checkpoints = [checkpoints[rank]]
 
@@ -387,7 +431,8 @@ def load_state_dict(
     else:
         with torch.no_grad():
             checkpoint_sds = [
-                torch.load(str(ckpt_path), mmap=True, map_location=initial_device) for ckpt_path in checkpoints
+                torch.load(str(ckpt_path), mmap=True, map_location=initial_device)
+                for ckpt_path in checkpoints
             ]
     return ChainMap(*checkpoint_sds)
 
@@ -631,7 +676,15 @@ def _load_partial_state_dict(
                     )
                 )
                 unused_keys_tp = tp_module.load_weights(tensor_values)
-        except:
+        except Exception as e:
+            # capture error specific to shape mismatch and halt the processing
+            if "shape" in str(e) or "size" in str(e):
+                raise ValueError(
+                    "Shape mismatch encountered while copying a tensor from the provided "
+                    "checkpoint into the model.\nIf running a quantized model, it may "
+                    "mean that the quantization setup used to train the checkpoint does "
+                    "not match the one used to instantiate the model."
+                ) from e
             if unused_keys_tp:
                 unused_keys.update(unused_keys_tp)
             else:

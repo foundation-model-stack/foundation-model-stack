@@ -88,7 +88,10 @@ def __one_epoch(
 
         input = input.to(device)
         label = label.to(device)
-        kwargs = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in kwargs.items()}
+        kwargs = {
+            k: v.to(device) if isinstance(v, torch.Tensor) else v
+            for k, v in kwargs.items()
+        }
 
         loss = __one_step(
             model,

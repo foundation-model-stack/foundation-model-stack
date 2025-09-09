@@ -76,7 +76,6 @@ class FeedForwardBlock(nn.Module):
         )
         self.use_bias = use_bias
         self.linear_config = linear_config
-        self.linear_type = get_linear_type(linear_config)
 
     def reset_parameters(self):
         for layer in ["w1", "w2"]:
@@ -129,9 +128,9 @@ class TPFeedForwardBlock(FeedForwardBlock, TPModule):
         if multiple_of:
             hidden_dim = multiple_of * ((hidden_dim + multiple_of - 1) // multiple_of)
         rank, world_size = distributed.rank_and_world(group)
-        assert (
-            hidden_dim % world_size == 0
-        ), "Hidden dim must be divisible by world size"
+        assert hidden_dim % world_size == 0, (
+            "Hidden dim must be divisible by world size"
+        )
         FeedForwardBlock.__init__(
             self,
             emb_dim,
@@ -142,7 +141,10 @@ class TPFeedForwardBlock(FeedForwardBlock, TPModule):
             use_bias,
             linear_config,
         )
-        self.setup_tp(rank, world_size)
+        self.setup_tp(rank, group)
+
+        # linear_type must handle module_name = None to support TP of FNN
+        self.linear_type = get_linear_type(self.linear_config)
 
     def load_weights(
         self,
@@ -171,8 +173,8 @@ class TPFeedForwardBlock(FeedForwardBlock, TPModule):
         ffb: FeedForwardBlock, group: ProcessGroup
     ) -> "TPFeedForwardBlock":
         tp_ffb = TPFeedForwardBlock(
-            emb_dim=ffb.w1.in_features,
-            hidden_grow_factor=ffb.hidden_dim / ffb.w1.in_features,
+            emb_dim=getattr(ffb.w1, "in_features"),
+            hidden_grow_factor=ffb.hidden_dim / getattr(ffb.w1, "in_features"),
             multiple_of=None,
             activation_fn=ffb.a,
             p_dropout=ffb.p_dropout,
@@ -183,9 +185,9 @@ class TPFeedForwardBlock(FeedForwardBlock, TPModule):
         return tp_ffb
 
     def forward(self, x):
-        x_par = copy_to_tensor_model_parallel_region(x)
+        x_par = copy_to_tensor_model_parallel_region(x, self.group)
         out_par = FeedForwardBlock.forward(self, x_par)
-        return reduce_from_tensor_model_parallel_region(out_par, self.world_size)
+        return reduce_from_tensor_model_parallel_region(out_par, self.group)
 
 
 class GatedLinearUnit(nn.Module):
@@ -263,7 +265,6 @@ class GatedLinearUnit(nn.Module):
         self.width = emb_dim
         self.grow_factor = hidden_grow_factor
         self.linear_config = linear_config
-        self.linear_type = get_linear_type(linear_config)
 
     def reset_parameters(self):
         layers = ["w2"]
@@ -359,9 +360,9 @@ class TPGatedLinearUnit(GatedLinearUnit, TPModule):
         hidden_dim = int(hidden_grow_factor * emb_dim)
         if multiple_of:
             hidden_dim = multiple_of * ((hidden_dim + multiple_of - 1) // multiple_of)
-        assert (
-            hidden_dim % world_size == 0
-        ), "Hidden dim must be divisible by world size"
+        assert hidden_dim % world_size == 0, (
+            "Hidden dim must be divisible by world size"
+        )
         GatedLinearUnit.__init__(
             self,
             emb_dim,
@@ -373,7 +374,7 @@ class TPGatedLinearUnit(GatedLinearUnit, TPModule):
             fused,
             linear_config,
         )
-        self.setup_tp(rank, world_size)
+        self.setup_tp(rank, group)
 
     def load_weights(
         self,
@@ -409,8 +410,11 @@ class TPGatedLinearUnit(GatedLinearUnit, TPModule):
             self.w2, 1, [self.world_size]
         )
 
+        # TODO: Remove assumption that all layers in module share quantization
+        module_name = getattr(self.w2, "module_name", None)
+        linear_type = get_linear_type(self.linear_config, module_name)
         type_sharding_map = get_all_linear_type_to_sharding_maps()
-        unused_keys = type_sharding_map[self.linear_type](
+        unused_keys = type_sharding_map[linear_type](
             tensor_values,
             self,
             module_sharding_info,
@@ -434,9 +438,9 @@ class TPGatedLinearUnit(GatedLinearUnit, TPModule):
         return tp_glu
 
     def forward(self, x):
-        x_par = copy_to_tensor_model_parallel_region(x)
+        x_par = copy_to_tensor_model_parallel_region(x, self.group)
         out_par = GatedLinearUnit.forward(self, x_par)
-        return reduce_from_tensor_model_parallel_region(out_par, self.world_size)
+        return reduce_from_tensor_model_parallel_region(out_par, self.group)
 
     def _initialize_empty_module(self):
         return TPGatedLinearUnit(
@@ -561,16 +565,16 @@ class TPConditionalFeedForward(ConditionalFeedForward, TPModule):
         assert torch.distributed.is_initialized()
         rank, world_size = distributed.rank_and_world(group)
 
-        assert (
-            intermediate_size % world_size == 0
-        ), "Intermediate size must be divisible by world size"
+        assert intermediate_size % world_size == 0, (
+            "Intermediate size must be divisible by world size"
+        )
         ConditionalFeedForward.__init__(
             self,
             num_experts,
             dim,
             intermediate_size // world_size,
         )
-        self.setup_tp(rank, world_size)
+        self.setup_tp(rank, group)
 
     def load_weights(
         self,
@@ -604,9 +608,9 @@ class TPConditionalFeedForward(ConditionalFeedForward, TPModule):
         return tp_cff
 
     def forward(self, x, expert_indices):
-        x_par = copy_to_tensor_model_parallel_region(x)
+        x_par = copy_to_tensor_model_parallel_region(x, self.group)
         out_par = ConditionalFeedForward.forward(self, x_par, expert_indices)
-        return reduce_from_tensor_model_parallel_region(out_par, self.world_size)
+        return reduce_from_tensor_model_parallel_region(out_par, self.group)
 
 
 class MOEFeedForward(nn.Module):

@@ -1,6 +1,7 @@
 import pytest
 import torch
 
+from fms.models import get_model
 from fms.models.gpt_bigcode import GPTBigCode, GPTBigCodeConfig, GPTBigCodeHeadless
 from fms.testing._internal.model_test_suite import (
     ConfigFixtureMixin,
@@ -20,7 +21,13 @@ class GPTBigCodeFixtures(ConfigFixtureMixin, ModelFixtureMixin):
 
     @pytest.fixture(scope="class", autouse=True)
     def uninitialized_model(self, config: GPTBigCodeConfig):
-        return GPTBigCode(config)
+        return get_model(
+            architecture="gpt_bigcode",
+            variant="micro",
+            device_type="cpu",
+            data_type=torch.float32,
+            **config.as_dict(),
+        )
 
     @pytest.fixture(scope="class", autouse=True)
     def config(self) -> GPTBigCodeConfig:
@@ -53,6 +60,7 @@ class TestGPTBigCode(
 
     # x is the main parameter for this model which is the input tensor
     _get_signature_params = ["x"]
+    _get_signature_input_ids = torch.arange(1, 16, dtype=torch.int64).unsqueeze(0)
 
     def test_config_passed_to_model_and_updated(self, model, config):
         """test model constructor appropriately merges any passed kwargs into the config without mutating the original config"""
@@ -122,11 +130,13 @@ class GPTBigCodeGPTQFixtures(ModelFixtureMixin):
             return None
 
 
+@pytest.mark.autogptq
 class TestGPTBigCodeGPTQ(
     ModelConsistencyTestSuite, ModelCompileTestSuite, GPTBigCodeGPTQFixtures
 ):
     # x is the main parameter for this model which is the input tensor
     _get_signature_params = ["x"]
+    _get_signature_input_ids = torch.arange(1, 16, dtype=torch.int64).unsqueeze(0)
 
     def test_model_unfused(self, model, signature):
         pytest.skip("weight unfuse is not implemented for GPTQ")

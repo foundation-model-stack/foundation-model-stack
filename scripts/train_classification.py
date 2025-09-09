@@ -299,13 +299,11 @@ def main():
     # Initialize the classification head so we don't get NaNs
     model.classification_head.pooler_linear.weight.data.normal_(
         0,
-        1
-        / math.sqrt(math.sqrt(model.config.emb_dim * model.config.src_vocab_size)),
+        1 / math.sqrt(math.sqrt(model.config.emb_dim * model.config.src_vocab_size)),
     )
     model.classification_head.head.weight.data.normal_(
         0,
-        1
-        / math.sqrt(math.sqrt(model.config.emb_dim * model.config.src_vocab_size)),
+        1 / math.sqrt(math.sqrt(model.config.emb_dim * model.config.src_vocab_size)),
     )
     if args.head_only:
         for param in model.parameters():

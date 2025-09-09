@@ -1,5 +1,7 @@
 from typing import Optional, Tuple
+from typing_extensions import Unpack
 
+from fms.modules.attention import SDPAAttentionKwargs
 import torch
 import torch.nn as nn
 from transformers import PretrainedConfig
@@ -27,19 +29,18 @@ class HFAdaptedLLaMADecoder(HFDecoder):
         position_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[Tuple[torch.Tensor]] = None,
         use_cache: Optional[bool] = None,
-        attn_algorithm: Optional[
-            str
-        ] = None,  # this can be passed in from top most forward
         *args,
-        **kwargs,
+        **kwargs: Unpack[SDPAAttentionKwargs],
     ) -> BaseModelOutputWithPastAndCrossAttentions:
+        if kwargs.get("mask", None) is None:
+            kwargs["mask"] = attention_mask
+
         output = self.model._helper(
             x_in=input_ids,
-            mask=attention_mask,
             position_ids=position_ids,
             past_key_value_states=past_key_values,
             use_cache=use_cache,
-            attn_algorithm=attn_algorithm,
+            **kwargs,
         )
 
         present_key_values = None
@@ -51,7 +52,7 @@ class HFAdaptedLLaMADecoder(HFDecoder):
 
 
 class HFAdaptedLLaMAHeadless(HFDecoderModelArchitecture):
-    """This is the Adapter for the base granite architecture"""
+    """This is the Adapter for the base llama architecture"""
 
     # attributes required by HF
     config_class = HFAdaptedLLaMAConfig
@@ -94,7 +95,7 @@ class HFAdaptedLLaMAHeadless(HFDecoderModelArchitecture):
 
         # Add more cached rope freqs if over cached number
         max_expected_len = input_ids.shape[1] + torch.max(position_ids)
-        if max_expected_len > self.decoder.model.rot_emb.max_seq_len:
+        if max_expected_len > self.decoder.model.rot_emb.rope_scaling.orig_max_seq_len:
             self.decoder.model.rot_emb.compute_freqs_cis(
                 input_ids.device, max_expected_len
             )

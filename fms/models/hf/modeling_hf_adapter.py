@@ -1,17 +1,15 @@
 import abc
 import copy
 import os
-from typing import Any, Callable, Dict, Optional, Tuple, Union
+from typing import Callable, Dict, Optional, Tuple, Union
 
 import torch
 from torch import nn
 from torch.nn.modules.loss import _Loss
-from transformers import PretrainedConfig, PreTrainedModel
+from transformers import PretrainedConfig, PreTrainedModel, GenerationMixin
 from transformers.modeling_outputs import (
     BaseModelOutput,
     BaseModelOutputWithPastAndCrossAttentions,
-    CausalLMOutputWithCrossAttentions,
-    Seq2SeqLMOutput,
     Seq2SeqModelOutput,
 )
 from transformers.utils import ModelOutput, is_torch_fx_proxy
@@ -92,7 +90,7 @@ class _HFBase(PreTrainedModel):
     ):
         if input_ids is not None and inputs_embeds is not None:
             raise ValueError(
-                f"You cannot specify both input_ids and inputs_embeds at the same time"
+                "You cannot specify both input_ids and inputs_embeds at the same time"
             )
 
         return_dict = (
@@ -918,7 +916,7 @@ class _EncoderArchitectureMixin:
         )
 
 
-class HFDecoderModelArchitecture(HFModelArchitecture):
+class HFDecoderModelArchitecture(HFModelArchitecture, GenerationMixin):
     """
     A specific form of HFModelArchitecture which provides the logic for a decoder model architecture. This class handles
     tasks such as:
@@ -1027,8 +1025,8 @@ class HFDecoderModelArchitecture(HFModelArchitecture):
             # we cannot compute the hf attention mask if no input ids are given
             else:
                 raise ValueError(
-                    f"if input_ids/inputs_embeds are not given, and attention_mask is not given, the attention_mask "
-                    f"cannot be computed"
+                    "if input_ids/inputs_embeds are not given, and attention_mask is not given, the attention_mask "
+                    "cannot be computed"
                 )
         # we are given some attention mask
         else:
@@ -1043,7 +1041,7 @@ class HFDecoderModelArchitecture(HFModelArchitecture):
                 hf_attention_mask = None
             else:
                 raise ValueError(
-                    f"attention mask needs to be given in either a 2d or 3d shape"
+                    "attention mask needs to be given in either a 2d or 3d shape"
                 )
         return attention_mask, hf_attention_mask
 

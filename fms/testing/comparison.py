@@ -1,10 +1,9 @@
 import dataclasses
-import inspect
 from typing import Callable, Dict, List, Optional, Union
 
 import numpy as np
 import torch
-import torch.nn as nn
+from torch import nn
 
 
 @dataclasses.dataclass
@@ -75,19 +74,6 @@ def get_signature(
         if not optional_params:
             optional_params = {}
 
-        all_forward_params = inspect.signature(model.forward).parameters
-        params_to_ignore = []
-        for k, v in optional_params.items():
-            if k in all_forward_params:
-                optional_params[k] = v
-            else:
-                params_to_ignore.append(k)
-
-        if len(params_to_ignore) != 0:
-            print(
-                f"the following params were ignored as they did not exist in the forward function: {params_to_ignore}"
-            )
-
         if isinstance(params, list):
             inps = {p: inp for p in params}
             p = model(**inps, **optional_params)
@@ -98,8 +84,6 @@ def get_signature(
         if logits_getter_fn:
             p = logits_getter_fn(p)
 
-        # Temporary dummy backward pass to avoid checkpointing problems (see issue #591)
-        p.abs().mean().mul(0).backward()
         return p
 
     # If cuda is available, we want to always create a signature using fp32, so this will ensure that.
@@ -115,7 +99,7 @@ def get_signature(
     else:
         p = run_forward(inp, optional_params)
 
-    s = p.max(2)[0] - p.min(2)[0]
+    s = p.max(2)[0] - p.min(2)[0] if p.dim() >= 3 else p
     return (s.squeeze() - s.min()).tolist()
 
 
@@ -123,6 +107,7 @@ def compare_model_signatures(
     model_params_1: ModelSignatureParams,
     model_params_2: ModelSignatureParams,
     atol: float = 1e-3,
+    rtol: float = 1e-5,
 ):
     """This utility function will compare the signature between 2 models using np.allclose
 
@@ -157,6 +142,5 @@ def compare_model_signatures(
 
     signature = np.array(signature)
     signature2 = np.array(signature2)
-    assert np.allclose(signature, signature2, atol=atol), np.mean(
-        np.abs(signature2 - signature)
-    )
+    result_text = f"\nabs mean: {np.mean(np.abs(signature2 - signature))}\nsignature 1: {signature}\nsignature 2: {signature2}"
+    assert np.allclose(signature, signature2, atol=atol, rtol=rtol), result_text

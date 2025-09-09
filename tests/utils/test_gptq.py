@@ -2,6 +2,7 @@ import pytest
 import torch
 
 from fms.models import get_model
+import fms.utils.gptq  # noqa: F401
 
 
 try:

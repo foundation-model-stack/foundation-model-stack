@@ -1,11 +1,10 @@
-import itertools
 from abc import ABCMeta, abstractmethod
 from enum import Enum
-from typing import Dict, List, Set, Type, Union
+from typing import Dict, List, Optional, Set, Union
 
 import torch
 import torch.nn as nn
-from torch.distributed.distributed_c10d import ProcessGroup
+import torch.distributed as dist
 
 
 def _get_tpd_module(module: nn.Module, attr_name: str):
@@ -33,10 +32,17 @@ class TPModule(nn.Module, metaclass=ABCMeta):
 
     rank: int
     world_size: int
+    group: dist.ProcessGroup
 
-    def setup_tp(self, rank: int, world_size: int) -> None:
+    def setup_tp(self, rank: int, group: Optional[dist.ProcessGroup]) -> None:
         self.rank = rank
-        self.world_size = world_size
+        if group is not None:
+            self.group = group
+        elif dist.group.WORLD is not None:
+            self.group = dist.group.WORLD
+        else:
+            raise ValueError("No process group defined!")
+        self.world_size = self.group.size()
 
     def __get_tp_slices(
         self,
@@ -205,5 +211,5 @@ class TPModule(nn.Module, metaclass=ABCMeta):
 
     @staticmethod
     @abstractmethod
-    def import_module(module, group: ProcessGroup):
+    def import_module(module, group: dist.ProcessGroup):
         pass

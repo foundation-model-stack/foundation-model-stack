@@ -1,14 +1,18 @@
 import functools
-import math
 from dataclasses import dataclass
 from typing import Any, List, Mapping, Optional, Tuple
+from typing_extensions import Unpack
 
 import torch
 import torch.nn as nn
 
 from fms import models
 from fms.distributed.strategy import DistributedStrategy, NoOpStrategy
-from fms.modules.attention import MultiHeadAttention
+from fms.modules.attention import (
+    AttentionKwargs,
+    MultiHeadAttention,
+    get_attention_type,
+)
 from fms.modules.feedforward import FeedForwardBlock
 from fms.utils import serialization
 from fms.utils.activation import str_to_activation
@@ -31,10 +35,11 @@ class GPTBigCodeConfig(ModelConfig):
     emb_dropout: float = 0.0
     multiquery_attn: bool = True
     ln_eps: float = 1e-5
-    linear_config: Optional[
-        Mapping[str, Any]
-    ] = None  # pass as {"linear_type": str, <other kwargs>}
+    linear_config: Optional[Mapping[str, Any]] = (
+        None  # pass as {"linear_type": str, <other kwargs>}
+    )
     fused_weights: bool = True
+    tie_heads: bool = True
 
 
 class GPTBigCodeBlock(nn.Module):
@@ -73,12 +78,10 @@ class GPTBigCodeBlock(nn.Module):
         self,
         x: torch.Tensor,
         *,
-        mask: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.Tensor] = None,
-        past_key_value_state: Optional[Tuple[torch.Tensor,]] = None,
-        use_cache: bool = False,
-        is_causal_mask: bool = False,
-        attn_algorithm: Optional[str] = None,
+        position_ids=None,
+        past_key_value_state=None,
+        use_cache=False,
+        **attn_kwargs: Unpack[AttentionKwargs],
     ):
         self_attn_past_key_value = past_key_value_state
 
@@ -88,13 +91,10 @@ class GPTBigCodeBlock(nn.Module):
         # self attention
         x = self.attn(
             q=x,
-            mask=mask,
             position_ids=position_ids,
-            attn_algorithm=attn_algorithm,
             past_key_value_state=self_attn_past_key_value,
             use_cache=use_cache,
-            is_self=True,
-            is_causal_mask=is_causal_mask,
+            **attn_kwargs,
         )
 
         cache = None
@@ -174,47 +174,18 @@ class GPTBigCodeHeadless(nn.Module):
     def forward(
         self,
         x: torch.LongTensor,
-        mask: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.LongTensor] = None,
-        past_key_value_states: Optional[
-            List[Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]
-        ] = None,
-        use_cache: bool = False,
-        attn_algorithm: Optional[str] = None,
+        position_ids=None,
+        past_key_value_states=None,
+        use_cache=False,
+        **attn_kwargs: Unpack[AttentionKwargs],
     ):
         # Embed the given vocabulary indices using the given attention mask, with pre-/post-norm and dropout as specified
         # x_in: batch_size x seq_len
         # mask: batch_size x seq_len x seq_len
         # bias: nheads x seq_len x seq_len
 
-        qlen = x.size(1)
-        klen = x.size(1)
-
         if past_key_value_states is None or len(past_key_value_states) == 0:
             past_key_value_states = [None for _ in range(len(self.layers))]
-
-        # if we are using the cache, the key length needs to be extended with the past keys length
-        if (
-            use_cache
-            and past_key_value_states is not None
-            and past_key_value_states[0] is not None
-        ):
-            klen += past_key_value_states[0][0].size(-2)
-
-        # if mask is none, we need to compute mask
-        is_causal_mask = False
-        if mask is None:
-            if x is None:
-                raise ValueError("cannot create a mask when x is None")
-            # we are caching and can assume all 1s in the mask
-            if use_cache and klen != 1 and qlen == 1:
-                # b x h x qlen x kvlen
-                mask = torch.ones(qlen, klen, dtype=torch.bool, device=x.device)
-            else:
-                pad_id: int = self.config.pad_id
-                is_pad: torch.Tensor = x == pad_id
-                mask = is_pad.unsqueeze(-1) == is_pad.unsqueeze(-2)
-                mask = mask.tril(diagonal=0)
 
         x_emb = self.embedding(x)
 
@@ -251,11 +222,10 @@ class GPTBigCodeHeadless(nn.Module):
         for i, layer in enumerate(self.layers):
             output = layer(
                 x=x,
-                mask=mask,
-                is_causal_mask=is_causal_mask,
+                position_ids=position_ids,
                 past_key_value_state=past_key_value_states[i],
                 use_cache=use_cache,
-                attn_algorithm=attn_algorithm,
+                **attn_kwargs,
             )
 
             if use_cache:
@@ -293,9 +263,6 @@ class GPTBigCode(nn.Module):
             self.config.emb_dim, self.config.src_vocab_size, bias=False
         )
 
-        # this model ties weights, so we tie here
-        self.head.weight = self.base_model.embedding.weight
-
     @classmethod
     def from_config(cls, config: GPTBigCodeConfig) -> "GPTBigCode":
         return cls(config)
@@ -322,30 +289,36 @@ class GPTBigCode(nn.Module):
     def post_init(self):
         # This function is called in `get_model` after the model is fully initalized in the correct device
 
-        # this model ties weights, so we tie here
-        # make sure you assign the non-meta weights to the meta parameters
-        if self.head.weight.device == torch.device("meta"):
-            self.head.weight = self.base_model.embedding.weight
-        else:
-            self.base_model.embedding.weight = self.head.weight
+        # if this model ties weights, they are tied here
+        if self.config.tie_heads:
+            # handle assignment of non-meta weights to meta parameters
+            if self.head.weight.device == torch.device("meta"):
+                self.head.weight = self.base_model.embedding.weight
+            else:
+                self.base_model.embedding.weight = self.head.weight
 
     def forward(
         self,
         x: torch.Tensor,
-        mask: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.Tensor] = None,
-        past_key_value_states: Optional[List[Tuple[torch.Tensor, torch.Tensor]]] = None,
+        position_ids: Optional[torch.LongTensor] = None,
+        past_key_value_states: Optional[Tuple[torch.FloatTensor,]] = None,
         use_cache: bool = False,
         only_last_token: bool = False,
-        attn_algorithm: Optional[str] = None,
+        **attn_kwargs: Unpack[AttentionKwargs],
     ):
-        output, cache = self.base_model(
-            x,
-            mask,
+        get_attention_type(**attn_kwargs)["validate_attn_kwargs"](
+            input_ids=x,
             position_ids=position_ids,
             past_key_value_states=past_key_value_states,
-            use_cache=use_cache,
-            attn_algorithm=attn_algorithm,
+            **attn_kwargs,
+        )
+
+        output, cache = self.base_model(
+            x,
+            position_ids,
+            past_key_value_states,
+            use_cache,
+            **attn_kwargs,
         )
 
         if only_last_token:

@@ -14,6 +14,7 @@ Simple dict which given an activation string, return an activation function clas
 __ACT_2_CLS: Dict[str, Type[nn.Module]] = {
     "gelu": nn.GELU,
     "gelu-tanh": GELUTanh,
+    "gelu_pytorch_tanh": GELUTanh,
     "mish": nn.Mish,
     "relu": nn.ReLU,
     "sigmoid": nn.Sigmoid,

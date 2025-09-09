@@ -1,7 +1,8 @@
 import math
 import re
 from dataclasses import dataclass
-from typing import Any, List, Mapping, MutableMapping, Optional, Tuple
+from typing import Any, Mapping, MutableMapping, Optional, Tuple
+from typing_extensions import Unpack
 
 import torch
 import torch.nn as nn
@@ -10,9 +11,12 @@ from fms import models
 from fms.distributed.strategy import (
     DistributedStrategy,
     NoOpStrategy,
-    UniformModelParallelStrategy,
 )
-from fms.modules.attention import MultiHeadAttention
+from fms.modules.attention import (
+    AttentionKwargs,
+    MultiHeadAttention,
+    get_attention_type,
+)
 from fms.modules.feedforward import MOEFeedForward
 from fms.modules.head import LinearClassificationHead
 from fms.modules.layernorm import LayerNormParameterized
@@ -93,12 +97,10 @@ class MixtralBlock(nn.Module):
         self,
         x,
         *,
-        mask=None,
         position_ids=None,
         past_key_value_state=None,
         use_cache=False,
-        is_causal_mask=False,
-        attn_algorithm=None,
+        **attn_kwargs: Unpack[AttentionKwargs],
     ):
         # if the cache is not empty, we need to get the kv cache for self and cross attention
         self_attn_past_key_value = past_key_value_state
@@ -110,13 +112,10 @@ class MixtralBlock(nn.Module):
             q=x,
             k=x,
             v=x,
-            mask=mask,
             position_ids=position_ids,
-            attn_algorithm=attn_algorithm,
             past_key_value_state=self_attn_past_key_value,
             use_cache=use_cache,
-            is_self=True,
-            is_causal_mask=is_causal_mask,
+            **attn_kwargs,
         )
         cache = None
         if use_cache:
@@ -162,10 +161,12 @@ class MixtralHeadless(nn.Module):
         embedding = nn.Embedding(self.config.src_vocab_size, self.config.dim)
         self.embedding = self.distributed_strategy.distribute_module(embedding)
 
+        rope_scaling = {"rope_type": "ntk" if self.config.ntk_scaling else "regular"}
+
         self.rot_emb = RotaryEmbedding(
             dim=self.config.dim // self.config.nheads,
             ratio=self.config.rope_base,
-            ntk_scaling=self.config.ntk_scaling,
+            scaling=rope_scaling,
             max_seq_len=self.config.max_expected_seq_len,
         )
 
@@ -225,11 +226,10 @@ class MixtralHeadless(nn.Module):
     def forward(
         self,
         x: torch.Tensor,
-        mask: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.Tensor] = None,
-        past_key_value_states: Optional[List[Tuple[torch.Tensor, torch.Tensor]]] = None,
-        use_cache: bool = False,
-        attn_algorithm: Optional[str] = None,
+        position_ids=None,
+        past_key_value_states=None,
+        use_cache=False,
+        **attn_kwargs: Unpack[AttentionKwargs],
     ):
         # Embed the given vocabulary indices using the given attention mask, with pre-/post-norm and dropout as specified
         # x: batch_size x seq_len
@@ -240,24 +240,6 @@ class MixtralHeadless(nn.Module):
                 (torch.empty(0), torch.empty(0)) for _ in range(len(self.layers))
             ]
 
-        qlen = x.size(1)
-        klen = x.size(1)
-
-        # if we are using the cache, the key length needs to be extended with the past keys length
-        if use_cache and past_key_value_states[0][0].numel() > 0:
-            klen += past_key_value_states[0][0].size(1)
-
-        # if mask is none, we need to specify causal mask
-        if mask is None:
-            # we are caching and can assume all 1s in the mask
-            if use_cache and klen != 1 and qlen == 1:
-                # b x h x qlen x kvlen
-                is_causal_mask = False
-            else:
-                is_causal_mask = True
-        else:
-            is_causal_mask = False
-
         x = self.embedding(x)
 
         # this is the output cache for all the decoder layers
@@ -266,12 +248,10 @@ class MixtralHeadless(nn.Module):
         for i, layer in enumerate(self.layers):
             output = layer(
                 x=x,
-                mask=mask,
                 position_ids=position_ids,
                 past_key_value_state=past_key_value_states[i],
                 use_cache=use_cache,
-                is_causal_mask=is_causal_mask,
-                attn_algorithm=attn_algorithm,
+                **attn_kwargs,
             )
 
             if use_cache:
@@ -334,15 +314,20 @@ class Mixtral(nn.Module):
     def forward(
         self,
         x: torch.Tensor,
-        mask: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.Tensor] = None,
-        past_key_value_states: Optional[List[Tuple[torch.Tensor, torch.Tensor]]] = None,
+        position_ids: Optional[torch.LongTensor] = None,
+        past_key_value_states: Optional[Tuple[torch.FloatTensor,]] = None,
         use_cache: bool = False,
         only_last_token: bool = False,
-        attn_algorithm: Optional[str] = None,
+        **attn_kwargs: Unpack[AttentionKwargs],
     ):
+        get_attention_type(**attn_kwargs)["validate_attn_kwargs"](
+            input_ids=x,
+            position_ids=position_ids,
+            past_key_value_states=past_key_value_states,
+            **attn_kwargs,
+        )
         output, cache = self.base_model(
-            x, mask, position_ids, past_key_value_states, use_cache, attn_algorithm
+            x, position_ids, past_key_value_states, use_cache, **attn_kwargs
         )
 
         if only_last_token:

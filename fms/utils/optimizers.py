@@ -67,8 +67,12 @@ class SteppingAdamW(Optimizer):
         for group in self.param_groups:
             group.setdefault("maximize", False)
             group.setdefault("decoupled_weight_decay", True)
-            group.setdefault("bias_correction1_rec", torch.tensor(1.0, dtype=_get_scalar_dtype()))
-            group.setdefault("bias_correction2_rec", torch.tensor(1.0, dtype=_get_scalar_dtype()))
+            group.setdefault(
+                "bias_correction1_rec", torch.tensor(1.0, dtype=_get_scalar_dtype())
+            )
+            group.setdefault(
+                "bias_correction2_rec", torch.tensor(1.0, dtype=_get_scalar_dtype())
+            )
             for p in group["params"]:
                 p_state = self.state.get(p, [])
                 if len(p_state) != 0 and not torch.is_tensor(p_state["step"]):
@@ -191,7 +195,7 @@ def stepping_adamw(
         raise RuntimeError(
             "API has changed, `state_steps` argument must contain a list of singleton tensors"
         )
-    
+
     assert grad_scale is None and found_inf is None
 
     # We only shuffle around the beta when it is a Tensor, otherwise, we prefer
@@ -240,7 +244,9 @@ def stepping_adamw(
             # cast to workaround https://github.com/pytorch/pytorch/issues/140601
             key = (device, dtype)
             if key not in beta1_dict:
-                beta1_dict[key] = beta1.to(device=device, dtype=dtype, non_blocking=True)  # type: ignore[union-attr]
+                beta1_dict[key] = beta1.to(
+                    device=device, dtype=dtype, non_blocking=True
+                )  # type: ignore[union-attr]
 
             device_beta1: Union[float, Tensor] = beta1_dict[key]
         else:

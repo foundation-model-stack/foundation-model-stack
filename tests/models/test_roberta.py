@@ -1,7 +1,12 @@
 import pytest
 import torch
 
-from fms.models.roberta import RoBERTa, RoBERTaConfig
+from fms.models.roberta import (
+    RoBERTa,
+    RoBERTaConfig,
+    RoBERTaForQuestionAnswering,
+    RoBERTaQuestionAnsweringConfig,
+)
 from fms.testing._internal.model_test_suite import (
     ConfigFixtureMixin,
     ModelCompileTestSuite,
@@ -52,9 +57,11 @@ class TestRoBERTa(
 
     # x is the main parameter for this model which is the input tensor
     _get_signature_params = ["x"]
+    _get_signature_input_ids = torch.arange(1, 16, dtype=torch.int64).unsqueeze(0)
 
     def test_config_passed_to_model_and_updated(self, model, config):
-        """test model constructor appropriately merges any passed kwargs into the config without mutating the original config"""
+        """test model constructor appropriately merges any passed kwargs into the config
+        without mutating the original config"""
         model = type(model)(config=config, pad_id=config.pad_id + 1)
         # check not same reference
         assert model.get_config() is not config
@@ -86,14 +93,14 @@ class RoBERTaGPTQFixtures(ModelFixtureMixin):
                 size=parameter.shape,
                 dtype=torch.int32,
             )
-        elif "qzeros" in key:
+        if "qzeros" in key:
             return torch.ones(parameter.shape, dtype=torch.int32) * 8
-        elif "g_idx" in key:
+        if "g_idx" in key:
             return parameter
-        else:
-            return None
+        return None
 
 
+@pytest.mark.autogptq
 class TestRoBERTaGPTQ(
     ModelConsistencyTestSuite, ModelCompileTestSuite, RoBERTaGPTQFixtures
 ):
@@ -102,3 +109,49 @@ class TestRoBERTaGPTQ(
 
     def test_model_unfused(self, model, signature):
         pytest.skip("weight unfuse is not implemented for GPTQ")
+
+
+class RoBERTaQuestionAnsweringFixtures(ConfigFixtureMixin, ModelFixtureMixin):
+    """Define uninitialized model and config used by RoBERTaQuestionAnswering tests"""
+
+    @pytest.fixture(scope="class", autouse=True)
+    def uninitialized_model(self, config: RoBERTaQuestionAnsweringConfig):
+        return RoBERTaForQuestionAnswering(config)
+
+    @pytest.fixture(scope="class", autouse=True)
+    def config(self) -> RoBERTaQuestionAnsweringConfig:
+        return RoBERTaQuestionAnsweringConfig(
+            src_vocab_size=384,
+            emb_dim=16,
+            nheads=8,
+            nlayers=2,
+            max_pos=512,
+            hidden_grow_factor=2.0,
+            tie_heads=False,
+        )
+
+
+class TestRoBERTaQuestionAnswering(
+    ModelConsistencyTestSuite, ModelCompileTestSuite, RoBERTaQuestionAnsweringFixtures
+):
+    """Main test class for RoBERTaQuestionAnswering"""
+
+    # x is the main parameter for this model which is the input tensor
+    # a default attention mask is generated when not provided
+    _get_signature_params = ["x"]
+    _get_signature_input_ids = torch.arange(1, 16, dtype=torch.int64).unsqueeze(0)
+
+    @staticmethod
+    def _get_signature_logits_getter_fn(f_out) -> torch.Tensor:
+        return torch.cat([f_out[0], f_out[1]], dim=-1)
+
+    def test_config_passed_to_model_and_updated(self, model, config):
+        """test model constructor appropriately merges any passed kwargs into the config
+        without mutating the original config"""
+        model = type(model)(config=config, pad_id=config.pad_id + 1)
+        # check not same reference
+        assert model.get_config() is not config
+
+        # modify pad_id to the new value expected and check equivalence
+        config.pad_id = config.pad_id + 1
+        assert model.get_config().as_dict() == config.as_dict()

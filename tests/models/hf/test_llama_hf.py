@@ -72,16 +72,15 @@ class LLaMA2HFFixtures(ModelFixtureMixin, HFConfigFixtureMixin, HFModelFixtureMi
 
         # compute the freq from rot_emb since it is gathered lazily
         rot_emb = fms_hf_model.decoder.model.rot_emb
-        max_seq_len = rot_emb.max_seq_len
-        alpha = rot_emb._alpha(max_seq_len)
-        ratio = rot_emb.ratio
-        dim = rot_emb.dim
-        if rot_emb.ntk_scaling:
-            ratio = ratio * alpha ** (dim / (dim - 2))
-        freqs = 1.0 / (ratio ** (torch.arange(0, dim, 2)[: (dim // 2)].float() / dim))
+        max_seq_len = rot_emb.rope_scaling.orig_max_seq_len
+        alpha = rot_emb.rope_scaling.get_alpha(max_seq_len)
+        freqs = rot_emb.rope_scaling.compute_scaled_freqs(
+            oss_hf_model.model.rotary_emb.inv_freq.device, alpha
+        )
 
         with torch.no_grad():
             oss_hf_model.model.embed_tokens.weight.copy_(fms_hf_model.embedding.weight)
+            oss_hf_model.model.rotary_emb.inv_freq = freqs
             i = 0
             for oss_hf_layer in oss_hf_model.model.layers:
                 fms_hf_layer = fms_hf_model.decoder.model.layers[i]
@@ -98,7 +97,6 @@ class LLaMA2HFFixtures(ModelFixtureMixin, HFConfigFixtureMixin, HFModelFixtureMi
                 oss_hf_layer.self_attn.o_proj.weight.copy_(
                     fms_hf_layer.attn.dense.weight
                 )
-                oss_hf_layer.self_attn.rotary_emb.inv_freqs = freqs
 
                 # mlp
                 wg1_fused = fms_hf_layer.ff_sub_layer.wg1_fused.weight

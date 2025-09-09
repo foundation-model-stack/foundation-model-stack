@@ -1,8 +1,9 @@
 import logging
 import math
 import re
-from dataclasses import dataclass
-from typing import Any, List, Mapping, Optional, Tuple
+from dataclasses import dataclass, field
+from typing import Any, Mapping, Optional, Tuple
+from typing_extensions import Unpack
 
 import torch
 import torch.nn as nn
@@ -13,15 +14,20 @@ from fms.distributed.strategy import (
     NoOpStrategy,
     TensorParallelStrategy,
 )
-from fms.modules.attention import MultiHeadAttention
+from fms.modules.attention import (
+    AttentionKwargs,
+    MultiHeadAttention,
+    get_attention_type,
+)
+from fms.modules.embedding import WordEmbedding
 from fms.modules.feedforward import GatedLinearUnit
 from fms.modules.head import LinearClassificationHead
 from fms.modules.layernorm import LayerNormParameterized
+from fms.modules.linear import get_linear_type
 from fms.modules.positions import RotaryEmbedding
 from fms.utils import serialization
 from fms.utils.activation import str_to_activation
 from fms.utils.config import ModelConfig
-from fms.utils.tokenizers import _has_hf
 
 
 logger = logging.getLogger(__name__)
@@ -48,11 +54,11 @@ class LLaMAConfig(ModelConfig):
     activation_fn: str = "swish"
     p_dropout: float = 0.0
     max_expected_seq_len: int = 4096
-    ntk_scaling: bool = False
     attn_bias: bool = False
     mlp_bias: bool = False
     tie_heads: bool = False
     rope_theta: float = 10_000.0
+    rope_scaling: dict = field(default_factory=lambda: {})
     linear_config: Optional[Mapping[str, Any]] = None
     fused_weights: bool = True
 
@@ -122,12 +128,10 @@ class LLaMABlock(nn.Module):
         self,
         x,
         *,
-        mask=None,
         position_ids=None,
         past_key_value_state=None,
         use_cache=False,
-        is_causal_mask=False,
-        attn_algorithm=None,
+        **attn_kwargs: Unpack[AttentionKwargs],
     ):
         # if the cache is not empty, we need to get the kv cache for self and cross attention
         self_attn_past_key_value = past_key_value_state
@@ -141,13 +145,10 @@ class LLaMABlock(nn.Module):
         x = self.ln(x)
         x = self.attn(
             q=x,
-            mask=mask,
             position_ids=position_ids,
-            attn_algorithm=attn_algorithm,
             past_key_value_state=self_attn_past_key_value,
             use_cache=use_cache,
-            is_self=True,
-            is_causal_mask=is_causal_mask,
+            **attn_kwargs,
         )
         cache = None
         if use_cache:
@@ -208,7 +209,7 @@ class LLaMAHeadless(nn.Module):
 
         self.rot_emb = RotaryEmbedding(
             dim=self.config.emb_dim // self.config.nheads,
-            ntk_scaling=self.config.ntk_scaling,
+            scaling=self.config.rope_scaling,
             max_seq_len=self.config.max_expected_seq_len,
             ratio=self.config.rope_theta,
         )
@@ -337,12 +338,11 @@ class LLaMAHeadless(nn.Module):
 
     def forward(
         self,
-        x,
-        mask=None,
+        x_in,
         position_ids=None,
         past_key_value_states=None,
         use_cache=False,
-        attn_algorithm=None,
+        **attn_kwargs: Unpack[AttentionKwargs],
     ):
         # Embed the given vocabulary indices using the given attention mask, with pre-/post-norm and dropout as specified
         # x_in: batch_size x seq_len
@@ -350,26 +350,7 @@ class LLaMAHeadless(nn.Module):
         # bias: nheads x seq_len x seq_len
         if past_key_value_states is None or len(past_key_value_states) == 0:
             past_key_value_states = [None for _ in range(len(self.layers))]
-
-        qlen = x.size(1)
-        klen = x.size(1)
-
-        # if we are using the cache, the key length needs to be extended with the past keys length
-        if use_cache and past_key_value_states[0] is not None:
-            klen += past_key_value_states[0][0].size(-2)
-
-        # if mask is none, we need to specify causal mask
-        if mask is None:
-            # we are caching and can assume all 1s in the mask
-            if use_cache and klen != 1 and qlen == 1:
-                # b x h x qlen x kvlen
-                is_causal_mask = False
-            else:
-                is_causal_mask = True
-        else:
-            is_causal_mask = False
-
-        x_in = self.embedding(x)
+        x_in = self.embedding(x_in)
 
         # this is the output cache for all the decoder layers
         present_key_value_states = []
@@ -377,12 +358,10 @@ class LLaMAHeadless(nn.Module):
         for i, layer in enumerate(self.layers):
             output = layer(
                 x=x_in,
-                mask=mask,
                 position_ids=position_ids,
                 past_key_value_state=past_key_value_states[i],
                 use_cache=use_cache,
-                is_causal_mask=is_causal_mask,
-                attn_algorithm=attn_algorithm,
+                **attn_kwargs,
             )
 
             if use_cache:
@@ -477,15 +456,20 @@ class LLaMA(nn.Module):
     def forward(
         self,
         x: torch.Tensor,
-        mask: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.Tensor] = None,
-        past_key_value_states: Optional[List[Tuple[torch.Tensor, torch.Tensor]]] = None,
+        position_ids: Optional[torch.LongTensor] = None,
+        past_key_value_states: Optional[Tuple[torch.FloatTensor,]] = None,
         use_cache: bool = False,
         only_last_token: bool = False,
-        attn_algorithm: Optional[str] = None,
+        **attn_kwargs: Unpack[AttentionKwargs],
     ):
+        get_attention_type(**attn_kwargs)["validate_attn_kwargs"](
+            input_ids=x,
+            position_ids=position_ids,
+            past_key_value_states=past_key_value_states,
+            **attn_kwargs,
+        )
         output, cache = self.base_model(
-            x, mask, position_ids, past_key_value_states, use_cache, attn_algorithm
+            x, position_ids, past_key_value_states, use_cache, **attn_kwargs
         )
 
         if only_last_token:
@@ -735,7 +719,9 @@ serialization.register_adapter_step(
     "llama", "pre0.0.6_attn_unfused_to_fused", serialization._pre006_attn_adapter_step
 )
 serialization.register_adapter_step(
-    "llama_classifier", "pre0.0.6_attn_unfused_to_fused", serialization._pre006_attn_adapter_step
+    "llama_classifier",
+    "pre0.0.6_attn_unfused_to_fused",
+    serialization._pre006_attn_adapter_step,
 )
 
 serialization.register_adapter_step(
@@ -781,7 +767,7 @@ def _hf_gptq_llama_check(
         if model_config.linear_config:
             linear_type = model_config.linear_config["linear_type"]
 
-    if "gptq" in linear_type and has_fused_weights:
+    if not callable(linear_type) and "gptq" in linear_type and has_fused_weights:
         raise ValueError(
             "GPTQ HF llama checkpoints cannot be loaded into a model with fused weights"
         )
@@ -825,7 +811,9 @@ def _meta_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, An
 
 
 serialization.register_adapter_step("llama", "meta_to_fms_names", _meta_to_fms_names)
-serialization.register_adapter_step("llama_classifier", "meta_to_fms_names", _meta_to_fms_names)
+serialization.register_adapter_step(
+    "llama_classifier", "meta_to_fms_names", _meta_to_fms_names
+)
 
 
 def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]:
@@ -854,12 +842,16 @@ def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]
 
 
 serialization.register_adapter_step("llama", "hf_to_fms_names", _hf_to_fms_names)
-serialization.register_adapter_step("llama_classifier", "hf_to_fms_names", _hf_to_fms_names)
+serialization.register_adapter_step(
+    "llama_classifier", "hf_to_fms_names", _hf_to_fms_names
+)
 
 
 def _get_rope_params(linear_type: str) -> list[str]:
     if "gptq" in linear_type:
         return ["qweight", "scales", "qzeros", "bias"]
+    elif "fp8" in linear_type:
+        return ["weight", "weight_scale", "input_scale", "bias"]
     else:  # torch.nn.Linear
         return ["weight", "bias"]
 
@@ -871,19 +863,25 @@ def _hf_to_fms_rope(
 
     if model_config:
         head_size = model_config.emb_dim // model_config.nheads
-        linear_type = "torch_linear"
-        if model_config.linear_config:
-            linear_type = model_config.linear_config["linear_type"]
     else:
         logger.warning("Missing model_config, assuming defaults for head_size")
         head_size = 128  # Good default for most models
-        linear_type = "torch_linear"
 
-    rope_params = _get_rope_params(linear_type)
-    trans_required_pattern = re.compile(
-        f"layers.[0-9]+.attn.in_proj.(query|key).({'|'.join(rope_params)})"
-    )
     for name, param in input_sd.items():
+        # Some checkpoints have weights in different precisions, which can have
+        # auxiliary tensors (see _get_rope_params e.g. gptq, fp8).
+        # Thus, we need to get rope_params per parameter.
+        linear_type_str = "torch_linear"
+        if model_config and model_config.linear_config:
+            linear_type_str = get_linear_type(
+                model_config.linear_config,
+                module_name=name,
+            )
+        rope_params = _get_rope_params(linear_type_str)
+        trans_required_pattern = re.compile(
+            f"layers.[0-9]+.attn.in_proj.(query|key).({'|'.join(rope_params)})$"
+        )
+
         # hf -> fms requires a transpose operation for the query and key
         # weight and bias parameters for Llama models
         # This transpose is due to the different implementation of RoPE in
@@ -895,9 +893,9 @@ def _hf_to_fms_rope(
         # Therefore, to make FMS produce the correct order of outputs when
         # loading from an HF checkpoint, we need to undo the transformation
         # that HF does from the original Meta weights:
-        if bool(trans_required_pattern.match(name)):
+        if bool(trans_required_pattern.match(name)) and param.size(0) > 1:
             temp = param
-            if "gptq" in linear_type and temp.dim() == 2:
+            if "gptq" in linear_type_str and temp.dim() == 2:
                 # GPTQ qweights are [in_feat, out_feat] (unlike usual [out_feat, in_feat])
                 # and are fully transposed before & after process
                 temp = temp.transpose(0, 1)
@@ -911,7 +909,7 @@ def _hf_to_fms_rope(
                 temp_view = temp.view(num_heads, 2, -1)
             temp = temp_view.transpose(1, 2).reshape(*temp.size())
 
-            if "gptq" in linear_type and temp.dim() == 2:
+            if "gptq" in linear_type_str and temp.dim() == 2:
                 temp = temp.transpose(0, 1)
 
             new_sd[name] = temp
@@ -922,13 +920,20 @@ def _hf_to_fms_rope(
 
 
 serialization.register_adapter_step("llama", "hf_to_fms_rope", _hf_to_fms_rope)
-serialization.register_adapter_step("llama_classifier", "hf_to_fms_rope", _hf_to_fms_rope)
+serialization.register_adapter_step(
+    "llama_classifier", "hf_to_fms_rope", _hf_to_fms_rope
+)
 
 serialization.register_adapter("llama", "meta", ["meta_to_fms_names", "weight_fusion"])
 serialization.register_adapter(
     "llama",
     "hf",
-    ["hf_to_fms_names", "hf_to_fms_rope", "hf_gptq_fusion_check", "weight_fusion"],
+    [
+        "hf_to_fms_names",
+        "hf_to_fms_rope",
+        "hf_gptq_fusion_check",
+        "weight_fusion",
+    ],
 )
 serialization.register_adapter(
     "llama_classifier",
@@ -940,89 +945,3 @@ serialization.register_adapter(
     "fms.pre0.0.6",
     ["pre0.0.6_attn_unfused_to_fused", "swiglu_unfused_to_fused", "weight_fusion"],
 )
-
-
-def convert_hf_llama(hf_model: "LlamaForCausalLM") -> LLaMA:  # type: ignore
-    """
-    Convert a Llama huggingface model to an fms model
-
-    Parameters
-    ----------
-    hf_model: LlamaForCausalLM
-        a Llama Huggingface model
-
-    Returns
-    -------
-    LLaMA
-        an FMS LLaMA model
-    """
-
-    if not _has_hf:
-        raise ImportError(
-            "in order to convert huggingface weights, you need to have transformers installed"
-        )
-
-    import re
-
-    config = LLaMAConfig(
-        src_vocab_size=hf_model.config.vocab_size,
-        emb_dim=hf_model.config.hidden_size,
-        norm_eps=hf_model.config.rms_norm_eps,
-        nheads=hf_model.config.num_attention_heads,
-        nlayers=hf_model.config.num_hidden_layers,
-        hidden_grow_factor=hf_model.config.intermediate_size
-        / hf_model.config.hidden_size,
-        multiple_of=1,  # this is set to 1 as it is encoded in the hidden dimension
-        activation_fn=hf_model.config.hidden_act,
-        max_expected_seq_len=hf_model.config.max_position_embeddings,
-        rope_theta=hf_model.config.rope_theta,
-    )
-    model = LLaMA(config)
-    count_parameters = lambda m: sum(p.numel() for p in m.parameters())
-    assert count_parameters(model) == count_parameters(hf_model)
-
-    hf_sd = hf_model.model.state_dict()
-
-    replacements = [
-        (r"^embed_tokens.weight", "base_model.embedding.weight"),
-        (r"^norm", "base_model.dec_norm"),
-        (r"^layers", "base_model.layers"),
-        (r"self_attn\.k_proj", "attn.key"),
-        (r"self_attn\.v_proj", "attn.value"),
-        (r"self_attn\.q_proj", "attn.query"),
-        (r"self_attn\.o_proj", "attn.dense"),
-        (r"mlp\.gate_proj", "ff_sub_layer.wg"),
-        (r"mlp\.up_proj", "ff_sub_layer.w1"),
-        (r"mlp\.down_proj", "ff_sub_layer.w2"),
-        (r"input_layernorm", "ln"),
-        (r"post_attention_layernorm", "ff_ln"),
-    ]
-    new_sd = {}
-    for name, param in hf_sd.items():
-        new_name = name
-        for pattern, repl in replacements:
-            new_name = re.sub(pattern, repl, new_name)
-        new_sd[new_name] = param
-
-    model.load_state_dict(new_sd, strict=False)
-    model.head.weight = hf_model.lm_head.weight
-
-    # model.rot_emb.freqs = hf_model.model.layers[0].self_attn.rotary_emb.inv_freq
-    for layer in model.layers:
-        q = layer.attn.query.weight.data
-        q = (
-            q.view(model.config.nheads, 2, -1, q.size(1))
-            .transpose(1, 2)
-            .reshape(*q.size())
-        )
-        layer.attn.query.weight.data = q
-
-        k = layer.attn.key.weight.data
-        k = (
-            k.view(model.config.nheads, 2, -1, k.size(1))
-            .transpose(1, 2)
-            .reshape(*k.size())
-        )
-        layer.attn.key.weight.data = k
-
-    return model
