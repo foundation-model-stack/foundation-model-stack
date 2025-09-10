@@ -394,7 +394,7 @@ class LLaMA(nn.Module):
             x, position_ids, past_key_value_states, use_cache, **attn_kwargs
         )
 
-        if last_n_tokens > 0:
+        if last_n_tokens > 0 and output.shape[1] > last_n_tokens:
             output = output[:, -last_n_tokens:, :]
         preds = self.shared(output, reverse=True)
 

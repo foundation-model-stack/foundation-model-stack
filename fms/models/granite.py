@@ -384,7 +384,7 @@ class Granite(nn.Module):
             **attn_kwargs,
         )
 
-        if last_n_tokens > 0:
+        if last_n_tokens > 0 and output.shape[1] > last_n_tokens:
             output = output[:, -last_n_tokens:, :]
         preds = self.head(output)
         preds = preds / self.config.logits_scaling
