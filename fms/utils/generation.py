@@ -286,8 +286,8 @@ def generate(
         else:
             logits = output
 
-        if "only_last_token" not in kwargs:
-            logits = logits[:, -1, :]
+        # always get last now since we still have this dim
+        logits = logits[:, -1, :]
 
         if do_sample:
             # get logits from last value in sequence nad scale
