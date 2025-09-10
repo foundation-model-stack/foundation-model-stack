@@ -427,7 +427,7 @@ class Bamba(nn.Module):
             List[SSMCacheUnit | Tuple[torch.FloatTensor,]]
         ] = None,
         use_cache: bool = False,
-        only_last_token: bool = False,
+        last_n_tokens: int = 0,
         **attn_kwargs: Unpack[AttentionKwargs],
     ):
         get_attention_type(**attn_kwargs)["validate_attn_kwargs"](
@@ -444,8 +444,8 @@ class Bamba(nn.Module):
             **attn_kwargs,
         )
 
-        if only_last_token:
-            output = output[:, -1, :]
+        if last_n_tokens > 0:
+            output = output[:, -last_n_tokens:, :]
         preds = self.head(output)
 
         if use_cache:
