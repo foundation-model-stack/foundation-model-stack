@@ -20,7 +20,7 @@ class HFAdaptedLLaMADecoder(HFDecoder):
         super().__init__(model, config, attention_mask_dim=3)
 
     def set_input_embeddings(self, value: nn.Module):
-        self.model.shared.emb = value
+        self.model.base_model.embedding = value
 
     def _adapt(
         self,
@@ -35,7 +35,7 @@ class HFAdaptedLLaMADecoder(HFDecoder):
         if kwargs.get("mask", None) is None:
             kwargs["mask"] = attention_mask
 
-        output = self.model._helper(
+        output = self.model.base_model(
             x_in=input_ids,
             position_ids=position_ids,
             past_key_value_states=past_key_values,
@@ -71,7 +71,7 @@ class HFAdaptedLLaMAHeadless(HFDecoderModelArchitecture):
             params = config.to_dict()
             model = LLaMA(pad_id=params.pop("pad_token_id"), **params)
             decoder = model if decoder is None else decoder
-            embedding = model.shared.emb if embedding is None else embedding
+            embedding = model.base_model.embedding if embedding is None else embedding
 
         # these are now huggingface compatible
         decoder = HFAdaptedLLaMADecoder(decoder, config)
@@ -95,8 +95,11 @@ class HFAdaptedLLaMAHeadless(HFDecoderModelArchitecture):
 
         # Add more cached rope freqs if over cached number
         max_expected_len = input_ids.shape[1] + torch.max(position_ids)
-        if max_expected_len > self.decoder.model.rot_emb.rope_scaling.orig_max_seq_len:
-            self.decoder.model.rot_emb.compute_freqs_cis(
+        if (
+            max_expected_len
+            > self.decoder.model.base_model.rot_emb.rope_scaling.orig_max_seq_len
+        ):
+            self.decoder.model.base_model.rot_emb.compute_freqs_cis(
                 input_ids.device, max_expected_len
             )
 
@@ -124,11 +127,11 @@ class HFAdaptedLLaMAForCausalLM(LMHeadModelLMHeadMixin, HFAdaptedLLaMAHeadless):
         return cls(
             config=config,
             decoder=model,
-            embedding=model.shared.emb,
-            lm_head=model.shared.head,
+            embedding=model.base_model.embedding,
+            lm_head=model.head,
         )
 
     # overriding this to enable tensor-parallel since it requires a WordEmbedding forward
     # in the future WordEmbedding should be split up
     def _lm_head(self, input_ids, *args, **kwargs):
-        return self.decoder.model.shared(input_ids, reverse=True)
+        return self.decoder.model.head(input_ids)
