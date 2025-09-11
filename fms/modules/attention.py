@@ -263,6 +263,8 @@ def _sdpa_compute_op(
         torch.backends.cuda.enable_math_sdp(__sdpa_previous_math)
 
     if attn_sinks is not None:
+        # https://github.com/openai/gpt-oss/blob/main/gpt_oss/torch/model.py#L153
+        # from gpt-oss open ai implementation
         n_tokens, n_heads, q_mult, d_head = queries.shape
         S = attn_sinks.reshape(1, -1, 1, 1).expand(
             queries.shape[0], -1, queries.shape[-2], -1
@@ -281,7 +283,7 @@ def _sdpa_compute_op(
         QK += mask[None, None, :, :]
         QK = torch.cat([QK, S], dim=-1)
         W = torch.softmax(QK, dim=-1)
-        W = W[..., :-1]
+        W = W[..., :-1] # drop the attention sinks after done
         attn = torch.einsum("hmqk,khmd->qhmd", W, values_e)
 
     # attn: bs x seq_len x nheads*emb_v_per_head
