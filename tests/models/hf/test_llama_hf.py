@@ -71,7 +71,7 @@ class LLaMA2HFFixtures(ModelFixtureMixin, HFConfigFixtureMixin, HFModelFixtureMi
         )
 
         # compute the freq from rot_emb since it is gathered lazily
-        rot_emb = fms_hf_model.decoder.model.base_model.rot_emb
+        rot_emb = fms_hf_model.decoder.model.rot_emb
         max_seq_len = rot_emb.rope_scaling.orig_max_seq_len
         alpha = rot_emb.rope_scaling.get_alpha(max_seq_len)
         freqs = rot_emb.rope_scaling.compute_scaled_freqs(
@@ -83,7 +83,7 @@ class LLaMA2HFFixtures(ModelFixtureMixin, HFConfigFixtureMixin, HFModelFixtureMi
             oss_hf_model.model.rotary_emb.inv_freq = freqs
             i = 0
             for oss_hf_layer in oss_hf_model.model.layers:
-                fms_hf_layer = fms_hf_model.decoder.model.base_model.layers[i]
+                fms_hf_layer = fms_hf_model.decoder.model.layers[i]
 
                 # self attn
                 q, k, v = torch.split(
@@ -135,7 +135,7 @@ class LLaMA2HFFixtures(ModelFixtureMixin, HFConfigFixtureMixin, HFModelFixtureMi
 
                 i = i + 1
             oss_hf_model.model.norm.weight = (
-                fms_hf_model.decoder.model.base_model.dec_norm.weight
+                fms_hf_model.decoder.model.dec_norm.weight
             )
             oss_hf_model.lm_head.weight = fms_hf_model.lm_head.weight
 
