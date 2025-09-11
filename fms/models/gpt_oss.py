@@ -134,6 +134,7 @@ class GptOssBlock(nn.Module):
     ):
         # if the cache is not empty, we need to get the kv cache for self and cross attention
         self_attn_past_key_value = past_key_value_state
+        attn_kwargs.update({"sliding_window": self.config.sliding_window})
 
         # first we do MHA and Add&Norm
         residual = x

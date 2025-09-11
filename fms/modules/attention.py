@@ -225,7 +225,7 @@ def _sdpa_compute_op(
 
     attn_algorithm = attn_kwargs.get("attn_algorithm", None)
     attn_sinks = attn_kwargs.get("sinks", None)
-    training = attn_kwargs.get("training", None)
+    sliding_window = attn_kwargs.get("sliding_window", None)
 
     if attn_algorithm:
         # Pick which fused attn kernels will run.
@@ -263,60 +263,26 @@ def _sdpa_compute_op(
         torch.backends.cuda.enable_math_sdp(__sdpa_previous_math)
 
     if attn_sinks is not None:
-        batch_size = query.shape[0]
-        query_states = query.transpose(1, 2)
-        key_states = key_cache.transpose(1, 2)
-        value_states = value_cache.transpose(1, 2)
-
-        num_query_heads = query_states.shape[1]
-        num_key_value_heads = key_states.shape[1]
-        q_len = query_states.shape[2]
-
-        n_rep = num_query_heads // num_key_value_heads
-
-        adjusted_q_heads = num_key_value_heads * (
-            query_states.shape[1] // num_key_value_heads
+        n_tokens, n_heads, q_mult, d_head = queries.shape
+        S = attn_sinks.reshape(1, -1, 1, 1).expand(
+            queries.shape[0], -1, queries.shape[-2], -1
         )
-        query_s = query_states[:, :adjusted_q_heads]
-
-        num_query_heads = query_s.shape[1]
-        assert num_query_heads % num_key_value_heads == 0, (
-            "num_query_heads must be divisible by num_key_value_groups"
+        S = S.transpose(0, 1).transpose(1, 2)
+        mask = torch.triu(
+            queries.new_full((n_tokens, n_tokens), -float("inf")), diagonal=1
         )
-
-        # query_s = query_states  # shape: [batch, num_query_heads, seq_len, head_dim]
-        key_s = repeat_kv(
-            key_states, n_rep
-        )  # shape: [batch, num_query_heads, seq_len, head_dim]
-
-        attn_weights = torch.matmul(query_s, key_s.transpose(-2, -1)) * scale_factor
-        if attn_mask is not None:
-            causal_mask = attn_mask[:, :, :, : key_states.shape[-2]]
-            attn_weights = attn_weights + causal_mask
-        attn_sinks = attn_sinks[:num_query_heads]
-
-        sinks = attn_sinks.view(1, -1, 1, 1).expand(
-            batch_size, num_query_heads, q_len, 1
-        )
-        combined_logits = torch.cat([attn_weights, sinks], dim=-1)
-        # This was not in the original implementation and slightly affect results; it prevents overflow in BF16/FP16
-        # when training with bsz>1 we clamp max values.
-
-        combined_logits = (
-            combined_logits - combined_logits.max(dim=-1, keepdim=True).values
-        )
-
-        combined_logits = combined_logits.clamp(min=-1e9, max=1e9)
-
-        probs = F.softmax(combined_logits, dim=-1, dtype=combined_logits.dtype)
-        probs = torch.clamp(probs, min=0.0, max=1.0)
-
-        scores = probs[..., :-1]  # we drop the sink here
-        attn_weights = nn.functional.dropout(scores, p=p_dropout, training=training)
-
-        value_states = repeat_kv_heads(value_states, num_key_value_heads, n_rep)
-
-        attn = torch.matmul(attn_weights, value_states)
+        if sliding_window and sliding_window > 0:
+            mask += torch.tril(
+                mask.new_full((n_tokens, n_tokens), -float("inf")),
+                diagonal=-sliding_window,
+            )
+        QK = torch.einsum("qhmd,khmd->hmqk", queries, keys_e)
+        QK *= scale_factor
+        QK += mask[None, None, :, :]
+        QK = torch.cat([QK, S], dim=-1)
+        W = torch.softmax(QK, dim=-1)
+        W = W[..., :-1]
+        attn = torch.einsum("hmqk,khmd->qhmd", W, values_e)
 
     # attn: bs x seq_len x nheads*emb_v_per_head
     # attn: b x h x qlen x ds
@@ -369,41 +335,6 @@ def get_attention_type(**attn_kwargs: Unpack[AttentionKwargs]) -> dict[str, Call
         raise KeyError(f"The attention {attn_name} is not registered")
 
     return __type_factory_map[attn_name]
-
-
-def repeat_kv(hidden_states: torch.Tensor, n_rep: int) -> torch.Tensor:
-    """
-    Repeat key/value tensors for multi-head attention when using group/query sharing.
-    Input shape:  (batch, num_kv_heads, seqlen, head_dim)
-    Output shape: (batch, num_kv_heads * n_rep, seqlen, head_dim)
-    """
-    batch, num_kv_heads, seq_len, head_dim = hidden_states.shape
-    if n_rep == 1:
-        return hidden_states
-    hidden_states = hidden_states.unsqueeze(
-        2
-    )  # [batch, num_kv_heads, 1, seq_len, head_dim]
-    hidden_states = hidden_states.expand(batch, num_kv_heads, n_rep, seq_len, head_dim)
-    return hidden_states.reshape(batch, num_kv_heads * n_rep, seq_len, head_dim)
-
-
-def repeat_kv_heads(
-    hidden_states: torch.Tensor, num_kv_heads: int, n_rep: int
-) -> torch.Tensor:
-    """
-    Repeat key/value tensors for MQA or GQA.
-    Input shape:  (batch, num_kv_heads, seq_len, head_dim)
-    Output shape: (batch, num_kv_heads * n_rep, seq_len, head_dim)
-    """
-    batch, num_kv_heads_, seq_len, head_dim = hidden_states.shape
-    assert num_kv_heads_ == num_kv_heads, (
-        f"Expected {num_kv_heads}, got {num_kv_heads_}"
-    )
-    if n_rep == 1:
-        return hidden_states
-    hidden_states = hidden_states[:, :, None, :, :]  # (B, KV_H, 1, S, D)
-    hidden_states = hidden_states.expand(batch, num_kv_heads, n_rep, seq_len, head_dim)
-    return hidden_states.reshape(batch, num_kv_heads * n_rep, seq_len, head_dim)
 
 
 class QKV(nn.Module, metaclass=abc.ABCMeta):
@@ -812,19 +743,7 @@ class MultiHeadAttention(nn.Module):
                 **attn_kwargs,
             )
 
-        if self.has_sinks:
-            batch_size, q_len, num_query_heads, emb_v_per_head = attn.shape
-
-            attn = attn.view(batch_size, q_len, num_query_heads * emb_v_per_head)
-            expected_dim = self.nheads * self.emb_v_per_head  # 64 * 64 = 4096
-            current_dim = attn.shape[-1]
-
-            if current_dim < expected_dim:
-                pad_width = expected_dim - current_dim
-                attn = F.pad(attn, (0, pad_width))  # pad on the last dimension
-
-        else:
-            attn = attn.view(batch_size, q_len, self.nheads * self.emb_v_per_head)
+        attn = attn.view(batch_size, q_len, self.nheads * self.emb_v_per_head)
 
         out = self.dense(attn)
 
