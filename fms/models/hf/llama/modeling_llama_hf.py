@@ -92,10 +92,7 @@ class HFAdaptedLLaMAHeadless(HFDecoderModelArchitecture):
 
         # Add more cached rope freqs if over cached number
         max_expected_len = input_ids.shape[1] + torch.max(position_ids)
-        if (
-            max_expected_len
-            > self.decoder.model.rot_emb.rope_scaling.orig_max_seq_len
-        ):
+        if max_expected_len > self.decoder.model.rot_emb.rope_scaling.orig_max_seq_len:
             self.decoder.model.rot_emb.compute_freqs_cis(
                 input_ids.device, max_expected_len
             )
@@ -116,7 +113,6 @@ class HFAdaptedLLaMAForCausalLM(LMHeadModelLMHeadMixin, HFAdaptedLLaMAHeadless):
 
     def __init__(self, config: HFAdaptedLLaMAConfig, *args, **kwargs):
         super().__init__(config=config, bias=False, *args, **kwargs)
-
 
     @classmethod
     def _hf_model_from_fms(
