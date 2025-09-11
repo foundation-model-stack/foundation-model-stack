@@ -63,27 +63,31 @@ def convert_to_hf(
         an HF equivalent model
     """
     hf_config: HFAdaptedLLaMAConfig = fms_hf_model.config
+    print(hf_config.emb_dim, hf_config.multiple_of)
     oss_hf_model = LlamaForCausalLM(
         LlamaConfig(
             vocab_size=hf_config.src_vocab_size,
             hidden_size=hf_config.emb_dim,
-            intermediate_size=int(
-                math.ceil(
-                    hf_config.emb_dim
-                    * hf_config.hidden_grow_factor
-                    / hf_config.multiple_of
+            intermediate_size=hf_config.multiple_of
+            * (
+                (
+                    int(hf_config.hidden_grow_factor * hf_config.emb_dim)
+                    + hf_config.multiple_of
+                    - 1
                 )
-                * hf_config.multiple_of
+                // hf_config.multiple_of
             ),
             num_hidden_layers=hf_config.nlayers,
             num_attention_heads=hf_config.nheads,
-            num_key_value_heads=hf_config.kvheads,
+            num_key_value_heads=(None if hf_config.kvheads == 0 else hf_config.kvheads),
             max_position_embedings=hf_config.max_expected_seq_len,
             rms_norm_eps=hf_config.norm_eps,
             bos_token_id=hf_config.bos_token_id,
             eos_token_id=hf_config.eos_token_id,
             rope_theta=hf_config.rope_theta,
-            rope_scaling=hf_config.rope_scaling,
+            rope_scaling=hf_config.rope_scaling
+            if len(hf_config.rope_scaling) > 0
+            else None,
             attention_dropout=hf_config.p_dropout,
         )
     )
@@ -121,6 +125,7 @@ def convert_to_hf(
             w1, wg = torch.split(
                 fms_hf_layer.ff_sub_layer.wg1_fused.weight, wg_splits, dim=0
             )
+            print(oss_hf_layer.mlp.gate_proj.weight.shape, wg.shape)
             oss_hf_layer.mlp.gate_proj.weight.copy_(wg)
             oss_hf_layer.mlp.up_proj.weight.copy_(w1)
             oss_hf_layer.mlp.down_proj.weight.copy_(fms_hf_layer.ff_sub_layer.w2.weight)
