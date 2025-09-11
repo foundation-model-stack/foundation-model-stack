@@ -16,7 +16,7 @@ from fms.models.llama import LLaMA, LLaMAHeadless
 class HFAdaptedLLaMADecoder(HFDecoder):
     """Adapter for the LLaMA decoder"""
 
-    def __init__(self, model: LLaMAHeadless, config: PretrainedConfig):
+    def __init__(self, model: LLaMA, config: PretrainedConfig):
         super().__init__(model, config, attention_mask_dim=3)
 
     def _adapt(
