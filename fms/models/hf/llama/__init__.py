@@ -4,7 +4,10 @@ from typing import Union
 import torch
 from transformers import LlamaConfig, LlamaForCausalLM
 
-from fms.models.hf.llama.modeling_llama_hf import HFAdaptedLLaMAForCausalLM, HFAdaptedLLaMAConfig
+from fms.models.hf.llama.modeling_llama_hf import (
+    HFAdaptedLLaMAForCausalLM,
+    HFAdaptedLLaMAConfig,
+)
 
 
 def get_model(model_name_or_path: Union[str, os.PathLike]) -> HFAdaptedLLaMAForCausalLM:
@@ -64,7 +67,14 @@ def convert_to_hf(
         LlamaConfig(
             vocab_size=hf_config.src_vocab_size,
             hidden_size=hf_config.emb_dim,
-            intermediate_size=int(math.ceil(hf_config.emb_dim*hf_config.hidden_grow_factor/hf_config.multiple_of)*hf_config.multiple_of),
+            intermediate_size=int(
+                math.ceil(
+                    hf_config.emb_dim
+                    * hf_config.hidden_grow_factor
+                    / hf_config.multiple_of
+                )
+                * hf_config.multiple_of
+            ),
             num_hidden_layers=hf_config.nlayers,
             num_attention_heads=hf_config.nheads,
             num_key_value_heads=hf_config.kvheads,
