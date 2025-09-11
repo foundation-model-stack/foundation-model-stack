@@ -295,6 +295,7 @@ def _map_model_config(architecture, config):
 def _infer_model_configuration(
     model_id_or_path: str | os.PathLike,
     download_weights: bool = True,
+    revision: Optional[str] = None,
 ) -> Dict[str, Any]:
     # if the path does not exist, download it from huggingface and get the local path
     if not os.path.exists(model_id_or_path):
@@ -331,6 +332,7 @@ def _infer_model_configuration(
             repo_id=str(model_id_or_path),
             ignore_patterns=ignore_patterns,
             allow_patterns=allow_patterns,
+            revision=revision,
         )
     else:
         model_path = str(model_id_or_path)
@@ -368,6 +370,7 @@ def as_fms_model(
     checkpoint_sharding: Optional[str] = None,
     group: Optional[ProcessGroup] = None,
     initialize_model_with_weights: bool = True,
+    revision: Optional[str] = None
 ) -> nn.Module:
     """
     get an FMS model from a huggingface checkpoint
@@ -393,7 +396,8 @@ def as_fms_model(
         an fms equivalent implementation of an HF model
     """
     get_model_kwargs = _infer_model_configuration(
-        model_id_or_path, download_weights=initialize_model_with_weights
+        model_id_or_path, download_weights=initialize_model_with_weights,
+        revision=revision
     )
 
     return get_model(
