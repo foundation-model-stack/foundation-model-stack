@@ -13,7 +13,6 @@ from fms.distributed.strategy import (
     DistributedStrategy,
     NoOpStrategy,
     TensorParallelStrategy,
-    UniformModelParallelStrategy,
 )
 from fms.modules.attention import (
     AttentionKwargs,
@@ -183,12 +182,7 @@ class LLaMAHeadless(nn.Module):
         self.config = self.config.updated(**kwargs)
         self.distributed_strategy = distributed_strategy
 
-        self.width = self.config.emb_dim
-        self.pad_id = self.config.pad_id
-        self.max_expected_seq_len = self.config.max_expected_seq_len
-
-        embedding = nn.Embedding(self.config.src_vocab_size, self.config.emb_dim)
-
+        embedding = nn.Embedding(self.config.src_vocab_size, self.config.emb_dim, self.config.pad_id)
         # TP does not work with tied weights
         if (
             not isinstance(self.distributed_strategy, TensorParallelStrategy)
@@ -250,6 +244,13 @@ class LLaMAHeadless(nn.Module):
             self.embedding.weight, mean=0.0, std=self.config.emb_dim**-0.5
         )
 
+        # RoPE init
+        for device in set(
+            [param.device for param in self.parameters()]
+            + [buffer.device for buffer in self.buffers()]
+        ):
+            self.rot_emb.compute_freqs_cis(device, self.config.max_expected_seq_len)
+
         # Call reset_parameters for relevant sub-layers
         for m in self.modules():
             if (
@@ -258,17 +259,6 @@ class LLaMAHeadless(nn.Module):
                 or isinstance(m, LayerNormParameterized)
             ):
                 m.reset_parameters()
-
-        # RoPE init
-        if isinstance(self.distributed_strategy, UniformModelParallelStrategy):
-            for dev_idx in set(self.distributed_strategy.layer_to_device):
-                self.rot_emb.compute_freqs_cis(
-                    torch.device("cuda", dev_idx), self.config.max_expected_seq_len
-                )
-        else:
-            self.rot_emb.compute_freqs_cis(
-                self.embedding.weight.device, self.config.max_expected_seq_len
-            )
 
     def validate_reset_parameters(self):
         # Verifies that the above self.reset_parameters() executed correctly.
@@ -396,10 +386,6 @@ class LLaMA(nn.Module):
         head = LinearClassificationHead(
             self.config.emb_dim, self.config.src_vocab_size, bias=False
         )
-        if self.config.tie_heads:
-            assert isinstance(self.base_model.embedding, torch.nn.Embedding)
-            head.weight = self.base_model.embedding.weight
-
         # TP does not work with tied weights
         if (
             not isinstance(self.distributed_strategy, TensorParallelStrategy)
@@ -738,7 +724,7 @@ def _hf_to_fms_rope(
             )
         rope_params = _get_rope_params(linear_type_str)
         trans_required_pattern = re.compile(
-            f"layers.[0-9]+.attn.in_proj.(query|key).({'|'.join(rope_params)})$"
+            f"base_model.layers.[0-9]+.attn.in_proj.(query|key).({'|'.join(rope_params)})$"
         )
 
         # hf -> fms requires a transpose operation for the query and key

@@ -10,17 +10,14 @@ from transformers.modeling_outputs import BaseModelOutputWithPastAndCrossAttenti
 from fms.models.hf.llama.configuration_llama_hf import HFAdaptedLLaMAConfig
 from fms.models.hf.lm_head_mixins import LMHeadModelLMHeadMixin
 from fms.models.hf.modeling_hf_adapter import HFDecoder, HFDecoderModelArchitecture
-from fms.models.llama import LLaMA
+from fms.models.llama import LLaMA, LLaMAHeadless
 
 
 class HFAdaptedLLaMADecoder(HFDecoder):
     """Adapter for the LLaMA decoder"""
 
-    def __init__(self, model: LLaMA, config: PretrainedConfig):
+    def __init__(self, model: LLaMAHeadless, config: PretrainedConfig):
         super().__init__(model, config, attention_mask_dim=3)
-
-    def set_input_embeddings(self, value: nn.Module):
-        self.model.base_model.embedding = value
 
     def _adapt(
         self,
@@ -35,7 +32,7 @@ class HFAdaptedLLaMADecoder(HFDecoder):
         if kwargs.get("mask", None) is None:
             kwargs["mask"] = attention_mask
 
-        output = self.model.base_model(
+        output = self.model(
             x_in=input_ids,
             position_ids=position_ids,
             past_key_value_states=past_key_values,
@@ -69,9 +66,9 @@ class HFAdaptedLLaMAHeadless(HFDecoderModelArchitecture):
         # in the case we have not yet received the encoder/decoder/embedding, initialize it here
         if decoder is None or embedding is None:
             params = config.to_dict()
-            model = LLaMA(pad_id=params.pop("pad_token_id"), **params)
+            model = LLaMAHeadless(pad_id=params.pop("pad_token_id"), **params)
             decoder = model if decoder is None else decoder
-            embedding = model.base_model.embedding if embedding is None else embedding
+            embedding = model.embedding if embedding is None else embedding
 
         # these are now huggingface compatible
         decoder = HFAdaptedLLaMADecoder(decoder, config)
@@ -97,9 +94,9 @@ class HFAdaptedLLaMAHeadless(HFDecoderModelArchitecture):
         max_expected_len = input_ids.shape[1] + torch.max(position_ids)
         if (
             max_expected_len
-            > self.decoder.model.base_model.rot_emb.rope_scaling.orig_max_seq_len
+            > self.decoder.model.rot_emb.rope_scaling.orig_max_seq_len
         ):
-            self.decoder.model.base_model.rot_emb.compute_freqs_cis(
+            self.decoder.model.rot_emb.compute_freqs_cis(
                 input_ids.device, max_expected_len
             )
 
@@ -120,18 +117,15 @@ class HFAdaptedLLaMAForCausalLM(LMHeadModelLMHeadMixin, HFAdaptedLLaMAHeadless):
     def __init__(self, config: HFAdaptedLLaMAConfig, *args, **kwargs):
         super().__init__(config=config, bias=False, *args, **kwargs)
 
+
     @classmethod
     def _hf_model_from_fms(
         cls, model: LLaMA, config: HFAdaptedLLaMAConfig
     ) -> "HFAdaptedLLaMAForCausalLM":
-        return cls(
+        out = cls(
             config=config,
-            decoder=model,
+            decoder=model.base_model,
             embedding=model.base_model.embedding,
             lm_head=model.head,
         )
-
-    # overriding this to enable tensor-parallel since it requires a WordEmbedding forward
-    # in the future WordEmbedding should be split up
-    def _lm_head(self, input_ids, *args, **kwargs):
-        return self.decoder.model.head(input_ids)
+        return out
