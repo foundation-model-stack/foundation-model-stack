@@ -134,9 +134,7 @@ class LLaMA2HFFixtures(ModelFixtureMixin, HFConfigFixtureMixin, HFModelFixtureMi
                 oss_hf_layer.self_attn.k_proj.weight.copy_(k)
 
                 i = i + 1
-            oss_hf_model.model.norm.weight = (
-                fms_hf_model.decoder.model.dec_norm.weight
-            )
+            oss_hf_model.model.norm.weight = fms_hf_model.decoder.model.dec_norm.weight
             oss_hf_model.lm_head.weight = fms_hf_model.lm_head.weight
 
         return oss_hf_model
