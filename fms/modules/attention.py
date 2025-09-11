@@ -283,7 +283,7 @@ def _sdpa_compute_op(
         QK += mask[None, None, :, :]
         QK = torch.cat([QK, S], dim=-1)
         W = torch.softmax(QK, dim=-1)
-        W = W[..., :-1] # drop the attention sinks after done
+        W = W[..., :-1]  # drop the attention sinks after done
         attn = torch.einsum("hmqk,khmd->qhmd", W, values_e)
 
     # attn: bs x seq_len x nheads*emb_v_per_head
