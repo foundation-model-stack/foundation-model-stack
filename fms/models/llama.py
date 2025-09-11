@@ -182,7 +182,9 @@ class LLaMAHeadless(nn.Module):
         self.config = self.config.updated(**kwargs)
         self.distributed_strategy = distributed_strategy
 
-        embedding = nn.Embedding(self.config.src_vocab_size, self.config.emb_dim, self.config.pad_id)
+        embedding = nn.Embedding(
+            self.config.src_vocab_size, self.config.emb_dim, self.config.pad_id
+        )
         # TP does not work with tied weights
         if (
             not isinstance(self.distributed_strategy, TensorParallelStrategy)
