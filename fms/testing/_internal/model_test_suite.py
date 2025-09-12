@@ -112,6 +112,11 @@ class SignatureFixtureMixin:
     def signature(self, model_id: Optional[str], **kwargs) -> list[float]:
         """include this fixture to get a models signature (defaults to what is in tests/resources/expectations)"""
         return self._signature(model_id)
+    
+    @pytest.fixture(scope="class", autouse = True)
+    def generation_signature(self, model_id: Optional[str], **kwargs) -> list[float]:
+        """Fixture to get the generation signature for the model if it supports generation"""
+        return self._generation_signature(model_id)
 
     def _get_expectation_path(self, test_name, model_id):
         """
@@ -403,10 +408,6 @@ class ModelConsistencyTestSuite(ModelFixtureMixin, SignatureFixtureMixin):
             assertion_msg,
         )
 
-    @pytest.fixture(scope="class", autouse = True)
-    def generation_signature(self, model_id: Optional[str], **kwargs) -> list[float]:
-        """Fixture to get the generation signature for the model if it supports generation"""
-        return self._generation_signature(model_id)
     
     def _generation_signature(self, model_id: Optional[str]) -> list[float]:
         try:
