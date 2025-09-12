@@ -56,6 +56,7 @@ class TestMixtral(
 
     # x is the main parameter for this model which is the input tensor
     _get_signature_params = ["x"]
+    _supports_generation = True
 
     def test_config_passed_to_model_and_updated(self, model, config):
         """test model constructor appropriately merges any passed kwargs into the config without mutating the original config"""
