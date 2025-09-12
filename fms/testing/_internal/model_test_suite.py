@@ -348,15 +348,9 @@ class ModelConsistencyTestSuite(ModelFixtureMixin, SignatureFixtureMixin):
                 )
             
 
-            # Create signature from the generated tokens using get_signature pattern
-            if captured_logits:
-                # Use the captured logits - concatenate prefill and decode logits
-                # captured_logits should contain logits from each generation step
-                logits_concat = torch.cat(captured_logits, dim=1)  # Concatenate along sequence dimension
-            else:
-                # If no logits were captured, fallback to the generated tokens
-                # Use the full generated sequence (input + generated tokens)
-                logits_concat = generated
+            # Concatenate captured logits
+            logits_concat = torch.cat(captured_logits, dim=1)  # Concatenate along sequence dimension
+            
             
             # Create a simple signature from the logits
             s = logits_concat.max(2)[0] - logits_concat.min(2)[0] if logits_concat.dim() >= 3 else logits_concat
