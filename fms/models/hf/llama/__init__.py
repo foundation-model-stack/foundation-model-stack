@@ -1,4 +1,3 @@
-import math
 import os
 from typing import Union
 import torch
@@ -110,8 +109,9 @@ def convert_to_hf(
                 .reshape(*hf_q.size())
             )
             oss_hf_layer.self_attn.q_proj.weight.copy_(hf_q)
+            kv_heads = hf_config.kvheads if hf_config.kvheads > 0 else hf_config.nheads
             hf_k = (
-                hf_k.view(hf_config.kvheads, 2, -1, hf_k.size(1))
+                hf_k.view(kv_heads, 2, -1, hf_k.size(1))
                 .transpose(1, 2)
                 .reshape(*hf_k.size())
             )
