@@ -15,7 +15,7 @@ authors = [
   {name = "Joshua Rosenkranz", email = "jmrosenk@us.ibm.com"},
   {name = "Raghu Kiran Ganti", email= "rganti@us.ibm.com"},
 ]
-license = "Apache-2.0"
+license = {text = "Apache-2.0"}
 readme = "README.md"
 requires-python = ">=3.11,<3.13"
 keywords = ['ibm-fms']
