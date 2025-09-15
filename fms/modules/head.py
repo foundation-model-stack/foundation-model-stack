@@ -29,6 +29,7 @@ class MLPClassificationHead(nn.Module):
         dense_bias: bool = True,
         head_bias: bool = True,
         dropout: float = 0.0,
+        do_pooling: bool = False,
         apply_pooling_fn: bool = False,
         pooling_fn_act: nn.Module = nn.Tanh(),
     ):
@@ -51,9 +52,12 @@ class MLPClassificationHead(nn.Module):
             the bias param in the head layer (default is True)
         dropout: float
             the dropout to use directly after activation (default is 0.0)
-        apply_pooling_fn: bool
+        do_pooling: bool
             if True, will take the first token for each sequence in the batch as input to the dense layer. Otherwise,
             use the entire sequence as input to the dense layer
+        apply_pooling_fn: bool
+            if True, will apply an extra non-linear projection to the pooled output. Otherwise,
+            the pfirst token is simply passed to the dense layer
         """
         super().__init__()
         self.dense = nn.Linear(emb_dim, emb_dim, bias=dense_bias)
@@ -61,6 +65,7 @@ class MLPClassificationHead(nn.Module):
         self.dropout = nn.Dropout(dropout)
         self.ln = layer_norm
         self.head = nn.Linear(emb_dim, num_classes, bias=head_bias)
+        self.do_pooling = do_pooling
         self.apply_pooling_fn = apply_pooling_fn
         if self.apply_pooling_fn:
             self.pooler_linear = nn.Linear(emb_dim, emb_dim)
@@ -79,10 +84,11 @@ class MLPClassificationHead(nn.Module):
         torch.Tensor
             a tensor projected to a space given by num_classes
         """
-        if self.apply_pooling_fn:
+        if self.do_pooling:
             x = x[:, 0]
-            x = self.pooler_linear(x)
-            x = self.pooler_act(x)
+            if self.apply_pooling_fn:
+                x = self.pooler_linear(x)
+                x = self.pooler_act(x)
         x = self.dense(x)
         x = self.act(x)
         x = self.dropout(x)

@@ -174,6 +174,17 @@ def _map_model_config(architecture, config):
         config_params["norm_eps"] = config.layer_norm_eps
         config_params["activation_fn"] = config.hidden_act
         config_params["type_vocab_size"] = config.type_vocab_size
+    elif architecture == "RobertaForSequenceClassification":
+        inner_dim = config.intermediate_size
+        architecture = "roberta_classification"
+        config_params["emb_dim"] = config.hidden_size
+        config_params["pad_id"] = config.pad_token_id
+        config_params["max_pos"] = config.max_position_embeddings - 2
+        config_params["p_dropout"] = config.hidden_dropout_prob
+        config_params["norm_eps"] = config.layer_norm_eps
+        config_params["activation_fn"] = config.hidden_act
+        config_params["num_classes"] = config.num_labels
+        config_params["type_vocab_size"] = config.type_vocab_size
     elif architecture == "GraniteForCausalLM":
         inner_dim = config.intermediate_size
         architecture = "granite"
