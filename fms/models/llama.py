@@ -19,7 +19,6 @@ from fms.modules.attention import (
     MultiHeadAttention,
     get_attention_type,
 )
-from fms.modules.embedding import WordEmbedding
 from fms.modules.feedforward import GatedLinearUnit
 from fms.modules.head import LinearClassificationHead
 from fms.modules.layernorm import LayerNormParameterized
@@ -188,12 +187,9 @@ class LLaMAHeadless(nn.Module):
         self.config = self.config.updated(**kwargs)
         self.distributed_strategy = distributed_strategy
 
-        self.width = self.config.emb_dim
-        self.pad_id = self.config.pad_id
-        self.max_expected_seq_len = self.config.max_expected_seq_len
-
-        embedding = nn.Embedding(self.config.src_vocab_size, self.config.emb_dim)
-
+        embedding = nn.Embedding(
+            self.config.src_vocab_size, self.config.emb_dim, self.config.pad_id
+        )
         # TP does not work with tied weights
         if (
             not isinstance(self.distributed_strategy, TensorParallelStrategy)
@@ -246,13 +242,21 @@ class LLaMAHeadless(nn.Module):
         return self.config
 
     @classmethod
-    def from_config(cls, config: LLaMAConfig) -> "LLaMA":
+    def from_config(cls, config: LLaMAConfig) -> "LLaMAHeadless":
         return cls(config)
 
     def reset_parameters(self):
+        assert isinstance(self.embedding, torch.nn.Embedding)
         nn.init.trunc_normal_(
-            self.embedding.weight, mean=0.0, std=self.config.dim**-0.5
+            self.embedding.weight, mean=0.0, std=self.config.emb_dim**-0.5
         )
+
+        # RoPE init
+        for device in set(
+            [param.device for param in self.parameters()]
+            + [buffer.device for buffer in self.buffers()]
+        ):
+            self.rot_emb.compute_freqs_cis(device, self.config.max_expected_seq_len)
 
         # Call reset_parameters for relevant sub-layers
         for m in self.modules():
@@ -290,21 +294,24 @@ class LLaMAHeadless(nn.Module):
                 assert p.isnan().int().sum() == 0
                 assert p.isinf().int().sum() == 0
             for m in self.modules():
-                if isinstance(LayerNormParameterized):
+                if isinstance(m, LayerNormParameterized):
                     if m.elementwise_scale:
                         assert m.weight.sum() == m.weight.numel()
                     if m.elementwise_shift:
                         assert m.bias.add(1).sum() == m.bias.numel()
-                elif isinstance(nn.Embedding):
+                elif isinstance(m, nn.Embedding):
                     check_close(m.weight)
-                elif isinstance(GatedLinearUnit):
+                elif isinstance(m, GatedLinearUnit):
                     check_close(m.w1.weight)
                     check_close(m.w2.weight)
                     check_close(m.wg.weight)
-                elif isinstance(MultiHeadAttention):
-                    check_close(m.query.weight)
-                    check_close(m.key.weight)
-                    check_close(m.value.weight)
+                elif isinstance(m, MultiHeadAttention):
+                    if m.fused:
+                        check_close(m.in_proj.qkv_fused.weight)
+                    else:
+                        check_close(m.in_proj.query.weight)
+                        check_close(m.in_proj.key.weight)
+                        check_close(m.in_proj.value.weight)
                     check_close(m.dense.weight)
 
     def _clean_up_rot_emb_cache(
@@ -397,9 +404,6 @@ class LLaMA(nn.Module):
         head = LinearClassificationHead(
             self.config.emb_dim, self.config.src_vocab_size, bias=False
         )
-        if self.config.tie_heads:
-            head.weight = self.base_model.embedding.weight
-
         # TP does not work with tied weights
         if (
             not isinstance(self.distributed_strategy, TensorParallelStrategy)
@@ -418,6 +422,7 @@ class LLaMA(nn.Module):
 
     def reset_parameters(self):
         # Call reset_parameters for relevant sub-layers
+        assert isinstance(self.head, torch.nn.Linear)
         self.head.weight.data.normal_(
             0,
             1 / math.sqrt(math.sqrt(self.config.emb_dim * self.config.src_vocab_size)),
@@ -475,94 +480,6 @@ class LLaMA(nn.Module):
         if only_last_token:
             output = output[:, -1, :]
         preds = self.head(output)
-
-        if use_cache:
-            return preds, cache
-        else:
-            return preds
-
-
-class LLaMAForClassification(nn.Module):
-    def __init__(
-        self,
-        config: Optional[LLaMAForClassificationConfig] = None,
-        distributed_strategy: DistributedStrategy = NoOpStrategy,
-        **kwargs,
-    ):
-        super(LLaMAForClassification, self).__init__()
-        if config is not None:
-            self.config = config
-        else:
-            self.config = LLaMAForClassificationConfig()
-        self.config = self.config.updated(**kwargs)
-        self.distributed_strategy = distributed_strategy
-
-        self.base_model = LLaMAHeadless(self.config, self.distributed_strategy)
-        classification_head = LinearClassificationHead(
-            self.config.emb_dim, self.config.num_classes, bias=False
-        )
-        self.classification_head = self.distributed_strategy.distribute_module(
-            classification_head
-        )
-
-    def get_config(self) -> LLaMAForClassificationConfig:
-        return self.config
-
-    @classmethod
-    def from_config(
-        cls, config: LLaMAForClassificationConfig
-    ) -> "LLaMAForClassification":
-        return cls(config)
-
-    def reset_head(self):
-        self.classification_head.weight.data.normal_(
-            0, 1 / math.sqrt(math.sqrt(self.config.emb_dim * self.config.num_classes))
-        )
-
-    def reset_parameters(self):
-        # Call reset_parameters for relevant sub-layers
-        self.reset_head()
-        self.base_model.reset_parameters()
-
-    def validate_reset_parameters(self):
-        # Verifies that the above self.reset_parameters() executed correctly.
-        # This may not always be the case for distributed settings with sharded tensors,
-        # such as FSDP or TP. Note that performing this check may require unsharding /
-        # re-materializing the full model on a single rank to access the underlying tensors.
-        tolerance = 1e-3
-
-        def check_close(x):
-            assert x.mean().abs() < tolerance
-            assert x.std().sub(0.02).abs() < tolerance
-
-        with torch.no_grad():
-            for p in self.parameters():
-                assert p.isnan().int().sum() == 0
-                assert p.isinf().int().sum() == 0
-            self.base_model.validate_reset_parameters()
-            check_close(self.classification_head.weight)
-
-    def post_init(self):
-        self.base_model.post_init()
-
-    def forward(
-        self,
-        x,
-        mask=None,
-        position_ids=None,
-        past_key_value_states=None,
-        use_cache=False,
-        only_last_token=False,
-        attn_algorithm=None,
-    ):
-        output, cache = self.base_model(
-            x, mask, position_ids, past_key_value_states, use_cache, attn_algorithm
-        )
-
-        if only_last_token:
-            output = output[:, -1, :]
-
-        preds = self.classification_head(output[:, -1, :])
 
         if use_cache:
             return preds, cache
@@ -702,6 +619,7 @@ models.register_model(
     "granite.code-3b",
     _llama_factory_factory((_granite_3b_code_config)),
 )
+
 models.register_model(
     "llama_classifier",
     "granite.code-3b",
@@ -879,7 +797,7 @@ def _hf_to_fms_rope(
             )
         rope_params = _get_rope_params(linear_type_str)
         trans_required_pattern = re.compile(
-            f"layers.[0-9]+.attn.in_proj.(query|key).({'|'.join(rope_params)})$"
+            f"base_model.layers.[0-9]+.attn.in_proj.(query|key).({'|'.join(rope_params)})$"
         )
 
         # hf -> fms requires a transpose operation for the query and key
@@ -920,9 +838,12 @@ def _hf_to_fms_rope(
 
 
 serialization.register_adapter_step("llama", "hf_to_fms_rope", _hf_to_fms_rope)
+<<<<<<< HEAD
 serialization.register_adapter_step(
     "llama_classifier", "hf_to_fms_rope", _hf_to_fms_rope
 )
+=======
+>>>>>>> main
 
 serialization.register_adapter("llama", "meta", ["meta_to_fms_names", "weight_fusion"])
 serialization.register_adapter(
