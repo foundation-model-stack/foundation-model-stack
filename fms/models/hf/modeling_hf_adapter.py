@@ -592,7 +592,7 @@ class HFModelArchitecture(PreTrainedModel, metaclass=PostInitCaller):
             Optionally include an lm_head in this model. If an lm_head is not included, the lm_head logic will be
             skipped (default to None)
         """
-        super().__init__(config, *args, **kwargs)
+        super().__init__(copy.deepcopy(config), *args, **kwargs)
         self.lm_head = lm_head
         self.embedding = embedding
 
