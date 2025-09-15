@@ -301,7 +301,7 @@ def _map_model_config(architecture, config):
         config_params["type_vocab_size"] = config.type_vocab_size
     else:
         raise ValueError(
-            "FMS model implementations currently only support LlamaForCausalLM, GPTBigCodeForCausalLM, MixtralForCausalLM, RobertaForMaskedLM, GraniteForCausalLM, SiglipModel and LlavaNextForConditionalGeneration"
+            "FMS model implementations currently only support LlamaForCausalLM, GPTBigCodeForCausalLM, MixtralForCausalLM, RobertaForMaskedLM, RobertaForQuestionAnswering, RobertaForSequenceClassification, GraniteForCausalLM, MistralForCausalLM, BambaForCausalLM, SiglipModel, LlavaNextForConditionalGeneration, MPNetForMaskedLM, and BertForMaskedLM"
         )
 
     # infer common params
