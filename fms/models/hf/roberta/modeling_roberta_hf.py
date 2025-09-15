@@ -82,6 +82,8 @@ class HFAdaptedRoBERTaConfig(PretrainedConfig):
     def from_fms_config(cls, config: RoBERTaConfig, **hf_kwargs):
         config_dict = config.as_dict()
         config_dict["pad_token_id"] = config_dict.pop("pad_id")
+        if "num_classes" in config_dict:
+            config_dict["num_labels"] = config_dict.pop("num_classes")
         return cls.from_dict(config_dict, **hf_kwargs)
 
 
@@ -171,6 +173,7 @@ class HFAdaptedRoBERTaForSequenceClassification(
         config: HFAdaptedRoBERTaConfig,
         encoder: Optional[nn.Module] = None,
         embedding: Optional[nn.Module] = None,
+        classifier_head: Optional[nn.Module] = None,
         *args,
         **kwargs,
     ):
@@ -180,6 +183,7 @@ class HFAdaptedRoBERTaForSequenceClassification(
             classifier_dropout=config.classifier_dropout,
             encoder=encoder,
             embedding=embedding,
+            lm_head=classifier_head,
             *args,
             **kwargs,
         )
@@ -192,4 +196,5 @@ class HFAdaptedRoBERTaForSequenceClassification(
             config=config,
             encoder=model.base_model,
             embedding=model.base_model.embedding,
+            classifier_head=model.classification_head,
         )

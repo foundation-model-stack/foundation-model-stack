@@ -31,12 +31,8 @@ def test_roberta_base_for_masked_lm_equivalency():
         )
 
         model = get_model(
-            "roberta",
-            "base",
-            f"{workdir}/roberta-base-masked_lm",
-            "hf",
-            norm_eps=1e-5,
-            tie_heads=True,
+            architecture="hf_pretrained",
+            variant="roberta-base",
             device_type="cpu",
         )
 
@@ -138,8 +134,6 @@ def test_roberta_base_for_sequence_classification(task, problem_type):
         device_map="cpu",
     )
     hf_model.config.problem_type = problem_type
-    with torch.no_grad():
-        hf_model.roberta.embeddings.token_type_embeddings.weight.zero_()
 
     with tempfile.TemporaryDirectory() as workdir:
         hf_model.save_pretrained(
@@ -147,12 +141,8 @@ def test_roberta_base_for_sequence_classification(task, problem_type):
         )
 
         model = get_model(
-            "roberta",
-            "base",
-            f"{workdir}/SamLowe-roberta-base-go_emotions",
-            "hf",
-            norm_eps=1e-5,
-            tie_heads=True,
+            architecture="hf_pretrained",
+            variant="SamLowe/roberta-base-go_emotions",
             device_type="cpu",
         )
 
@@ -161,16 +151,11 @@ def test_roberta_base_for_sequence_classification(task, problem_type):
         model,
         id2label=hf_model.config.id2label,
         label2id=hf_model.config.label2id,
-        num_labels=hf_model.config.num_labels,
         eos_token_id=hf_model.config.eos_token_id,
         bos_token_id=hf_model.config.bos_token_id,
         pad_token_id=hf_model.config.pad_token_id,
         problem_type=hf_model.config.problem_type,
     )
-    hf_model_fms.lm_head.dense.weight = hf_model.classifier.dense.weight
-    hf_model_fms.lm_head.dense.bias = hf_model.classifier.dense.bias
-    hf_model_fms.lm_head.head.weight = hf_model.classifier.out_proj.weight
-    hf_model_fms.lm_head.head.bias = hf_model.classifier.out_proj.bias
 
     model.eval()
     hf_model.eval()
