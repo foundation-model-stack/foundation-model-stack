@@ -92,8 +92,8 @@ class FeedForwardBlock(nn.Module):
 
     def forward(self, x):
         out = self.a(self.w1(x))
-        if self.p_dropout:
-            out = self.d(out)
+        # if self.p_dropout:
+        #     out = self.d(out)
         out = self.w2(out)
         return out
 

@@ -1,10 +1,14 @@
 import argparse
+import math
 import os
 from contextlib import nullcontext
+from datetime import timedelta
 from pathlib import Path
+import random
 
 import torch
 from torch import distributed as dist
+from torch import nn
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.distributed.fsdp import ShardingStrategy
 from torch.utils.data import DataLoader
@@ -13,8 +17,7 @@ from torch.utils.data.distributed import DistributedSampler
 from fms import datasets, models
 from fms.training import plugins as trainplugins
 from fms.training import trainer
-from fms.utils import fusion, print0, tokenizers
-
+from fms.utils import fusion, print0, tokenizers, optimizers
 
 #
 # This is a fairly minimal training/tuning script for causal language models.
@@ -51,13 +54,19 @@ parser.add_argument(
     "--architecture",
     type=str,
     default="llama",
-    help="The model architecture to benchmark",
+    help="The model architecture to tune",
 )
 parser.add_argument(
     "--variant",
     type=str,
     default="micro",
-    help="The model variant (configuration) to benchmark. E.g. 7b, 13b, 70b.",
+    help="The model variant (configuration) to tune. E.g. 7b, 13b, 70b.",
+)
+parser.add_argument(
+    "--num_classes",
+    type=str,
+    default="micro",
+    help="The model variant (configuration) to tune. E.g. 7b, 13b, 70b.",
 )
 parser.add_argument(
     "--checkpoint_format",
@@ -97,10 +106,9 @@ parser.add_argument(
     help="The strategy used for distributing the model. E.g. fsdp, ddp, tp, mp. Default None",
 )
 parser.add_argument(
-    "--peft_method",
-    type=str,
-    default=None,
-    help="Peft method (lora, ...). Default None if not using peft",
+    "--unfuse_weights",
+    action="store_true",
+    help="If set to True, this will unfuse any fused weight modules that support the unfuse_weights method",
 )
 
 # Dataset arguments
@@ -147,6 +155,11 @@ parser.add_argument(
     default="inductor",
     help="What backend to use for compilation.",
 )
+parser.add_argument(
+    "--head_only",
+    action="store_true",
+    help="Whether to only tune the head or the whole model.",
+)
 
 # Training/tuning parameters
 parser.add_argument(
@@ -158,11 +171,6 @@ parser.add_argument(
     type=int,
     default=1,
     help="Number of steps to accumulate gradients before applying",
-)
-parser.add_argument(
-    "--head_only",
-    action="store_true",
-    help="Whether to only tune the head or the whole model.",
 )
 
 
@@ -199,6 +207,9 @@ if args.default_dtype is not None:
 
 group = None
 
+torch.manual_seed(1337)
+random.seed(1337)
+
 if args.distributed is not None:
     # gathering optimizer state takes more than 10 minutes, so need a longer timeout.
     dist.init_process_group(backend="nccl")
@@ -211,71 +222,13 @@ def get_loss_fn():
     ce_loss = torch.nn.CrossEntropyLoss()
 
     def loss_fn(output, target):
-        # model output is batch x seq_len x vocab_size.
-        # ce expects batch x vocab x seq_len
-        output = output.transpose(-1, -2)
         return ce_loss(output, target)
 
     return loss_fn
 
 
-def _hf_to_fms_model(model):
-    model.orig_forward_f = model.forward
-
-    def new_forward(self, *args, **kwargs):
-        hf_out = model.orig_forward_f(self, *args, **kwargs)
-        logits = hf_out.logits
-        kv_cache = hf_out.past_key_values
-        if "use_cache" in kwargs and kwargs["use_cache"]:
-            return logits, kv_cache
-        else:
-            return logits
-
-    model.forward = new_forward
-    return model
-
-
-def peft_model(model):
-    # TODO: consider using loralib directly instead:
-    # https://github.com/microsoft/LoRA/tree/main
-    # This would simplify checkpoint handling.
-    """
-    Converts an fms model to an PEFT and HF adapted (wrapped) model, while
-    preserving the original `forward` function.
-
-    If we call state_dict() on one of these models we'll get keys prefixed with
-    `base_model.model.*`, so correctly saving and re-loading one of these
-    requires some care. The state_dict will also contain all paramters, not
-    just the adapter, though we plan to use merged tuned models for now.
-    """
-    from peft import LoraConfig
-    from peft.mapping import PeftModelForCausalLM
-
-    from fms.models.hf.utils import to_hf_api
-
-    model = to_hf_api(model)
-    lora_config = LoraConfig(
-        r=8,
-        lora_alpha=32,
-        target_modules=["query", "key"],
-        bias="none",
-        task_type="CAUSAL_LM",
-        lora_dropout=0.05,
-        inference_mode=False,
-    )
-
-    if args.peft_method == "lora":
-        model = PeftModelForCausalLM(model, lora_config, adapter_name="None")
-    else:
-        # TODO: add others
-        raise ValueError("unsupported peft method", args.peft_method)
-
-    model = _hf_to_fms_model(model)
-    return model
-
-
 def training_state(model_path, model, rank):
-    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4)
+    optimizer = optimizers.SteppingAdamW(model.parameters(), lr=1e-5)
     is_fsdp = isinstance(model, FSDP)
     dataset_sd = {}
     epoch = 0
@@ -338,20 +291,26 @@ def main():
         distributed_strategy=args.distributed,
         group=group,
         p_dropout=0.0,
+        # classifier_activation_fn="gelu",
     )
-    model = fusion.apply_unfuse_weights(model)
-    # model.to(torch.half)
+    if args.unfuse_weights:
+        model = fusion.apply_unfuse_weights(model)
+    # model.base_model.rot_emb.compute_freqs_cis(device, 512)
+    # Initialize the classification head so we don't get NaNs
+    model.classification_head.pooler_linear.weight.data.normal_(
+        0,
+        1 / math.sqrt(math.sqrt(model.config.emb_dim * model.config.src_vocab_size)),
+    )
+    model.classification_head.head.weight.data.normal_(
+        0,
+        1 / math.sqrt(math.sqrt(model.config.emb_dim * model.config.src_vocab_size)),
+    )
     if args.head_only:
-        for name, param in model.named_parameters():
+        for param in model.parameters():
             param.requires_grad = False
-        # Untie head and activate its gradients
-        model.head.weight = torch.nn.Parameter(model.head.weight.clone().detach())
-        model.head.weight.requires_grad = True
+        model.classification_head.head.weight.requires_grad = True
     model.base_model.embedding.weight.requires_grad = False
-    if getattr(model, "base_model", None) and getattr(
-        model.base_model, "rot_emb", None
-    ):
-        model.base_model.rot_emb.compute_freqs_cis(model.head.weight.device, 4096)
+    model.base_model.position_embedding.weight.requires_grad = False
     optimizer, dataset_sd, epoch, prev_step, cum_tokens = training_state(
         args.model_path, model, rank
     )
@@ -362,22 +321,30 @@ def main():
     print0("dataset state", dataset_sd)
 
     if args.compile:
-        # model = torch.compile(model, backend="sendnn")
+        torch._dynamo.config.assume_static_by_default = True
+        torch._dynamo.config.dynamic_shapes = False
+        torch._dynamo.config.automatic_dynamic_shapes = False
+        # Handled by trainer to include loss
+        model = torch.compile(model, backend=args.compile_backend)
         optimizer.step = torch.compile(optimizer.step, backend=args.compile_backend)
 
     tokenizer = tokenizers.get_tokenizer(args.tokenizer)
 
-    if args.peft_method is not None:
-        model = peft_model(model)
-
-    bos_token_id = tokenizer.bos_token_id
-    eos_token_id = tokenizer.eos_token_id
+    pad_token_id = 0
+    bos_token_id = 101
+    eos_token_id = 102
     bos_token = tokenizer.convert_ids_to_tokens([bos_token_id])[0]
     eos_token = tokenizer.convert_ids_to_tokens([eos_token_id])[0]
 
     # TODO: split a validation dataset
     dataset = datasets.get_dataset(
-        args.dataset_style, tokenizer, args.dataset_path, pad_token=0, max_len=513
+        args.dataset_style,
+        tokenizer,
+        args.dataset_path,
+        pad_token_id=pad_token_id,
+        bos_token_id=bos_token_id,
+        eos_token_id=eos_token_id,
+        max_len=512,
     )
     if len(dataset_sd):
         dataset.load_state_dict(dataset_sd)
@@ -448,14 +415,14 @@ def main():
         device=device,
     )
     reporting = trainplugins.MetricReporter(
-        steps=1,
+        steps=args.report_steps,
         prev_step=prev_step,
         cumulative_tokens=cum_tokens,
         group=group,
         device=device,
     )
 
-    plugins = [reporting, validator, validator2, checkpointing]
+    plugins = [reporting, checkpointing]  #  validator, validator2
     print0("training...")
     with torch.cuda.device(local_rank) if device.type == "cuda" else nullcontext():
         trainer.train(

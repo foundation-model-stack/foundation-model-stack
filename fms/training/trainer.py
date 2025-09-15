@@ -1,9 +1,9 @@
+import functools
 from contextlib import nullcontext
 from typing import List, Optional
 
 import torch
-from torch import nn
-from torch.cuda import amp
+from torch import amp, nn
 from torch.optim import Optimizer
 from torch.utils.data import DataLoader, DistributedSampler
 
@@ -16,12 +16,23 @@ def __one_step(
     input: torch.Tensor,
     label: torch.Tensor,
     loss_fn: nn.Module,
-    grad_scaler: Optional[amp.GradScaler],
+    grad_scaler,
+    compile_loss: bool = False,
+    compile_backend: Optional[str] = None,
+    **kwargs,
 ):
-    autocast = amp.autocast if grad_scaler is not None else nullcontext
-    with autocast():
-        output = model(input)
-        loss = loss_fn(output, label)
+    def loss_fwd(input, model, label, **kwargs):
+        output = model(input, attn_algorithm="math", **kwargs)
+        return loss_fn(output, label)
+
+    if compile_loss:
+        loss_fwd = torch.compile(loss_fwd, backend=compile_backend)
+
+    autocast = (
+        torch.autocast(device_type="cuda") if grad_scaler is not None else nullcontext()
+    )
+    with autocast:
+        loss = loss_fwd(input, model, label, **kwargs)
 
     if grad_scaler is not None:
         grad_scaler.scale(loss).backward()
@@ -52,6 +63,8 @@ def __one_epoch(
     prev_step: int,
     plugins: List[TrainerPlugin],
     accum_iters: int = 1,
+    compile_loss: bool = False,
+    compile_backend: Optional[str] = None,
 ):
     print0("Epoch", epoch)
     model.train()
@@ -66,7 +79,7 @@ def __one_epoch(
     optimizer.zero_grad()
 
     highest_step = prev_step
-    for step, (input, label) in enumerate(data):
+    for step, (input, label, kwargs) in enumerate(data):
         step = prev_step + step + 1
         highest_step = step
 
@@ -75,8 +88,21 @@ def __one_epoch(
 
         input = input.to(device)
         label = label.to(device)
+        kwargs = {
+            k: v.to(device) if isinstance(v, torch.Tensor) else v
+            for k, v in kwargs.items()
+        }
 
-        loss = __one_step(model, input, label, loss_fn, grad_scaler)
+        loss = __one_step(
+            model,
+            input,
+            label,
+            loss_fn,
+            grad_scaler,
+            compile_loss=compile_loss,
+            compile_backend=compile_backend,
+            **kwargs,
+        )
         if (step + 1) % accum_iters == 0:
             __optimize(model, optimizer, grad_scaler)
             optimized = True
@@ -92,8 +118,12 @@ def __one_epoch(
             plugin.step(epoch, step, metrics)
     if not optimized:
         __optimize(model, optimizer, grad_scaler)
+    metrics = {
+        "batch_size": batch_size,
+        "input_length": input_length,
+    }
     for plugin in plugins:
-        plugin.step(epoch, step=highest_step, end_of_epoch=True)
+        plugin.step(epoch, step=highest_step, metrics=metrics, end_of_epoch=True)
 
 
 def train(
@@ -107,6 +137,8 @@ def train(
     prev_step: int = -1,
     trainer_plugins: List[TrainerPlugin] = [],
     grad_accum_iters: int = 1,
+    compile_loss: bool = False,
+    compile_backend: Optional[str] = None,
 ):
     for epoch in range(start_epoch, start_epoch + epochs):
         __one_epoch(
@@ -119,4 +151,6 @@ def train(
             prev_step,
             trainer_plugins,
             accum_iters=grad_accum_iters,
+            compile_loss=compile_loss,
+            compile_backend=compile_backend,
         )

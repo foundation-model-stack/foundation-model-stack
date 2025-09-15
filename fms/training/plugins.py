@@ -122,15 +122,14 @@ class MetricReporter(TrainerPlugin):
     # tracking tools such as aimstack/wandb/neptune (or add alternate plugin?)
     def __init__(
         self,
-        seconds=10,
+        steps: int,
         group: Optional[dist.ProcessGroup] = None,
         prev_step: int = -1,
         cumulative_tokens: int = 0,
         device="cpu",
         writer=print0,
     ):
-        super().__init__(1)
-        self.seconds = seconds
+        super().__init__(steps)
         self.last_reported_time = datetime.now()
         self.tokens_seen = torch.tensor(0, device=device)
         self.cumulative_tokens = torch.tensor(cumulative_tokens, device=device)
@@ -161,8 +160,7 @@ class MetricReporter(TrainerPlugin):
             self.last_step = step
             if step == self.last_reported_step:
                 return
-            steps_taken = step - self.last_reported_step
-            if steps_taken * self.time_per_step < self.seconds:
+            if step % self.steps != 0:
                 return
             time_per_step = elapsed / (step - self.last_reported_step)
             self.time_per_step.fill_(time_per_step)
@@ -317,6 +315,9 @@ class Checkpointer(TrainerPlugin):
             os.makedirs(path, exist_ok=True)
             train_file = path / f"rank_{self.group.rank():02d}.train"
             path = path / f"rank_{self.group.rank():02d}.pth"
+
+        # Remove torch.compile wrapping if it exists
+        model_dict = {k.replace("_orig_mod.", ""): v for k, v in model_dict.items()}
 
         print0("Writing model checkpoint", path)
         if is_fsdp:

@@ -4,7 +4,9 @@ import torch
 from torch.utils.data import Dataset, IterableDataset
 
 from fms.datasets import arrow, text
+from fms.datasets.aml import AMLDataset
 from fms.datasets.instructions import JsonInstructions
+from fms.datasets.sentiment import JsonCausal, JsonSentiment
 from fms.utils.tokenizers import BaseTokenizer
 
 
@@ -30,8 +32,11 @@ class MockDataset(IterableDataset):
             yield t, t
 
 
-__dataset_factory: Mapping[str, Callable[[str, BaseTokenizer], Dataset] | type] = {
+__dataset_factory: Mapping[str, Callable[[str, BaseTokenizer], Dataset]] = {
     "instruction": JsonInstructions,
+    "sentiment": JsonSentiment,
+    "causal": JsonCausal,
+    "aml": AMLDataset,
     "text": text.causaltext,
     "arrow": _arrow_ds_generator,
     "mock": MockDataset,
