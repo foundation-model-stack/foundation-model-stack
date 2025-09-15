@@ -585,19 +585,9 @@ models.register_model(
 serialization.register_adapter_step(
     "llama", "pre0.0.6_attn_unfused_to_fused", serialization._pre006_attn_adapter_step
 )
-serialization.register_adapter_step(
-    "llama_classifier",
-    "pre0.0.6_attn_unfused_to_fused",
-    serialization._pre006_attn_adapter_step,
-)
 
 serialization.register_adapter_step(
     "llama",
-    "swiglu_unfused_to_fused",
-    serialization._mlp_glu_unfused_to_fused_adapter_step,
-)
-serialization.register_adapter_step(
-    "llama_classifier",
     "swiglu_unfused_to_fused",
     serialization._mlp_glu_unfused_to_fused_adapter_step,
 )
@@ -620,7 +610,6 @@ def _weight_fusion(
 
 
 serialization.register_adapter_step("llama", "weight_fusion", _weight_fusion)
-serialization.register_adapter_step("llama_classifier", "weight_fusion", _weight_fusion)
 
 
 def _hf_gptq_llama_check(
@@ -644,9 +633,6 @@ def _hf_gptq_llama_check(
 
 serialization.register_adapter_step(
     "llama", "hf_gptq_fusion_check", _hf_gptq_llama_check
-)
-serialization.register_adapter_step(
-    "llama_classifier", "hf_gptq_fusion_check", _hf_gptq_llama_check
 )
 
 
@@ -678,9 +664,6 @@ def _meta_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, An
 
 
 serialization.register_adapter_step("llama", "meta_to_fms_names", _meta_to_fms_names)
-serialization.register_adapter_step(
-    "llama_classifier", "meta_to_fms_names", _meta_to_fms_names
-)
 
 
 def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]:
@@ -709,9 +692,6 @@ def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]
 
 
 serialization.register_adapter_step("llama", "hf_to_fms_names", _hf_to_fms_names)
-serialization.register_adapter_step(
-    "llama_classifier", "hf_to_fms_names", _hf_to_fms_names
-)
 
 
 def _get_rope_params(linear_type: str) -> list[str]:
@@ -799,11 +779,7 @@ serialization.register_adapter(
         "weight_fusion",
     ],
 )
-serialization.register_adapter(
-    "llama_classifier",
-    "hf",
-    ["hf_to_fms_names", "hf_to_fms_rope", "hf_gptq_fusion_check", "weight_fusion"],
-)
+
 serialization.register_adapter(
     "llama",
     "fms.pre0.0.6",
