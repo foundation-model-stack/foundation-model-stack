@@ -62,7 +62,6 @@ def convert_to_hf(
         an HF equivalent model
     """
     hf_config: HFAdaptedLLaMAConfig = fms_hf_model.config
-    print(hf_config.emb_dim, hf_config.multiple_of)
     oss_hf_model = LlamaForCausalLM(
         LlamaConfig(
             vocab_size=hf_config.src_vocab_size,
@@ -125,7 +124,6 @@ def convert_to_hf(
             w1, wg = torch.split(
                 fms_hf_layer.ff_sub_layer.wg1_fused.weight, wg_splits, dim=0
             )
-            print(oss_hf_layer.mlp.gate_proj.weight.shape, wg.shape)
             oss_hf_layer.mlp.gate_proj.weight.copy_(wg)
             oss_hf_layer.mlp.up_proj.weight.copy_(w1)
             oss_hf_layer.mlp.down_proj.weight.copy_(fms_hf_layer.ff_sub_layer.w2.weight)
