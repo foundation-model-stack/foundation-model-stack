@@ -697,7 +697,7 @@ def _hf_to_fms_rope(
             new_sd[name] = _rope_transpose(param, lang_head_size, lang_linear_type )
         elif trans_required_pattern_vision.match(name):
             # Apply RoPE transformation for vision model
-            param = _rope_transpose(param, vision_head_size, vision_linear_type)
+            new_sd[name] = _rope_transpose(param, vision_head_size, vision_linear_type)
         else:
             new_sd[name] = param
 
