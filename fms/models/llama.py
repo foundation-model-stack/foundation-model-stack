@@ -62,11 +62,6 @@ class LLaMAConfig(ModelConfig):
     fused_weights: bool = True
 
 
-@dataclass
-class LLaMAForClassificationConfig(LLaMAConfig):
-    num_classes: int = 2
-
-
 class LLaMABlock(nn.Module):
     def __init__(self, config: LLaMAConfig, rotary_emb: RotaryEmbedding):
         super(LLaMABlock, self).__init__()
@@ -266,17 +261,6 @@ class LLaMAHeadless(nn.Module):
                 or isinstance(m, LayerNormParameterized)
             ):
                 m.reset_parameters()
-
-        # RoPE init
-        if isinstance(self.distributed_strategy, UniformModelParallelStrategy):
-            for dev_idx in set(self.distributed_strategy.layer_to_device):
-                self.rot_emb.compute_freqs_cis(
-                    torch.device("cuda", dev_idx), self.config.max_expected_seq_len
-                )
-        else:
-            self.rot_emb.compute_freqs_cis(
-                self.shared.emb.weight.device, self.config.max_expected_seq_len
-            )
 
     def validate_reset_parameters(self):
         # Verifies that the above self.reset_parameters() executed correctly.
@@ -524,10 +508,6 @@ _8b_llama3_config = LLaMAConfig(
 _granite_7b_config = LLaMAConfig(
     src_vocab_size=32008,
 )
-_granite_7b_classification_config = LLaMAForClassificationConfig(
-    src_vocab_size=32008,
-    num_classes=2,
-)
 
 _granite_3b_code_config = LLaMAConfig(
     src_vocab_size=49152,
@@ -540,19 +520,6 @@ _granite_3b_code_config = LLaMAConfig(
     attn_bias=True,
     mlp_bias=True,
     tie_heads=True,
-)
-_granite_3b_code_classification_config = LLaMAForClassificationConfig(
-    src_vocab_size=49152,
-    emb_dim=2560,
-    pad_id=0,
-    hidden_grow_factor=10240 / 2560,
-    multiple_of=1,
-    p_dropout=0.1,
-    max_expected_seq_len=2048,
-    attn_bias=True,
-    mlp_bias=True,
-    tie_heads=True,
-    num_classes=2,
 )
 
 _granite_8b_code_config = LLaMAConfig(
@@ -580,13 +547,6 @@ def _llama_factory_factory(config):
     return factory
 
 
-def _llama_classification_factory_factory(config):
-    def factory(**kwargs):
-        return LLaMAForClassification(config, **kwargs)
-
-    return factory
-
-
 models.register_model(
     _architecture_name, "micro", _llama_factory_factory(_micro_char_config)
 )
@@ -610,20 +570,9 @@ models.register_model(
     _architecture_name, "granite-7b", _llama_factory_factory((_granite_7b_config))
 )
 models.register_model(
-    "llama_classifier",
-    "granite-7b",
-    _llama_classification_factory_factory(_granite_7b_classification_config),
-)
-models.register_model(
     _architecture_name,
     "granite.code-3b",
     _llama_factory_factory((_granite_3b_code_config)),
-)
-
-models.register_model(
-    "llama_classifier",
-    "granite.code-3b",
-    _llama_classification_factory_factory(_granite_3b_code_classification_config),
 )
 
 models.register_model(
@@ -838,12 +787,6 @@ def _hf_to_fms_rope(
 
 
 serialization.register_adapter_step("llama", "hf_to_fms_rope", _hf_to_fms_rope)
-<<<<<<< HEAD
-serialization.register_adapter_step(
-    "llama_classifier", "hf_to_fms_rope", _hf_to_fms_rope
-)
-=======
->>>>>>> main
 
 serialization.register_adapter("llama", "meta", ["meta_to_fms_names", "weight_fusion"])
 serialization.register_adapter(
