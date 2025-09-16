@@ -1,8 +1,10 @@
 from typing import Any, Mapping, Optional, Set
+import math
 
 import torch
 import torch.distributed
 import torch.nn as nn
+import torch.nn.init as init
 import torch.nn.functional as F
 from torch.distributed.distributed_c10d import ProcessGroup
 
@@ -470,13 +472,46 @@ class ConditionalFeedForward(nn.Module):
         The intermediate size for the expert networks.
     """
 
-    def __init__(self, num_experts: int, dim: int, intermediate_size: int):
+    def __init__(
+        self,
+        num_experts: int,
+        dim: int,
+        intermediate_size: int,
+        use_bias: bool = False,
+    ):
         super().__init__()
         self.num_experts = num_experts
         self.dim = dim
         self.intermediate_size = intermediate_size
-        self.w13 = nn.Parameter(torch.empty(num_experts, 2 * intermediate_size, dim))
-        self.w2 = nn.Parameter(torch.empty(num_experts, dim, intermediate_size))
+        self.w13 = (
+            nn.Parameter(torch.empty(num_experts, 2 * intermediate_size, dim))
+            if not use_bias
+            else nn.Parameter(
+                torch.empty(num_experts, 2 * intermediate_size, intermediate_size)
+            )
+        )
+        self.w2 = (
+            nn.Parameter(torch.empty(num_experts, dim, intermediate_size))
+            if not use_bias
+            else nn.Parameter(
+                torch.empty(num_experts, intermediate_size, intermediate_size)
+            )
+        )
+        self.use_bias = use_bias
+        self.w13_bias = torch.nn.Parameter(
+            torch.empty(num_experts, 2 * intermediate_size)
+        )
+        self.w2_bias = torch.nn.Parameter(torch.empty(num_experts, intermediate_size))
+
+        init.kaiming_uniform_(self.w13, a=math.sqrt(5))
+        init.kaiming_uniform_(self.w2, a=math.sqrt(5))
+        init.zeros_(self.w13_bias)
+        init.zeros_(self.w2_bias)
+
+        assert self.is_parameter_initialized(self.w13), "Loaded w13"
+        assert self.is_parameter_initialized(self.w2), "Loaded w2"
+        assert self.is_parameter_initialized(self.w13_bias), "Loaded w13_bias"
+        assert self.is_parameter_initialized(self.w2_bias), "Loaded w2_bias"
 
     def reset_parameters(self):
         for param in ["w13", "w2"]:
@@ -485,6 +520,9 @@ class ConditionalFeedForward(nn.Module):
                 mean=0.0,
                 std=0.02,
             )
+
+    def is_parameter_initialized(self, param: nn.Parameter):
+        return param is not None and isinstance(param, nn.Parameter)
 
     def to_tp(self, group: ProcessGroup) -> "TPConditionalFeedForward":
         return TPConditionalFeedForward.import_module(self, group)
@@ -514,16 +552,21 @@ class ConditionalFeedForward(nn.Module):
             total_padded_tokens,
         ) = triton_ops.moe_align_block_size(expert_indices, padding_size, E)
 
+        original_num_tokens = x.shape[0]
+
         x1, x3 = (
             torch.ops.moe.moe_mm(
                 x,
                 self.w13,
+                self.use_bias,
+                self.w13_bias,
                 expert_indices,
                 padded_token_ids_per_block,
                 expert_block_mapping,
                 total_padded_tokens,
                 expert_indices.shape[1],
                 padding_size,
+                original_num_tokens,
             )
             .view(-1, N)
             .chunk(2, dim=1)
@@ -531,12 +574,15 @@ class ConditionalFeedForward(nn.Module):
         return torch.ops.moe.moe_mm(
             F.silu(x1) * x3,
             self.w2,
+            self.use_bias,
+            self.w2_bias,
             expert_indices,
             padded_token_ids_per_block,
             expert_block_mapping,
             total_padded_tokens,
             1,
             padding_size,
+            original_num_tokens,
         )
 
 
@@ -640,11 +686,20 @@ class MOEFeedForward(nn.Module):
         num_activated_experts: int,
         dim: int,
         intermediate_size: int,
+        use_bias: bool = False,
     ) -> None:
         super().__init__()
-        self.gate = nn.Linear(dim, num_experts, bias=False)
-        self.cond_ffn = ConditionalFeedForward(num_experts, dim, intermediate_size)
+        self.cond_ffn = ConditionalFeedForward(
+            num_experts, dim, intermediate_size, use_bias=use_bias
+        )
         self.dim = dim
+        self.gate = (
+            nn.Linear(dim, num_experts, bias=use_bias)
+            if not use_bias
+            else nn.Linear(intermediate_size, num_experts, bias=use_bias)
+        )
+        self.use_bias = use_bias
+        self.intermediate_size = intermediate_size
         self.num_activated_experts = num_activated_experts
 
     def reset_parameters(self):
@@ -658,7 +713,13 @@ class MOEFeedForward(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         B, S = x.shape[:2]
-        x = x.view(-1, self.dim)
+
+        x = (
+            x.view(-1, self.dim)
+            if not self.use_bias
+            else x.view(-1, self.intermediate_size)
+        )
+
         # T = num_tokens, E = num_experts, D = hidden dim, A = activated experts
         # x: [T, D]
         scores = self.gate(x)  # [T, E]
@@ -667,7 +728,18 @@ class MOEFeedForward(nn.Module):
             expert_weights, self.num_activated_experts, dim=-1
         )  # [T, A], [T, A]
         expert_weights /= expert_weights.sum(dim=-1, keepdim=True)  # [T, A]
+
         expert_outs = self.cond_ffn(x, expert_indices)
+
+        if self.use_bias:
+            expert_outs = expert_outs.view(
+                B * S, expert_indices.shape[1], self.intermediate_size
+            )
+
         int_v1 = torch.einsum("tai,ta -> ti", expert_outs, expert_weights)
-        int_v2 = int_v1.view(B, S, self.dim)
+        if self.use_bias:
+            int_v2 = int_v1.view(B, S, self.intermediate_size)
+        else:
+            int_v2 = int_v1.view(B, S, self.dim)
+
         return int_v2

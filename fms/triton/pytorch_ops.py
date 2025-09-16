@@ -2,6 +2,7 @@ from typing import Tuple
 
 import torch
 from torch.library import custom_op
+from torch.nn import functional as F
 
 
 def moe_align_block_size(
@@ -98,12 +99,15 @@ def moe_align_block_size(
 def moe_mm(
     input: torch.Tensor,
     moe_matrix: torch.Tensor,
+    use_bias: bool,
+    moe_bias_matrix: torch.Tensor,
     token_expert_mapping: torch.Tensor,
     padded_token_ids_per_block: torch.Tensor,
     expert_block_mapping: torch.Tensor,
     total_padded_tokens: torch.Tensor,
     topk: int,
     padding_size: int,
+    original_num_tokens: int,
 ) -> torch.Tensor:
     from fms.triton.moe_kernel import invoke_fused_moe_kernel
 
@@ -121,6 +125,7 @@ def moe_mm(
         total_padded_tokens,
         topk,
         padding_size,
+        original_num_tokens,
     )
 
     return output
@@ -130,12 +135,15 @@ def moe_mm(
 def moe_mm_meta(
     input: torch.Tensor,
     moe_matrix: torch.Tensor,
+    use_bias: bool,
+    moe_bias_matrix: torch.Tensor,
     token_expert_mapping: torch.Tensor,
     padded_token_ids_per_block: torch.Tensor,
     expert_block_mapping: torch.Tensor,
     total_padded_tokens: torch.Tensor,
     topk: int,
     padding_size,
+    original_num_tokens: int,
 ):
     M, A = token_expert_mapping.shape
     _, N, _ = moe_matrix.shape
@@ -162,12 +170,15 @@ def moe_mm_setup_context(ctx, inputs, output):
     (
         input_,
         moe_matrix,
+        use_bias,
+        moe_bias_matrix,
         token_expert_mapping,
         padded_token_ids_per_block,
         expert_block_mapping,
         total_padded_tokens,
         topk,
         padding_size,
+        original_num_tokens,
     ) = inputs
     ctx.save_for_backward(input_)
     pass
@@ -180,22 +191,47 @@ moe_mm.register_autograd(moe_mm_backward, setup_context=moe_mm_setup_context)
 def moe_mm_cpu(
     input: torch.Tensor,
     moe_matrix: torch.Tensor,
+    use_bias: bool,
+    moe_bias_matrix: torch.Tensor,
     token_expert_mapping: torch.Tensor,
     padded_token_ids_per_block: torch.Tensor,
     expert_block_mapping: torch.Tensor,
     total_padded_tokens: torch.Tensor,
     topk: int,
     padding_size,
+    original_num_tokens: int,
 ):
     T, D = input.shape
     M, A = token_expert_mapping.shape
-
+    assert torch.isfinite(input).all(), f"input has NaNs: {input}"
     a = input.view(T, -1, D).repeat(1, topk, 1).reshape(-1, D)
     out = torch.zeros(T * topk, moe_matrix.shape[1], dtype=a.dtype, device=a.device)
 
     token_expert_mapping = token_expert_mapping.view(-1)
+
+    if use_bias:
+        moe_index = moe_matrix[0]
+        if moe_index.shape[0] == D:
+            moe_index = moe_index.T
+
     for i in range(moe_matrix.shape[0]):
         mask = token_expert_mapping == i
         if mask.sum():
-            out[mask] = a[mask] @ moe_matrix[i].transpose(0, 1)
-    return out.view(M, A, moe_matrix.shape[1])
+            if use_bias:
+                moe_index = moe_matrix[i]
+                if moe_bias_matrix[i].shape[0] != moe_index.shape[0]:
+                    raise ValueError(
+                        f"Bias shape mismatch: bias {moe_bias_matrix[i].shape[0]} vs weight {moe_index.shape}"
+                    )
+                out[mask] = F.linear(
+                    a[mask],
+                    moe_index.to(dtype=a.dtype),
+                    bias=moe_bias_matrix[i].to(dtype=a.dtype),
+                )
+            else:
+                out[mask] = a[mask] @ moe_matrix[i].transpose(0, 1)
+
+    if use_bias:
+        return out.view(original_num_tokens, topk, -1)
+    else:
+        return out.view(M, A, moe_matrix.shape[1])
