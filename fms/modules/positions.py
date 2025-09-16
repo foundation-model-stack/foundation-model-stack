@@ -5,6 +5,8 @@ from typing import MutableMapping, Optional, Tuple
 
 import torch
 
+from pycony import *
+DEBUG_MODE = True
 
 class PositionEncoder:
     """
@@ -313,7 +315,26 @@ class RotaryEmbedding(PositionEncoder):
         assert len(q.size()) == 4
         assert len(k.size()) == 4
 
-        seq_len = max(k.size(1), q.size(1))
+        # ---- Debug: incoming shapes ----
+        device = q.device
+        q_size = q.size()
+        k_size = k.size()
+        if DEBUG_MODE: print("q in:", q.shape)            # [..., S, Dh]
+        if DEBUG_MODE: print("k in:", k.shape)
+        if DEBUG_MODE: print("position_ids:", position_ids.shape)
+
+        forced_dim = 128
+        pad_len = max(0, forced_dim - q_size[-1])
+
+        # ---- 1) Zero-pad q,k on last dim to 128 if needed ----
+        if pad_len > 0:
+            q = torch.cat([q, torch.zeros_like(q[..., :pad_len])], dim=-1)
+            k = torch.cat([k, torch.zeros_like(k[..., :pad_len])], dim=-1)
+            if DEBUG_MODE: print("q after pad:", q.shape)
+            if DEBUG_MODE: print("k after pad:", k.shape)
+    
+        seq_len = max(k_size[1], q_size[1])
+
         if position_ids is None:
             # Compute position_ids based on cache config
             position_ids = torch.arange(
@@ -327,38 +348,127 @@ class RotaryEmbedding(PositionEncoder):
             ):
                 position_ids += past_kv_state[0].size(2)
 
+            if DEBUG_MODE: print("position_ids was None so created :", position_ids.shape)
+
         if self.partial_rope != 1.0:
-            q_rope = q[..., : self.dim]
-            k_rope = k[..., : self.dim]
+            q_rope = q[..., : forced_dim]
+            k_rope = k[..., : forced_dim]
         else:
             q_rope = q
             k_rope = k
+
+        if DEBUG_MODE: print("q_rope :", q.shape)
+        if DEBUG_MODE: print("k_rope :", k.shape)
+
         q_ = q_rope.float().view(*q.size()[:-1], -1, 2)  # B L H D/2 2
         k_ = k_rope.float().view(*k.size()[:-1], -1, 2)  # B L H D/2 2
+        if DEBUG_MODE: print("q_ :", q_.shape)
+        if DEBUG_MODE: print("k_ :", k_.shape)
 
         # the max start position should be based on the max first position of each sequence
         max_start_pos = torch.max(position_ids[:, 0])
         alpha = self.compute_freqs_cis(q.device, max_start_pos + seq_len)
-        freqs = self.cached_freqs[q.device.index][alpha][position_ids]
+        freqs_pos = self.cached_freqs[q.device.index][alpha]
+
+        # if pad_len > 0:
+        #     # Here we need to add no-ops to freqs_pos so that would correspond to zero padded part of q and k
+        #     # when freqs = freqs_pos[position_ids] is done 
+        #     # Hint freqs_pos.size(1) == 64 e.g torch.Size([131072, 64, 2, 2])
+        #     freqs_pos = torch.cat([freqs_pos, freqs_pos], dim=1)
+        #     pass
+
+
+        # Pad freqs with no-op rotations (cos=1, sin=0)
+        if pad_len > 0:
+            n_pad = pad_len // 2  # because freqs is D/2
+            no_ops = torch.zeros(
+                freqs_pos.size(0), n_pad, 2, 2, device=freqs_pos.device, dtype=freqs_pos.dtype
+            )
+            no_ops[..., 0, 0] = 1
+            no_ops[..., 1, 1] = 1
+            freqs_pos = torch.cat([freqs_pos, no_ops], dim=1)
+            if DEBUG_MODE: print("freqs_pos padded:", freqs_pos.shape)
+
+
+        if DEBUG_MODE: print("freqs_pos :", freqs_pos.shape)
+        freqs = freqs_pos[position_ids] # freqs should shape like : torch.Size([1, 64, 64, 2, 2])
+        if DEBUG_MODE: print("freqs :", freqs.shape)
+
+
 
         freqs = freqs.float()  # 1 L D/2 2 2
-        q_out = (
-            freqs[:, -q.size(1) :, None, :, :, :]
-            .mul(q_.unsqueeze(-2))
-            .sum(5)
-            .flatten(3)
-        ).type_as(q)
-        k_out = (
-            freqs[:, -k.size(1) :, None, :, :, :]
-            .mul(k_.unsqueeze(-2))
-            .sum(5)
-            .flatten(3)
-        ).type_as(k)
+
+        # q_out = (
+        #     freqs[:, -q.size(1) :, None, :, :, :]
+        #     .mul(q_.unsqueeze(-2))
+        #     .sum(5)
+        #     .flatten(3)
+        # ).type_as(q)
+        # k_out = (
+        #     freqs[:, -k.size(1) :, None, :, :, :]
+        #     .mul(k_.unsqueeze(-2))
+        #     .sum(5)
+        #     .flatten(3)
+        # ).type_as(k)
+
+
+        # Process q_out
+        q_freqs = freqs[:, -q.size(1):, None, :, :, :]
+        if DEBUG_MODE: print(f"q_freqs : {q_freqs.shape}")
+
+        q_expanded = q_.unsqueeze(-2)
+        if DEBUG_MODE: print(f"q_expanded : {q_expanded.shape}")
+
+        q_multiplied = q_freqs.mul(q_expanded)
+        if DEBUG_MODE: print(f"q_multiplied : {q_multiplied.shape}")
+
+        q_summed = q_multiplied.sum(5)
+        if DEBUG_MODE: print(f"q_summed : {q_summed.shape}")
+
+        q_flattened = q_summed.flatten(3)
+        if DEBUG_MODE: print(f"q_flattened : {q_flattened.shape}")
+
+        q_out = q_flattened.type_as(q)
+        if DEBUG_MODE: print(f"q_out : {q_out.shape}")
+
+        # Process k_out
+        k_freqs = freqs[:, -k.size(1):, None, :, :, :]
+        if DEBUG_MODE: print(f"k_freqs : {k_freqs.shape}")
+
+        k_expanded = k_.unsqueeze(-2)
+        if DEBUG_MODE: print(f"k_expanded : {k_expanded.shape}")
+
+        k_multiplied = k_freqs.mul(k_expanded)
+        if DEBUG_MODE: print(f"k_multiplied : {k_multiplied.shape}")
+
+        k_summed = k_multiplied.sum(5)
+        if DEBUG_MODE: print(f"k_summed : {k_summed.shape}")
+
+        k_flattened = k_summed.flatten(3)
+        if DEBUG_MODE: print(f"k_flattened : {k_flattened.shape}")
+
+        k_out = k_flattened.type_as(k)
+        if DEBUG_MODE: print(f"k_out : {k_out.shape}")
+
 
         if self.partial_rope != 1.0:
-            q_out = torch.cat([q_out.view_as(q_rope), q[..., self.dim :]], dim=-1)
-            k_out = torch.cat([k_out.view_as(k_rope), k[..., self.dim :]], dim=-1)
+            q_out = torch.cat([q_out.view_as(q_rope), q[..., forced_dim :]], dim=-1)
+            k_out = torch.cat([k_out.view_as(k_rope), k[..., forced_dim :]], dim=-1)
         else:
             q_out = q_out.view_as(q_rope)
             k_out = k_out.view_as(k_rope)
+
+
+        if DEBUG_MODE: print(f"q_out : {q_out.shape}")
+        if DEBUG_MODE: print(f"k_out : {k_out.shape}")
+
+        if pad_len > 0: 
+            q_out = q_out[..., q_size[3]-1].to(device)
+            k_out = k_out[..., k_size[3]-1].to(device)
+
+        if DEBUG_MODE: print(f"final q_out : {q_out.shape}")
+        if DEBUG_MODE: print(f"final k_out : {k_out.shape}")
+
+        if DEBUG_MODE: open_console()
+
         return q_out, k_out
