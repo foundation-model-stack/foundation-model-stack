@@ -6,7 +6,7 @@ import torch
 from transformers import (
     AutoModelForMaskedLM,
     AutoModelForSequenceClassification,
-    RobertaTokenizerFast,
+    AutoTokenizer,
 )
 
 from fms.models import get_model
@@ -21,18 +21,19 @@ from fms.testing.comparison import (
 )
 
 
-def test_roberta_base_for_masked_lm_equivalency():
+@pytest.mark.parametrize("model_id", ["roberta-base", "google-bert/bert-base-uncased"])
+def test_roberta_base_for_masked_lm_equivalency(model_id):
     # create models
-    hf_model = AutoModelForMaskedLM.from_pretrained("roberta-base", device_map="cpu")
+    hf_model = AutoModelForMaskedLM.from_pretrained(model_id, device_map="cpu")
 
     with tempfile.TemporaryDirectory() as workdir:
         hf_model.save_pretrained(
-            f"{workdir}/roberta-base-masked_lm", safe_serialization=False
+            f"{workdir}/{model_id}-masked_lm", safe_serialization=False
         )
 
         model = get_model(
             architecture="hf_pretrained",
-            variant="roberta-base",
+            variant=model_id,
             device_type="cpu",
         )
 
@@ -40,7 +41,9 @@ def test_roberta_base_for_masked_lm_equivalency():
     model_param_count = sum([p.numel() for p in model.parameters()])
     # note: we subtract 2*768 because our model uses 512 positional encodings instead
     # of 514 (they don't use their position 0, and their position 1 is the zeros vector)
-    hf_model_param_count = sum([p.numel() for p in hf_model.parameters()]) - 2 * 768
+    hf_model_param_count = sum([p.numel() for p in hf_model.parameters()])
+    if "roberta" in model_id:
+        hf_model_param_count -= 2 * 768
     assert model_param_count == hf_model_param_count
 
     hf_model_fms = to_hf_api(
@@ -81,8 +84,12 @@ def test_roberta_base_for_masked_lm_equivalency():
     from transformers import pipeline
 
     with torch.no_grad():
-        tokenizer = RobertaTokenizerFast.from_pretrained("roberta-base")
-        prompt = "Hello I'm a <mask> model."
+        tokenizer = AutoTokenizer.from_pretrained(model_id)
+        if "roberta" in model_id:
+            mask_token = "<mask>"
+        else:
+            mask_token = "[MASK]"
+        prompt = f"Hello I'm a {mask_token} model."
         unmasker = pipeline("fill-mask", model=hf_model, tokenizer=tokenizer)
         hf_output = unmasker(prompt)
 
@@ -109,10 +116,7 @@ def test_roberta_base_for_masked_lm_equivalency():
         input_ids=inputs, labels=labels, attention_mask=attention_mask, return_dict=True
     ).loss
 
-    torch._assert(
-        math.isclose(hf_model_loss.item(), hf_model_fms_loss.item(), abs_tol=1e-3),
-        "model loss is not equal",
-    )
+    torch.testing.assert_close(hf_model_loss, hf_model_fms_loss, rtol=1e-3, atol=1e-3)
 
 
 sequence_classification_params = [
@@ -123,26 +127,31 @@ sequence_classification_params = [
 
 
 @pytest.mark.parametrize(
+    "model_id",
+    [
+        "SamLowe/roberta-base-go_emotions",
+        "nlptown/bert-base-multilingual-uncased-sentiment",
+    ],
+)
+@pytest.mark.parametrize(
     "task,problem_type",
     sequence_classification_params,
     ids=[x[1] for x in sequence_classification_params],
 )
-def test_roberta_base_for_sequence_classification(task, problem_type):
+def test_roberta_base_for_sequence_classification(model_id, task, problem_type):
     # create models
     hf_model = AutoModelForSequenceClassification.from_pretrained(
-        "SamLowe/roberta-base-go_emotions",
+        model_id,
         device_map="cpu",
     )
     hf_model.config.problem_type = problem_type
 
     with tempfile.TemporaryDirectory() as workdir:
-        hf_model.save_pretrained(
-            f"{workdir}/SamLowe-roberta-base-go_emotions", safe_serialization=False
-        )
+        hf_model.save_pretrained(f"{workdir}/{model_id}", safe_serialization=False)
 
         model = get_model(
             architecture="hf_pretrained",
-            variant="SamLowe/roberta-base-go_emotions",
+            variant=model_id,
             device_type="cpu",
         )
 
@@ -164,7 +173,7 @@ def test_roberta_base_for_sequence_classification(task, problem_type):
     from transformers import pipeline
 
     with torch.no_grad():
-        tokenizer = RobertaTokenizerFast.from_pretrained("roberta-base")
+        tokenizer = AutoTokenizer.from_pretrained(model_id)
         prompt = "Hugging Face is the best thing since sliced bread!"
         classifier = pipeline(task=task, model=hf_model, tokenizer=tokenizer)
         hf_output = classifier(prompt)
@@ -193,8 +202,6 @@ def test_roberta_base_for_sequence_classification(task, problem_type):
     hf_model_fms_loss = hf_model_fms(
         input_ids=inputs, labels=labels, attention_mask=attention_mask, return_dict=True
     ).loss
-    print(hf_model_loss)
-    print(hf_model_fms_loss)
     torch._assert(
         math.isclose(hf_model_loss.item(), hf_model_fms_loss.item(), abs_tol=1e-3),
         "model loss is not equal",
