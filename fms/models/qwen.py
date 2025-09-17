@@ -11,7 +11,7 @@ import logging
 import math
 import re
 from dataclasses import dataclass
-from typing import Any, Dict, Mapping, Optional, Tuple
+from typing import Any, Dict, Mapping, Optional, Tuple, Unpack
 
 import torch
 from torch import nn
@@ -22,7 +22,9 @@ from fms.distributed.strategy import (
     NoOpStrategy,
 )
 
+
 from fms.modules.attention import MultiHeadAttention
+from fms.modules.attention import AttentionKwargs
 from fms.modules.feedforward import GatedLinearUnit
 from fms.modules.layernorm import LayerNormParameterized
 from fms.modules.positions import RotaryEmbedding
@@ -193,7 +195,7 @@ class QwenBlock(nn.Module):
         past_key_value_state=None,
         use_cache=False,
         is_causal_mask=False,
-        attn_algorithm=None,
+        **attn_kwargs: Unpack[AttentionKwargs],
     ):
         """_summary_
 
@@ -383,7 +385,7 @@ class QwenHeadless(nn.Module):
         position_ids=None,
         past_key_value_states=None,
         use_cache=False,
-        attn_algorithm=None,
+        **attn_kwargs: Unpack[AttentionKwargs],
     ):
         """_summary_
 
@@ -538,10 +540,13 @@ class Qwen(nn.Module):
         past_key_value_states: Optional[Tuple[torch.FloatTensor,]] = None,
         use_cache: bool = False,
         only_last_token: bool = False,
-        attn_algorithm: Optional[str] = None,
+        **attn_kwargs: Unpack[AttentionKwargs],
     ):
         """_summary_
 
+        Changed last parameter to method:
+            attn_algorithm: Optional[str] = None,
+        
         Args:
             x (torch.LongTensor): _description_
             mask (Optional[torch.Tensor], optional): _description_. Defaults to None.
