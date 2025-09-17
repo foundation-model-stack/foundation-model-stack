@@ -21,10 +21,10 @@ from fms.distributed.strategy import (
     DistributedStrategy,
     NoOpStrategy,
 )
+from fms.modules.attention import (MultiHeadAttention,
+                                   AttentionKwargs,
+                                   get_attention_type)
 
-
-from fms.modules.attention import MultiHeadAttention
-from fms.modules.attention import AttentionKwargs
 from fms.modules.feedforward import GatedLinearUnit
 from fms.modules.layernorm import LayerNormParameterized
 from fms.modules.positions import RotaryEmbedding
@@ -218,18 +218,54 @@ class QwenBlock(nn.Module):
         # else:
         #     self_attn_past_key_value = None
 
+        # Previous code
+        # first we do MHA and Add&Norm
+        # residual = x
+        # x = self.ln(x)
+        # x = self.attn(
+        #     q=x,
+        #     mask=mask,
+        #     position_ids=position_ids,
+        #     attn_algorithm=attn_algorithm,
+        #     past_key_value_state=self_attn_past_key_value,
+        #     use_cache=use_cache,
+        #     is_self=True,
+        #     is_causal_mask=is_causal_mask,
+        # )
+        # cache = None
+        # if use_cache:
+        #     x, cache = x
+        # if self.config.p_dropout != 0:
+        #     x = self.dropout(x)
+        # # residual connection
+        # x = x + residual
+
+        # # then we do FF and Add&Norm
+        # residual = x
+        # x = self.ff_ln(x)
+        # x = self.ff_sub_layer(x)
+        # if self.config.p_dropout != 0:
+        #     x = self.dropout(x)
+        # # another residual
+        # x = x + residual
+
+        # if use_cache:
+        #     return (x, cache)
+        # return x
+
+        # Code from mistral.py same class and method
+         # if the cache is not empty, we need to get the kv cache for self and cross attention
+        self_attn_past_key_value = past_key_value_state
+
         # first we do MHA and Add&Norm
         residual = x
         x = self.ln(x)
         x = self.attn(
             q=x,
-            mask=mask,
             position_ids=position_ids,
-            attn_algorithm=attn_algorithm,
             past_key_value_state=self_attn_past_key_value,
             use_cache=use_cache,
-            is_self=True,
-            is_causal_mask=is_causal_mask,
+            **attn_kwargs,
         )
         cache = None
         if use_cache:
@@ -250,7 +286,8 @@ class QwenBlock(nn.Module):
 
         if use_cache:
             return (x, cache)
-        return x
+        else:
+            return x
 
 
 class QwenHeadless(nn.Module):
@@ -405,26 +442,62 @@ class QwenHeadless(nn.Module):
         # x_in: batch_size x seq_len
         # mask: batch_size x seq_len x seq_len
         # bias: nheads x seq_len x seq_len
+
+        # Previous code:
+        # if past_key_value_states is None or len(past_key_value_states) == 0:
+        #     past_key_value_states = [None for _ in range(len(self.layers))]
+
+        # qlen = x_in.size(1)
+        # klen = x_in.size(1)
+
+        # # if we are using the cache, the key length needs to be extended with the past keys length
+        # if use_cache and past_key_value_states[0] is not None:
+        #     klen += past_key_value_states[0][0].size(-2) # type: ignore
+
+        # # if mask is none, we need to specify causal mask
+        # if mask is None:
+        #     # we are caching and can assume all 1s in the mask
+        #     if use_cache and klen != 1 and qlen == 1:
+        #         # b x h x qlen x kvlen
+        #         is_causal_mask = False
+        #     else:
+        #         is_causal_mask = True
+        # else:
+        #     is_causal_mask = False
+
+        # x_in = self.embedding(x_in)
+
+        # # this is the output cache for all the decoder layers
+        # present_key_value_states = []
+
+        # for i, layer in enumerate(self.layers):
+        #     output = layer(
+        #         x=x_in,
+        #         mask=mask,
+        #         position_ids=position_ids,
+        #         past_key_value_state=past_key_value_states[i],
+        #         use_cache=use_cache,
+        #         is_causal_mask=is_causal_mask,
+        #         attn_algorithm=attn_algorithm,
+        #     )
+
+        #     if use_cache:
+        #         x_in, present_key_value_state = output
+        #         present_key_value_states.append(present_key_value_state)
+
+        #     else:
+        #         x_in = output
+
+        # dec_out = x_in
+        # dec_out = self.dec_norm(dec_out)
+        # if self.config.p_dropout:
+        #     dec_out = self.dropout(dec_out)
+
+        # return dec_out, present_key_value_states
+
+        # Same code for class and methon in mistral.py
         if past_key_value_states is None or len(past_key_value_states) == 0:
             past_key_value_states = [None for _ in range(len(self.layers))]
-
-        qlen = x_in.size(1)
-        klen = x_in.size(1)
-
-        # if we are using the cache, the key length needs to be extended with the past keys length
-        if use_cache and past_key_value_states[0] is not None:
-            klen += past_key_value_states[0][0].size(-2) # type: ignore
-
-        # if mask is none, we need to specify causal mask
-        if mask is None:
-            # we are caching and can assume all 1s in the mask
-            if use_cache and klen != 1 and qlen == 1:
-                # b x h x qlen x kvlen
-                is_causal_mask = False
-            else:
-                is_causal_mask = True
-        else:
-            is_causal_mask = False
 
         x_in = self.embedding(x_in)
 
@@ -434,12 +507,10 @@ class QwenHeadless(nn.Module):
         for i, layer in enumerate(self.layers):
             output = layer(
                 x=x_in,
-                mask=mask,
                 position_ids=position_ids,
                 past_key_value_state=past_key_value_states[i],
                 use_cache=use_cache,
-                is_causal_mask=is_causal_mask,
-                attn_algorithm=attn_algorithm,
+                **attn_kwargs,
             )
 
             if use_cache:
@@ -542,26 +613,31 @@ class Qwen(nn.Module):
         only_last_token: bool = False,
         **attn_kwargs: Unpack[AttentionKwargs],
     ):
-        """_summary_
-
-        Changed last parameter to method:
-            attn_algorithm: Optional[str] = None,
-        
-        Args:
-            x (torch.LongTensor): _description_
-            mask (Optional[torch.Tensor], optional): _description_. Defaults to None.
-            position_ids (Optional[torch.LongTensor], optional): _description_. Defaults to None.
-            past_key_value_states (Optional[Tuple[torch.FloatTensor,]], optional):
-                    _description_. Defaults to None.
-            use_cache (bool, optional): _description_. Defaults to False.
-            only_last_token (bool, optional): _description_. Defaults to False.
-            attn_algorithm (Optional[str], optional): _description_. Defaults to None.
-
-        Returns:
-            _type_: _description_
         """
+        Changed last parameter to method, old parameter:
+            attn_algorithm: Optional[str] = None,
+        """
+        # output, cache = self.base_model(
+        #     x, mask, position_ids, past_key_value_states, use_cache, attn_algorithm
+        # )
+
+        # if only_last_token:
+        #     output = output[:, -1, :]
+        # preds = self.head(output)
+
+        # if use_cache:
+        #     return preds, cache
+        # return preds
+
+        # New code from same Class/Methon in mistral.py
+        get_attention_type(**attn_kwargs)["validate_attn_kwargs"](
+            input_ids=x,
+            position_ids=position_ids,
+            past_key_value_states=past_key_value_states,
+            **attn_kwargs,
+        )
         output, cache = self.base_model(
-            x, mask, position_ids, past_key_value_states, use_cache, attn_algorithm
+            x, position_ids, past_key_value_states, use_cache, **attn_kwargs
         )
 
         if only_last_token:
@@ -570,7 +646,8 @@ class Qwen(nn.Module):
 
         if use_cache:
             return preds, cache
-        return preds
+        else:
+            return preds
 
 
 _ARCHITECTURE_NAME = "qwen3"
