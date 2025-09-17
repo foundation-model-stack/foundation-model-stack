@@ -128,7 +128,7 @@ class TestLlavaNext(
     _get_signature_optional_params = {
         "pixel_values": pixel_values,
         "image_sizes": image_sizes,
-        "only_last_token": True,
+        "last_n_tokens": 1,
     }
     _get_signature_logits_getter_fn = get_logits
 

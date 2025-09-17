@@ -448,7 +448,7 @@ class LLaMA(nn.Module):
         position_ids: Optional[torch.LongTensor] = None,
         past_key_value_states: Optional[Tuple[torch.FloatTensor,]] = None,
         use_cache: bool = False,
-        only_last_token: bool = False,
+        last_n_tokens: int = 0,
         **attn_kwargs: Unpack[AttentionKwargs],
     ):
         get_attention_type(**attn_kwargs)["validate_attn_kwargs"](
@@ -461,8 +461,8 @@ class LLaMA(nn.Module):
             x, position_ids, past_key_value_states, use_cache, **attn_kwargs
         )
 
-        if only_last_token:
-            output = output[:, -1, :]
+        if last_n_tokens > 0 and output.shape[1] > last_n_tokens:
+            output = output[:, -last_n_tokens:, :]
         preds = self.head(output)
 
         if use_cache:
