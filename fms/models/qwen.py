@@ -118,11 +118,7 @@ _1_7b_config = QwenConfig()
 
 
 class QwenBlock(nn.Module):
-    """
-    
-    Args:
-        nn (_type_): _description_
-    """
+
 
     def __init__(self, config: QwenConfig, rotary_emb: RotaryEmbedding):
         """_summary_
@@ -195,64 +191,7 @@ class QwenBlock(nn.Module):
         use_cache=False,
         **attn_kwargs: Unpack[AttentionKwargs],
     ):
-        """_summary_
 
-        Args:
-            x (_type_): _description_
-            mask (_type_, optional): _description_. Defaults to None.
-            position_ids (_type_, optional): _description_. Defaults to None.
-            past_key_value_state (_type_, optional): _description_. Defaults to None.
-            use_cache (bool, optional): _description_. Defaults to False.
-            is_causal_mask (bool, optional): _description_. Defaults to False.
-            attn_algorithm (_type_, optional): _description_. Defaults to None.
-
-        Returns:
-            _type_: _description_
-        """
-        # if the cache is not empty, we need to get the kv cache for self and cross attention
-        self_attn_past_key_value = past_key_value_state
-        # if past_key_value_state is not None:
-        #     self_attn_past_key_value = past_key_value_state[:2]
-        # else:
-        #     self_attn_past_key_value = None
-
-        # Previous code
-        # first we do MHA and Add&Norm
-        # residual = x
-        # x = self.ln(x)
-        # x = self.attn(
-        #     q=x,
-        #     mask=mask,
-        #     position_ids=position_ids,
-        #     attn_algorithm=attn_algorithm,
-        #     past_key_value_state=self_attn_past_key_value,
-        #     use_cache=use_cache,
-        #     is_self=True,
-        #     is_causal_mask=is_causal_mask,
-        # )
-        # cache = None
-        # if use_cache:
-        #     x, cache = x
-        # if self.config.p_dropout != 0:
-        #     x = self.dropout(x)
-        # # residual connection
-        # x = x + residual
-
-        # # then we do FF and Add&Norm
-        # residual = x
-        # x = self.ff_ln(x)
-        # x = self.ff_sub_layer(x)
-        # if self.config.p_dropout != 0:
-        #     x = self.dropout(x)
-        # # another residual
-        # x = x + residual
-
-        # if use_cache:
-        #     return (x, cache)
-        # return x
-
-        # Code from mistral.py same class and method
-         # if the cache is not empty, we need to get the kv cache for self and cross attention
         self_attn_past_key_value = past_key_value_state
 
         # first we do MHA and Add&Norm
@@ -300,13 +239,6 @@ class QwenHeadless(nn.Module):
         config: QwenConfig,
         distributed_strategy: DistributedStrategy = NoOpStrategy,
     ):
-        """_summary_
-
-        Args:
-            config (QwenConfig): _description_
-            distributed_strategy (DistributedStrategy, optional): 
-                    _description_. Defaults to NoOpStrategy.
-        """
         super(QwenHeadless, self).__init__()
         self.config = config
         self.distributed_strategy = distributed_strategy
@@ -353,8 +285,6 @@ class QwenHeadless(nn.Module):
             self.dropout = nn.Dropout(self.config.p_dropout)
 
     def reset_parameters(self):
-        """_summary_
-        """
         nn.init.trunc_normal_(
             self.embedding.weight, mean=0.0, std=self.config.emb_dim**-0.5
         )
@@ -380,12 +310,6 @@ class QwenHeadless(nn.Module):
         cached_freqs: dict[Optional[torch.device], dict[int, torch.Tensor]],
         max_seq_len_cached: dict[Optional[torch.device], int],
     ):
-        """_summary_
-
-        Args:
-            cached_freqs (dict[Optional[torch.device], dict[int, torch.Tensor]]): _description_
-            max_seq_len_cached (dict[Optional[torch.device], int]): _description_
-        """
         # remove meta tensors from cached_freqs
         for dev in list(cached_freqs.keys()):
             for alp in list(cached_freqs[dev].keys()):
@@ -396,8 +320,6 @@ class QwenHeadless(nn.Module):
                         del max_seq_len_cached[dev]
 
     def post_init(self):
-        """_summary_
-        """
         # This function is called in `get_model` after the model is
         # fully initalized on the correct device
 
@@ -421,78 +343,6 @@ class QwenHeadless(nn.Module):
         use_cache=False,
         **attn_kwargs: Unpack[AttentionKwargs],
     ):
-        """_summary_
-
-        Args:
-            x_in (_type_): _description_
-            mask (_type_, optional): _description_. Defaults to None.
-            position_ids (_type_, optional): _description_. Defaults to None.
-            past_key_value_states (_type_, optional): _description_. Defaults to None.
-            use_cache (bool, optional): _description_. Defaults to False.
-            attn_algorithm (_type_, optional): _description_. Defaults to None.
-
-        Returns:
-            _type_: _description_
-        """
-        # Embed the given vocabulary indices using the given attention mask, with pre-/post-norm
-        # and dropout as specified
-        # x_in: batch_size x seq_len
-        # mask: batch_size x seq_len x seq_len
-        # bias: nheads x seq_len x seq_len
-
-        # Previous code:
-        # if past_key_value_states is None or len(past_key_value_states) == 0:
-        #     past_key_value_states = [None for _ in range(len(self.layers))]
-
-        # qlen = x_in.size(1)
-        # klen = x_in.size(1)
-
-        # # if we are using the cache, the key length needs to be extended with the past keys length
-        # if use_cache and past_key_value_states[0] is not None:
-        #     klen += past_key_value_states[0][0].size(-2) # type: ignore
-
-        # # if mask is none, we need to specify causal mask
-        # if mask is None:
-        #     # we are caching and can assume all 1s in the mask
-        #     if use_cache and klen != 1 and qlen == 1:
-        #         # b x h x qlen x kvlen
-        #         is_causal_mask = False
-        #     else:
-        #         is_causal_mask = True
-        # else:
-        #     is_causal_mask = False
-
-        # x_in = self.embedding(x_in)
-
-        # # this is the output cache for all the decoder layers
-        # present_key_value_states = []
-
-        # for i, layer in enumerate(self.layers):
-        #     output = layer(
-        #         x=x_in,
-        #         mask=mask,
-        #         position_ids=position_ids,
-        #         past_key_value_state=past_key_value_states[i],
-        #         use_cache=use_cache,
-        #         is_causal_mask=is_causal_mask,
-        #         attn_algorithm=attn_algorithm,
-        #     )
-
-        #     if use_cache:
-        #         x_in, present_key_value_state = output
-        #         present_key_value_states.append(present_key_value_state)
-
-        #     else:
-        #         x_in = output
-
-        # dec_out = x_in
-        # dec_out = self.dec_norm(dec_out)
-        # if self.config.p_dropout:
-        #     dec_out = self.dropout(dec_out)
-
-        # return dec_out, present_key_value_states
-
-        # Same code for class and methon in mistral.py
         if past_key_value_states is None or len(past_key_value_states) == 0:
             past_key_value_states = [None for _ in range(len(self.layers))]
 
@@ -513,7 +363,6 @@ class QwenHeadless(nn.Module):
             if use_cache:
                 x_in, present_key_value_state = output
                 present_key_value_states.append(present_key_value_state)
-
             else:
                 x_in = output
 
@@ -526,11 +375,6 @@ class QwenHeadless(nn.Module):
 
 
 class Qwen(nn.Module):
-    """
-
-    Args:
-        nn (_type_): _description_
-    """
 
     def __init__(
         self,
@@ -538,13 +382,6 @@ class Qwen(nn.Module):
         distributed_strategy: DistributedStrategy = NoOpStrategy,
         **kwargs,
     ):
-        """_summary_
-
-        Args:
-            config (Optional[QwenConfig], optional): _description_. Defaults to None.
-            distributed_strategy (DistributedStrategy, optional):
-                _description_. Defaults to NoOpStrategy.
-        """
         super(Qwen, self).__init__()
         if config is not None:
             self.config = config
@@ -560,27 +397,12 @@ class Qwen(nn.Module):
 
     @classmethod
     def from_config(cls, config: QwenConfig) -> "Qwen":
-        """_summary_
-
-        Args:
-            config (QwenConfig): _description_
-
-        Returns:
-            Qwen: _description_
-        """
         return cls(config)
 
     def get_config(self) -> QwenConfig:
-        """_summary_
-
-        Returns:
-            QwenConfig: _description_
-        """
         return self.config
 
     def reset_parameters(self):
-        """_summary_
-        """
         self.head.weight.data.normal_(
             0,
             1 / math.sqrt(math.sqrt(self.config.emb_dim * self.config.src_vocab_size)),
@@ -588,8 +410,6 @@ class Qwen(nn.Module):
         self.base_model.reset_parameters()
 
     def post_init(self):
-        """_summary_
-        """
         # if this model ties weights, they are tied here
         if self.config.tie_heads:
             # handle assignment of non-meta weights to meta parameters
@@ -609,23 +429,6 @@ class Qwen(nn.Module):
         only_last_token: bool = False,
         **attn_kwargs: Unpack[AttentionKwargs],
     ):
-        """
-        Changed last parameter to method, old parameter:
-            attn_algorithm: Optional[str] = None,
-        """
-        # output, cache = self.base_model(
-        #     x, mask, position_ids, past_key_value_states, use_cache, attn_algorithm
-        # )
-
-        # if only_last_token:
-        #     output = output[:, -1, :]
-        # preds = self.head(output)
-
-        # if use_cache:
-        #     return preds, cache
-        # return preds
-
-        # New code from same Class/Methon in mistral.py
         get_attention_type(**attn_kwargs)["validate_attn_kwargs"](
             input_ids=x,
             position_ids=position_ids,
