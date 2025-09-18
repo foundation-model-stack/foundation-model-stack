@@ -190,11 +190,9 @@ class QwenBlock(nn.Module):
         self,
         x,
         *,
-        mask=None,
         position_ids=None,
         past_key_value_state=None,
         use_cache=False,
-        is_causal_mask=False,
         **attn_kwargs: Unpack[AttentionKwargs],
     ):
         """_summary_
@@ -418,7 +416,6 @@ class QwenHeadless(nn.Module):
     def forward(
         self,
         x_in,
-        mask=None,
         position_ids=None,
         past_key_value_states=None,
         use_cache=False,
@@ -606,7 +603,6 @@ class Qwen(nn.Module):
     def forward(
         self,
         x: torch.LongTensor,
-        mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_value_states: Optional[Tuple[torch.FloatTensor,]] = None,
         use_cache: bool = False,
