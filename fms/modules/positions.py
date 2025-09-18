@@ -209,6 +209,7 @@ class RotaryEmbedding(PositionEncoder):
         max_seq_len: int = 2048,
         partial_rope=1.0,
         scaling={},
+        fix_head_dim=False,
     ):
         """
         This implementation of Rotary Position Embeddings (RoPE) avoids
@@ -232,6 +233,9 @@ class RotaryEmbedding(PositionEncoder):
         """
         super(RotaryEmbedding, self).__init__()
         self.partial_rope = partial_rope
+        self.fix_head_dim = fix_head_dim
+        if self.fix_head_dim:
+            dim = 128
         self.dim = int(partial_rope * dim)
         own_scaling = copy.deepcopy(scaling)
         if "rope_type" not in own_scaling:
@@ -313,6 +317,11 @@ class RotaryEmbedding(PositionEncoder):
         assert len(q.size()) == 4
         assert len(k.size()) == 4
 
+        Eh = q.size(-1)
+        if self.fix_head_dim and (128 - Eh) > 0:
+            q = torch.cat([q, torch.zeros_like(q[..., : (128 - Eh)])], dim=-1)
+            k = torch.cat([k, torch.zeros_like(k[..., : (128 - Eh)])], dim=-1)
+
         seq_len = max(k.size(1), q.size(1))
         if position_ids is None:
             # Compute position_ids based on cache config
@@ -361,4 +370,9 @@ class RotaryEmbedding(PositionEncoder):
         else:
             q_out = q_out.view_as(q_rope)
             k_out = k_out.view_as(k_rope)
+
+        if self.fix_head_dim and (128 - Eh) > 0:
+            q_out = q_out[..., :Eh]
+            k_out = k_out[..., :Eh]
+
         return q_out, k_out

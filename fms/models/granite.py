@@ -188,6 +188,7 @@ class GraniteHeadless(nn.Module):
             scaling=rope_scaling,
             max_seq_len=self.config.max_expected_seq_len,
             ratio=self.config.rope_theta,
+            fix_head_dim=True,
         )
         # RoPE init
         for device in set(
