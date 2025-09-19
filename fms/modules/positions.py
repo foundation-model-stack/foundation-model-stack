@@ -4,6 +4,7 @@ import math
 from typing import MutableMapping, Optional, Tuple
 
 import torch
+import torch.nn.functional as F
 
 
 class PositionEncoder:
@@ -319,8 +320,8 @@ class RotaryEmbedding(PositionEncoder):
 
         Eh = q.size(-1)
         if self.fix_head_dim and (128 - Eh) > 0:
-            q = torch.cat([q, torch.zeros_like(q[..., : (128 - Eh)])], dim=-1)
-            k = torch.cat([k, torch.zeros_like(k[..., : (128 - Eh)])], dim=-1)
+            q = F.pad(q, (0, 128 - Eh), mode="constant", value=0)
+            k = F.pad(k, (0, 128 - Eh), mode="constant", value=0)
 
         seq_len = max(k.size(1), q.size(1))
         if position_ids is None:
