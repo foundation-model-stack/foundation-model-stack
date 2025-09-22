@@ -483,25 +483,13 @@ class ConditionalFeedForward(nn.Module):
         self.num_experts = num_experts
         self.dim = dim
         self.intermediate_size = intermediate_size
-        self.w13 = (
-            nn.Parameter(torch.empty(num_experts, 2 * intermediate_size, dim))
-            if not use_bias
-            else nn.Parameter(
-                torch.empty(num_experts, 2 * intermediate_size, intermediate_size)
-            )
-        )
-        self.w2 = (
-            nn.Parameter(torch.empty(num_experts, dim, intermediate_size))
-            if not use_bias
-            else nn.Parameter(
-                torch.empty(num_experts, intermediate_size, intermediate_size)
-            )
-        )
+        self.w13 = nn.Parameter(torch.empty(num_experts, 2 * intermediate_size, dim))
+        self.w2 = nn.Parameter(torch.empty(num_experts, dim, intermediate_size))
         self.use_bias = use_bias
         self.w13_bias = torch.nn.Parameter(
             torch.empty(num_experts, 2 * intermediate_size)
         )
-        self.w2_bias = torch.nn.Parameter(torch.empty(num_experts, intermediate_size))
+        self.w2_bias = torch.nn.Parameter(torch.empty(num_experts, dim))
 
         init.kaiming_uniform_(self.w13, a=math.sqrt(5))
         init.kaiming_uniform_(self.w2, a=math.sqrt(5))

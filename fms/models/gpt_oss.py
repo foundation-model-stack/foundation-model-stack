@@ -21,7 +21,7 @@ from fms.utils.config import ModelConfig
 from fms.modules.feedforward import MOEFeedForward
 from fms.modules.positions import RotaryEmbedding
 
-from fms.modules.ssm import RMSNormGated
+from fms.modules.layernorm import LayerNormParameterized
 
 FP4_VALUES = [
     +0.0,
@@ -83,8 +83,22 @@ class GptOssBlock(nn.Module):
         emb_kq = self.config.head_dim
         emb_v = self.config.head_dim
 
-        self.ln = RMSNormGated(config.emb_dim, eps=config.norm_eps)
-        self.ff_ln = RMSNormGated(config.emb_dim, eps=config.norm_eps)
+        self.ln = LayerNormParameterized(
+            config.emb_dim,
+            elementwise_scale=True,
+            elementwise_shift=False,
+            use_mean=False,
+            eps=config.norm_eps,
+            use_high_precision_pow=True,
+        )
+        self.ff_ln = LayerNormParameterized(
+            self.config.emb_dim,
+            elementwise_scale=True,
+            elementwise_shift=False,
+            use_mean=False,
+            eps=self.config.norm_eps,
+            use_high_precision_pow=True,
+        )
 
         if self.config.kvheads == 0:
             kvheads = self.config.nheads
@@ -115,7 +129,7 @@ class GptOssBlock(nn.Module):
         self.ff_sub_layer = MOEFeedForward(
             self.config.num_experts,
             self.config.top_k_experts,
-            self.config.head_dim,
+            self.config.emb_dim,
             self.config.emb_dim,
             use_bias=True,
         )
@@ -135,6 +149,7 @@ class GptOssBlock(nn.Module):
         # if the cache is not empty, we need to get the kv cache for self and cross attention
         self_attn_past_key_value = past_key_value_state
         attn_kwargs.update({"sliding_window": self.config.sliding_window})
+        attn_kwargs.update({"attn_name": "sdpa_with_sinks"})
 
         # first we do MHA and Add&Norm
         residual = x
@@ -212,7 +227,14 @@ class GptOssHeadless(nn.Module):
             layers.append(block)
         self.layers = nn.ModuleList(layers)
 
-        dec_norm = RMSNormGated(config.emb_dim, eps=config.norm_eps)
+        dec_norm = LayerNormParameterized(
+            config.emb_dim,
+            elementwise_scale=True,
+            elementwise_shift=False,
+            use_mean=False,
+            eps=config.norm_eps,
+            use_high_precision_pow=True,
+        )
 
         self.dec_norm = self.distributed_strategy.distribute_module(
             dec_norm, final_layers=True

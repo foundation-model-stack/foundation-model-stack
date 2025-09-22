@@ -224,8 +224,6 @@ def _sdpa_compute_op(
         values_e = value_cache
 
     attn_algorithm = attn_kwargs.get("attn_algorithm", None)
-    attn_sinks = attn_kwargs.get("sinks", None)
-    sliding_window = attn_kwargs.get("sliding_window", None)
 
     if attn_algorithm:
         # Pick which fused attn kernels will run.
@@ -262,6 +260,44 @@ def _sdpa_compute_op(
         torch.backends.cuda.enable_mem_efficient_sdp(__sdpa_previous_mem_efficient)
         torch.backends.cuda.enable_math_sdp(__sdpa_previous_math)
 
+    # attn: bs x seq_len x nheads*emb_v_per_head
+    # attn: b x h x qlen x ds
+    # attn after permute: b x qlen x h x ds
+    # b x qlen x (d)
+    attn = attn.transpose(2, 1).contiguous()
+    return attn
+
+
+def _sdpa_with_sinks_op(
+    query: torch.Tensor,
+    key_cache: torch.Tensor,
+    value_cache: torch.Tensor,
+    nheads: int,
+    kvheads: int,
+    p_dropout: float,
+    scale_factor: Optional[float],
+    **attn_kwargs,
+) -> torch.Tensor:
+    queries = query.transpose(2, 1)
+
+    if key_cache.shape[1] != kvheads and key_cache.shape[2] == kvheads:
+        key_cache = key_cache.transpose(2, 1)
+        value_cache = value_cache.transpose(2, 1)
+
+    # Expand kv so black-box attn will work
+    expansion = nheads // kvheads
+    # k/v: b h l d
+    if expansion != 1:
+        keys_e = key_cache.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
+        values_e = (
+            value_cache.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
+        )
+    else:
+        keys_e = key_cache
+        values_e = value_cache
+
+    attn_sinks = attn_kwargs.get("sinks", None)
+    sliding_window = attn_kwargs.get("sliding_window", None)
     if attn_sinks is not None:
         # https://github.com/openai/gpt-oss/blob/main/gpt_oss/torch/model.py#L153
         # from gpt-oss open ai implementation
@@ -323,6 +359,7 @@ register_attention_op(
     _sdpa_compute_op,
     update_attn_kwargs_op=_sdpa_update_attn_kwargs,
 )
+register_attention_op("sdpa_with_sinks", _sdpa_store_op, _sdpa_with_sinks_op)
 register_attention_op(
     "sdpa_bidirectional",
     _sdpa_store_op,
