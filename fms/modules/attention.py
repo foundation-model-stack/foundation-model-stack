@@ -298,29 +298,27 @@ def _sdpa_with_sinks_op(
 
     attn_sinks = attn_kwargs.get("sinks", None)
     sliding_window = attn_kwargs.get("sliding_window", None)
-    if attn_sinks is not None:
-        # https://github.com/openai/gpt-oss/blob/main/gpt_oss/torch/model.py#L153
-        # from gpt-oss open ai implementation
-        n_tokens, n_heads, q_mult, d_head = queries.shape
-        S = attn_sinks.reshape(1, -1, 1, 1).expand(
-            queries.shape[0], -1, queries.shape[-2], -1
+
+    # https://github.com/openai/gpt-oss/blob/main/gpt_oss/torch/model.py#L153
+    # from gpt-oss open ai implementation
+    n_tokens, n_heads, q_mult, d_head = queries.shape
+    S = attn_sinks.reshape(1, -1, 1, 1).expand(
+        queries.shape[0], -1, queries.shape[-2], -1
+    )
+    S = S.transpose(0, 1).transpose(1, 2)
+    mask = torch.triu(queries.new_full((n_tokens, n_tokens), -float("inf")), diagonal=1)
+    if sliding_window and sliding_window > 0:
+        mask += torch.tril(
+            mask.new_full((n_tokens, n_tokens), -float("inf")),
+            diagonal=-sliding_window,
         )
-        S = S.transpose(0, 1).transpose(1, 2)
-        mask = torch.triu(
-            queries.new_full((n_tokens, n_tokens), -float("inf")), diagonal=1
-        )
-        if sliding_window and sliding_window > 0:
-            mask += torch.tril(
-                mask.new_full((n_tokens, n_tokens), -float("inf")),
-                diagonal=-sliding_window,
-            )
-        QK = torch.einsum("qhmd,khmd->hmqk", queries, keys_e)
-        QK *= scale_factor
-        QK += mask[None, None, :, :]
-        QK = torch.cat([QK, S], dim=-1)
-        W = torch.softmax(QK, dim=-1)
-        W = W[..., :-1]  # drop the attention sinks after done
-        attn = torch.einsum("hmqk,khmd->qhmd", W, values_e)
+    QK = torch.einsum("qhmd,khmd->hmqk", queries, keys_e)
+    QK *= scale_factor
+    QK += mask[None, None, :, :]
+    QK = torch.cat([QK, S], dim=-1)
+    W = torch.softmax(QK, dim=-1)
+    W = W[..., :-1]  # drop the attention sinks after done
+    attn = torch.einsum("hmqk,khmd->qhmd", W, values_e)
 
     # attn: bs x seq_len x nheads*emb_v_per_head
     # attn: b x h x qlen x ds
