@@ -107,7 +107,6 @@ def moe_mm(
     total_padded_tokens: torch.Tensor,
     topk: int,
     padding_size: int,
-    original_num_tokens: int,
 ) -> torch.Tensor:
     from fms.triton.moe_kernel import invoke_fused_moe_kernel
 
@@ -125,7 +124,6 @@ def moe_mm(
         total_padded_tokens,
         topk,
         padding_size,
-        original_num_tokens,
     )
 
     return output
@@ -143,7 +141,6 @@ def moe_mm_meta(
     total_padded_tokens: torch.Tensor,
     topk: int,
     padding_size,
-    original_num_tokens: int,
 ):
     M, A = token_expert_mapping.shape
     _, N, _ = moe_matrix.shape
@@ -178,7 +175,6 @@ def moe_mm_setup_context(ctx, inputs, output):
         total_padded_tokens,
         topk,
         padding_size,
-        original_num_tokens,
     ) = inputs
     ctx.save_for_backward(input_)
     pass

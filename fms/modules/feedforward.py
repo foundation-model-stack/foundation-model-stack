@@ -540,8 +540,6 @@ class ConditionalFeedForward(nn.Module):
             total_padded_tokens,
         ) = triton_ops.moe_align_block_size(expert_indices, padding_size, E)
 
-        original_num_tokens = x.shape[0]
-
         x1, x3 = (
             torch.ops.moe.moe_mm(
                 x,
@@ -554,7 +552,6 @@ class ConditionalFeedForward(nn.Module):
                 total_padded_tokens,
                 expert_indices.shape[1],
                 padding_size,
-                original_num_tokens,
             )
             .view(-1, N)
             .chunk(2, dim=1)
@@ -570,7 +567,6 @@ class ConditionalFeedForward(nn.Module):
             total_padded_tokens,
             1,
             padding_size,
-            original_num_tokens,
         )
 
 
