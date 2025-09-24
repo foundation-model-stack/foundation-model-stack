@@ -199,11 +199,10 @@ def moe_mm_cpu(
     total_padded_tokens: torch.Tensor,
     topk: int,
     padding_size,
-    original_num_tokens: int,
 ):
     T, D = input.shape
     M, A = token_expert_mapping.shape
-    assert torch.isfinite(input).all(), f"input has NaNs: {input}"
+
     a = input.view(T, -1, D).repeat(1, topk, 1).reshape(-1, D)
     out = torch.zeros(T * topk, moe_matrix.shape[1], dtype=a.dtype, device=a.device)
 
