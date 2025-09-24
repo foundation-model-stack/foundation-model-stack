@@ -27,7 +27,7 @@ class GptOssFixtures(ConfigFixtureMixin, ModelFixtureMixin):
     @pytest.fixture(scope="class", autouse=True)
     def config(self) -> ModelConfig:
         return GptOssConfig(
-            num_experts=128,
+            num_experts=32,
             emb_dim=2880,
             head_dim=64,
             num_attention_heads=64,

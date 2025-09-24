@@ -45,7 +45,7 @@ FP4_VALUES = [
 
 @dataclass
 class GptOssConfig(ModelConfig):
-    num_experts: int = 128
+    num_experts: int = 32
     src_vocab_size: int = 201088
     emb_dim: int = 2880
     head_dim: int = 64
@@ -456,11 +456,9 @@ def _weight_fusion(
 
     new_sd = input_sd
     if has_fused_weights:
-        for key in list(new_sd.keys()):
-            if key not in new_sd:
-                continue
-        new_sd = dict(serialization._attn_unfused_to_fused_step(new_sd))
-
+        new_sd = serialization._mlp_glu_unfused_to_fused_adapter_step(
+            serialization._attn_unfused_to_fused_step(new_sd)
+        )
     return new_sd
 
 

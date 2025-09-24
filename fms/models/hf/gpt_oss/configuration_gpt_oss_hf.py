@@ -20,7 +20,7 @@ class HFAdaptedGptOssConfig(GptOssConfig):
 
     def __init__(
         self,
-        num_experts: int = 128,
+        num_experts: int = 32,
         src_vocab_size: int = 201088,
         emb_dim: int = 2880,
         hidden_dim: int = 2880,
