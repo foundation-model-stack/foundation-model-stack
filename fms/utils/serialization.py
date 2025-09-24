@@ -559,14 +559,6 @@ def load_state_dict_into_model(
 
             unused_keys.update(unused_keys_partial)
 
-            to_remove = set()
-
-            for u_key in unused_keys:
-                if u_key in fms_partial_sd.keys():
-                    to_remove.add(u_key)
-
-            unused_keys -= to_remove
-
             # Be agressive in removing weights to save as much memory as possible
             for p_key in partial_sd.keys():
                 if isinstance(state_dict, ChainMap):

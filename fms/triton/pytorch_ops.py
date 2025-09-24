@@ -217,31 +217,8 @@ def moe_mm_cpu(
     for i in range(moe_matrix.shape[0]):
         mask = token_expert_mapping == i
         if mask.sum():
-            if use_bias:
-                moe_index = moe_matrix[i]
-                moe_index = (
-                    moe_index.to(dtype=a.dtype)
-                    if moe_index.dtype != a.dtype
-                    else moe_index
-                )
-                moe_bias_matrix_index = (
-                    moe_bias_matrix[i].to(dtype=a.dtype)
-                    if moe_bias_matrix[i].dtype != a.dtype
-                    else moe_bias_matrix[i]
-                )
-                if moe_bias_matrix[i].shape[0] != moe_index.shape[0]:
-                    raise ValueError(
-                        f"Bias shape mismatch: bias {moe_bias_matrix[i].shape[0]} vs weight {moe_index.shape}"
-                    )
-                out[mask] = F.linear(
-                    a[mask],
-                    moe_index,
-                    bias=moe_bias_matrix_index,
-                )
-            else:
-                out[mask] = a[mask] @ moe_matrix[i].transpose(0, 1)
+            out[mask] = a[mask] @ moe_matrix[i].transpose(0, 1)
+        if use_bias:
+            out[mask] += moe_bias_matrix[i]
 
-    if use_bias:
-        return out.view(original_num_tokens, topk, -1)
-    else:
-        return out.view(M, A, moe_matrix.shape[1])
+    return out.view(M, A, moe_matrix.shape[1])
