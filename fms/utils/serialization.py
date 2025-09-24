@@ -529,8 +529,6 @@ def load_state_dict_into_model(
             f"[WARNING] Keys from checkpoint (adapted to FMS) "
             f"not copied into model: {unused_keys}"
             )
-        for key in sorted(unused_keys):
-            print(f"  {key}", flush=True)
 
 
 def _copy_if_present(parameter, tensor_value):
