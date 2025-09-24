@@ -11,7 +11,7 @@ import logging
 import math
 import re
 from dataclasses import dataclass
-from typing import Any, Dict, Mapping, Optional, Tuple, Unpack
+from typing import Any, Mapping, Optional, Tuple, Unpack
 
 import torch
 from torch import nn
@@ -113,7 +113,7 @@ class QwenConfig(ModelConfig):
     linear_config: Optional[Mapping[str, Any]] = None  # To support quantization
 
 
-# Qwen3-1.7B
+# Qwen3-1.7b
 _1_7b_config = QwenConfig()
 
 
@@ -228,11 +228,6 @@ class QwenBlock(nn.Module):
 
 
 class QwenHeadless(nn.Module):
-    """
-
-    Args:
-        nn (_type_): _description_
-    """
 
     def __init__(
         self,
@@ -449,7 +444,7 @@ class Qwen(nn.Module):
             return preds
 
 
-_ARCHITECTURE_NAME = "qwen3"
+_ARCHITECTURE_NAME = "qwen"
 
 
 def _qwen_factory_factory(config):
@@ -527,27 +522,6 @@ serialization.register_adapter_step(
 )
 
 
-import atexit  # noqa: E402
-import os  # noqa: E402
-KWR_DEBUG = len(os.getenv("KWR_DEBUG", "")) > 0
-mapping_dict: Dict[str, str] = {}
-no_mapping_dict: Dict[str, int] = {}
-if KWR_DEBUG:
-    def mapping_dict_cleanup() -> None:
-        """
-        This function will be called automatically when the script exits.
-        """
-        size = len(mapping_dict)  # noqa: F821
-        print(f"qwen3.py:_hf_to_fms_names():mapping_dict()/{size}", flush=True)
-        for key in sorted(mapping_dict.keys()):  # noqa: F821
-            print(f"  {key:<60} : {mapping_dict[key]}", flush=True)  # noqa: F821
-        size = len(no_mapping_dict)  # noqa: F821
-        print(f"qwen3.py:_hf_to_fms_names():no_mapping_dict()/{size}", flush=True)
-        for key in sorted(no_mapping_dict.keys()):  # noqa: F821
-            print(f"  {key:<60} : {no_mapping_dict[key]}", flush=True)  # noqa: F821
-    atexit.register(mapping_dict_cleanup)
-
-
 def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]:
     """_summary_
 
@@ -582,16 +556,6 @@ def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]
         for pattern, repl in replacements:
             new_name = re.sub(pattern, repl, new_name)
         new_sd[new_name] = param
-        if KWR_DEBUG:
-            if new_name == name:
-                if name in no_mapping_dict:
-                    no_mapping_dict[name] += 1
-                else:
-                    no_mapping_dict[name] = 1
-            if name in mapping_dict:
-                print(f"[WARNING]: key '{name}' already in mapping_dict")
-            else:
-                mapping_dict[name] = new_name
     return new_sd
 
 

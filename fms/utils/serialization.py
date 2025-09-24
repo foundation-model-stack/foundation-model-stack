@@ -437,23 +437,6 @@ def _find_key_neighbors(key: str, sd_keys: Set[str]):
     return list(prefix_neighbors)
 
 
-KWR_DEBUG = len(os.getenv("KWR_DEBUG", "")) > 0
-qwen3_msg = False
-_load_cnt = 0
-KWR_SKIP = len(os.getenv("KWR_SKIP", "")) > 0
-print(f"KWR_DEBUG={KWR_DEBUG} KWR_SKIP={KWR_SKIP}", flush=True)
-
-
-import atexit  # noqa: E402
-if KWR_DEBUG:
-    def load_state_dict_cleanup() -> None:
-        """
-        This function will be called automatically when the script exits.
-        """
-        print(f"serialization.py:_load_cnt() >>> {_load_cnt}", flush=True)
-    atexit.register(load_state_dict_cleanup)
-
-
 def load_state_dict_into_model(
     model: torch.nn.Module,
     state_dict: MutableMapping[str, Any],
@@ -489,8 +472,6 @@ def load_state_dict_into_model(
     initial_device: where the weights will be loaded from disk.
     """
 
-    global _load_cnt
-    _load_cnt += 1
     # 1. Get the adapter from checkpoint sd to fms sd
     adapter = _get_adapter(architecture, source)
 
@@ -498,12 +479,6 @@ def load_state_dict_into_model(
     adapter_kwargs = {}
     if hasattr(model, "config"):
         adapter_kwargs["model_config"] = model.config
-    if KWR_DEBUG:
-        txt = f"KWR_DEBUG: type(model.config)={type(model.config)}\n"
-        tmp = str(model.config).split(", ")
-        for kvpair in tmp:
-            txt += f"KWR_DEBUG:   {kvpair}\n"
-        print(txt[:-1])
 
     # 2. Decide if model needs sharding and how (for now only TP)
     needs_tp_sharding = checkpoint_sharding != "tp" and distributed_strategy == "tp"
@@ -524,19 +499,6 @@ def load_state_dict_into_model(
             # this function doesn't find it, it will crash.
             remaining_keys = sd_keys.difference(used_keys)
             neighbors = _find_key_neighbors(key, remaining_keys)
-            if KWR_DEBUG:
-                txt = f"KWR_DEBUG: key={key}\n"
-                txt += f"KWR_DEBUG:    initial_device={initial_device}\n"
-                size = len(partial_sd)
-                txt += f"KWR_DEBUG:    type(partial_sd)={type(partial_sd)}/{size}\n"
-                for key in sorted(partial_sd.keys()):
-                    txt += f"KWR_DEBUG:        {key}\n"
-                size = len(remaining_keys)
-                txt += f"KWR_DEBUG:    type(remaining_keys)={type(remaining_keys)}/{size}\n"
-                if size <= 1000:
-                    for key in sorted(remaining_keys):
-                        txt += f"KWR_DEBUG:        {key}\n"
-                print(txt[:-1], flush=True)
             for neighbor in neighbors:
                 partial_sd[neighbor] = state_dict[neighbor]
                 used_keys.add(neighbor)
@@ -550,20 +512,7 @@ def load_state_dict_into_model(
                 needs_tp_sharding=needs_tp_sharding,
                 dtype=dtype,
             )
-
-            global qwen3_msg
-            if architecture != "qwen3":
-                unused_keys.update(unused_keys_partial)
-            elif KWR_SKIP and qwen3_msg is False:
-                # Only print skipping unused_keys.update() once if KWR_SKIP is set
-                msg ="skipping all calls to unused_keys.update() in 'serialization.py:load_state_dict_into_model()' because "
-                msg += f"architecture is '{architecture}'"
-                print(msg, flush=True)
-                qwen3_msg = True  # noqa: F841
-            elif KWR_SKIP is False:
-                # Still want to do even if arch  is qwen3
-                unused_keys.update(unused_keys_partial)
-
+            unused_keys.update(unused_keys_partial)
             # Be aggressive in removing weights to save as much memory as possible
             for p_key in partial_sd.keys():
                 if isinstance(state_dict, ChainMap):
@@ -576,11 +525,10 @@ def load_state_dict_into_model(
 
     if unused_keys and rank == 0:
         # TODO: start using logger?
-        cnt = len(unused_keys)
         print(
             f"[WARNING] Keys from checkpoint (adapted to FMS) "
-            f"not copied into model: cnt={cnt}", flush=True
-        )
+            f"not copied into model: {unused_keys}"
+            )
         for key in sorted(unused_keys):
             print(f"  {key}", flush=True)
 
