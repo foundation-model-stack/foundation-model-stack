@@ -386,7 +386,6 @@ class Granite(nn.Module):
         )
 
         output = gather_outputs(output, last_n_tokens, **attn_kwargs)
-
         preds = self.head(output)
         preds = preds / self.config.logits_scaling
 
