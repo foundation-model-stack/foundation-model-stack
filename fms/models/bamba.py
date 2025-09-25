@@ -22,6 +22,7 @@ from fms.modules.ssm import SSM, SSMCacheUnit
 from fms.utils import serialization
 from fms.utils.activation import str_to_activation
 from fms.utils.config import ModelConfig
+from fms.utils.headless import gather_outputs
 
 
 logger = logging.getLogger(__name__)
@@ -444,8 +445,7 @@ class Bamba(nn.Module):
             **attn_kwargs,
         )
 
-        if last_n_tokens > 0 and output.shape[1] > last_n_tokens:
-            output = output[:, -last_n_tokens:, :]
+        output = gather_outputs(output, last_n_tokens, **attn_kwargs)
         preds = self.head(output)
 
         if use_cache:

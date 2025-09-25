@@ -25,6 +25,7 @@ from fms.modules.positions import RotaryEmbedding
 from fms.utils import serialization
 from fms.utils.activation import str_to_activation
 from fms.utils.config import ModelConfig
+from fms.utils.headless import gather_outputs
 
 
 logger = logging.getLogger(__name__)
@@ -409,8 +410,7 @@ class Mistral(nn.Module):
             x, position_ids, past_key_value_states, use_cache, **attn_kwargs
         )
 
-        if last_n_tokens > 0 and output.shape[1] > last_n_tokens:
-            output = output[:, -last_n_tokens:, :]
+        output = gather_outputs(output, last_n_tokens, **attn_kwargs)
         preds = self.head(output)
 
         if use_cache:
