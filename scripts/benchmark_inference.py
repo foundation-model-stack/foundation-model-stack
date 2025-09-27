@@ -203,11 +203,11 @@ next_input = torch.cat((ids, next_val), dim=-1)
 del logits
 
 expected, _ = model.forward(
-    next_val, past_key_value_states=cache, use_cache=True, only_last_token=True
+    next_val, past_key_value_states=cache, use_cache=True, last_n_tokens=1
 )
 expected = torch.argmax(expected, dim=-1)
 
-expected2 = model.forward(next_input, only_last_token=True)
+expected2 = model.forward(next_input, last_n_tokens=1)
 expected2 = torch.argmax(expected2, dim=-1)
 
 torch.testing.assert_close(expected, expected2)
@@ -227,10 +227,10 @@ repeat = 3
 def one_token(model, use_cache):
     if use_cache:
         actual, _ = model.forward(
-            next_val, past_key_value_states=cache, use_cache=True, only_last_token=True
+            next_val, past_key_value_states=cache, use_cache=True, last_n_tokens=1
         )
     else:
-        actual = model.forward(next_input, only_last_token=True)
+        actual = model.forward(next_input, last_n_tokens=1)
     actual = torch.argmax(actual, dim=-1)
     if local_rank == 0 and not args.skip_correctness_check:
         torch.testing.assert_close(actual, expected)
