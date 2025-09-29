@@ -650,6 +650,9 @@ def _load_partial_state_dict(
                     )
                     setattr(target_module, key_steps[-1], param)
                     param = getattr(target_module, key_steps[-1])
+                # *** ALERT *** Granite 2b hack for AIU Compiler 
+                if param.size() != tensor_value.size():
+                    tensor_value = torch.stack((tensor_value, torch.zeros_like(tensor_value)), dim=1).view(*(param.size()))
                 param.copy_(tensor_value, non_blocking=True)
 
             elif tp_module is not None and tp_module not in seen_tp_modules:

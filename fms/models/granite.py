@@ -59,7 +59,8 @@ class GraniteBlock(nn.Module):
     def __init__(self, config: GraniteConfig, rotary_emb: RotaryEmbedding):
         super(GraniteBlock, self).__init__()
         self.config = config
-        emb_kq = self.config.emb_dim // self.config.nheads
+        # *** ALERT *** Granite 2b hack for AIU Compiler 
+        emb_kq = 128 # self.config.emb_dim // self.config.nheads
         emb_v = self.config.emb_dim // self.config.nheads
 
         self.ln = LayerNormParameterized(

@@ -232,7 +232,9 @@ class RotaryEmbedding(PositionEncoder):
         """
         super(RotaryEmbedding, self).__init__()
         self.partial_rope = partial_rope
-        self.dim = int(partial_rope * dim)
+        # *** ALERT *** Granite 2b hack for AIU Compiler 
+        # # self.dim = int(partial_rope * dim)
+        self.dim = 128
         own_scaling = copy.deepcopy(scaling)
         if "rope_type" not in own_scaling:
             own_scaling["rope_type"] = "regular"
