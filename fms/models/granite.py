@@ -32,6 +32,7 @@ logger = logging.getLogger(__name__)
 class GraniteConfig(ModelConfig):
     src_vocab_size: int = 32_000  # can be set by tokenizer
     emb_dim: int = 4096
+    orig_emb_dim: int = emb_dim
     norm_eps: float = 1e-5
     nheads: int = 32
     kvheads: int = 0
@@ -60,12 +61,11 @@ class GraniteBlock(nn.Module):
         super(GraniteBlock, self).__init__()
         self.config = config
         # *** ALERT *** Granite 2b hack for AIU Compiler 
-        emb_dim = self.config.emb_dim * 2
-        emb_kq = emb_dim // self.config.nheads
-        emb_v = emb_dim // self.config.nheads
+        emb_kq = self.config.emb_dim // self.config.nheads
+        emb_v = self.config.emb_dim // self.config.nheads
 
         self.ln = LayerNormParameterized(
-            self.config.emb_dim,
+            self.config.orig_emb_dim,
             elementwise_scale=True,
             elementwise_shift=False,
             use_mean=False,
@@ -73,7 +73,7 @@ class GraniteBlock(nn.Module):
             use_high_precision_pow=True,
         )
         self.ff_ln = LayerNormParameterized(
-            self.config.emb_dim,
+            self.config.orig_emb_dim,
             elementwise_scale=True,
             elementwise_shift=False,
             use_mean=False,
@@ -88,7 +88,7 @@ class GraniteBlock(nn.Module):
             assert self.config.nheads % self.config.kvheads == 0
 
         self.attn = MultiHeadAttention(
-            self.config.emb_dim,
+            self.config.orig_emb_dim,
             emb_kq,
             emb_v,
             self.config.nheads,
@@ -101,7 +101,7 @@ class GraniteBlock(nn.Module):
             scale_factor=self.config.attention_multiplier,
         )
         self.ff_sub_layer = GatedLinearUnit(
-            self.config.emb_dim,
+            self.config.orig_emb_dim,
             hidden_grow_factor=self.config.hidden_grow_factor,
             multiple_of=self.config.multiple_of,
             activation_fn=str_to_activation(self.config.activation_fn),
@@ -174,13 +174,13 @@ class GraniteHeadless(nn.Module):
         self.config = self.config.updated(**kwargs)
         self.distributed_strategy = distributed_strategy
 
-        self.width = self.config.emb_dim
+        self.width = self.config.orig_emb_dim
         self.pad_id = self.config.pad_id
         self.max_expected_seq_len = self.config.max_expected_seq_len
 
         self.embedding = nn.Embedding(
             self.config.src_vocab_size,
-            self.config.emb_dim,
+            self.config.orig_emb_dim,
             padding_idx=self.config.pad_id,
         )
 
@@ -207,7 +207,7 @@ class GraniteHeadless(nn.Module):
         self.layers = nn.ModuleList(layers)
 
         dec_norm = LayerNormParameterized(
-            self.config.emb_dim,
+            self.config.orig_emb_dim,
             elementwise_scale=True,
             elementwise_shift=False,
             use_mean=False,
@@ -223,7 +223,7 @@ class GraniteHeadless(nn.Module):
 
     def reset_parameters(self):
         nn.init.trunc_normal_(
-            self.embedding.weight, mean=0.0, std=self.config.emb_dim**-0.5
+            self.embedding.weight, mean=0.0, std=self.config.orig_emb_dim**-0.5
         )
 
         # RoPE init
@@ -281,7 +281,7 @@ class GraniteHeadless(nn.Module):
         **attn_kwargs: Unpack[AttentionKwargs],
     ):
         # Embed the given vocabulary indices using the given attention mask, with pre-/post-norm and dropout as specified
-        # x_in: batch_size x seq_len x emb_dim if input is already embedded, otherwise batch_size x seq_len
+        # x_in: batch_size x seq_len x orig_emb_dim if input is already embedded, otherwise batch_size x seq_len
         # mask: batch_size x seq_len x seq_len
         # bias: nheads x seq_len x seq_len
         if past_key_value_states is None or len(past_key_value_states) == 0:
@@ -331,11 +331,17 @@ class Granite(nn.Module):
         else:
             self.config = GraniteConfig()
         self.config = self.config.updated(**kwargs)
+        
+        if self.config.emb_dim < 4096:
+            self.config.orig_emb_dim = self.config.emb_dim
+            self.config.emb_dim = 4096
+
+
         self.distributed_strategy = distributed_strategy
 
         self.base_model = GraniteHeadless(self.config, self.distributed_strategy)
         self.head = nn.Linear(
-            self.config.emb_dim, self.config.src_vocab_size, bias=False
+            self.config.orig_emb_dim, self.config.src_vocab_size, bias=False
         )
 
     @classmethod
@@ -348,7 +354,7 @@ class Granite(nn.Module):
     def reset_parameters(self):
         self.head.weight.data.normal_(
             0,
-            1 / math.sqrt(math.sqrt(self.config.emb_dim * self.config.src_vocab_size)),
+            1 / math.sqrt(math.sqrt(self.config.orig_emb_dim * self.config.src_vocab_size)),
         )
         self.base_model.reset_parameters()
 
@@ -399,7 +405,7 @@ class Granite(nn.Module):
 
 _8b_config = GraniteConfig(
     src_vocab_size=49155,
-    emb_dim=4096,
+    orig_emb_dim=4096,
     norm_eps=1e-5,
     nheads=32,
     kvheads=8,
@@ -418,7 +424,7 @@ _8b_config = GraniteConfig(
 
 _3_1_2b_config = GraniteConfig(
     src_vocab_size=49155,
-    emb_dim=2048,
+    orig_emb_dim=2048,
     norm_eps=1e-5,
     nheads=32,
     kvheads=8,
@@ -518,7 +524,7 @@ def _hf_to_fms_rope(
     new_sd = {}
 
     if model_config:
-        head_size = model_config.emb_dim // model_config.nheads
+        head_size = model_config.orig_emb_dim // model_config.nheads
     else:
         logger.warning("Missing model_config, assuming defaults for head_size")
         head_size = 128  # Good default for most models

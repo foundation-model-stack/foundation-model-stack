@@ -652,11 +652,7 @@ def _load_partial_state_dict(
                     param = getattr(target_module, key_steps[-1])
                 # *** ALERT *** Granite 2b hack for AIU Compiler 
                 if param.size() != tensor_value.size():
-                    print(f"**** {key}")
-                    print(f"**** Expanding weights of {key_steps[-2]}  from size {tensor_value.size()} => to match param size {param.size()}")
-                    if tensor_value.ndim != param.ndim:
-                        raise ValueError("Tensors must have the same number of dimensions.")
-
+                    print(f"* Expanding weights of {(".".join(key_steps[1:-1])):30.30} {str(list(tensor_value.size())):12.12} => {list(param.size())}")
                     slices = []
                     for dim in range(tensor_value.ndim):
                         expand_factor = param.shape[dim] // tensor_value.shape[dim]
@@ -665,13 +661,10 @@ def _load_partial_state_dict(
                             slices.append(slice(0, None, expand_factor))
                         else:
                             slices.append(slice(None))
-                    # print(slices)
-                    # Assign the original tensor to the correct interleaved positions
+                    # Assign the original weights tensor to the interleaved positions
                     expanded_tensor = torch.zeros_like(param)
                     expanded_tensor[tuple(slices)] = tensor_value
                     tensor_value = expanded_tensor
-                    # tensor_value = torch.stack((tensor_value, torch.zeros_like(tensor_value)), dim=1).view(*(param.size()))
-                    # print("**** AFTER matching ****", tensor_value.size(), " => " , param.size())
                     
                 param.copy_(tensor_value, non_blocking=True)
 
