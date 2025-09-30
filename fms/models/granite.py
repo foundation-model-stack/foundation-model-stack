@@ -60,8 +60,9 @@ class GraniteBlock(nn.Module):
         super(GraniteBlock, self).__init__()
         self.config = config
         # *** ALERT *** Granite 2b hack for AIU Compiler 
-        emb_kq = 128 # self.config.emb_dim // self.config.nheads
-        emb_v = self.config.emb_dim // self.config.nheads
+        emb_dim = self.config.emb_dim * 2
+        emb_kq = emb_dim // self.config.nheads
+        emb_v = emb_dim // self.config.nheads
 
         self.ln = LayerNormParameterized(
             self.config.emb_dim,
