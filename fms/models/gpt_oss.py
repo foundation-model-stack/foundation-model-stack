@@ -244,7 +244,6 @@ class GptOssHeadless(nn.Module):
             self.dropout = nn.Dropout(self.config.p_dropout)
 
     def reset_parameters(self):
-        """_summary_"""
         nn.init.trunc_normal_(
             self.embedding.weight, mean=0.0, std=self.config.emb_dim**-0.5
         )
@@ -275,7 +274,6 @@ class GptOssHeadless(nn.Module):
                         del max_seq_len_cached[dev]
 
     def post_init(self):
-        """_summary_"""
         # This function is called in `get_model` after the model is
         # fully initalized on the correct device
 
