@@ -331,10 +331,11 @@ class Granite(nn.Module):
         else:
             self.config = GraniteConfig()
         self.config = self.config.updated(**kwargs)
-        
-        if self.config.emb_dim < 4096:
+
+        # *** ALERT *** Granite 2b hack for AIU Compiler 
+        if (self.config.emb_dim // self.config.nheads) < 128:
             self.config.orig_emb_dim = self.config.emb_dim
-            self.config.emb_dim = 4096
+            self.config.emb_dim = self.config.emb_dim * (128 // (self.config.emb_dim // self.config.nheads))
 
 
         self.distributed_strategy = distributed_strategy
