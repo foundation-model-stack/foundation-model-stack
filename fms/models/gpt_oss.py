@@ -199,6 +199,8 @@ class GptOssHeadless(nn.Module):
         self.config = self.config.updated(**kwargs)
         self.distributed_strategy = distributed_strategy
 
+        param_ = [param.device for param in self.parameters()]
+
         self.embedding = nn.Embedding(
             self.config.src_vocab_size,
             self.config.emb_dim,
@@ -612,7 +614,7 @@ def _convert_moe_packed_tensors(
     scales,
     *,
     dtype: torch.dtype = torch.bfloat16,
-    rows_per_chunk: int = 32768 * 1024,
+    rows_per_chunk: int = 16384 * 512,
 ) -> torch.Tensor:
     import math
 

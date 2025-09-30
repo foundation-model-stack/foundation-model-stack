@@ -154,6 +154,8 @@ def moe_mm_backward(ctx, grad_output):
     return (
         input_,  # input
         None,  # moe_matrix
+        None,  # moe_bias
+        None,  # moe_bias_matrix
         None,  # token_expert_mapping
         None,  # padded_token_ids_per_block
         None,  # expert_block_mapping
