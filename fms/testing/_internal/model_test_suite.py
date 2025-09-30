@@ -237,7 +237,7 @@ class ModelCompileTestSuite(ModelFixtureMixin):
                 params=self._get_signature_params,
                 optional_params=optional_params,
                 logits_getter_fn=self._get_signature_logits_getter_fn,
-                device="cpu",
+                device="cuda" if torch.cuda.is_available() else "cpu",
             )
             assert cnt.frame_count == 1
         except TorchDynamoException as e:
@@ -302,7 +302,7 @@ class ModelConsistencyTestSuite(ModelFixtureMixin, SignatureFixtureMixin):
             params=self._get_signature_params,
             optional_params=self._get_signature_optional_params,
             logits_getter_fn=self._get_signature_logits_getter_fn,
-            device="cpu",
+            device="cuda" if torch.cuda.is_available() else "cpu",
         )
 
         if capture_expectation:

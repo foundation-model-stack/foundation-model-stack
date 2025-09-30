@@ -2,7 +2,6 @@ from typing import Tuple
 
 import torch
 from torch.library import custom_op
-from torch.nn import functional as F
 
 
 def moe_align_block_size(
