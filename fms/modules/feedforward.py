@@ -746,11 +746,10 @@ class MOEFeedForward(nn.Module):
 
         x = x.view(-1, self.dim)
         if self.use_bias:
-            scores = self.norm(x)
-            scores = scores.to(self.gate.weight.dtype)
+            scores = x.to(self.gate.weight.dtype)
             g = self.gate(scores)
             experts = torch.topk(g, k=self.num_activated_experts, dim=-1, sorted=True)
-            expert_weights = torch.nn.functional.softmax(experts.values, dim=1)
+            expert_weights = F.softmax(experts.values, dim=1)
             expert_indices = experts.indices
             expert_outs = self.cond_ffn(x, expert_indices, expert_weights, scores)
 
