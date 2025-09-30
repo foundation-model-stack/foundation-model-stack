@@ -35,7 +35,7 @@ class LLaMA2Fixtures(ConfigFixtureMixin, ModelFixtureMixin):
             kvheads=0,
             nlayers=2,
             pad_id=0,
-            hidden_grow_factor=2.6666666666666665,
+            hidden_grow_factor=8 / 3,
             multiple_of=2,
             activation_fn="swish",
             p_dropout=0.0,
@@ -43,6 +43,28 @@ class LLaMA2Fixtures(ConfigFixtureMixin, ModelFixtureMixin):
             rope_scaling={},
             linear_config={"linear_type": "torch_linear"},
         )
+
+    @pytest.fixture(scope="class", autouse=True)
+    def model(self, uninitialized_model: torch.nn.Module):
+        """include this fixture to get a model that is fully initialized"""
+
+        # Special random seed for Llama to ensure tests pass
+        torch.random.manual_seed(0)
+        sd = uninitialized_model.state_dict()
+        params = sorted(sd.keys())
+        for key in params:
+            parameter = sd[key]
+            opt_parameter_initialized = self._maybe_get_initialized_parameter(
+                key, parameter
+            )
+            if opt_parameter_initialized is not None:
+                parameter.copy_(opt_parameter_initialized)
+            else:
+                values = torch.randn_like(parameter)
+                values -= 0.5
+                values /= 20.0
+                parameter.copy_(values)
+        return uninitialized_model
 
 
 class TestLlama2(
@@ -91,7 +113,7 @@ class LLaMA2GQAFixtures(ModelFixtureMixin):
             kvheads=2,
             nlayers=2,
             pad_id=0,
-            hidden_grow_factor=2.6666666666666665,
+            hidden_grow_factor=8 / 3,
             multiple_of=2,
             activation_fn="swish",
             p_dropout=0.0,
