@@ -60,7 +60,7 @@ class GraniteBlock(nn.Module):
     def __init__(self, config: GraniteConfig, rotary_emb: RotaryEmbedding):
         super(GraniteBlock, self).__init__()
         self.config = config
-        # *** ALERT *** Granite 2b hack for AIU Compiler 
+        # *** ALERT *** Granite 2b hack for AIU Compiler
         emb_kq = self.config.emb_dim // self.config.nheads
         emb_v = self.config.emb_dim // self.config.nheads
 
@@ -332,11 +332,12 @@ class Granite(nn.Module):
             self.config = GraniteConfig()
         self.config = self.config.updated(**kwargs)
 
-        # *** ALERT *** Granite 2b hack for AIU Compiler 
+        # *** ALERT *** Granite 2b hack for AIU Compiler
         if (self.config.emb_dim // self.config.nheads) < 128:
             self.config.orig_emb_dim = self.config.emb_dim
-            self.config.emb_dim = self.config.emb_dim * (128 // (self.config.emb_dim // self.config.nheads))
-
+            self.config.emb_dim = self.config.emb_dim * (
+                128 // (self.config.emb_dim // self.config.nheads)
+            )
 
         self.distributed_strategy = distributed_strategy
 
@@ -355,7 +356,10 @@ class Granite(nn.Module):
     def reset_parameters(self):
         self.head.weight.data.normal_(
             0,
-            1 / math.sqrt(math.sqrt(self.config.orig_emb_dim * self.config.src_vocab_size)),
+            1
+            / math.sqrt(
+                math.sqrt(self.config.orig_emb_dim * self.config.src_vocab_size)
+            ),
         )
         self.base_model.reset_parameters()
 
