@@ -265,6 +265,7 @@ class RoBERTa(nn.Module):
                 activation_fn=str_to_activation(self.config.activation_fn),
                 layer_norm=nn.LayerNorm(self.config.emb_dim, self.config.norm_eps),
                 dropout=self.config.p_dropout,
+                do_pooling=self.config.pooling,
                 apply_pooling_fn=self.config.pooling,
                 pooling_fn_act=str_to_activation(self.config.classifier_activation_fn),
             ),
@@ -308,6 +309,7 @@ class RoBERTa(nn.Module):
 
     def reset_parameters(self):
         self.base_model.reset_parameters()
+        assert isinstance(self.classification_head.head, torch.nn.Linear)
         if self.config.tie_heads:
             self.classification_head.head.bias.data.zero_()
         else:
@@ -324,6 +326,7 @@ class RoBERTa(nn.Module):
         # on the correct device
 
         # if this model ties weights, so we tie here
+        assert isinstance(self.classification_head.head, torch.nn.Linear)
         if self.config.tie_heads:
             # make sure you assign the non-meta weights to the meta parameter
             if self.classification_head.head.weight.device == torch.device("meta"):
@@ -359,13 +362,13 @@ class RoBERTaForClassification(nn.Module):
             MLPClassificationHead(
                 self.config.emb_dim,
                 num_classes=self.config.num_classes,
-                activation_fn=str_to_activation(self.config.activation_fn),
-                layer_norm=nn.LayerNorm(self.config.emb_dim, self.config.norm_eps),
+                activation_fn=str_to_activation(self.config.classifier_activation_fn),
+                layer_norm=None,
                 dropout=self.config.p_dropout,
-                apply_pooling_fn=self.config.pooling,
-                pooling_fn_act=str_to_activation(self.config.classifier_activation_fn),
+                do_pooling=True,
+                apply_pooling_fn=False,
                 dense_bias=True,
-                head_bias=False,
+                head_bias=True,
             ),
             final_layers=True,
         )
@@ -374,6 +377,7 @@ class RoBERTaForClassification(nn.Module):
         self,
         x: torch.Tensor,
         position_ids: Optional[torch.Tensor] = None,
+        token_type_ids: Optional[torch.Tensor] = None,
         **attn_kwargs: Unpack[AttentionKwargs],
     ):
         get_attention_type(**attn_kwargs)["validate_attn_kwargs"](
@@ -381,7 +385,9 @@ class RoBERTaForClassification(nn.Module):
         )
 
         # run through the encoder layers
-        x = self.base_model(x, position_ids=position_ids, **attn_kwargs)
+        x = self.base_model(
+            x, position_ids=position_ids, token_type_ids=token_type_ids, **attn_kwargs
+        )
 
         # run through classification head and project to vocab space
         x = self.classification_head(x)
@@ -489,7 +495,6 @@ _base_config = RoBERTaConfig(tie_heads=True, norm_eps=1e-5, p_dropout=0.1)
 
 # Roberta for 2-Class Classification
 _base_classification_config_dict = copy.copy(_base_config.__dict__)
-_base_classification_config_dict["pooling"] = True
 _base_classification_config = RoBERTaClassificationConfig(
     **_base_classification_config_dict,
     num_classes=2,
@@ -634,6 +639,14 @@ def _hf_to_fms_names(hf_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]:
         (r"^lm_head\.decoder", "classification_head.head"),
         (r"^lm_head\.bias", "classification_head.head.bias"),
         (r"^roberta.pooler.dense", "classification_head.pooler_linear"),
+        (
+            r"^classifier\.dense",
+            "classification_head.dense",
+        ),  # only relevant to SentenceClassification task
+        (
+            r"^classifier\.out_proj",
+            "classification_head.head",
+        ),  # only relevant to SentenceClassification task
         (r"^qa_outputs", "qa_head"),  # only relevant to QuestionAnswering task
     ]
     new_sd = {}

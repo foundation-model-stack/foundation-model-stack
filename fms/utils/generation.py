@@ -250,6 +250,10 @@ def generate(
     kwargs["past_key_value_states"] = None
     kwargs["use_cache"] = use_cache
     kwargs["attn_algorithm"] = "math"
+    # if we didn't specify last_n_tokens and only_last_token is set to True, set last_n_tokens to 1, otherwise use default
+    # we do this since the output shape of only_last_token is different and therefore would change the logic in generate
+    if "last_n_tokens" not in kwargs and kwargs.get("only_last_token", False):
+        kwargs["last_n_tokens"] = 1
 
     prompt_length = input_ids.shape[1]
 
@@ -287,8 +291,8 @@ def generate(
         else:
             logits = output
 
-        if "only_last_token" not in kwargs:
-            logits = logits[:, -1, :]
+        # always get last now since we still have this dim
+        logits = logits[:, -1, :]
 
         if do_sample:
             # get logits from last value in sequence nad scale
