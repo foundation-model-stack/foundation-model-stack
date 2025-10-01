@@ -172,6 +172,16 @@ def _map_model_config(architecture, config):
         config_params["p_dropout"] = config.hidden_dropout_prob
         config_params["norm_eps"] = config.layer_norm_eps
         config_params["activation_fn"] = config.hidden_act
+    elif architecture == "BertForQuestionAnswering":
+        inner_dim = config.intermediate_size
+        architecture = "bert_question_answering"
+        config_params["emb_dim"] = config.hidden_size
+        config_params["pad_id"] = config.pad_token_id
+        config_params["max_pos"] = config.max_position_embeddings  # roberta differs
+        config_params["p_dropout"] = config.hidden_dropout_prob
+        config_params["norm_eps"] = config.layer_norm_eps
+        config_params["activation_fn"] = config.hidden_act
+        config_params["type_vocab_size"] = config.type_vocab_size  # roberta differs
     elif architecture == "GraniteForCausalLM":
         inner_dim = config.intermediate_size
         architecture = "granite"
