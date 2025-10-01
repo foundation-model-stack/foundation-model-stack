@@ -143,6 +143,29 @@ class HFAdaptedRoBERTaHeadless(HFEncoderModelArchitecture):
         super().__init__(encoder, embedding, config, *args, **kwargs)
 
 
+class HFAdaptedRoBERTaForFeatureExtraction(HFAdaptedRoBERTaHeadless):
+    def __init__(self, config: HFAdaptedRoBERTaConfig, *args, **kwargs):
+        
+        super().__init__(
+            config=config,
+            activation_fn=config.activation_fn,
+            norm_eps=config.norm_eps,
+            *args,
+            **kwargs,
+        )
+
+    @classmethod
+    def _hf_model_from_fms(
+        cls, model: RoBERTa, config: HFAdaptedRoBERTaConfig
+    ) -> "HFAdaptedRoBERTaForMaskedLM":
+        return cls(
+            config=config,
+            encoder=model.base_model,
+            embedding=model.base_model.embedding,
+            pooler=None, # TODO parse the pooling layer.
+        )
+
+
 class HFAdaptedRoBERTaForMaskedLM(MaskedLMHeadMixin, HFAdaptedRoBERTaHeadless):
     def __init__(self, config: HFAdaptedRoBERTaConfig, *args, **kwargs):
         super().__init__(

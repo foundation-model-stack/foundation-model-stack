@@ -6,6 +6,7 @@ import torch
 from transformers import (
     AutoModelForMaskedLM,
     AutoModelForSequenceClassification,
+    AutoModel,
     RobertaTokenizerFast,
 )
 
@@ -13,6 +14,7 @@ from fms.models import get_model
 from fms.models.hf import to_hf_api
 from fms.models.hf.roberta.modeling_roberta_hf import (
     HFAdaptedRoBERTaForSequenceClassification,
+    HFAdaptedRoBERTaHeadless
 )
 from fms.testing.comparison import (
     HFModelSignatureParams,
@@ -114,6 +116,61 @@ def test_roberta_base_for_masked_lm_equivalency():
         "model loss is not equal",
     )
 
+def test_roberta_base_for_featureextraction_equivalency():
+    # create models
+        # create models
+    model_hf_name = "sentence-transformers/stsb-roberta-base-v2"
+    hf_model = AutoModel.from_pretrained(
+        "sentence-transformers/stsb-roberta-base-v2"
+    )
+
+    with tempfile.TemporaryDirectory() as workdir:
+        hf_model.save_pretrained(
+            f"{workdir}/{model_hf_name.split('/',1)[-1]}", safe_serialization=False
+        )
+
+        model = get_model(
+            "roberta",
+            "base",
+            f"{workdir}/{model_hf_name.split('/',1)[-1]}",
+            "hf",
+            norm_eps=1e-5,
+            tie_heads=True,
+        )
+
+    # copy weights
+    hf_model_fms = HFAdaptedRoBERTaHeadless.from_fms_model(
+        model,
+        eos_token_id=hf_model.config.eos_token_id,
+        bos_token_id=hf_model.config.bos_token_id,
+        pad_token_id=hf_model.config.pad_token_id,
+    )
+    model.eval()
+    hf_model.eval()
+    hf_model_fms.eval()
+
+
+
+    with torch.no_grad():
+        tokenizer = RobertaTokenizerFast.from_pretrained("roberta-base")
+        prompt = "Hugging Face is the best thing since sliced bread!"
+        input_tokenized = tokenizer(prompt, return_tensors="pt")
+        
+        hf_output = hf_model.forward(**input_tokenized).last_hidden_state
+        hf_embeddings = hf_model.embeddings.forward(input_tokenized["input_ids"])
+        hf_model.pooler = None
+        
+        hf_output = hf_model.forward(**input_tokenized)
+        
+        print(len(hf_output[0]))
+        hf_fms_embeddings = hf_model_fms.embedding.forward(input_tokenized["input_ids"])
+        hf_fms_output = hf_model_fms.forward(**input_tokenized)
+    
+    assert (torch.Tensor(hf_embeddings) - torch.Tensor(hf_fms_embeddings)).abs().max() < 1e-4 , "model embeddings are not equal"
+    assert  (torch.Tensor(hf_output[0]) - torch.Tensor(hf_fms_output.last_hidden_state)).abs().max() < 1e-4 , "model output is not equal"
+    
+
+test_roberta_base_for_featureextraction_equivalency()
 
 sequence_classification_params = [
     ("sentiment-analysis", "multi_label_classification"),
