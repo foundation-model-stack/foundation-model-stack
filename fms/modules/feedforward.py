@@ -1,10 +1,8 @@
 from typing import Any, Mapping, Optional, Set
-import math
 
 import torch
 import torch.distributed
 import torch.nn as nn
-import torch.nn.init as init
 import torch.nn.functional as F
 from torch.distributed.distributed_c10d import ProcessGroup
 
