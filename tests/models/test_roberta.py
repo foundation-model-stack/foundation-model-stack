@@ -3,7 +3,9 @@ import torch
 
 from fms.models.roberta import (
     RoBERTa,
+    RoBERTaClassificationConfig,
     RoBERTaConfig,
+    RoBERTaForClassification,
     RoBERTaForQuestionAnswering,
     RoBERTaQuestionAnsweringConfig,
 )
@@ -144,6 +146,52 @@ class TestRoBERTaQuestionAnswering(
     @staticmethod
     def _get_signature_logits_getter_fn(f_out) -> torch.Tensor:
         return torch.cat([f_out[0], f_out[1]], dim=-1)
+
+    def test_config_passed_to_model_and_updated(self, model, config):
+        """test model constructor appropriately merges any passed kwargs into the config
+        without mutating the original config"""
+        model = type(model)(config=config, pad_id=config.pad_id + 1)
+        # check not same reference
+        assert model.get_config() is not config
+
+        # modify pad_id to the new value expected and check equivalence
+        config.pad_id = config.pad_id + 1
+        assert model.get_config().as_dict() == config.as_dict()
+
+
+class RoBERTaClassificationFixtures(ConfigFixtureMixin, ModelFixtureMixin):
+    """Define uninitialized model and config used by RoBERTaForClassification tests"""
+
+    @pytest.fixture(scope="class", autouse=True)
+    def uninitialized_model(self, config: RoBERTaClassificationConfig):
+        return RoBERTaForClassification(config)
+
+    @pytest.fixture(scope="class", autouse=True)
+    def config(self) -> RoBERTaClassificationConfig:
+        return RoBERTaClassificationConfig(
+            src_vocab_size=384,
+            emb_dim=16,
+            nheads=8,
+            nlayers=2,
+            max_pos=512,
+            hidden_grow_factor=2.0,
+            tie_heads=False,
+        )
+
+
+class TestRoBERTaClassification(
+    ModelConsistencyTestSuite, ModelCompileTestSuite, RoBERTaClassificationFixtures
+):
+    """Main test class for RoBERTaForClassification"""
+
+    # x is the main parameter for this model which is the input tensor
+    # a default attention mask is generated when not provided
+    _get_signature_params = ["x"]
+    _get_signature_input_ids = torch.arange(1, 16, dtype=torch.int64).unsqueeze(0)
+
+    # @staticmethod
+    # def _get_signature_logits_getter_fn(f_out) -> torch.Tensor:
+    #     return f_out
 
     def test_config_passed_to_model_and_updated(self, model, config):
         """test model constructor appropriately merges any passed kwargs into the config
