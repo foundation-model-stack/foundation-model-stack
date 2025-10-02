@@ -316,6 +316,7 @@ def _sdpa_with_sinks_op(
     QK *= scale_factor
     QK += mask[None, None, :, :]
     QK = torch.cat([QK, S], dim=-1)
+    QK = QK - QK.max(dim=-1, keepdim=True).values
     W = torch.softmax(QK, dim=-1)
     W = W[..., :-1]  # drop the attention sinks after done
     attn = torch.einsum("hmqk,khmd->qhmd", W, values_e)

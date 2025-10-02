@@ -56,6 +56,7 @@ class GptOssConfig(ModelConfig):
     activation_fn: str = "silu"
     initializer_range: float = 0.02
     max_expected_seq_len = 131072
+    swiglu_limit: float = 7.0
     top_k_experts = 4
     router_aux_loss_coef: float = 0.9
     output_router_logits = False
@@ -132,6 +133,7 @@ class GptOssBlock(nn.Module):
             self.config.emb_dim,
             self.config.emb_dim,
             use_bias=True,
+            swiglu_limit=self.config.swiglu_limit
         )
 
         if self.config.p_dropout != 0:

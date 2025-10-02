@@ -161,6 +161,7 @@ def _map_model_config(architecture, config):
         config_params["head_dim"] = config.head_dim
         config_params["rope_theta"] = config.rope_theta
         config_params["rope_scaling"] = config.rope_scaling
+        config_params["swiglu_limit"] = config.swiglu_limit
     elif architecture == "MixtralForCausalLM":
         inner_dim = config.intermediate_size
         architecture = "mixtral"

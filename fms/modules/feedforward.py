@@ -479,6 +479,7 @@ class ConditionalFeedForward(nn.Module):
         dim: int,
         intermediate_size: int,
         use_bias: bool = False,
+        swiglu_limit: float = 7.0
     ):
         super().__init__()
         self.num_experts = num_experts
@@ -487,23 +488,11 @@ class ConditionalFeedForward(nn.Module):
         self.w13 = nn.Parameter(torch.empty(num_experts, 2 * intermediate_size, dim))
         self.w2 = nn.Parameter(torch.empty(num_experts, dim, intermediate_size))
         self.use_bias = use_bias
+        self.swiglu_limit = swiglu_limit
         self.w13_bias = torch.nn.Parameter(
             torch.empty(num_experts, 2 * intermediate_size)
         )
         self.w2_bias = torch.nn.Parameter(torch.empty(num_experts, dim))
-        self.norm = LayerNormParameterized(
-            dim,
-            elementwise_scale=True,
-            elementwise_shift=False,
-            use_mean=False,
-            eps=1e-05,
-            use_high_precision_pow=True,
-        )
-
-        init.kaiming_uniform_(self.w13, a=math.sqrt(5))
-        init.kaiming_uniform_(self.w2, a=math.sqrt(5))
-        init.zeros_(self.w13_bias)
-        init.zeros_(self.w2_bias)
 
         assert self.is_parameter_initialized(self.w13), "Loaded w13"
         assert self.is_parameter_initialized(self.w2), "Loaded w2"
@@ -551,7 +540,7 @@ class ConditionalFeedForward(nn.Module):
             mlp1_weight = self.w13[expert_indices, ...]
             mlp1_bias = self.w13_bias[expert_indices, ...]
             scores = torch.einsum("beck,bk->bec", mlp1_weight, scores) + mlp1_bias
-            scores = self.swiglu(scores, limit=7.0)
+            scores = self.swiglu(scores, limit=self.swiglu_limit)
 
             # MLP #2
             mlp2_weight = self.w2[expert_indices, ...]
@@ -561,7 +550,7 @@ class ConditionalFeedForward(nn.Module):
             # Weighted sum of experts
             scores = torch.einsum("bec,be->bc", scores, expert_weights)
 
-            return scores
+            return x + scores
 
         else:
             M, D = x.shape
@@ -713,6 +702,7 @@ class MOEFeedForward(nn.Module):
         dim: int,
         intermediate_size: int,
         use_bias: bool = False,
+        swiglu_limit: float = 7.0
     ) -> None:
         super().__init__()
         self.cond_ffn = ConditionalFeedForward(
@@ -746,13 +736,15 @@ class MOEFeedForward(nn.Module):
 
         x = x.view(-1, self.dim)
         if self.use_bias:
-            scores = x.to(self.gate.weight.dtype)
-            g = self.gate(scores)
-            experts = torch.topk(g, k=self.num_activated_experts, dim=-1, sorted=True)
+            t = self.norm(x)
+            t = t.to(self.gate.weight.dtype)
+            scores = self.gate(t)
+            experts = torch.topk(scores, k=self.num_activated_experts, dim=-1, sorted=True)
             expert_weights = F.softmax(experts.values, dim=1)
             expert_indices = experts.indices
-            expert_outs = self.cond_ffn(x, expert_indices, expert_weights, scores)
+            expert_outs = self.cond_ffn(x, expert_indices, expert_weights, t)
 
+            return expert_outs.view(B, S, self.intermediate_size)
         else:
             # T = num_tokens, E = num_experts, D = hidden dim, A = activated experts
             # x: [T, D]
@@ -765,10 +757,6 @@ class MOEFeedForward(nn.Module):
 
             expert_outs = self.cond_ffn(x, expert_indices, expert_weights, scores)
             int_v1 = torch.einsum("tai,ta -> ti", expert_outs, expert_weights)
-
-        if self.use_bias:
-            int_v2 = expert_outs.view(B, S, self.intermediate_size)
-        else:
             int_v2 = int_v1.view(B, S, self.dim)
 
-        return int_v2
+            return int_v2
