@@ -479,7 +479,7 @@ class ConditionalFeedForward(nn.Module):
         dim: int,
         intermediate_size: int,
         use_bias: bool = False,
-        swiglu_limit: float = 7.0
+        swiglu_limit: float = 7.0,
     ):
         super().__init__()
         self.num_experts = num_experts
@@ -702,7 +702,7 @@ class MOEFeedForward(nn.Module):
         dim: int,
         intermediate_size: int,
         use_bias: bool = False,
-        swiglu_limit: float = 7.0
+        swiglu_limit: float = 7.0,
     ) -> None:
         super().__init__()
         self.cond_ffn = ConditionalFeedForward(
@@ -739,7 +739,9 @@ class MOEFeedForward(nn.Module):
             t = self.norm(x)
             t = t.to(self.gate.weight.dtype)
             scores = self.gate(t)
-            experts = torch.topk(scores, k=self.num_activated_experts, dim=-1, sorted=True)
+            experts = torch.topk(
+                scores, k=self.num_activated_experts, dim=-1, sorted=True
+            )
             expert_weights = F.softmax(experts.values, dim=1)
             expert_indices = experts.indices
             expert_outs = self.cond_ffn(x, expert_indices, expert_weights, t)

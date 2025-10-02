@@ -133,7 +133,7 @@ class GptOssBlock(nn.Module):
             self.config.emb_dim,
             self.config.emb_dim,
             use_bias=True,
-            swiglu_limit=self.config.swiglu_limit
+            swiglu_limit=self.config.swiglu_limit,
         )
 
         if self.config.p_dropout != 0:
