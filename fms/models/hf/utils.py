@@ -229,7 +229,7 @@ def _infer_model_configuration(
         config_params["sliding_window"] = config.sliding_window
     elif architecture == "Qwen3ForCausalLM":
         inner_dim = config.intermediate_size
-        architecture = "qwen"  # or qwen3?
+        architecture = "qwen3"
         config_params["activation_fn"] = config.hidden_act
         config_params["emb_dim"] = config.hidden_size
         config_params["max_expected_seq_len"] = config.max_position_embeddings

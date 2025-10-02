@@ -6,12 +6,16 @@ Part of code to support Qwen3 models
 
 # pylint: disable=unknown-option-value,protected-access
 # pylint: disable=unused-argument
+# pylint: disable=too-many-instance-attributes
+# pylint: disable=missing-class-docstring
+# pylint: disable=missing-function-docstring
+# pylint: disable=too-many-arguments,too-many-positional-arguments
 
 import logging
 import math
 import re
 from dataclasses import dataclass
-from typing import Any, Mapping, Optional, Tuple, Unpack
+from typing import Any, Dict, Mapping, Optional, Tuple, Unpack
 
 import torch
 from torch import nn
@@ -38,7 +42,7 @@ logger = logging.getLogger(__name__)
 ======= Mapping =======
     # These are independent of model (except architecture)
     inner_dim = config.intermediate_size
-    architecture = "qwen"
+    architecture = "qwen3"
     01 + config_params["activation_fn"] = config.hidden_act
     02 + config_params["emb_dim"] = config.hidden_size
     03 + config_params["max_expected_seq_len"] = config.max_position_embeddings
@@ -85,12 +89,8 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
-class QwenConfig(ModelConfig):
-    """_summary_
+class Qwen3Config(ModelConfig):
 
-    Args:
-        ModelConfig (_type_): _description_
-    """
     # From above mapping
     src_vocab_size: int = 151936
     nheads: int = 16
@@ -111,23 +111,44 @@ class QwenConfig(ModelConfig):
     fused_weights: bool = True  # FMS Specific -- For CPU/GPU = T, AIU = F
     pad_id: int = -1  # borrowed from granite, we do need it
     linear_config: Optional[Mapping[str, Any]] = None  # To support quantization
+    # From config.json just in case?
+    attention_bias: bool = False
+    attention_dropout: float = 0.0
+    # bos_token_id: int = 151643
+    eos_token_id: int = 151645
+    head_dim:int = 128
+    hidden_act:str = "silu"
+    hidden_size: int = 2048
+    initializer_range: float = 0.02
+    intermediate_size:int = 6144
+    max_position_embeddings:int = 40960
+    max_window_layers:int = 28
+    model_type:str = "qwen3"
+    num_attention_heads:int = 16
+    num_hidden_layers:int = 28
+    num_key_value_heads:int = 8
+    rms_norm_eps:float = 1e-06
+    rope_scaling =  None
+    rope_theta:int = 1000000
+    sliding_window = 0  # not sure what to put here
+    tie_word_embeddings:bool = True
+    torch_dtype: str = "bfloat16"
+    transformers_version:str = "4.51.0"
+    use_cache:bool = True
+    use_sliding_window = False
+    vocab_size: int = 15193
 
 
-# Qwen3-1.7b
-_1_7b_config = QwenConfig()
+# Qwen3-1.7B
+_1_7b_config = Qwen3Config()
 
 
-class QwenBlock(nn.Module):
+class Qwen3Block(nn.Module):
 
 
-    def __init__(self, config: QwenConfig, rotary_emb: RotaryEmbedding):
-        """_summary_
+    def __init__(self, config: Qwen3Config, rotary_emb: RotaryEmbedding):
 
-        Args:
-            config (QwenConfig): _description_
-            rotary_emb (RotaryEmbedding): _description_
-        """
-        super(QwenBlock, self).__init__()
+        super().__init__()
         self.config = config
         emb_kq = self.config.emb_dim // self.config.nheads
         emb_v = self.config.emb_dim // self.config.nheads
@@ -227,14 +248,14 @@ class QwenBlock(nn.Module):
             return x
 
 
-class QwenHeadless(nn.Module):
+class Qwen3Headless(nn.Module):
 
     def __init__(
         self,
-        config: QwenConfig,
+        config: Qwen3Config,
         distributed_strategy: DistributedStrategy = NoOpStrategy,
     ):
-        super(QwenHeadless, self).__init__()
+        super().__init__()
         self.config = config
         self.distributed_strategy = distributed_strategy
 
@@ -259,7 +280,7 @@ class QwenHeadless(nn.Module):
 
         layers = []
         for i in range(self.config.nlayers):
-            block: nn.Module = QwenBlock(self.config, self.rot_emb)
+            block: nn.Module = Qwen3Block(self.config, self.rot_emb)
             block = self.distributed_strategy.distribute_layer(block, i)
             layers.append(block)
         self.layers = nn.ModuleList(layers)
@@ -369,32 +390,32 @@ class QwenHeadless(nn.Module):
         return dec_out, present_key_value_states
 
 
-class Qwen(nn.Module):
+class Qwen3(nn.Module):
 
     def __init__(
         self,
-        config: Optional[QwenConfig] = None,
+        config: Optional[Qwen3Config] = None,
         distributed_strategy: DistributedStrategy = NoOpStrategy,
         **kwargs,
     ):
-        super(Qwen, self).__init__()
+        super().__init__()
         if config is not None:
             self.config = config
         else:
-            self.config = QwenConfig()
+            self.config = Qwen3Config()
         self.config = self.config.updated(**kwargs)
         self.distributed_strategy = distributed_strategy
 
-        self.base_model = QwenHeadless(self.config, self.distributed_strategy)
+        self.base_model = Qwen3Headless(self.config, self.distributed_strategy)
         self.head = nn.Linear(
             self.config.emb_dim, self.config.src_vocab_size, bias=False
         )
 
     @classmethod
-    def from_config(cls, config: QwenConfig) -> "Qwen":
+    def from_config(cls, config: Qwen3Config) -> "Qwen3":
         return cls(config)
 
-    def get_config(self) -> QwenConfig:
+    def get_config(self) -> Qwen3Config:
         return self.config
 
     def reset_parameters(self):
@@ -444,17 +465,17 @@ class Qwen(nn.Module):
             return preds
 
 
-_ARCHITECTURE_NAME = "qwen"
+_ARCHITECTURE_NAME = "qwen3"
 
 
-def _qwen_factory_factory(config):
+def _qwen3_factory_factory(config):
     def factory(**kwargs):
-        return Qwen(config, **kwargs)
+        return Qwen3(config, **kwargs)
 
     return factory
 
 
-models.register_model(_ARCHITECTURE_NAME, "1.7b", _qwen_factory_factory(_1_7b_config))
+models.register_model(_ARCHITECTURE_NAME, "1.7b", _qwen3_factory_factory(_1_7b_config))
 
 
 # =============== Serialization ==================
@@ -468,7 +489,7 @@ serialization.register_adapter_step(
 
 
 def _weight_fusion(
-    input_sd: Mapping[str, Any], model_config: Optional[QwenConfig] = None, **kwargs
+    input_sd: Mapping[str, Any], model_config: Optional[Qwen3Config] = None, **kwargs
 ) -> Mapping[str, Any]:
     has_fused_weights = True
     if model_config:
@@ -486,8 +507,8 @@ def _weight_fusion(
 serialization.register_adapter_step(_ARCHITECTURE_NAME, "weight_fusion", _weight_fusion)
 
 
-def _hf_gptq_qwen_check(
-    input_sd: Mapping[str, Any], model_config: Optional[QwenConfig] = None, **kwargs
+def _hf_gptq_qwen3_check(
+    input_sd: Mapping[str, Any], model_config: Optional[Qwen3Config] = None, **kwargs
 ) -> Mapping[str, Any]:
     """_summary_
 
@@ -518,8 +539,29 @@ def _hf_gptq_qwen_check(
 
 
 serialization.register_adapter_step(
-    _ARCHITECTURE_NAME, "hf_gptq_fusion_check", _hf_gptq_qwen_check
+    _ARCHITECTURE_NAME, "hf_gptq_fusion_check", _hf_gptq_qwen3_check
 )
+
+# pylint: disable=wrong-import-position,wrong-import-order
+import atexit  # noqa: E402
+import os  # noqa: E402
+KWR_DEBUG = len(os.getenv("KWR_DEBUG", "")) > 0
+mapping_dict: Dict[str, str] = {}
+no_mapping_dict: Dict[str, int] = {}
+if KWR_DEBUG:
+    def mapping_dict_cleanup() -> None:
+        """
+        This function will be called automatically when the script exits.
+        """
+        size = len(mapping_dict)  # noqa: F821
+        print(f"qwen3.py:_hf_to_fms_names():mapping_dict()/{size}", flush=True)
+        for key in sorted(mapping_dict.keys()):  # noqa: F821
+            print(f"  {key:<60} : {mapping_dict[key]}", flush=True)  # noqa: F821
+        size = len(no_mapping_dict)  # noqa: F821
+        print(f"qwen3.py:_hf_to_fms_names():no_mapping_dict()/{size}", flush=True)
+        for key in sorted(no_mapping_dict.keys()):  # noqa: F821
+            print(f"  {key:<60} : {no_mapping_dict[key]}", flush=True)  # noqa: F821
+    atexit.register(mapping_dict_cleanup)
 
 
 def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]:
@@ -540,7 +582,7 @@ def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]
         (r"self_attn\.k_proj", "attn.in_proj.key"),
         (r"self_attn\.v_proj", "attn.in_proj.value"),
         (r"self_attn\.q_proj", "attn.in_proj.query"),
-        (r"self_attn\.o_proj", "attn.dense"),       
+        (r"self_attn\.o_proj", "attn.dense"),
         (r"mlp\.gate_proj", "ff_sub_layer.wg"),
         (r"mlp\.up_proj", "ff_sub_layer.w1"),
         (r"mlp\.down_proj", "ff_sub_layer.w2"),
@@ -549,13 +591,24 @@ def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]
         (r"self_attn\.k_norm", "attn.in_proj.k_norm"),
         (r"self_attn\.q_norm", "attn.in_proj.q_norm"),
     ]
-    global mapping_dict
     new_sd = {}
     for name, param in input_sd.items():
         new_name = name
         for pattern, repl in replacements:
             new_name = re.sub(pattern, repl, new_name)
         new_sd[new_name] = param
+        if KWR_DEBUG:
+            if new_name == name:
+                global no_mapping_dict   # pylint: disable=global-variable-not-assigned
+                if name in no_mapping_dict:
+                    no_mapping_dict[name] += 1
+                else:
+                    no_mapping_dict[name] = 1
+            global mapping_dict # pylint: disable=global-variable-not-assigned
+            if name in mapping_dict:
+                print(f"[WARNING]: key '{name}' already in mapping_dict")
+            else:
+                mapping_dict[name] = new_name
     return new_sd
 
 
@@ -580,17 +633,9 @@ def _get_rope_params(linear_type: str) -> list[str]:
 
 
 def _hf_to_fms_rope(
-    input_sd: Mapping[str, Any], model_config: Optional[QwenConfig] = None, **kwargs
+    input_sd: Mapping[str, Any], model_config: Optional[Qwen3Config] = None, **kwargs
 ) -> Mapping[str, Any]:
-    """_summary_
 
-    Args:
-        input_sd (Mapping[str, Any]): _description_
-        model_config (Optional[QwenConfig], optional): _description_. Defaults to None.
-
-    Returns:
-        Mapping[str, Any]: _description_
-    """
     new_sd = {}
 
     if model_config:
