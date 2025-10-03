@@ -732,20 +732,21 @@ class MOEFeedForward(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         B, S = x.shape[:2]
 
-        x = x.view(-1, self.dim)
         if self.use_bias:
-            t = self.norm(x)
-            t = t.to(self.gate.weight.dtype)
-            scores = self.gate(t)
+            x = self.norm(x)
+            x = x.view(-1, self.dim)
+            x = x.to(self.gate.weight.dtype)
+            scores = self.gate(x)
             experts = torch.topk(
                 scores, k=self.num_activated_experts, dim=-1, sorted=True
             )
             expert_weights = F.softmax(experts.values, dim=1)
             expert_indices = experts.indices
-            expert_outs = self.cond_ffn(x, expert_indices, expert_weights, t)
+            expert_outs = self.cond_ffn(x, expert_indices, expert_weights, x)
 
             return expert_outs.view(B, S, self.intermediate_size)
         else:
+            x = x.view(-1, self.dim)
             # T = num_tokens, E = num_experts, D = hidden dim, A = activated experts
             # x: [T, D]
             scores = self.gate(x)  # [T, E]

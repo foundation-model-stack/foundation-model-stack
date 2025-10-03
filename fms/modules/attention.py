@@ -301,30 +301,25 @@ def _sdpa_with_sinks_op(
 
     # https://github.com/openai/gpt-oss/blob/main/gpt_oss/torch/model.py#L153
     # from gpt-oss open ai implementation
-    n_tokens, n_heads, q_mult, d_head = queries.shape
+    batch, n_heads, n_tokens, d_head = queries.shape
     S = attn_sinks.reshape(1, -1, 1, 1).expand(
-        queries.shape[0], -1, queries.shape[-2], -1
+        batch, -1, n_tokens, -1
     )
-    S = S.transpose(0, 1).transpose(1, 2)
     mask = torch.triu(queries.new_full((n_tokens, n_tokens), -float("inf")), diagonal=1)
     if sliding_window and sliding_window > 0:
         mask += torch.tril(
             mask.new_full((n_tokens, n_tokens), -float("inf")),
             diagonal=-sliding_window,
         )
-    QK = torch.einsum("qhmd,khmd->hmqk", queries, keys_e)
+    QK = torch.einsum("bhqd,bhkd->bhqk", queries, keys_e)
     QK *= scale_factor
     QK += mask[None, None, :, :]
     QK = torch.cat([QK, S], dim=-1)
     QK = QK - QK.max(dim=-1, keepdim=True).values
     W = torch.softmax(QK, dim=-1)
     W = W[..., :-1]  # drop the attention sinks after done
-    attn = torch.einsum("hmqk,khmd->qhmd", W, values_e)
+    attn = torch.matmul(W, values_e)
 
-    # attn: bs x seq_len x nheads*emb_v_per_head
-    # attn: b x h x qlen x ds
-    # attn after permute: b x qlen x h x ds
-    # b x qlen x (d)
     attn = attn.transpose(2, 1).contiguous()
     return attn
 

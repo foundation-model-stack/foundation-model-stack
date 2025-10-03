@@ -7,9 +7,9 @@ import torch.nn as nn
 from transformers import PretrainedConfig
 from transformers.modeling_outputs import BaseModelOutputWithPastAndCrossAttentions
 
-from fms.models.hf.gpt_oss.configuration_gpt_oss_hf import HFAdaptedGptOssConfig
 from fms.models.hf.lm_head_mixins import LMHeadModelLMHeadMixin
 from fms.models.hf.modeling_hf_adapter import HFDecoder, HFDecoderModelArchitecture
+from fms.models.hf.gpt_oss.configuration_gpt_oss_hf import HFAdaptedGptOssConfig
 from fms.models.gpt_oss import GptOss, GptOssHeadless
 
 
@@ -46,13 +46,15 @@ class HFAdapterGptOssDecoder(HFDecoder):
 
 
 class HFAdaptedGptOssHeadless(HFDecoderModelArchitecture):
-    config_class: HFAdaptedGptOssConfig
+    print(f"cheguei aqui {HFDecoderModelArchitecture}")
+    print(f"achei a config {HFAdaptedGptOssConfig}")
+    config_class = HFAdaptedGptOssConfig
     base_model_prefix = "hf_adapted_gpt_oss"
 
     def __init__(
         self,
         config: PretrainedConfig,
-        decoder: Optional[nn.Module] = None,
+        decoder: Optional[GptOssHeadless] = None,
         embedding: Optional[nn.Module] = None,
         *args,
         **kwargs,

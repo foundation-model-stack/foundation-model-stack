@@ -1,7 +1,9 @@
 from fms.models.gpt_oss import GptOssConfig
 
+from transformers import PretrainedConfig
 
-class HFAdaptedGptOssConfig(GptOssConfig):
+
+class HFAdaptedGptOssConfig(PretrainedConfig):
     model_type = "hf_adapted_gpt_oss"
     attribute_map = {
         "vocab_size": "src_vocab_size",
@@ -16,6 +18,15 @@ class HFAdaptedGptOssConfig(GptOssConfig):
         "max_position_embeddings": "max_expected_seq_len",
         "rope_theta": "rope_base",
         "attention_dropout": "p_dropout",
+         "attention_bias": "attn_bias",
+        "eos_token_id": "eos_token_id",
+        "num_key_value_heads": "kvheads",
+        "hidden_act": "activation_fn",
+        "hidden_size": "emb_dim",
+        "sliding_window": "sliding_window",
+        "rope_theta": "rope_theta",
+        "rope_scaling": "rope_scaling",
+        "swiglu_limit": "swiglu_limit"
     }
 
     def __init__(
@@ -74,6 +85,7 @@ class HFAdaptedGptOssConfig(GptOssConfig):
 
         # Validate the correctness of rotary position embeddings parameters
         # BC: if there is a 'type' field, copy it it to 'rope_type'.
+        self.rope_scaling = kwargs.get("rope_scaling")
         if self.rope_scaling is not None and "type" in self.rope_scaling:
             self.rope_scaling["rope_type"] = self.rope_scaling["type"]
 
@@ -88,7 +100,7 @@ class HFAdaptedGptOssConfig(GptOssConfig):
         )
 
     @classmethod
-    def from_pretrained(cls, pretrained_model_name_or_path, **kwargs) -> "GptOssConfig":
+    def from_pretrained(cls, pretrained_model_name_or_path, **kwargs) -> "PretrainedConfig":
         config_dict, kwargs = cls.get_config_dict(
             pretrained_model_name_or_path, **kwargs
         )
