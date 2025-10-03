@@ -60,7 +60,7 @@ class GptOssConfig(ModelConfig):
     top_k_experts = 4
     router_aux_loss_coef: float = 0.9
     output_router_logits = False
-    layer_types = None
+    layer_types: Optional[list[Any]] = None
     pad_id: int = -1
     nheads: int = 64
     nlayers: int = 24
@@ -142,8 +142,8 @@ class GptOssBlock(nn.Module):
     ):
         # if the cache is not empty, we need to get the kv cache for self and cross attention
         self_attn_past_key_value = past_key_value_state
-        attn_kwargs.update({"sliding_window": self.config.sliding_window})
-        attn_kwargs.update({"attn_name": "sdpa_with_sinks"})
+        attn_kwargs.update({"sliding_window": self.config.sliding_window})  # type: ignore[misc]
+        attn_kwargs.update({"attn_name": "sdpa_with_sinks"})  # type: ignore[misc]
 
         # first we do MHA and Add&Norm
         residual = x
@@ -215,7 +215,7 @@ class GptOssHeadless(nn.Module):
         layers = []
         for i in range(self.config.nlayers):
             config = self.config
-            if config.layer_types[i] == "full_attention":
+            if config.layer_types[i] == "full_attention": # type: ignore[index]
                 config = self.config.updated(sliding_window=0)
             block: nn.Module = GptOssBlock(config, self.rot_emb)
             block = self.distributed_strategy.distribute_layer(block, i)
@@ -605,7 +605,7 @@ def _convert_moe_packed_tensors(
     scales,
     *,
     dtype: torch.dtype = torch.bfloat16,
-    rows_per_chunk: int = 16384 * 512,
+    rows_per_chunk: int = 32768 * 1024,
 ) -> torch.Tensor:
     import math
 

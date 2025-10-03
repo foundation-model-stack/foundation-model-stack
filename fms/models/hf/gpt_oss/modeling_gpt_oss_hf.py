@@ -46,8 +46,6 @@ class HFAdapterGptOssDecoder(HFDecoder):
 
 
 class HFAdaptedGptOssHeadless(HFDecoderModelArchitecture):
-    print(f"cheguei aqui {HFDecoderModelArchitecture}")
-    print(f"achei a config {HFAdaptedGptOssConfig}")
     config_class = HFAdaptedGptOssConfig
     base_model_prefix = "hf_adapted_gpt_oss"
 

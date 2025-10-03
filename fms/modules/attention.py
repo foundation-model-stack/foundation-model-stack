@@ -49,6 +49,9 @@ class AttentionKwargs(TypedDict, total=False):
     """
 
     attn_name: str
+    sinks: Tensor
+    training: bool
+    sliding_window: int
 
 
 # TODO: add adjusted_mask for alibi as part of attn_compute_dict
@@ -302,9 +305,7 @@ def _sdpa_with_sinks_op(
     # https://github.com/openai/gpt-oss/blob/main/gpt_oss/torch/model.py#L153
     # from gpt-oss open ai implementation
     batch, n_heads, n_tokens, d_head = queries.shape
-    S = attn_sinks.reshape(1, -1, 1, 1).expand(
-        batch, -1, n_tokens, -1
-    )
+    S = attn_sinks.reshape(1, -1, 1, 1).expand(batch, -1, n_tokens, -1)
     mask = torch.triu(queries.new_full((n_tokens, n_tokens), -float("inf")), diagonal=1)
     if sliding_window and sliding_window > 0:
         mask += torch.tril(
@@ -312,7 +313,7 @@ def _sdpa_with_sinks_op(
             diagonal=-sliding_window,
         )
     QK = torch.einsum("bhqd,bhkd->bhqk", queries, keys_e)
-    QK *= scale_factor
+    QK *= scale_factor  # type: ignore[arg-type]
     QK += mask[None, None, :, :]
     QK = torch.cat([QK, S], dim=-1)
     QK = QK - QK.max(dim=-1, keepdim=True).values

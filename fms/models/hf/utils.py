@@ -23,7 +23,6 @@ def register_fms_models():
     )
 
     for model_cls in _headless_models:
-
         print(model_cls.config_class)
         # register config
         AutoConfig.register(model_cls.config_class.model_type, model_cls.config_class)

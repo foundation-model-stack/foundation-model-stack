@@ -27,7 +27,7 @@ def convert_to_hf(
     oss_hf_model = GptOssForCausalLM(
         GptOssConfig(
             vocab_size=hf_config.src_vocab_size,
-            hidden_size=hf_config.dim,
+            hidden_size=hf_config.emb_dim,
             intermediate_size=hf_config.hidden_dim,
             num_hidden_layers=hf_config.nlayers,
             num_attention_heads=hf_config.nheads,
@@ -75,12 +75,8 @@ def convert_to_hf(
             oss_hf_layer.self_attn.o_proj.weight.copy_(fms_hf_layer.attn.dense.weight)
 
             # MoE SwiGLU
-            oss_hf_layer.block_sparse_moe.gate.weight.copy_(
-                fms_hf_layer.ff_sub_layer.gate.weight
-            )
-            for expert_idx, expert_layer in enumerate(
-                oss_hf_layer.block_sparse_moe.experts
-            ):
+            oss_hf_layer.mlp.router.weight.copy_(fms_hf_layer.ff_sub_layer.gate.weight)
+            for expert_idx, expert_layer in enumerate(oss_hf_layer.mlp.experts):
                 expert_layer.w1.weight.copy_(
                     fms_hf_layer.ff_sub_layer.cond_ffn.w1.chunk(2, dim=1)[0][expert_idx]
                 )

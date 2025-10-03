@@ -26,7 +26,8 @@ class HFAdaptedGptOssConfig(PretrainedConfig):
         "sliding_window": "sliding_window",
         "rope_theta": "rope_theta",
         "rope_scaling": "rope_scaling",
-        "swiglu_limit": "swiglu_limit"
+        "swiglu_limit": "swiglu_limit",
+        "layer_types": "layer_types",
     }
 
     def __init__(
@@ -69,7 +70,7 @@ class HFAdaptedGptOssConfig(PretrainedConfig):
         self.norm_eps = norm_eps
         self.rope_base = rope_base
         self.p_dropout = p_dropout
-        self.dim = head_dim
+        self.dim = hidden_dim
         self.hidden_dim = hidden_dim
         self.head_dim = (
             head_dim
@@ -100,7 +101,9 @@ class HFAdaptedGptOssConfig(PretrainedConfig):
         )
 
     @classmethod
-    def from_pretrained(cls, pretrained_model_name_or_path, **kwargs) -> "PretrainedConfig":
+    def from_pretrained(
+        cls, pretrained_model_name_or_path, **kwargs
+    ) -> "PretrainedConfig":
         config_dict, kwargs = cls.get_config_dict(
             pretrained_model_name_or_path, **kwargs
         )

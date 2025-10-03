@@ -42,9 +42,7 @@ class GptOssHFFixtures(ModelFixtureMixin, HFConfigFixtureMixin, HFModelFixtureMi
         )
 
     @pytest.fixture(scope="class", autouse=True)
-    def oss_hf_model(
-        self, fms_hf_model: HFAdaptedGptOssForCausalLM
-    ) -> PreTrainedModel:
+    def oss_hf_model(self, fms_hf_model: HFAdaptedGptOssForCausalLM) -> PreTrainedModel:
         return convert_to_hf(fms_hf_model)
 
 

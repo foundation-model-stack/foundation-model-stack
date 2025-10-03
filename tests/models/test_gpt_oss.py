@@ -26,7 +26,7 @@ class GptOssFixtures(ConfigFixtureMixin, ModelFixtureMixin):
 
     @pytest.fixture(scope="class", autouse=True)
     def config(self) -> ModelConfig:
-        return GptOssConfig(
+        gpt_oss_config = GptOssConfig(
             src_vocab_size=201088,
             num_experts=32,
             emb_dim=2880,
@@ -36,6 +36,11 @@ class GptOssFixtures(ConfigFixtureMixin, ModelFixtureMixin):
             nlayers=24,
             kvheads=8,
         )
+        gpt_oss_config.layer_types = [
+            "sliding_attention" if bool((i + 1) % 2) else "full_attention"
+            for i in range(24)
+        ]
+        return gpt_oss_config
 
 
 class TestGptOss(
