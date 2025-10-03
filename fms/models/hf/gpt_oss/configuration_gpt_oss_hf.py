@@ -36,7 +36,6 @@ class HFAdaptedGptOssConfig(PretrainedConfig):
         emb_dim: int = 2880,
         hidden_dim: int = 2880,
         head_dim: int = 64,
-        num_attention_heads: int = 64,
         sliding_window: int = 128,
         rope_base: float = 150000.0,
         tie_heads=False,
@@ -71,6 +70,7 @@ class HFAdaptedGptOssConfig(PretrainedConfig):
         self.rope_base = rope_base
         self.p_dropout = p_dropout
         self.dim = head_dim
+        self.hidden_dim = hidden_dim
         self.head_dim = (
             head_dim
             if head_dim is not None

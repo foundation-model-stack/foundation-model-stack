@@ -156,6 +156,7 @@ def _map_model_config(architecture, config):
         config_params["emb_dim"] = config.hidden_size
         config_params["hidden_dim"] = config.intermediate_size
         config_params["norm_eps"] = config.rms_norm_eps
+        config_params["layer_types"] = config.layer_types
         config_params["num_experts"] = config.num_local_experts
         config_params["top_k_experts"] = config.num_experts_per_tok
         config_params["max_expected_seq_len"] = config.max_position_embeddings
