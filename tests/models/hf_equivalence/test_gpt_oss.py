@@ -1,5 +1,3 @@
-import pytest
-
 from fms.models import get_model
 from fms.models.hf import to_hf_api
 from fms.testing.comparison import (

@@ -7,7 +7,6 @@ class HFAdaptedGptOssConfig(PretrainedConfig):
     model_type = "hf_adapted_gpt_oss"
     attribute_map = {
         "vocab_size": "src_vocab_size",
-        "hidden_size": "dim",
         "num_attention_heads": "nheads",
         "num_hidden_layers": "nlayers",
         "num_key_value_heads": "kvheads",
@@ -16,11 +15,9 @@ class HFAdaptedGptOssConfig(PretrainedConfig):
         "intermediate_size": "hidden_dim",
         "rms_norm_eps": "norm_eps",
         "max_position_embeddings": "max_expected_seq_len",
-        "rope_theta": "rope_base",
         "attention_dropout": "p_dropout",
         "attention_bias": "attn_bias",
         "eos_token_id": "eos_token_id",
-        "num_key_value_heads": "kvheads",
         "hidden_act": "activation_fn",
         "hidden_size": "emb_dim",
         "sliding_window": "sliding_window",
@@ -64,7 +61,7 @@ class HFAdaptedGptOssConfig(PretrainedConfig):
         self.sliding_window = sliding_window
         self.top_k_experts = top_k_experts
         # for backward compatibility
-        self.kvheads = num_attention_heads if kvheads is None else kvheads
+        self.kvheads = kvheads
         self.activation_fn = activation_fn
         self.initializer_range = initializer_range
         self.norm_eps = norm_eps
@@ -72,11 +69,7 @@ class HFAdaptedGptOssConfig(PretrainedConfig):
         self.p_dropout = p_dropout
         self.dim = hidden_dim
         self.hidden_dim = hidden_dim
-        self.head_dim = (
-            head_dim
-            if head_dim is not None
-            else self.hidden_size // self.num_attention_heads
-        )
+        self.head_dim = head_dim
         self.layer_types = layer_types
         if self.layer_types is None:
             self.layer_types = [

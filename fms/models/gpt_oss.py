@@ -215,7 +215,7 @@ class GptOssHeadless(nn.Module):
         layers = []
         for i in range(self.config.nlayers):
             config = self.config
-            if config.layer_types[i] == "full_attention": # type: ignore[index]
+            if config.layer_types[i] == "full_attention":  # type: ignore[index]
                 config = self.config.updated(sliding_window=0)
             block: nn.Module = GptOssBlock(config, self.rot_emb)
             block = self.distributed_strategy.distribute_layer(block, i)
