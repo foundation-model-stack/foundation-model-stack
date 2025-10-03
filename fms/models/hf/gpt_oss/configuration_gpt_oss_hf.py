@@ -18,7 +18,7 @@ class HFAdaptedGptOssConfig(PretrainedConfig):
         "max_position_embeddings": "max_expected_seq_len",
         "rope_theta": "rope_base",
         "attention_dropout": "p_dropout",
-         "attention_bias": "attn_bias",
+        "attention_bias": "attn_bias",
         "eos_token_id": "eos_token_id",
         "num_key_value_heads": "kvheads",
         "hidden_act": "activation_fn",
@@ -51,7 +51,6 @@ class HFAdaptedGptOssConfig(PretrainedConfig):
         pad_id=199999,
         nheads: int = 64,
         nlayers: int = 24,
-        dim: int = 2880,
         norm_eps: float = 1e-05,
         kvheads: int = 8,
         p_dropout: float = 0.0,
@@ -71,6 +70,7 @@ class HFAdaptedGptOssConfig(PretrainedConfig):
         self.norm_eps = norm_eps
         self.rope_base = rope_base
         self.p_dropout = p_dropout
+        self.dim = head_dim
         self.head_dim = (
             head_dim
             if head_dim is not None

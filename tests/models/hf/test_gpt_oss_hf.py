@@ -16,7 +16,7 @@ from fms.testing._internal.hf.model_test_suite import (
 )
 from fms.testing._internal.model_test_suite import ModelFixtureMixin
 
-from tests.models.test_gpt_oss import GptOssFixtures
+from ..test_gpt_oss import GptOssFixtures
 
 
 class GptOssHFFixtures(ModelFixtureMixin, HFConfigFixtureMixin, HFModelFixtureMixin):

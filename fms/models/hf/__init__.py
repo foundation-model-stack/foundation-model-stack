@@ -95,14 +95,9 @@ def to_hf_api(model: nn.Module, **override_config_kwargs) -> HFModelArchitecture
     """
     from fms.models.hf import _fms_to_hf_adapt_map  # type: ignore
 
-    print(f"type {type(model)}")
-    print(model)
-
     register_fms_models()
 
     model_type = type(model)
-    print(f"type {type(model)}")
-    print(model)
     if model_type not in _fms_to_hf_adapt_map:
         raise ValueError(
             f"{model.__class__.__name__} is not one of {_fms_to_hf_adapt_map.keys()}"
