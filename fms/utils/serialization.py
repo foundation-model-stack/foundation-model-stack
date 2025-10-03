@@ -549,17 +549,14 @@ def load_state_dict_into_model(
                 if partial_sd[psd_key].device != initial_device:
                     partial_sd[psd_key] = partial_sd[psd_key].to(device=initial_device)
             fms_partial_sd = adapter(partial_sd, **adapter_kwargs)
-
             unused_keys_partial = _load_partial_state_dict(
                 model=model,
                 state_dict=fms_partial_sd,
                 needs_tp_sharding=needs_tp_sharding,
                 dtype=dtype,
             )
-
             unused_keys.update(unused_keys_partial)
-
-            # Be agressive in removing weights to save as much memory as possible
+            # Be aggressive in removing weights to save as much memory as possible
             for p_key in partial_sd.keys():
                 if isinstance(state_dict, ChainMap):
                     for child_sd in state_dict.maps:
@@ -633,7 +630,6 @@ def _load_partial_state_dict(
                 if isinstance(target_module, TPModule):
                     tp_module = target_module
                     tp_prefix = prefix
-
             except AttributeError:
                 unused_keys.add(key)
                 break
@@ -654,7 +650,6 @@ def _load_partial_state_dict(
                     )
                     setattr(target_module, key_steps[-1], param)
                     param = getattr(target_module, key_steps[-1])
-
                 param.copy_(tensor_value, non_blocking=True)
 
             elif tp_module is not None and tp_module not in seen_tp_modules:
@@ -680,9 +675,7 @@ def _load_partial_state_dict(
                         ),
                     )
                 )
-
                 unused_keys_tp = tp_module.load_weights(tensor_values)
-
         except Exception as e:
             # capture error specific to shape mismatch and halt the processing
             if "shape" in str(e) or "size" in str(e):
