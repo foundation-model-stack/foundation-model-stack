@@ -98,8 +98,6 @@ def moe_align_block_size(
 def moe_mm(
     input: torch.Tensor,
     moe_matrix: torch.Tensor,
-    use_bias: bool,
-    moe_bias_matrix: torch.Tensor,
     token_expert_mapping: torch.Tensor,
     padded_token_ids_per_block: torch.Tensor,
     expert_block_mapping: torch.Tensor,
@@ -132,8 +130,6 @@ def moe_mm(
 def moe_mm_meta(
     input: torch.Tensor,
     moe_matrix: torch.Tensor,
-    use_bias: bool,
-    moe_bias_matrix: torch.Tensor,
     token_expert_mapping: torch.Tensor,
     padded_token_ids_per_block: torch.Tensor,
     expert_block_mapping: torch.Tensor,
@@ -153,8 +149,6 @@ def moe_mm_backward(ctx, grad_output):
     return (
         input_,  # input
         None,  # moe_matrix
-        None,  # moe_bias
-        None,  # moe_bias_matrix
         None,  # token_expert_mapping
         None,  # padded_token_ids_per_block
         None,  # expert_block_mapping
@@ -168,8 +162,6 @@ def moe_mm_setup_context(ctx, inputs, output):
     (
         input_,
         moe_matrix,
-        use_bias,
-        moe_bias_matrix,
         token_expert_mapping,
         padded_token_ids_per_block,
         expert_block_mapping,
@@ -188,8 +180,6 @@ moe_mm.register_autograd(moe_mm_backward, setup_context=moe_mm_setup_context)
 def moe_mm_cpu(
     input: torch.Tensor,
     moe_matrix: torch.Tensor,
-    use_bias: bool,
-    moe_bias_matrix: torch.Tensor,
     token_expert_mapping: torch.Tensor,
     padded_token_ids_per_block: torch.Tensor,
     expert_block_mapping: torch.Tensor,
@@ -204,17 +194,8 @@ def moe_mm_cpu(
     out = torch.zeros(T * topk, moe_matrix.shape[1], dtype=a.dtype, device=a.device)
 
     token_expert_mapping = token_expert_mapping.view(-1)
-
-    if use_bias:
-        moe_index = moe_matrix[0]
-        if moe_index.shape[0] == D:
-            moe_index = moe_index.T
-
     for i in range(moe_matrix.shape[0]):
         mask = token_expert_mapping == i
         if mask.sum():
             out[mask] = a[mask] @ moe_matrix[i].transpose(0, 1)
-        if use_bias:
-            out[mask] += moe_bias_matrix[i]
-
     return out.view(M, A, moe_matrix.shape[1])
