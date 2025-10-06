@@ -37,6 +37,7 @@ class RoBERTaConfig(ModelConfig):
     activation_fn: str = "gelu"
     classifier_activation_fn: str = "tanh"
     max_pos: int = 512
+    pos_emb: str = "roberta"
     type_vocab_size: int = 1
     p_dropout: float = 0.1
     multiquery_attn: bool = False
@@ -44,7 +45,6 @@ class RoBERTaConfig(ModelConfig):
     tie_heads: bool = False
     linear_config: Optional[Mapping[str, Any]] = None
     fused_weights: bool = True
-    pooling: bool = False
 
 
 @dataclass
@@ -144,7 +144,11 @@ class RoBERTaHeadless(nn.Module):
         # RoBERTa embeddings don't support TP as in many cases the vocab size is
         # not divisible by the world size
         self.embedding = self.distributed_strategy.distribute_module(
-            nn.Embedding(self.config.src_vocab_size, self.config.emb_dim),
+            nn.Embedding(
+                self.config.src_vocab_size,
+                self.config.emb_dim,
+                padding_idx=self.config.pad_id,
+            ),
             final_layers=True,
         )
 
@@ -195,20 +199,26 @@ class RoBERTaHeadless(nn.Module):
         # if pad_id exists
         #   is_pad will be a BoolTensor
         #   otherwise pad_id will not be taken into account
-        if self.config.pad_id is None:
-            is_pad = torch.zeros_like(x, dtype=bool, device=x.device)
-        else:
-            is_pad = x == self.config.pad_id
+        if self.config.pos_emb == "roberta":
+            if self.config.pad_id is None:
+                is_pad = torch.zeros_like(x, dtype=bool, device=x.device)
+            else:
+                is_pad = x == self.config.pad_id
 
-        if position_ids is None:
-            position_ids = ((~is_pad).cumsum(1) - 1).clamp(min=0)
+            if position_ids is None:
+                position_ids = ((~is_pad).cumsum(1) - 1).clamp(min=0)
+        else:
+            position_ids = torch.arange(
+                x.shape[1], dtype=torch.int64, device=x.device
+            ).unsqueeze(0)
 
         # look up position embeddings
         position_out = self.position_embedding(position_ids)
 
         # zero out the associated position embeddings
-        if self.config.pad_id is not None:
-            position_out = position_out.mul(~is_pad.unsqueeze(-1))
+        if self.config.pos_emb == "roberta":
+            if self.config.pad_id is not None:
+                position_out = position_out.mul(~is_pad.unsqueeze(-1))
 
         # token_type_ids should be of size (bs, seq_len), same as input_ids.
         # depending on task, it may be a zero tensor, but the embeddings may not be,
@@ -265,9 +275,7 @@ class RoBERTa(nn.Module):
                 activation_fn=str_to_activation(self.config.activation_fn),
                 layer_norm=nn.LayerNorm(self.config.emb_dim, self.config.norm_eps),
                 dropout=self.config.p_dropout,
-                do_pooling=self.config.pooling,
-                apply_pooling_fn=self.config.pooling,
-                pooling_fn_act=str_to_activation(self.config.classifier_activation_fn),
+                do_pooling=False,
             ),
             final_layers=True,
         )
@@ -366,7 +374,6 @@ class RoBERTaForClassification(nn.Module):
                 layer_norm=None,
                 dropout=self.config.p_dropout,
                 do_pooling=True,
-                apply_pooling_fn=False,
                 dense_bias=True,
                 head_bias=True,
             ),
@@ -509,14 +516,10 @@ _base_questionanswering_config = RoBERTaQuestionAnsweringConfig(
 )
 
 # BERT for Masked Language
-_bert_base_config = RoBERTaConfig(
-    src_vocab_size=30522,
-    pad_id=0,
-)
+_bert_base_config = RoBERTaConfig(src_vocab_size=30522, pad_id=0, pos_emb="bert")
 
 # BERT for 2-Class Classification
 _bert_base_classification_config_dict = copy.copy(_bert_base_config.__dict__)
-_bert_base_classification_config_dict["pooling"] = True
 _bert_base_classification_config = RoBERTaClassificationConfig(
     **_bert_base_classification_config_dict, num_classes=2
 )
@@ -638,7 +641,7 @@ def _hf_to_fms_names(hf_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]:
         (r"^lm_head\.layer_norm", "classification_head.ln"),
         (r"^lm_head\.decoder", "classification_head.head"),
         (r"^lm_head\.bias", "classification_head.head.bias"),
-        (r"^roberta.pooler.dense", "classification_head.pooler_linear"),
+        (r"^roberta.pooler.dense", "classification_head.dense"),
         (
             r"^classifier\.dense",
             "classification_head.dense",
@@ -672,12 +675,18 @@ serialization.register_adapter_step(
 )
 
 
-def _bert_hf_to_fms_names(hf_sd: Mapping[str, Any], **kwargs) -> Mapping[Any, Any]:
+def _bert_hf_to_fms_names(
+    hf_sd: Mapping[str, Any], model_config: Optional[RoBERTaConfig] = None, **kwargs
+) -> Mapping[Any, Any]:
     replacements = [
         (r"^bert.embeddings.word_embeddings.weight", "base_model.embedding.weight"),
         (
             r"^bert.embeddings.position_embeddings.weight",
             "base_model.position_embedding.weight",
+        ),
+        (
+            r"^bert.embeddings.token_type_embeddings.weight",
+            "base_model.token_type_embeddings.weight",
         ),
         (r"^bert.embeddings.LayerNorm", "base_model.enc_norm"),
         (r"^bert.encoder.layer", "base_model.layers"),
@@ -689,14 +698,25 @@ def _bert_hf_to_fms_names(hf_sd: Mapping[str, Any], **kwargs) -> Mapping[Any, An
         (r"attention\.output\.dense", "attn.dense"),
         (r"intermediate\.dense", "ff_sub_layer.w1"),
         (r"output\.dense", "ff_sub_layer.w2"),
-        (r"^cls\.predictions\.transform\.dense", "classification_head.dense"),
-        (r"^cls\.predictions\.transform\.LayerNorm", "classification_head.ln"),
-        (r"^cls\.predictions\.decoder", "classification_head.head"),
-        (r"^cls\.predictions\.bias", "classification_head.head.bias"),
         (r"gamma", "weight"),
         (r"beta", "bias"),
-        (r"^bert.pooler.dense", "classification_head.pooler_linear"),
     ]
+    if isinstance(model_config, RoBERTaClassificationConfig):
+        replacements.extend(
+            [
+                (r"^bert.pooler.dense", "classification_head.dense"),
+                (r"^classifier", "classification_head.head"),
+            ]
+        )
+    else:  # Bert for Masked LM
+        replacements.extend(
+            [
+                (r"^cls\.predictions\.transform\.dense", "classification_head.dense"),
+                (r"^cls\.predictions\.transform\.LayerNorm", "classification_head.ln"),
+                (r"^cls\.predictions\.decoder", "classification_head.head"),
+                (r"^cls\.predictions\.bias", "classification_head.head.bias"),
+            ]
+        )
     new_sd = {}
     for name, param in hf_sd.items():
         new_name = name
@@ -729,12 +749,10 @@ serialization.register_adapter(
 )
 
 # BERT adapters
-serialization.register_adapter(
-    _bert_name, "hf", ["bert_hf_to_fms_names", "weight_fusion"]
-)
+serialization.register_adapter(_bert_name, "hf", ["hf_to_fms_names", "weight_fusion"])
 serialization.register_adapter(
     _bert_name, "fms.pre0.0.6", ["pre0.0.6_attn_unfused_to_fused", "weight_fusion"]
 )
 serialization.register_adapter(
-    _bert_name + "_classification", "hf", ["bert_hf_to_fms_names", "weight_fusion"]
+    _bert_name + "_classification", "hf", ["hf_to_fms_names", "weight_fusion"]
 )
