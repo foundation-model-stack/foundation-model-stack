@@ -7,6 +7,7 @@ import torch
 from torch import nn
 from torch.nn.modules.loss import _Loss
 from transformers import PretrainedConfig, PreTrainedModel, GenerationMixin
+from transformers.modeling_utils import no_init_weights
 from transformers.modeling_outputs import (
     BaseModelOutput,
     BaseModelOutputWithPastAndCrossAttentions,
@@ -591,7 +592,7 @@ class HFModelArchitecture(PreTrainedModel, metaclass=PostInitCaller):
             Optionally include an lm_head in this model. If an lm_head is not included, the lm_head logic will be
             skipped (default to None)
         """
-        super().__init__(type(config).from_dict(config.to_dict()), *args, **kwargs)
+        super().__init__(copy.deepcopy(config), *args, **kwargs)
         self.lm_head = lm_head
         self.embedding = embedding
 
@@ -622,10 +623,11 @@ class HFModelArchitecture(PreTrainedModel, metaclass=PostInitCaller):
         HFModelArchitecture
             the initialized model architecture
         """
-        hf_config = cls.config_class.from_fms_config(
-            model.get_config(), **config_kwargs
-        )
-        return cls._hf_model_from_fms(model, hf_config)
+        with no_init_weights():
+            hf_config = cls.config_class.from_fms_config(
+                model.get_config(), **config_kwargs
+            )
+            return cls._hf_model_from_fms(model, hf_config)
 
     @staticmethod
     @abc.abstractmethod

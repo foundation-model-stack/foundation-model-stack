@@ -1,14 +1,14 @@
 # Foundation Model Stack
 
-Foundation Model Stack is a collection of components for development, inference, training, and tuning of foundation models leveraging PyTorch native components. For inference optimizations we aim to support PyTorch compile, accelerated transformers, and tensor parallelism. At training time we aim to support FSDP, accelerated transformers, and PyTorch compile. To enable these optimizations, we will provide reimplementations of several popular model architectures starting with Llama and GPT-BigCode. 
+Foundation Model Stack is a collection of components for development, inference, training, and tuning of foundation models leveraging PyTorch native components. For inference optimizations we aim to support PyTorch compile, accelerated transformers, and tensor parallelism. At training time we aim to support FSDP, accelerated transformers, and PyTorch compile. To enable these optimizations, we will provide reimplementations of several popular model architectures starting with Llama and GPT-BigCode.
 
 ## Models Supported
+
 | Model family | Inference | Tuning and Training |
 |--------------| ---------- | ------------------ |
 | LLaMA        | :heavy_check_mark: | :heavy_check_mark: |
 | GPT-BigCode  | :heavy_check_mark: | :x: |
 | RoBERTa      | :heavy_check_mark: | :x: |
-
 
 ## Installation
 
@@ -16,7 +16,7 @@ We recommend running this on Python 3.11 and CUDA 12.1 for best performance, as 
 
 ### Pypi
 
-```
+```shell
 pip install ibm-fms
 ```
 
@@ -24,24 +24,34 @@ pip install ibm-fms
 
 Requires [PyTorch >= 2.1](https://pytorch.org/get-started/locally/).
 
-```
+```shell
 pip install -e .
 ```
-or
-```
-python setup.py install
+
+For installing the development dependencies, use:
+
+```shell
+pip install .[dev]
 ```
 
+For installing the Hugging Face specific dependencies, use:
+
+```shell
+pip install .[hf]
+```
 
 ## Inference
 
-#### Approach
+### Approach
+
 Our approach for inference optimization is to use PyTorch compile, accelerated transformers, and tensor parallelism. PyTorch compile compiles the code into optimized kernels, accelerated transformers leverages `scaled_dot_product_attention` (SDPA) for accelerating attention computation while saving memory, and tensor parallelism is necessary for larger models.
 
 To enable the Llama models to compile, we had to reimplement `RoPE` encodings without complex numbers. With this change, Llama model inference is able to leverage model compilation for latency reduction.
 
-#### Inference latency
+### Inference latency
+
 We measured inference latencies with 1024 token prompt and generation of 256 tokens on AWS P4de instance nodes with 8 80G A100 GPUs and report the median latency in the below table.
+
 | Model | # GPUs | Median latency (ms) |
 | ----- | ----------- | ----- |
 | 7B | 1 | 14ms |
@@ -81,7 +91,8 @@ A detailed example is provided [here](./notebooks/hf_adapted_inference.ipynb).
 
 To fine-tune LLaMA, use the `scripts/train_causal.py` training script. Here's
 an example of that command.
-```
+
+```shell
 torchrun --nproc_per_node=2 \
         scripts/train_causal.py \
         --architecture=llama \
@@ -92,6 +103,7 @@ torchrun --nproc_per_node=2 \
         --checkpoint_format=meta \
         --distributed=fsdp
 ```
+
 See options in the script for other ways to train and tune.
 
 ## Structure and contents of this Repository
@@ -114,10 +126,10 @@ This library is used by [three](https://github.com/foundation-model-stack/founda
 
 ## Open Issues
 
-* https://github.com/pytorch/pytorch/issues/107824 prevents training/finetuning from working with `torch.compile`.
+* <https://github.com/pytorch/pytorch/issues/107824> prevents training/finetuning from working with `torch.compile`.
 * In addition, there are several open issues we are tracking to improve stability and memory footprint of inference
   
 ## References
 
-* Huggingface TGI: https://github.com/huggingface/text-generation-inference
-* IBM TGIS: https://github.com/IBM/text-generation-inference
+* Huggingface TGI: <https://github.com/huggingface/text-generation-inference>
+* IBM TGIS: <https://github.com/IBM/text-generation-inference>
