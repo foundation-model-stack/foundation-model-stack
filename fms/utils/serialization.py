@@ -653,11 +653,12 @@ def _load_partial_state_dict(
                 # *** ALERT *** Granite 2b hack for AIU Compiler
                 if param.size() != tensor_value.size():
                     print(
-                        f"* Expanding weights of {('.'.join(key_steps[1:-1])):30.30} {str(list(tensor_value.size())):12.12} => {list(param.size())}"
+                        f"[WARNING] Expanding weights of {('.'.join(key_steps[1:-1])):30.30} {str(list(tensor_value.size())):12.12} => {list(param.size())}"
                     )
                     slices = []
                     for dim in range(tensor_value.ndim):
                         expand_factor = param.shape[dim] // tensor_value.shape[dim]
+                        assert param.shape[dim] % tensor_value.shape[dim] == 0
                         # Only expand the dimension if the size is different
                         if expand_factor > 1:
                             slices.append(slice(0, None, expand_factor))
