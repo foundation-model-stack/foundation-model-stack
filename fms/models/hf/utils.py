@@ -163,6 +163,8 @@ def _map_model_config(architecture, config):
         config_params["p_dropout"] = config.hidden_dropout_prob
         config_params["norm_eps"] = config.layer_norm_eps
         config_params["activation_fn"] = config.hidden_act
+        config_params["type_vocab_size"] = config.type_vocab_size
+        config_params["pos_emb"] = "roberta"
     elif architecture == "RobertaForQuestionAnswering":
         inner_dim = config.intermediate_size
         architecture = "roberta_question_answering"
@@ -172,6 +174,20 @@ def _map_model_config(architecture, config):
         config_params["p_dropout"] = config.hidden_dropout_prob
         config_params["norm_eps"] = config.layer_norm_eps
         config_params["activation_fn"] = config.hidden_act
+        config_params["type_vocab_size"] = config.type_vocab_size
+        config_params["pos_emb"] = "roberta"
+    elif architecture == "RobertaForSequenceClassification":
+        inner_dim = config.intermediate_size
+        architecture = "roberta_classification"
+        config_params["emb_dim"] = config.hidden_size
+        config_params["pad_id"] = config.pad_token_id
+        config_params["max_pos"] = config.max_position_embeddings - 2
+        config_params["p_dropout"] = config.hidden_dropout_prob
+        config_params["norm_eps"] = config.layer_norm_eps
+        config_params["activation_fn"] = config.hidden_act
+        config_params["num_classes"] = config.num_labels
+        config_params["type_vocab_size"] = config.type_vocab_size
+        config_params["pos_emb"] = "roberta"
     elif architecture == "GraniteForCausalLM":
         inner_dim = config.intermediate_size
         architecture = "granite"
@@ -276,9 +292,32 @@ def _map_model_config(architecture, config):
         config_params["relative_attention_num_buckets"] = (
             config.relative_attention_num_buckets
         )
+    elif architecture == "BertForMaskedLM":
+        inner_dim = config.intermediate_size
+        architecture = "bert"
+        config_params["emb_dim"] = config.hidden_size
+        config_params["pad_id"] = config.pad_token_id
+        config_params["max_pos"] = config.max_position_embeddings
+        config_params["p_dropout"] = config.hidden_dropout_prob
+        config_params["norm_eps"] = config.layer_norm_eps
+        config_params["activation_fn"] = config.hidden_act
+        config_params["type_vocab_size"] = config.type_vocab_size
+        config_params["pos_emb"] = "bert"
+    elif architecture == "BertForSequenceClassification":
+        inner_dim = config.intermediate_size
+        architecture = "bert_classification"
+        config_params["emb_dim"] = config.hidden_size
+        config_params["pad_id"] = config.pad_token_id
+        config_params["max_pos"] = config.max_position_embeddings
+        config_params["p_dropout"] = config.hidden_dropout_prob
+        config_params["norm_eps"] = config.layer_norm_eps
+        config_params["activation_fn"] = config.hidden_act
+        config_params["type_vocab_size"] = config.type_vocab_size
+        config_params["pos_emb"] = "bert"
+        config_params["num_classes"] = config.num_labels
     else:
         raise ValueError(
-            "FMS model implementations currently only support LlamaForCausalLM, GPTBigCodeForCausalLM, MixtralForCausalLM, RobertaForMaskedLM, GraniteForCausalLM, SiglipModel and LlavaNextForConditionalGeneration"
+            "FMS model implementations currently only support LlamaForCausalLM, GPTBigCodeForCausalLM, MixtralForCausalLM, RobertaForMaskedLM, RobertaForQuestionAnswering, RobertaForSequenceClassification, GraniteForCausalLM, MistralForCausalLM, BambaForCausalLM, SiglipModel, LlavaNextForConditionalGeneration, MPNetForMaskedLM, BertForMaskedLM, and BertForSequenceClassification"
         )
 
     # infer common params
