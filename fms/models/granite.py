@@ -499,6 +499,51 @@ serialization.register_adapter_step(
 )
 
 
+# *** ALERT *** Weights are expanded to support Granite 2b and 3b models where
+# Where emb_dim // nheads < 128, so we set the head_dim = 128
+def _weight_expansion(
+    input_sd: Mapping,
+    model_config: GraniteConfig,
+    model_param_size_dict: dict[str, torch.Size],
+):
+    new_sd = input_sd
+    if model_config.head_dim > model_config.emb_dim // model_config.nheads:
+        for name, tensor_value in new_sd.items():
+            # We are only expanding the weights of the attn layers
+            if "attn" not in name:
+                continue
+            if name not in model_param_size_dict:
+                raise KeyError(
+                    f"Parameter '{name}' from state_dict not found in model_param_size_dict. "
+                    f"This indicate a mismatch between the checkpoint and model architecture."
+                )
+            param_shape = model_param_size_dict[name]
+            key_steps = name.split(".")
+            if model_param_size_dict[name] != tensor_value.size():
+                print(
+                    f"[WARNING] Expanding weights of {('.'.join(key_steps[1:-1])):30.30} {str(list(tensor_value.size())):12.12} => {list(param_shape)}"
+                )
+                slices = []
+                for dim in range(tensor_value.ndim):
+                    expand_factor = param_shape[dim] // tensor_value.shape[dim]
+                    assert param_shape[dim] % tensor_value.shape[dim] == 0
+                    # Only expand the dimension if the size is different
+                    if expand_factor > 1:
+                        slices.append(slice(0, None, expand_factor))
+                    else:
+                        slices.append(slice(None))
+                # Assign the original weights tensor to the interleaved positions
+                expanded_tensor = torch.zeros(param_shape)
+                expanded_tensor[tuple(slices)] = tensor_value
+                new_sd[name] = expanded_tensor
+    return new_sd
+
+
+serialization.register_adapter_step(
+    _architecture_name, "weight_expansion", _weight_expansion
+)
+
+
 def _get_rope_params(linear_type: str) -> list[str]:
     if "gptq" in linear_type:
         return ["qweight", "scales", "qzeros", "bias"]
@@ -606,5 +651,11 @@ serialization.register_adapter_step(
 serialization.register_adapter(
     _architecture_name,
     "hf",
-    ["hf_to_fms_names", "hf_to_fms_rope", "hf_gptq_fusion_check", "weight_fusion"],
+    [
+        "hf_to_fms_names",
+        "hf_to_fms_rope",
+        "weight_expansion",
+        "hf_gptq_fusion_check",
+        "weight_fusion",
+    ],
 )

@@ -522,6 +522,9 @@ def load_state_dict_into_model(
     adapter_kwargs = {}
     if hasattr(model, "config"):
         adapter_kwargs["model_config"] = model.config
+        adapter_kwargs["model_param_size_dict"] = {
+            name: param.size() for name, param in model.state_dict().items()
+        }
 
     # 2. Decide if model needs sharding and how (for now only TP)
     needs_tp_sharding = checkpoint_sharding != "tp" and distributed_strategy == "tp"
@@ -650,25 +653,6 @@ def _load_partial_state_dict(
                     )
                     setattr(target_module, key_steps[-1], param)
                     param = getattr(target_module, key_steps[-1])
-                # *** ALERT *** Granite 2b hack for AIU Compiler
-                if param.size() != tensor_value.size():
-                    print(
-                        f"[WARNING] Expanding weights of {('.'.join(key_steps[1:-1])):30.30} {str(list(tensor_value.size())):12.12} => {list(param.size())}"
-                    )
-                    slices = []
-                    for dim in range(tensor_value.ndim):
-                        expand_factor = param.shape[dim] // tensor_value.shape[dim]
-                        assert param.shape[dim] % tensor_value.shape[dim] == 0
-                        # Only expand the dimension if the size is different
-                        if expand_factor > 1:
-                            slices.append(slice(0, None, expand_factor))
-                        else:
-                            slices.append(slice(None))
-                    # Assign the original weights tensor to the interleaved positions
-                    expanded_tensor = torch.zeros_like(param)
-                    expanded_tensor[tuple(slices)] = tensor_value
-                    tensor_value = expanded_tensor
-
                 param.copy_(tensor_value, non_blocking=True)
 
             elif tp_module is not None and tp_module not in seen_tp_modules:
