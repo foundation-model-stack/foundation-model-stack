@@ -519,7 +519,7 @@ def _weight_expansion(
                 continue
             if model_param_size_dict is None:
                 raise TypeError(
-                    f"model_param_size_dict must be passed as kwargs to the register_adapter_step _weight_expansion"
+                    "model_param_size_dict must be passed as kwargs to the register_adapter_step _weight_expansion"
                 )
             if name not in model_param_size_dict:
                 raise KeyError(
