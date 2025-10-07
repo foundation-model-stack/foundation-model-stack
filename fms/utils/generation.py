@@ -289,7 +289,7 @@ def generate(
                 )
         else:
             logits = output
-        
+
         print("logits stats", logits.min(), logits.max(), logits.mean(), logits.std())
 
         # always get last now since we still have this dim

@@ -364,11 +364,11 @@ class RotaryEmbedding(PositionEncoder):
         return q_out, k_out
 
 
-class YarnRotaryEmbedding(torch.nn.Module):
+class YarnRotaryEmbedding(PositionEncoder):
     def __init__(
-        self,   
+        self,
         head_dim: int,
-        base: int,
+        base: int | float,
         dtype: torch.dtype,
         initial_context_length: int = 4096,
         scaling_factor: float = 1.0,
@@ -406,8 +406,7 @@ class YarnRotaryEmbedding(torch.nn.Module):
         o2 = x2 * cos + x1 * sin
         return torch.cat((o1, o2), dim=-1)
 
-
-    def _compute_concentration_and_inv_freq(self) -> torch.Tensor:
+    def _compute_concentration_and_inv_freq(self):
         """See YaRN paper: https://arxiv.org/abs/2309.00071"""
         freq = self.base ** (
             torch.arange(0, self.head_dim, 2, dtype=torch.float32, device=self.device)
@@ -436,7 +435,8 @@ class YarnRotaryEmbedding(torch.nn.Module):
             extrapolation = 1.0 / freq
 
             ramp = (
-                torch.arange(d_half, dtype=torch.torch.float32, device=freq.device) - low
+                torch.arange(d_half, dtype=torch.torch.float32, device=freq.device)
+                - low
             ) / (high - low)
             mask = 1 - ramp.clamp(0, 1)
 
@@ -446,15 +446,15 @@ class YarnRotaryEmbedding(torch.nn.Module):
             inv_freq = 1.0 / freq
 
         return concentration, inv_freq
-    
-    def _compute_cos_sin(self, num_tokens: int):
+
+    def _compute_cos_sin(self, num_tokens: int | float):
         concentration, inv_freq = self._compute_concentration_and_inv_freq()
         t = torch.arange(num_tokens, dtype=torch.float32, device=self.device)
         freqs = torch.einsum("i,j->ij", t, inv_freq)
         cos = freqs.cos() * concentration
         sin = freqs.sin() * concentration
         return cos, sin
-    
+
     def adjusted_qk(
         self,
         query: torch.Tensor,

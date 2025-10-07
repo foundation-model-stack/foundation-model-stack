@@ -43,6 +43,7 @@ FP4_VALUES = [
     -6.0,
 ]
 
+
 @dataclass
 class GptOssConfig(ModelConfig):
     num_experts: int = 32
@@ -144,7 +145,6 @@ class GptOssBlock(nn.Module):
         # first we do MHA and Add&Norm
         residual = x
         x = self.ln(x)
-        print("After norm1", x.mean(), x.std(), x.min(), x.max())
         x = self.attn(
             q=x,
             position_ids=position_ids,
@@ -242,7 +242,6 @@ class GptOssHeadless(nn.Module):
             if isinstance(m, MultiHeadAttention) or isinstance(m, MOEFeedForward):
                 m.reset_parameters()
 
-
     def post_init(self):
         # This function is called in `get_model` after the model is
         # fully initalized on the correct device
@@ -251,7 +250,6 @@ class GptOssHeadless(nn.Module):
             + [buffer.device for buffer in self.buffers()]
         ):
             self.rot_emb.device = device
-
 
     def forward(
         self,
@@ -270,27 +268,17 @@ class GptOssHeadless(nn.Module):
         if past_key_value_states is None or len(past_key_value_states) == 0:
             past_key_value_states = [None for _ in range(len(self.layers))]
 
-        
-        print("embedding.weight shape:", self.embedding.weight.shape)
-
-        tok_emb = self.embedding(x_in)
-        print("tok_emb stats:", tok_emb.mean(), tok_emb.std(), tok_emb.min(), tok_emb.max())
-
         if x_in.dim() == 2:  # input is not already embedded
             x_in = self.embedding(x_in)
 
-        print("post emb stats:", x_in.mean(), x_in.std(), x_in.min(), x_in.max())
         # this is the output cache for all the decoder layers
         present_key_value_states = []
 
         for i, layer in enumerate(self.layers):
-            if torch.isnan(x_in).any().item():
-                print(f"Layer {i} has nan input")
-                
-            if layer.config.sliding_window > 0:
-                attn_kwargs.update({"sliding_window": layer.config.sliding_window})
+            if layer.config.sliding_window > 0:  # type: ignore
+                attn_kwargs.update({"sliding_window": layer.config.sliding_window})  # type: ignore
             else:
-                attn_kwargs.update({"sliding_window": 0})                
+                attn_kwargs.update({"sliding_window": 0})
             output = layer(
                 x=x_in,
                 position_ids=position_ids,
@@ -340,8 +328,6 @@ class GptOss(nn.Module):
             self.head.weight = self.base_model.embedding.weight
         else:
             self.base_model.embedding.weight = self.head.weight
-
-        print("weights tied?", self.head.weight.data_ptr() == self.base_model.embedding.weight.data_ptr())
 
     @classmethod
     def from_config(cls, config: GptOssConfig) -> "GptOss":
@@ -406,6 +392,7 @@ class GptOss(nn.Module):
             return preds, cache
         else:
             return preds
+
 
 _architecture_name = "gpt_oss"
 _20b_config = GptOssConfig()
