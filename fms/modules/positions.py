@@ -362,3 +362,127 @@ class RotaryEmbedding(PositionEncoder):
             q_out = q_out.view_as(q_rope)
             k_out = k_out.view_as(k_rope)
         return q_out, k_out
+
+
+class YarnRotaryEmbedding(torch.nn.Module):
+    def __init__(
+        self,   
+        head_dim: int,
+        base: int,
+        dtype: torch.dtype,
+        initial_context_length: int = 4096,
+        scaling_factor: float = 1.0,
+        ntk_alpha: float = 1.0,
+        ntk_beta: float = 32.0,
+        device: torch.device | None = None,
+    ) -> None:
+        super().__init__()
+        self.head_dim = head_dim
+        self.base = base
+        self.dtype = dtype
+        self.initial_context_length = initial_context_length
+        self.scaling_factor = scaling_factor
+        self.ntk_alpha = ntk_alpha
+        self.ntk_beta = ntk_beta
+        self.device = device
+
+    def _apply_yarn_rotary_emb(
+        self,
+        x: torch.Tensor,
+        cos: torch.Tensor,
+        sin: torch.Tensor,
+        position_ids: torch.Tensor,
+    ) -> torch.Tensor:
+        # cos = cos.unsqueeze(-2).to(x.dtype)
+        # sin = sin.unsqueeze(-2).to(x.dtype)
+        # x1, x2 = torch.chunk(x, 2, dim=-1)
+        # o1 = x1 * cos - x2 * sin
+        # o2 = x2 * cos + x1 * sin
+        # return torch.cat((o1, o2), dim=-1)
+        cos = cos[position_ids].unsqueeze(-2).to(x.dtype)
+        sin = sin[position_ids].unsqueeze(-2).to(x.dtype)
+        x1, x2 = torch.chunk(x, 2, dim=-1)
+        o1 = x1 * cos - x2 * sin
+        o2 = x2 * cos + x1 * sin
+        return torch.cat((o1, o2), dim=-1)
+
+
+    def _compute_concentration_and_inv_freq(self) -> torch.Tensor:
+        """See YaRN paper: https://arxiv.org/abs/2309.00071"""
+        freq = self.base ** (
+            torch.arange(0, self.head_dim, 2, dtype=torch.float32, device=self.device)
+            / self.head_dim
+        )
+        if self.scaling_factor > 1.0:
+            concentration = (
+                0.1 * math.log(self.scaling_factor) + 1.0
+            )  # YaRN concentration
+
+            d_half = self.head_dim / 2
+            # NTK by parts
+            low = (
+                d_half
+                * math.log(self.initial_context_length / (self.ntk_beta * 2 * math.pi))
+                / math.log(self.base)
+            )
+            high = (
+                d_half
+                * math.log(self.initial_context_length / (self.ntk_alpha * 2 * math.pi))
+                / math.log(self.base)
+            )
+            assert 0 < low < high < d_half - 1
+
+            interpolation = 1.0 / (self.scaling_factor * freq)
+            extrapolation = 1.0 / freq
+
+            ramp = (
+                torch.arange(d_half, dtype=torch.torch.float32, device=freq.device) - low
+            ) / (high - low)
+            mask = 1 - ramp.clamp(0, 1)
+
+            inv_freq = interpolation * (1 - mask) + extrapolation * mask
+        else:
+            concentration = 1.0
+            inv_freq = 1.0 / freq
+
+        return concentration, inv_freq
+    
+    def _compute_cos_sin(self, num_tokens: int):
+        concentration, inv_freq = self._compute_concentration_and_inv_freq()
+        t = torch.arange(num_tokens, dtype=torch.float32, device=self.device)
+        freqs = torch.einsum("i,j->ij", t, inv_freq)
+        cos = freqs.cos() * concentration
+        sin = freqs.sin() * concentration
+        return cos, sin
+    
+    def adjusted_qk(
+        self,
+        query: torch.Tensor,
+        key: torch.Tensor,
+        position_ids: Optional[torch.Tensor] = None,
+        past_kv_state: Optional[Tuple[torch.Tensor | None, torch.Tensor | None]] = None,
+        use_cache=False,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        # key: [batch, seq_len, kvheads, head_dim]
+        # query: [batch, seq_len, nheads, head_dim]
+
+        batch_size, seq_length, _, _ = query.shape
+        device = query.device
+
+        if position_ids is None:
+            position_ids = torch.arange(0, seq_length, dtype=torch.long, device=device)
+            position_ids = position_ids.unsqueeze(0).expand(batch_size, -1)
+            if use_cache and past_kv_state and past_kv_state[0] is not None:
+                position_ids += past_kv_state[0].size(2)
+
+        # Compute cos/sin for max position
+        max_position = position_ids.max().item() + 1
+        cos, sin = self._compute_cos_sin(max_position)
+
+        query_shape = query.shape
+        key_shape = key.shape
+
+        query = self._apply_yarn_rotary_emb(query, cos, sin, position_ids)
+        key = self._apply_yarn_rotary_emb(key, cos, sin, position_ids)
+
+        return query.reshape(query_shape), key.reshape(key_shape)

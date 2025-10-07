@@ -19,9 +19,10 @@ from fms.utils import serialization
 from fms.utils.config import ModelConfig
 
 from fms.modules.feedforward import MOEFeedForward
-from fms.modules.positions import RotaryEmbedding
 
 from fms.modules.layernorm import LayerNormParameterized
+
+from fms.modules.positions import YarnRotaryEmbedding
 
 FP4_VALUES = [
     +0.0,
@@ -42,7 +43,6 @@ FP4_VALUES = [
     -6.0,
 ]
 
-
 @dataclass
 class GptOssConfig(ModelConfig):
     num_experts: int = 32
@@ -52,6 +52,9 @@ class GptOssConfig(ModelConfig):
     num_attention_heads: int = 64
     sliding_window: int = 128
     rope_base: float = 150000.0
+    rope_scaling_factor: float = 32.0
+    rope_ntk_alpha: float = 1.0
+    rope_ntk_beta: float = 32.0
     tie_heads = False
     activation_fn: str = "silu"
     initializer_range: float = 0.02
@@ -69,16 +72,10 @@ class GptOssConfig(ModelConfig):
     p_dropout: float = 0.0
     fused_weights: bool = True
     linear_config: Optional[Mapping[str, Any]] = None
-    hidden_grow_factor: float = 1.0
-    multiple_of: int = 256
-    embedding_multiplier: float = 1.0
-    residual_multiplier: float = 1.0
-    logits_scaling: float = 1.0
-    attention_multiplier: float = 1.0
 
 
 class GptOssBlock(nn.Module):
-    def __init__(self, config: GptOssConfig, rotary_emb: RotaryEmbedding):
+    def __init__(self, config: GptOssConfig, rotary_emb: YarnRotaryEmbedding):
         super(GptOssBlock, self).__init__()
         self.config = config
         emb_kq = self.config.head_dim
@@ -142,11 +139,12 @@ class GptOssBlock(nn.Module):
     ):
         # if the cache is not empty, we need to get the kv cache for self and cross attention
         self_attn_past_key_value = past_key_value_state
-        attn_kwargs.update({"sliding_window": self.config.sliding_window})  # type: ignore[misc]
         attn_kwargs.update({"attn_name": "sdpa_with_sinks"})  # type: ignore[misc]
 
         # first we do MHA and Add&Norm
         residual = x
+        x = self.ln(x)
+        print("After norm1", x.mean(), x.std(), x.min(), x.max())
         x = self.attn(
             q=x,
             position_ids=position_ids,
@@ -160,7 +158,7 @@ class GptOssBlock(nn.Module):
         if self.config.p_dropout != 0:
             x = self.dropout(x)
         # residual connection
-        x = x * self.config.residual_multiplier + residual
+        x = x + residual
 
         # then we do FF and Add&Norm
         residual = x
@@ -168,7 +166,7 @@ class GptOssBlock(nn.Module):
         if self.config.p_dropout != 0:
             x = self.dropout(x)
         # another residual
-        x = x * self.config.residual_multiplier + residual
+        x = x + residual
 
         if use_cache:
             return (x, cache)
@@ -197,20 +195,16 @@ class GptOssHeadless(nn.Module):
             padding_idx=self.config.pad_id,
         )
 
-        rope_scaling = {"rope_type": "regular"}
-
-        self.rot_emb = RotaryEmbedding(
-            dim=self.config.head_dim,
-            scaling=rope_scaling,
-            max_seq_len=self.config.max_expected_seq_len,
-            ratio=self.config.rope_base,
+        self.rot_emb = YarnRotaryEmbedding(
+            self.config.head_dim,
+            self.config.rope_base,
+            torch.bfloat16,
+            initial_context_length=self.config.max_expected_seq_len,
+            scaling_factor=self.config.rope_scaling_factor,
+            ntk_alpha=self.config.rope_ntk_alpha,
+            ntk_beta=self.config.rope_ntk_beta,
+            device=self.embedding.weight.device,
         )
-        # RoPE init
-        for device in set(
-            [param.device for param in self.parameters()]
-            + [buffer.device for buffer in self.buffers()]
-        ):
-            self.rot_emb.compute_freqs_cis(device, self.config.max_expected_seq_len)
 
         layers = []
         for i in range(self.config.nlayers):
@@ -243,46 +237,21 @@ class GptOssHeadless(nn.Module):
             self.embedding.weight, mean=0.0, std=self.config.emb_dim**-0.5
         )
 
-        # RoPE init
-        for device in set(
-            [param.device for param in self.parameters()]
-            + [buffer.device for buffer in self.buffers()]
-        ):
-            self.rot_emb.compute_freqs_cis(device, self.config.max_expected_seq_len)
-
         # Call reset_parameters for relevant sub-layers
         for m in self.modules():
             if isinstance(m, MultiHeadAttention) or isinstance(m, MOEFeedForward):
                 m.reset_parameters()
 
-    def _clean_up_rot_emb_cache(
-        self,
-        cached_freqs: dict[Optional[torch.device], dict[int, torch.Tensor]],
-        max_seq_len_cached: dict[Optional[torch.device], int],
-    ):
-        for dev in list(cached_freqs.keys()):
-            for alp in list(cached_freqs[dev].keys()):
-                if cached_freqs[dev][alp].device == torch.device("meta"):
-                    del cached_freqs[dev][alp]
-                    if len(cached_freqs[dev]) == 0:
-                        del cached_freqs[dev]
-                        del max_seq_len_cached[dev]
 
     def post_init(self):
         # This function is called in `get_model` after the model is
         # fully initalized on the correct device
-
-        self._clean_up_rot_emb_cache(
-            self.rot_emb.cached_freqs,  # type: ignore
-            self.rot_emb.max_seq_len_cached,  # type: ignore
-        )
-
-        # init RoPE on the right device(s)
         for device in set(
             [param.device for param in self.parameters()]
             + [buffer.device for buffer in self.buffers()]
         ):
-            self.rot_emb.compute_freqs_cis(device, self.config.max_expected_seq_len)
+            self.rot_emb.device = device
+
 
     def forward(
         self,
@@ -296,17 +265,32 @@ class GptOssHeadless(nn.Module):
         # x_in: batch_size x seq_len x emb_dim if input is already embedded, otherwise batch_size x seq_len
         # mask: batch_size x seq_len x seq_len
         # bias: nheads x seq_len x seq_len
+        attn_kwargs.update({"attn_name": "sdpa_with_sinks"})
+
         if past_key_value_states is None or len(past_key_value_states) == 0:
             past_key_value_states = [None for _ in range(len(self.layers))]
 
+        
+        print("embedding.weight shape:", self.embedding.weight.shape)
+
+        tok_emb = self.embedding(x_in)
+        print("tok_emb stats:", tok_emb.mean(), tok_emb.std(), tok_emb.min(), tok_emb.max())
+
         if x_in.dim() == 2:  # input is not already embedded
             x_in = self.embedding(x_in)
-        x_in = x_in * self.config.embedding_multiplier
 
+        print("post emb stats:", x_in.mean(), x_in.std(), x_in.min(), x_in.max())
         # this is the output cache for all the decoder layers
         present_key_value_states = []
 
         for i, layer in enumerate(self.layers):
+            if torch.isnan(x_in).any().item():
+                print(f"Layer {i} has nan input")
+                
+            if layer.config.sliding_window > 0:
+                attn_kwargs.update({"sliding_window": layer.config.sliding_window})
+            else:
+                attn_kwargs.update({"sliding_window": 0})                
             output = layer(
                 x=x_in,
                 position_ids=position_ids,
@@ -350,6 +334,15 @@ class GptOss(nn.Module):
             self.config.emb_dim, self.config.src_vocab_size, bias=False
         )
 
+        # handle assignment of non-meta weights to meta parameters
+        if self.head.weight.device == torch.device("meta"):
+            assert self.base_model.embedding.weight != torch.device("meta")
+            self.head.weight = self.base_model.embedding.weight
+        else:
+            self.base_model.embedding.weight = self.head.weight
+
+        print("weights tied?", self.head.weight.data_ptr() == self.base_model.embedding.weight.data_ptr())
+
     @classmethod
     def from_config(cls, config: GptOssConfig) -> "GptOss":
         return cls(config)
@@ -383,6 +376,8 @@ class GptOss(nn.Module):
         only_last_token: bool = False,
         **attn_kwargs: Unpack[AttentionKwargs],
     ):
+        attn_kwargs.update({"attn_name": "sdpa_with_sinks"})  # type: ignore[misc]
+
         get_attention_type(**attn_kwargs)["validate_attn_kwargs"](
             input_ids=x,
             position_ids=position_ids,
@@ -407,13 +402,10 @@ class GptOss(nn.Module):
         else:
             preds = self.head(output)
 
-        preds = preds / self.config.logits_scaling
-
         if use_cache:
             return preds, cache
         else:
             return preds
-
 
 _architecture_name = "gpt_oss"
 _20b_config = GptOssConfig()

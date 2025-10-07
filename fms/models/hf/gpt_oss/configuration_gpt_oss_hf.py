@@ -88,8 +88,8 @@ class HFAdaptedGptOssConfig(PretrainedConfig):
         self.router_aux_loss_coef = router_aux_loss_coef
         self.output_router_logits = output_router_logits
         self.use_cache = use_cache
+        self.tie_word_embeddings = False
         super().__init__(
-            tie_word_embeddings=tie_heads,
             **kwargs,
         )
 

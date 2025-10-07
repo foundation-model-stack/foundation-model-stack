@@ -76,19 +76,9 @@ def convert_to_hf(
 
             # MoE SwiGLU
             oss_hf_layer.mlp.router.weight.copy_(fms_hf_layer.ff_sub_layer.gate.weight)
-            for expert_idx, expert_layer in enumerate(oss_hf_layer.mlp.experts):
-                expert_layer.w1.weight.copy_(
-                    fms_hf_layer.ff_sub_layer.cond_ffn.w1.chunk(2, dim=1)[0][expert_idx]
-                )
-                expert_layer.w2.weight.copy_(
-                    fms_hf_layer.ff_sub_layer.cond_ffn.w2[expert_idx]
-                )
 
             # layer norm
             oss_hf_layer.input_layernorm.weight.copy_(fms_hf_layer.ln.weight)
-            oss_hf_layer.post_attention_layernorm.weight.copy_(
-                fms_hf_layer.ff_ln.weight
-            )
 
         # LM Head
         oss_hf_model.model.norm.weight.copy_(fms_hf_model.decoder.model.dec_norm.weight)

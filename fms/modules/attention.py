@@ -1,5 +1,7 @@
 import abc
 import functools
+
+import math
 from typing import (
     Any,
     Callable,
@@ -306,6 +308,7 @@ def _sdpa_with_sinks_op(
     # from gpt-oss open ai implementation
     batch, n_heads, n_tokens, d_head = queries.shape
     S = attn_sinks.reshape(1, -1, 1, 1).expand(batch, -1, n_tokens, -1)
+
     mask = torch.triu(queries.new_full((n_tokens, n_tokens), -float("inf")), diagonal=1)
     if sliding_window and sliding_window > 0:
         mask += torch.tril(
@@ -313,6 +316,10 @@ def _sdpa_with_sinks_op(
             diagonal=-sliding_window,
         )
     QK = torch.einsum("bhqd,bhkd->bhqk", queries, keys_e)
+
+    if scale_factor is None:
+        scale_factor = 1.0 / math.sqrt(d_head)
+
     QK *= scale_factor  # type: ignore[arg-type]
     QK += mask[None, None, :, :]
     QK = torch.cat([QK, S], dim=-1)
@@ -732,6 +739,7 @@ class MultiHeadAttention(nn.Module):
             queries, keys = self.position_encoder.adjusted_qk(
                 queries, keys, position_ids, past_key_value_state, use_cache
             )
+
         if self.has_sinks:
             attn_kwargs.update({"sinks": self.sinks})
             attn_kwargs.update({"training": self.training})
