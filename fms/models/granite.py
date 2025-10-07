@@ -502,16 +502,25 @@ serialization.register_adapter_step(
 # *** ALERT *** Weights are expanded to support Granite 2b and 3b models where
 # Where emb_dim // nheads < 128, so we set the head_dim = 128
 def _weight_expansion(
-    input_sd: Mapping,
-    model_config: GraniteConfig,
-    model_param_size_dict: dict[str, torch.Size],
-):
-    new_sd = input_sd
-    if model_config.head_dim > model_config.emb_dim // model_config.nheads:
+    input_sd: Mapping[str, Any],
+    model_config: Optional[GraniteConfig] = None,
+    model_param_size_dict: Optional[dict[str, torch.Size]] = None,
+    **kwargs,
+) -> Mapping[str, Any]:
+    new_sd = dict(input_sd)
+
+    if (
+        model_config
+        and model_config.head_dim > model_config.emb_dim // model_config.nheads
+    ):
         for name, tensor_value in new_sd.items():
             # We are only expanding the weights of the attn layers
             if "attn" not in name:
                 continue
+            if model_param_size_dict is None:
+                raise TypeError(
+                    f"model_param_size_dict must be passed as kwargs to the register_adapter_step _weight_expansion"
+                )
             if name not in model_param_size_dict:
                 raise KeyError(
                     f"Parameter '{name}' from state_dict not found in model_param_size_dict. "

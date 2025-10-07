@@ -519,7 +519,7 @@ def load_state_dict_into_model(
     adapter = _get_adapter(architecture, source)
 
     # Prepare the extra_kwargs for the adapter
-    adapter_kwargs = {}
+    adapter_kwargs: dict[str, Any] = {}
     if hasattr(model, "config"):
         adapter_kwargs["model_config"] = model.config
         adapter_kwargs["model_param_size_dict"] = {
