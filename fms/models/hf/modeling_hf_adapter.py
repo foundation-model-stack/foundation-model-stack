@@ -533,7 +533,9 @@ class HFDecoder(_HFBase):
         *args,
         **kwargs,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        is_cache_used_and_filled = use_cache and past_key_values is not None
+        is_cache_used_and_filled = use_cache and (
+            past_key_values is not None and len(past_key_values) != 0
+        )
         return HFDecoderModelArchitecture._produce_decoder_attention_mask_from_hf(
             attention_mask, is_cache_used_and_filled
         )
@@ -1673,7 +1675,9 @@ class HFEncoderDecoderModelArchitecture(
                 )
 
         # compute the decoder attention masks (3d and 2d)
-        is_cache_used_and_filled = use_cache and past_key_values is not None
+        is_cache_used_and_filled = use_cache and (
+            past_key_values is not None and len(past_key_values) != 0
+        )
         (
             decoder_attention_mask,
             hf_dec_attention_mask,
