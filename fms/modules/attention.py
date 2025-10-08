@@ -53,6 +53,23 @@ class AttentionKwargs(TypedDict, total=False):
     attn_name: str
 
 
+class SinkAttentionKwargs(TypedDict):
+    """
+    The sinks attention kwargs to be passed to fms model forward.
+
+    attn_name: str
+        this is the name corresponding to the attention op registered in register_attention_op
+    sinks: torch.Tensor
+        this is the tensor weights for the sinks
+    sliding_window: int
+        this is the sliding window size for sinks attention
+    """
+
+    attn_name: str
+    sinks: NotRequired[torch.Tensor]
+    sliding_window: NotRequired[int]
+
+
 # TODO: add adjusted_mask for alibi as part of attn_compute_dict
 def register_attention_op(
     attn_type: str,
@@ -95,7 +112,10 @@ def register_attention_op(
             torch.Tensor,
         ]
     ] = None,
-    update_attn_kwargs_op: Optional[Callable[..., AttentionKwargs]] = None,
+    update_attn_kwargs_op: Union[
+        Optional[Callable[..., AttentionKwargs]],
+        Optional[Callable[..., SinkAttentionKwargs]],
+    ] = None,
     validate_attn_kwargs_op: Optional[
         Callable[
             Concatenate[
@@ -268,23 +288,6 @@ def _sdpa_compute_op(
     # b x qlen x (d)
     attn = attn.transpose(2, 1).contiguous()
     return attn
-
-
-class SinkAttentionKwargs(TypedDict):
-    """
-    The sinks attention kwargs to be passed to fms model forward.
-
-    attn_name: str
-        this is the name corresponding to the attention op registered in register_attention_op
-    sinks: torch.Tensor
-        this is the tensor weights for the sinks
-    sliding_window: int
-        this is the sliding window size for sinks attention
-    """
-
-    attn_name: str
-    sinks: NotRequired[torch.Tensor]
-    sliding_window: NotRequired[int]
 
 
 def _sdpa_with_sinks_op(

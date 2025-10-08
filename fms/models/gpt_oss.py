@@ -43,6 +43,33 @@ FP4_VALUES = [
     -6.0,
 ]
 
+LAYER_TYPES = [
+    "sliding_attention",
+    "full_attention",
+    "sliding_attention",
+    "full_attention",
+    "sliding_attention",
+    "full_attention",
+    "sliding_attention",
+    "full_attention",
+    "sliding_attention",
+    "full_attention",
+    "sliding_attention",
+    "full_attention",
+    "sliding_attention",
+    "full_attention",
+    "sliding_attention",
+    "full_attention",
+    "sliding_attention",
+    "full_attention",
+    "sliding_attention",
+    "full_attention",
+    "sliding_attention",
+    "full_attention",
+    "sliding_attention",
+    "full_attention",
+]
+
 
 @dataclass
 class GptOssConfig(ModelConfig):
@@ -328,6 +355,8 @@ class GptOss(nn.Module):
             self.config = config
         else:
             self.config = GptOssConfig()
+        if not self.config.layer_types:
+            self.config.layer_types = LAYER_TYPES
         self.config = self.config.updated(**kwargs)
         self.distributed_strategy = distributed_strategy
 
@@ -512,12 +541,8 @@ def _hf_to_fms_rope(
 
     if model_config:
         head_size = model_config.emb_dim // model_config.nheads
-        linear_type = "torch_linear"
-        if model_config.linear_config:
-            linear_type = model_config.linear_config["linear_type"]
     else:
         head_size = 128  # Good default for most models
-        linear_type = "torch_linear"
 
     rope_params = _get_rope_params()
     trans_required_pattern = re.compile(
