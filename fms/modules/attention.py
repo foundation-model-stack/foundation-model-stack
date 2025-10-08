@@ -12,7 +12,7 @@ from typing import (
     Tuple,
     TypedDict,
 )
-from typing_extensions import NotRequired, Unpack
+from typing_extensions import NotRequired, Unpack, Union
 
 import torch
 import torch.distributed
@@ -51,17 +51,6 @@ class AttentionKwargs(TypedDict, total=False):
     """
 
     attn_name: str
-
-class SinkAttentionKwargs(AttentionKwargs):
-    """
-    The sinks attention kwargs to be passed to fms model forward.
-
-    attn_name: str
-        this is the name corresponding to the attention op registered in register_attention_op
-    """
-    attn_name: str
-    sinks: Tensor
-    sliding_window: int
 
 
 # TODO: add adjusted_mask for alibi as part of attn_compute_dict
@@ -281,6 +270,23 @@ def _sdpa_compute_op(
     return attn
 
 
+class SinkAttentionKwargs(TypedDict):
+    """
+    The sinks attention kwargs to be passed to fms model forward.
+
+    attn_name: str
+        this is the name corresponding to the attention op registered in register_attention_op
+    sinks: torch.Tensor
+        this is the tensor weights for the sinks
+    sliding_window: int
+        this is the sliding window size for sinks attention
+    """
+
+    attn_name: str
+    sinks: NotRequired[torch.Tensor]
+    sliding_window: NotRequired[int]
+
+
 def _sdpa_with_sinks_op(
     query: torch.Tensor,
     key_cache: torch.Tensor,
@@ -377,7 +383,9 @@ register_attention_op(
 )
 
 
-def get_attention_type(**attn_kwargs: Unpack[AttentionKwargs]) -> dict[str, Callable]:
+def get_attention_type(
+    **attn_kwargs: Unpack[Union[AttentionKwargs, SinkAttentionKwargs]],
+) -> dict[str, Callable]:
     attn_name = attn_kwargs.get("attn_name", "sdpa_causal")
     if attn_name not in __type_factory_map:
         # we can add sdpa default here
@@ -702,7 +710,7 @@ class MultiHeadAttention(nn.Module):
         position_ids=None,
         past_key_value_state: Optional[Tuple[Tensor | None, Tensor | None]] = None,
         use_cache=False,
-        **attn_kwargs: Unpack[AttentionKwargs],
+        **attn_kwargs: Unpack[Union[AttentionKwargs, SinkAttentionKwargs]],
     ):
         """
         past_key_value_state: tuple
@@ -745,7 +753,7 @@ class MultiHeadAttention(nn.Module):
             )
 
         if self.has_sinks:
-            attn_kwargs.update({"sinks": self.sinks})
+            attn_kwargs["sinks"] = self.sinks
 
         attn_compute_dict = get_attention_type(**attn_kwargs)
 
@@ -960,7 +968,7 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
         position_ids=None,
         past_key_value_state: Optional[Tuple[Tensor | None, Tensor | None]] = None,
         use_cache=False,
-        **attn_kwargs: Unpack[AttentionKwargs],
+        **attn_kwargs: Unpack[Union[AttentionKwargs, SinkAttentionKwargs]],
     ):
         """
         Check MultiHeadAttention for up-to-date arguments and docs

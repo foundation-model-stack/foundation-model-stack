@@ -76,11 +76,15 @@ class GptOssConfig(ModelConfig):
 
 
 class GptOssBlock(nn.Module):
-    def __init__(self, config: GptOssConfig, rotary_emb: YarnRotaryEmbedding):
+    def __init__(
+        self,
+        config: GptOssConfig,
+        layer_sliding_window: int,
+        rotary_emb: YarnRotaryEmbedding,
+    ):
         super(GptOssBlock, self).__init__()
         self.config = config
-        emb_kq = self.config.head_dim
-        emb_v = self.config.head_dim
+        self.layer_sliding_window = layer_sliding_window
 
         self.ln = LayerNormParameterized(
             config.emb_dim,
@@ -98,6 +102,9 @@ class GptOssBlock(nn.Module):
             assert self.config.nheads % self.config.kvheads == 0
 
         scale_factor = 1.0 / math.sqrt(self.config.head_dim)
+
+        emb_kq = self.config.head_dim
+        emb_v = self.config.head_dim
 
         self.attn = MultiHeadAttention(
             emb_dim=self.config.emb_dim,
@@ -131,11 +138,11 @@ class GptOssBlock(nn.Module):
 
     def forward(
         self,
-        x,
+        x: torch.Tensor,
         *,
-        position_ids=None,
-        past_key_value_state=None,
-        use_cache=False,
+        position_ids: Optional[torch.Tensor] = None,
+        past_key_value_state: Optional[Tuple[torch.Tensor,]] = None,
+        use_cache: bool = False,
         **attn_kwargs: Unpack[SinkAttentionKwargs],
     ):
         # if the cache is not empty, we need to get the kv cache for self and cross attention
@@ -209,9 +216,14 @@ class GptOssHeadless(nn.Module):
         layers = []
         for i in range(self.config.nlayers):
             config = self.config
+            layer_sliding_window = 128
             if config.layer_types[i] == "full_attention":  # type: ignore[index]
-                config = self.config.updated(sliding_window=0)
-            block: nn.Module = GptOssBlock(config, self.rot_emb)
+                layer_sliding_window = 0
+            block: nn.Module = GptOssBlock(
+                config=config,
+                layer_sliding_window=layer_sliding_window,
+                rotary_emb=self.rot_emb,
+            )
             block = self.distributed_strategy.distribute_layer(block, i)
             layers.append(block)
         self.layers = nn.ModuleList(layers)
@@ -253,10 +265,12 @@ class GptOssHeadless(nn.Module):
 
     def forward(
         self,
-        x_in,
-        position_ids=None,
-        past_key_value_states=None,
-        use_cache=False,
+        x_in: torch.Tensor,
+        position_ids: Optional[torch.Tensor] = None,
+        past_key_value_states: Optional[
+            Tuple[torch.Tensor,] | list[torch.Tensor] | list[None]
+        ] = None,
+        use_cache: bool = False,
         **attn_kwargs: Unpack[SinkAttentionKwargs],
     ):
         # Embed the given vocabulary indices using the given attention mask, with pre-/post-norm and dropout as specified
@@ -275,10 +289,10 @@ class GptOssHeadless(nn.Module):
         present_key_value_states = []
 
         for i, layer in enumerate(self.layers):
-            if layer.config.sliding_window > 0:  # type: ignore
-                attn_kwargs.update({"sliding_window": layer.config.sliding_window})  # type: ignore
+            if layer.layer_sliding_window > 0:  # type: ignore
+                attn_kwargs["sliding_window"] = layer.layer_sliding_window  # type: ignore
             else:
-                attn_kwargs.update({"sliding_window": 0})
+                attn_kwargs["sliding_window"] = 0
             output = layer(
                 x=x_in,
                 position_ids=position_ids,
@@ -355,14 +369,14 @@ class GptOss(nn.Module):
 
     def forward(
         self,
-        x: torch.LongTensor,
-        position_ids: Optional[torch.LongTensor] = None,
-        past_key_value_states: Optional[Tuple[torch.FloatTensor,]] = None,
+        x: torch.Tensor,
+        position_ids: Optional[torch.Tensor] = None,
+        past_key_value_states: Optional[Tuple[torch.Tensor,]] = None,
         use_cache: bool = False,
         only_last_token: bool = False,
         **attn_kwargs: Unpack[SinkAttentionKwargs],
     ):
-        attn_kwargs.update({"attn_name": "sdpa_with_sinks"})  # type: ignore[misc]
+        attn_kwargs["attn_name"] = "sdpa_with_sinks"
 
         get_attention_type(**attn_kwargs)["validate_attn_kwargs"](
             input_ids=x,
