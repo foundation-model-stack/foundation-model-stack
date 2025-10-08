@@ -15,7 +15,7 @@ import logging
 import math
 import re
 from dataclasses import dataclass
-from typing import Any, Dict, Mapping, Optional, Tuple, Unpack
+from typing import Any, Dict, List, Mapping, Optional, Tuple, Unpack
 
 import torch
 from torch import nn
@@ -91,53 +91,38 @@ logger = logging.getLogger(__name__)
 @dataclass
 class Qwen3Config(ModelConfig):
 
-    # From above mapping
-    src_vocab_size: int = 151936
-    nheads: int = 16
-    nlayers: int = 28
-    hidden_grow_factor: float = 6144 / 2048  # intermediate_size / hidden_size:emb_dim
-    tie_heads: bool = True
-    p_dropout: float = 0.0
-    activation_fn: str = "silu"
-    emb_dim: int = 2048
-    max_expected_seq_len: int = 40960
-    kvheads: int = 8
-    norm_eps: float = 1e-6
-    rope_base: float = 100_0000.0  # Same as rope_theta
-    # Extra?
-    bos_token_id:int = 151643
-    multiple_of: int = 256  # borrowed from llama
-    sliding_window: int = 4000
+    # -----------------------------------------------------------------------
+    # From transformers/src/transformers/models/qwen3/configuration_qwen3.py
+    #  AND some FMS config name changes
+    # -----------------------------------------------------------------------
+    activation_fn:str = "silu"  # hf_config.hidden_act:str = "silu"
+    attention_bias:bool = False
+    emb_dim: int = 4096  # hf_config.hidden_size:int = 4096
     fused_weights: bool = True  # FMS Specific -- For CPU/GPU = T, AIU = F
-    pad_id: int = -1  # borrowed from granite, we do need it
-    linear_config: Optional[Mapping[str, Any]] = None  # To support quantization
-    # From config.json just in case?
-    attention_bias: bool = False
-    attention_dropout: float = 0.0
-    # bos_token_id: int = 151643
-    eos_token_id: int = 151645
     head_dim:int = 128
-    hidden_act:str = "silu"
-    hidden_size: int = 2048
-    initializer_range: float = 0.02
-    intermediate_size:int = 6144
-    max_position_embeddings:int = 40960
-    max_window_layers:int = 28
-    model_type:str = "qwen3"
-    num_attention_heads:int = 16
-    num_hidden_layers:int = 28
-    num_key_value_heads:int = 8
-    rms_norm_eps:float = 1e-06
-    rope_scaling =  None
-    rope_theta:int = 1000000
-    sliding_window = 0  # not sure what to put here
-    tie_word_embeddings:bool = True
-    torch_dtype: str = "bfloat16"
-    transformers_version:str = "4.51.0"
-    use_cache:bool = True
-    use_sliding_window = False
-    vocab_size: int = 15193
 
+    hidden_grow_factor: float = 6144 / 2048  # hf_config.intermediate_size / hf_config.hidden_size
+    initializer_range:float = 0.02
+    intermediate_size:int = 22016
+    kvheads: int = 32  # hf_config.num_key_value_heads:int = 32
+#    layer_types:List[str] = []
+    linear_config: Optional[Mapping[str, Any]] = None  # To support quantization
+    max_position_embeddings:int = 32768
+    max_expected_seq_len:int = 40960
+    max_window_layers:int = 28
+    multiple_of: int = 256  # borrowed from llama
+    nheads: int = 32  # hf_config.num_attention_heads:int = 32
+    nlayers: int = 32  # hf_config.num_hidden_layers:int = 32
+    norm_eps: float = 1e-06  # hf_config.rms_norm_eps:float = 1e-6
+    p_dropout: float = 0.0  # hf_config. attention_dropout:float = 0.0
+    pad_id: int = -1  # borrowed from granite, we do need it
+#    rope_scaling: Dict[str, Any] = {}
+    rope_base:int = 1000000  # hf_config.rope_theta:int = 1000000
+    sliding_window:int = 4096
+    tie_heads: bool = True  # hf_config.tie_word_embeddings: bool = True
+    use_cache:bool = True
+    use_sliding_window:bool = False
+    src_vocab_size:int = 15193  # hf_config.vocab_size:int = 15193
 
 # Qwen3-1.7B
 _1_7b_config = Qwen3Config()
@@ -153,24 +138,23 @@ class Qwen3Block(nn.Module):
         emb_kq = self.config.emb_dim // self.config.nheads
         emb_v = self.config.emb_dim // self.config.nheads
 
-        self.ln = LayerNormParameterized(
-            self.config.emb_dim,
-            elementwise_scale=True,
-            elementwise_shift=False,
-            use_mean=False,
-            eps=self.config.norm_eps,
-            use_high_precision_pow=True,
-        )
-        self.ff_ln = LayerNormParameterized(
-            self.config.emb_dim,
-            elementwise_scale=True,
-            elementwise_shift=False,
-            use_mean=False,
-            eps=self.config.norm_eps,
-            use_high_precision_pow=True,
-        )
-
-
+        # -----------------------------------------
+        # Can't find the following in Qwen3Config.
+        # fused_weights       fused_weights: bool = True  # FMS Specific -- For CPU/GPU = T, AIU = F
+        # linear_config       linear_config: Optional[Mapping[str, Any]] = None  # To support quantization
+        # hidden_grow_factor  config.intermediate_size/config.hidden_size
+        # multiple_of         multiple_of: int = 256  # borrowed from llama
+        # pad_id              pad_id: int = -1  # borrowed from granite, we do need it
+        # -----------------------------------------
+        # -----------------------------------------
+        # Found these in Qwen3Config:
+        # kvheads        -> num_key_value_heads
+        # nheads         -> num_attention_heads
+        # p_dropout      -> attention_dropout
+        # emb_dim        -> hidden_size
+        # norm_eps       -> rms_norm_eps
+        # src_vocab_size -> vocab_size 
+        # -----------------------------------------
         if self.config.kvheads == 0:
             kvheads = self.config.nheads
         else:
@@ -199,7 +183,22 @@ class Qwen3Block(nn.Module):
             fused=self.config.fused_weights,
             linear_config=self.config.linear_config,
         )
-
+        self.ln = LayerNormParameterized(
+            self.config.emb_dim,
+            elementwise_scale=True,
+            elementwise_shift=False,
+            use_mean=False,
+            eps=self.config.norm_eps,
+            use_high_precision_pow=True,
+        )
+        self.ff_ln = LayerNormParameterized(
+            self.config.emb_dim,
+            elementwise_scale=True,
+            elementwise_shift=False,
+            use_mean=False,
+            eps=self.config.norm_eps,
+            use_high_precision_pow=True,
+        )
         if self.config.p_dropout != 0:
             self.dropout = nn.Dropout(self.config.p_dropout)
 
