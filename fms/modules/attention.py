@@ -290,7 +290,7 @@ def _sdpa_compute_op(
     return attn
 
 
-def _sdpa_with_sinks_op(
+def _math_attention_with_sinks_op(
     query: torch.Tensor,
     key_cache: torch.Tensor,
     value_cache: torch.Tensor,
@@ -298,7 +298,7 @@ def _sdpa_with_sinks_op(
     kvheads: int,
     p_dropout: float,
     scale_factor: Optional[float],
-    **attn_kwargs,
+    **attn_kwargs: Unpack[SinkAttentionKwargs],
 ) -> torch.Tensor:
     queries = query.transpose(2, 1)
 
@@ -318,8 +318,11 @@ def _sdpa_with_sinks_op(
         keys_e = key_cache
         values_e = value_cache
 
-    attn_sinks = attn_kwargs.get("sinks", None)
-    sliding_window = attn_kwargs.get("sliding_window", None)
+    try:
+        attn_sinks = attn_kwargs.get("sinks", None)
+        sliding_window = attn_kwargs.get("sliding_window", None)
+    except TypeError as e:
+        print(f"Invalid attention sinks kwargs. {e}")
 
     # https://github.com/openai/gpt-oss/blob/main/gpt_oss/torch/model.py#L153
     # from gpt-oss open ai implementation
@@ -378,7 +381,7 @@ register_attention_op(
     _sdpa_compute_op,
     update_attn_kwargs_op=_sdpa_update_attn_kwargs,
 )
-register_attention_op("sdpa_with_sinks", _sdpa_store_op, _sdpa_with_sinks_op)
+register_attention_op("sdpa_with_sinks", _sdpa_store_op, _math_attention_with_sinks_op)
 register_attention_op(
     "sdpa_bidirectional",
     _sdpa_store_op,
