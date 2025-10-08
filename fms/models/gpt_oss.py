@@ -438,37 +438,11 @@ def _weight_fusion(
 
     new_sd = input_sd
     if has_fused_weights:
-        new_sd = serialization._mlp_glu_unfused_to_fused_adapter_step(
-            serialization._attn_unfused_to_fused_step(new_sd)
-        )
+        new_sd = serialization._attn_unfused_to_fused_step(new_sd)
     return new_sd
 
 
 serialization.register_adapter_step(_architecture_name, "weight_fusion", _weight_fusion)
-
-
-def _hf_gptq_gpt_oss_check(
-    input_sd: Mapping[str, Any], model_config: Optional[GptOssConfig] = None, **kwargs
-) -> Mapping[str, Any]:
-    has_fused_weights = True
-    linear_type = "torch_linear"
-    if model_config:
-        if not model_config.fused_weights:
-            has_fused_weights = False
-        if model_config.linear_config:
-            linear_type = model_config.linear_config["linear_type"]
-
-    if "gptq" in linear_type and has_fused_weights:
-        raise ValueError(
-            "GPTQ HF GptOss checkpoints cannot be loaded into a model with fused weights"
-        )
-
-    return input_sd
-
-
-serialization.register_adapter_step(
-    _architecture_name, "hf_gptq_fusion_check", _hf_gptq_gpt_oss_check
-)
 
 
 def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]:
@@ -526,9 +500,7 @@ serialization.register_adapter_step(
 )
 
 
-def _get_rope_params(linear_type: str) -> list[str]:
-    if "gptq" in linear_type:
-        return ["qweight", "scales", "qzeros", "bias"]
+def _get_rope_params() -> list[str]:
     # torch.nn.Linear
     return ["weight", "bias"]
 
@@ -547,7 +519,7 @@ def _hf_to_fms_rope(
         head_size = 128  # Good default for most models
         linear_type = "torch_linear"
 
-    rope_params = _get_rope_params(linear_type)
+    rope_params = _get_rope_params()
     trans_required_pattern = re.compile(
         f"layers.[0-9]+.attn.in_proj.(query|key).({'|'.join(rope_params)})"
     )
@@ -565,10 +537,6 @@ def _hf_to_fms_rope(
         # that HF does from the original Meta weights:
         if bool(trans_required_pattern.match(name)):
             temp = param
-            if "gptq" in linear_type and temp.dim() == 2:
-                # GPTQ qweights are [in_feat, out_feat] (unlike usual [out_feat, in_feat])
-                # and are fully transposed before & after process
-                temp = temp.transpose(0, 1)
             # num_heads is used in the transformation required for hf->fms
             # can't be precomputed because q and k might have different num_heads
             num_heads = temp.size(0) // head_size
@@ -578,9 +546,6 @@ def _hf_to_fms_rope(
             else:  # bias
                 temp_view = temp.view(num_heads, 2, -1)
             temp = temp_view.transpose(1, 2).reshape(*temp.size())
-
-            if "gptq" in linear_type and temp.dim() == 2:
-                temp = temp.transpose(0, 1)
 
             new_sd[name] = temp
         else:
@@ -643,5 +608,5 @@ serialization.register_adapter_step(
 serialization.register_adapter(
     _architecture_name,
     "hf",
-    ["hf_to_fms_names", "hf_to_fms_rope", "hf_gptq_fusion_check", "weight_fusion"],
+    ["hf_to_fms_names", "hf_to_fms_rope", "weight_fusion"],
 )
