@@ -396,11 +396,7 @@ class GptOss(nn.Module):
         if only_last_token:
             output = output[:, -1, :]
 
-        if output.dtype != self.head.weight.dtype:
-            output_dtype = output.to(self.head.weight.dtype)
-            preds = self.head(output_dtype)
-        else:
-            preds = self.head(output)
+        preds = self.head(output)
 
         if use_cache:
             return preds, cache
