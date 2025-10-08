@@ -477,7 +477,7 @@ class ConditionalFeedForward(nn.Module):
         dim: int,
         intermediate_size: int,
         use_bias: bool = False,
-        swiglu_limit: float = 7.0,
+        swiglu_limit: Optional[float] = None,
     ):
         super().__init__()
         self.num_experts = num_experts
@@ -487,15 +487,12 @@ class ConditionalFeedForward(nn.Module):
         self.w2 = nn.Parameter(torch.empty(num_experts, dim, intermediate_size))
         self.use_bias = use_bias
         self.swiglu_limit = swiglu_limit
-        self.w13_bias = torch.nn.Parameter(
-            torch.empty(num_experts, 2 * intermediate_size)
-        )
-        self.w2_bias = torch.nn.Parameter(torch.empty(num_experts, dim))
 
-        assert self.is_parameter_initialized(self.w13), "Loaded w13"
-        assert self.is_parameter_initialized(self.w2), "Loaded w2"
-        assert self.is_parameter_initialized(self.w13_bias), "Loaded w13_bias"
-        assert self.is_parameter_initialized(self.w2_bias), "Loaded w2_bias"
+        if self.use_bias:
+            self.w13_bias = torch.nn.Parameter(
+                torch.empty(num_experts, 2 * intermediate_size)
+            )
+            self.w2_bias = torch.nn.Parameter(torch.empty(num_experts, dim))
 
     def reset_parameters(self):
         for param in ["w13", "w2"]:
@@ -511,11 +508,11 @@ class ConditionalFeedForward(nn.Module):
     def to_tp(self, group: ProcessGroup) -> "TPConditionalFeedForward":
         return TPConditionalFeedForward.import_module(self, group)
 
-    def swiglu(self, x, alpha: float = 1.702, limit: float = 7.0):
+    def clamp_swiglu(self, x, alpha: float = 1.702, limit: Optional[float] = None):
         x_glu, x_linear = x[..., ::2], x[..., 1::2]
         # Clamp the input values
         x_glu = x_glu.clamp(min=None, max=limit)
-        x_linear = x_linear.clamp(min=-limit, max=limit)
+        x_linear = x_linear.clamp(min=-limit, max=limit)  # type: ignore
         out_glu = x_glu * torch.sigmoid(alpha * x_glu)
         # Note we add an extra bias of 1 to the linear layer
         return out_glu * (x_linear + 1)
@@ -538,7 +535,7 @@ class ConditionalFeedForward(nn.Module):
             mlp1_weight = self.w13[expert_indices, ...]
             mlp1_bias = self.w13_bias[expert_indices, ...]
             scores = torch.einsum("beck,bk->bec", mlp1_weight, scores) + mlp1_bias
-            scores = self.swiglu(scores, limit=self.swiglu_limit)
+            scores = self.clamp_swiglu(scores, limit=self.swiglu_limit)
 
             # MLP #2
             mlp2_weight = self.w2[expert_indices, ...]
@@ -700,11 +697,15 @@ class MOEFeedForward(nn.Module):
         dim: int,
         intermediate_size: int,
         use_bias: bool = False,
-        swiglu_limit: float = 7.0,
+        swiglu_limit: Optional[float] = None,
     ) -> None:
         super().__init__()
         self.cond_ffn = ConditionalFeedForward(
-            num_experts, dim, intermediate_size, use_bias=use_bias
+            num_experts,
+            dim,
+            intermediate_size,
+            use_bias=use_bias,
+            swiglu_limit=swiglu_limit,
         )
         self.dim = dim
         self.gate = nn.Linear(dim, num_experts, bias=use_bias)

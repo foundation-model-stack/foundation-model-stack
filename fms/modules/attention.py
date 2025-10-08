@@ -327,7 +327,7 @@ def _math_attention_with_sinks_op(
     # https://github.com/openai/gpt-oss/blob/main/gpt_oss/torch/model.py#L153
     # from gpt-oss open ai implementation
     batch, n_heads, n_tokens, d_head = queries.shape
-    S = attn_sinks.reshape(1, -1, 1, 1).expand(batch, -1, n_tokens, -1)
+    S = attn_sinks.reshape(1, -1, 1, 1).expand(batch, -1, n_tokens, -1)  # type: ignore
 
     mask = torch.triu(queries.new_full((n_tokens, n_tokens), -float("inf")), diagonal=1)
     if sliding_window and sliding_window > 0:
