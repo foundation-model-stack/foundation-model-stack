@@ -11,7 +11,7 @@ import torch.nn as nn
 from fms import models
 from fms.distributed.strategy import DistributedStrategy, NoOpStrategy
 from fms.modules.attention import (
-    AttentionKwargs,
+    SinkAttentionKwargs,
     MultiHeadAttention,
     get_attention_type,
 )
@@ -136,11 +136,11 @@ class GptOssBlock(nn.Module):
         position_ids=None,
         past_key_value_state=None,
         use_cache=False,
-        **attn_kwargs: Unpack[AttentionKwargs],
+        **attn_kwargs: Unpack[SinkAttentionKwargs],
     ):
         # if the cache is not empty, we need to get the kv cache for self and cross attention
         self_attn_past_key_value = past_key_value_state
-        attn_kwargs.update({"attn_name": "sdpa_with_sinks"})  # type: ignore[misc]
+        attn_kwargs["attn_name"] = attn_kwargs.get("attn_name", "sdpa_with_sinks")
 
         # first we do MHA and Add&Norm
         residual = x
@@ -257,13 +257,13 @@ class GptOssHeadless(nn.Module):
         position_ids=None,
         past_key_value_states=None,
         use_cache=False,
-        **attn_kwargs: Unpack[AttentionKwargs],
+        **attn_kwargs: Unpack[SinkAttentionKwargs],
     ):
         # Embed the given vocabulary indices using the given attention mask, with pre-/post-norm and dropout as specified
         # x_in: batch_size x seq_len x emb_dim if input is already embedded, otherwise batch_size x seq_len
         # mask: batch_size x seq_len x seq_len
         # bias: nheads x seq_len x seq_len
-        attn_kwargs.update({"attn_name": "sdpa_with_sinks"})
+        attn_kwargs["attn_name"] = attn_kwargs.get("attn_name", "sdpa_with_sinks")
 
         if past_key_value_states is None or len(past_key_value_states) == 0:
             past_key_value_states = [None for _ in range(len(self.layers))]
@@ -360,7 +360,7 @@ class GptOss(nn.Module):
         past_key_value_states: Optional[Tuple[torch.FloatTensor,]] = None,
         use_cache: bool = False,
         only_last_token: bool = False,
-        **attn_kwargs: Unpack[AttentionKwargs],
+        **attn_kwargs: Unpack[SinkAttentionKwargs],
     ):
         attn_kwargs.update({"attn_name": "sdpa_with_sinks"})  # type: ignore[misc]
 

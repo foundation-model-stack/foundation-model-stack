@@ -51,8 +51,16 @@ class AttentionKwargs(TypedDict, total=False):
     """
 
     attn_name: str
+
+class SinkAttentionKwargs(AttentionKwargs):
+    """
+    The sinks attention kwargs to be passed to fms model forward.
+
+    attn_name: str
+        this is the name corresponding to the attention op registered in register_attention_op
+    """
+    attn_name: str
     sinks: Tensor
-    training: bool
     sliding_window: int
 
 
@@ -660,9 +668,8 @@ class MultiHeadAttention(nn.Module):
             self.use_bias,
             linear_config=linear_config,
         )
-
-        self.sinks = nn.Parameter(torch.empty(self.nheads))
-        assert self.is_parameter_initialized(self.sinks), "Loaded sinks"
+        if self.has_sinks:
+            self.sinks = nn.Parameter(torch.empty(self.nheads))
 
         self.dense = get_linear(
             self.nheads * self.emb_v_per_head,
@@ -686,9 +693,6 @@ class MultiHeadAttention(nn.Module):
 
     def to_tp(self, group: ProcessGroup) -> "TPMultiHeadAttention":
         return TPMultiHeadAttention.import_module(self, group)
-
-    def is_parameter_initialized(self, param: nn.Parameter):
-        return param is not None and isinstance(param, nn.Parameter)
 
     def forward(
         self,
@@ -742,7 +746,6 @@ class MultiHeadAttention(nn.Module):
 
         if self.has_sinks:
             attn_kwargs.update({"sinks": self.sinks})
-            attn_kwargs.update({"training": self.training})
 
         attn_compute_dict = get_attention_type(**attn_kwargs)
 
