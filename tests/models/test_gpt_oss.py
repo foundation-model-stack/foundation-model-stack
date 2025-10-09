@@ -21,25 +21,22 @@ class GptOssFixtures(ConfigFixtureMixin, ModelFixtureMixin):
     @pytest.fixture(scope="class", autouse=True)
     def uninitialized_model(self, config: GptOssConfig):
         model = GptOss(config)
-        model.reset_parameters()
         return model
 
     @pytest.fixture(scope="class", autouse=True)
     def config(self) -> ModelConfig:
         gpt_oss_config = GptOssConfig(
-            src_vocab_size=201088,
-            num_experts=32,
-            emb_dim=2880,
-            head_dim=64,
-            sliding_window=128,
-            nheads=64,
-            nlayers=24,
-            kvheads=8,
+            src_vocab_size=384,
+            sliding_window=4,
+            dim=16,
+            norm_eps=1e-05,
+            nheads=4,
+            kvheads=1,
+            nlayers=2,
+            hidden_dim=56,
+            num_experts=8,
+            top_k_experts=2,
         )
-        gpt_oss_config.layer_types = [
-            "sliding_attention" if bool((i + 1) % 2) else "full_attention"
-            for i in range(24)
-        ]
         return gpt_oss_config
 
 
