@@ -72,4 +72,4 @@ class TestGptOss(
         assert model.get_config().as_dict() == config.as_dict()
 
     def test_model_unfused(self, model, signature):
-        pytest.skip("weight unfuse is not implemented for GPTQ")
+        pytest.skip("weight unfuse is not implemented")
