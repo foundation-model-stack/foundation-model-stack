@@ -26,6 +26,7 @@ _granite_3_2_2b_text_config = GraniteConfig(
     emb_dim=2048,
     norm_eps=1e-5,
     nheads=32,
+    head_dim=64,
     kvheads=8,
     nlayers=40,
     hidden_grow_factor=8192 / 2048,
