@@ -499,13 +499,10 @@ serialization.register_adapter_step(
 )
 
 
-# *** ALERT *** Weights are expanded to support Granite 2b and 3b models where
-# Where emb_dim // nheads < 128, so we set the head_dim = 128
+# *** ALERT *** QKV and Dense Weights are expanded to support Granite 2b and 3b models AIU Compilation
+# When emb_dim // nheads < head_dim
 def _weight_expansion(
-    input_sd: Mapping[str, Any],
-    model_config: Optional[GraniteConfig] = None,
-    model_param_size_dict: Optional[dict[str, torch.Size]] = None,
-    **kwargs,
+    input_sd: Mapping[str, Any], model_config: Optional[GraniteConfig] = None
 ) -> Mapping[str, Any]:
     new_sd = dict(input_sd)
 
@@ -513,38 +510,43 @@ def _weight_expansion(
         model_config
         and model_config.head_dim > model_config.emb_dim // model_config.nheads
     ):
-        for name, tensor_value in new_sd.items():
-            # We are only expanding the weights of the attn layers
-            if "attn" not in name:
-                continue
-            if model_param_size_dict is None:
-                raise TypeError(
-                    "model_param_size_dict must be passed as kwargs to the register_adapter_step _weight_expansion"
-                )
-            if name not in model_param_size_dict:
-                raise KeyError(
-                    f"Parameter '{name}' from state_dict not found in model_param_size_dict. "
-                    f"This indicate a mismatch between the checkpoint and model architecture."
-                )
-            param_shape = model_param_size_dict[name]
-            key_steps = name.split(".")
-            if model_param_size_dict[name] != tensor_value.size():
-                print(
-                    f"[WARNING] Expanding weights of {('.'.join(key_steps[1:-1])):30.30} {str(list(tensor_value.size())):12.12} => {list(param_shape)}"
-                )
-                slices = []
-                for dim in range(tensor_value.ndim):
-                    expand_factor = param_shape[dim] // tensor_value.shape[dim]
-                    assert param_shape[dim] % tensor_value.shape[dim] == 0
-                    # Only expand the dimension if the size is different
-                    if expand_factor > 1:
-                        slices.append(slice(0, None, expand_factor))
-                    else:
-                        slices.append(slice(None))
-                # Assign the original weights tensor to the interleaved positions
-                expanded_tensor = torch.zeros(param_shape)
-                expanded_tensor[tuple(slices)] = tensor_value
-                new_sd[name] = expanded_tensor
+        expansion_factor = (
+            model_config.head_dim * model_config.nheads
+        ) // model_config.emb_dim
+        assert expansion_factor % 2 == 0
+        # dim of layers to be expanded
+        layer_dim = {
+            "attn.in_proj.query": 0,
+            "attn.in_proj.key": 0,
+            "attn.in_proj.value": 0,
+            "attn.dense": 1,
+        }
+
+        expand_layer_dim = {
+            layer: layer_dim[tgt]
+            for layer in new_sd
+            for tgt in layer_dim
+            if tgt in layer
+        }
+
+        for layer, expand_dim in expand_layer_dim.items():
+            tensor_value = new_sd[layer]
+            original_size = list(tensor_value.size())
+            # print(original_size)
+            expanded_size = original_size.copy()
+            expanded_size[expand_dim] = expanded_size[expand_dim] * expansion_factor
+            print(
+                f"WARNING:fms.models.granite: expanding weights of {('.'.join(layer.split('.')[1:-1])):30.30} {str(original_size):12.12} => {expanded_size}"
+            )
+            slices = [
+                slice(0, None, expansion_factor) if dim == expand_dim else slice(None)
+                for dim in range(tensor_value.ndim)
+            ]
+            # Assign the original weights tensor to the interleaved positions
+            expanded_tensor = torch.zeros(expanded_size)
+            expanded_tensor[tuple(slices)] = tensor_value
+            new_sd[layer] = expanded_tensor
+
     return new_sd
 
 

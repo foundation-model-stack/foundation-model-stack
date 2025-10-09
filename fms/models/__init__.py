@@ -409,6 +409,13 @@ def get_model(
                 devices, _guess_num_layers(lazy_sd)
             )
 
+    # Let the user override the head_dim in the get_model kwargs
+    if kwargs.get("override_head_dim", None) is not None:
+        extra_args["head_dim"] = kwargs.get("override_head_dim")
+        logger.warning(
+            f"setting head_dim = {extra_args['head_dim']} this overrides pretrained model config\n"
+        )
+
     # Create the model on meta device to allocate weights lazily
     fms_model = _get_model_instance(
         architecture,

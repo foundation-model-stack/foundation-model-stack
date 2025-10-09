@@ -522,9 +522,6 @@ def load_state_dict_into_model(
     adapter_kwargs: dict[str, Any] = {}
     if hasattr(model, "config"):
         adapter_kwargs["model_config"] = model.config
-        adapter_kwargs["model_param_size_dict"] = {
-            name: param.size() for name, param in model.state_dict().items()
-        }
 
     # 2. Decide if model needs sharding and how (for now only TP)
     needs_tp_sharding = checkpoint_sharding != "tp" and distributed_strategy == "tp"
