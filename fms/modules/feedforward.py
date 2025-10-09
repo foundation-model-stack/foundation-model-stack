@@ -736,7 +736,6 @@ class MOEFeedForward(nn.Module):
         if self.use_bias:
             x = self.norm(x)
             x = x.view(-1, self.dim)
-            x = x.to(self.gate.weight.dtype)
             scores = self.gate(x)
             experts = torch.topk(
                 scores, k=self.num_activated_experts, dim=-1, sorted=True
