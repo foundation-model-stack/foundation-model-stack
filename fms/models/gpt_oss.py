@@ -485,6 +485,31 @@ def _weight_fusion(
 serialization.register_adapter_step(_architecture_name, "weight_fusion", _weight_fusion)
 
 
+def _unpack_weights(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]:
+    new_sd = {}
+    for name, param in input_sd.items():
+        new_name = name
+        unpacked_tensors = None
+        if re.search("gate_up_proj|down_proj", name) and "bias" not in name:
+            if "scales" in name:
+                continue
+            elif "blocks" in name:
+                # deal with packed weights
+                blocks = input_sd[name]
+                scales = input_sd[name.replace("blocks", "scales")]
+                new_name = name.replace(".blocks", "")
+                unpacked_tensors = _convert_moe_packed_tensors(
+                    blocks, scales, dtype=torch.bfloat16
+                )
+        new_sd[new_name] = unpacked_tensors if unpacked_tensors is not None else param
+    return new_sd
+
+
+serialization.register_adapter_step(
+    _architecture_name, "unpack_weights", _unpack_weights
+)
+
+
 def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]:
     replacements = [
         (r"^lm_head.weight", "head.weight"),
@@ -511,18 +536,6 @@ def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]
     new_sd = {}
     for name, param in input_sd.items():
         new_name = name
-        unpacked_tensors = None
-        if re.search("gate_up_proj|down_proj", name) and "bias" not in name:
-            if "scales" in name:
-                continue
-            elif "blocks" in name:
-                # deal with packed weights
-                blocks = input_sd[name]
-                scales = input_sd[name.replace("blocks", "scales")]
-                new_name = name.replace(".blocks", "")
-                unpacked_tensors = _convert_moe_packed_tensors(
-                    blocks, scales, dtype=torch.bfloat16
-                )
         for pattern, repl in replacements:
             new_name = re.sub(pattern, repl, new_name)
 
@@ -531,7 +544,7 @@ def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]
         ):
             for pattern, repl in gpt_oss_experts_specific:
                 new_name = re.sub(pattern, repl, new_name)
-        new_sd[new_name] = unpacked_tensors if unpacked_tensors is not None else param
+        new_sd[new_name] = param
     return new_sd
 
 
@@ -644,5 +657,5 @@ serialization.register_adapter_step(
 serialization.register_adapter(
     _architecture_name,
     "hf",
-    ["hf_to_fms_names", "hf_to_fms_rope", "weight_fusion"],
+    ["unpack_weights", "hf_to_fms_names", "hf_to_fms_rope", "weight_fusion"],
 )
