@@ -32,6 +32,7 @@ class LlavaNextFixtures(ConfigFixtureMixin, ModelFixtureMixin):
             emb_dim=16,
             norm_eps=1e-5,
             nheads=8,
+            head_dim=2,
             kvheads=8,
             nlayers=2,
             hidden_grow_factor=4,
