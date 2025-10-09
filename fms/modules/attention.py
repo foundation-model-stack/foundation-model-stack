@@ -1,5 +1,7 @@
 import abc
 import functools
+
+import math
 from typing import (
     Any,
     Callable,
@@ -10,7 +12,7 @@ from typing import (
     Tuple,
     TypedDict,
 )
-from typing_extensions import NotRequired, Unpack
+from typing_extensions import NotRequired, Unpack, Union
 
 import torch
 import torch.distributed
@@ -49,6 +51,23 @@ class AttentionKwargs(TypedDict, total=False):
     """
 
     attn_name: str
+
+
+class SinkAttentionKwargs(TypedDict):
+    """
+    The sinks attention kwargs to be passed to fms model forward.
+
+    attn_name: str
+        this is the name corresponding to the attention op registered in register_attention_op
+    sinks: torch.Tensor
+        this is the tensor weights for the sinks
+    sliding_window: int
+        this is the sliding window size for sinks attention
+    """
+
+    attn_name: str
+    sinks: NotRequired[torch.Tensor]
+    sliding_window: NotRequired[int]
 
 
 # TODO: add adjusted_mask for alibi as part of attn_compute_dict
@@ -93,7 +112,10 @@ def register_attention_op(
             torch.Tensor,
         ]
     ] = None,
-    update_attn_kwargs_op: Optional[Callable[..., AttentionKwargs]] = None,
+    update_attn_kwargs_op: Union[
+        Optional[Callable[..., AttentionKwargs]],
+        Optional[Callable[..., SinkAttentionKwargs]],
+    ] = None,
     validate_attn_kwargs_op: Optional[
         Callable[
             Concatenate[
@@ -224,6 +246,7 @@ def _sdpa_compute_op(
         values_e = value_cache
 
     attn_algorithm = attn_kwargs.get("attn_algorithm", None)
+
     if attn_algorithm:
         # Pick which fused attn kernels will run.
         use_flash = attn_algorithm == "flash"
@@ -267,6 +290,68 @@ def _sdpa_compute_op(
     return attn
 
 
+def _math_attention_with_sinks_op(
+    query: torch.Tensor,
+    key_cache: torch.Tensor,
+    value_cache: torch.Tensor,
+    nheads: int,
+    kvheads: int,
+    p_dropout: float,
+    scale_factor: Optional[float],
+    **attn_kwargs: Unpack[SinkAttentionKwargs],
+) -> torch.Tensor:
+    queries = query.transpose(2, 1)
+
+    if key_cache.shape[1] != kvheads and key_cache.shape[2] == kvheads:
+        key_cache = key_cache.transpose(2, 1)
+        value_cache = value_cache.transpose(2, 1)
+
+    # Expand kv so black-box attn will work
+    expansion = nheads // kvheads
+    # k/v: b h l d
+    if expansion != 1:
+        keys_e = key_cache.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
+        values_e = (
+            value_cache.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
+        )
+    else:
+        keys_e = key_cache
+        values_e = value_cache
+
+    try:
+        attn_sinks = attn_kwargs.get("sinks", None)
+        sliding_window = attn_kwargs.get("sliding_window", None)
+    except TypeError as e:
+        print(f"Invalid attention sinks kwargs. {e}")
+
+    # https://github.com/openai/gpt-oss/blob/main/gpt_oss/torch/model.py#L153
+    # from gpt-oss open ai implementation
+    batch, n_heads, n_tokens, d_head = queries.shape
+    S = attn_sinks.reshape(1, -1, 1, 1).expand(batch, -1, n_tokens, -1)  # type: ignore
+
+    mask = torch.triu(queries.new_full((n_tokens, n_tokens), -float("inf")), diagonal=1)
+    if sliding_window and sliding_window > 0:
+        mask += torch.tril(
+            mask.new_full((n_tokens, n_tokens), -float("inf")),
+            diagonal=-sliding_window,
+        )
+    QK = torch.einsum("bhqd,bhkd->bhqk", queries, keys_e)
+
+    if scale_factor is None:
+        scale_factor = 1.0 / math.sqrt(d_head)
+
+    QK *= scale_factor  # type: ignore[arg-type]
+    QK += mask[None, None, :, :]
+    QK = torch.cat([QK, S], dim=-1)
+    QK = QK - QK.max(dim=-1, keepdim=True).values
+    W = torch.softmax(QK, dim=-1)
+    W = W[..., :-1]  # drop the attention sinks after done
+    attn = torch.matmul(W, values_e)
+
+    attn = attn.transpose(2, 1).contiguous()
+    return attn
+
+
 def _sdpa_update_attn_kwargs(
     **attn_kwargs: Unpack[SDPAAttentionKwargs],
 ) -> SDPAAttentionKwargs:
@@ -296,6 +381,7 @@ register_attention_op(
     _sdpa_compute_op,
     update_attn_kwargs_op=_sdpa_update_attn_kwargs,
 )
+register_attention_op("sdpa_with_sinks", _sdpa_store_op, _math_attention_with_sinks_op)
 register_attention_op(
     "sdpa_bidirectional",
     _sdpa_store_op,
@@ -303,7 +389,9 @@ register_attention_op(
 )
 
 
-def get_attention_type(**attn_kwargs: Unpack[AttentionKwargs]) -> dict[str, Callable]:
+def get_attention_type(
+    **attn_kwargs: Unpack[Union[AttentionKwargs, SinkAttentionKwargs]],
+) -> dict[str, Callable]:
     attn_name = attn_kwargs.get("attn_name", "sdpa_causal")
     if attn_name not in __type_factory_map:
         # we can add sdpa default here
@@ -570,6 +658,7 @@ class MultiHeadAttention(nn.Module):
         fused: bool = True,
         linear_config: Optional[Mapping[str, Any]] = None,
         scale_factor: Optional[float] = None,
+        has_sinks: bool = False,
     ):
         super(MultiHeadAttention, self).__init__()
         self.nheads = nheads
@@ -582,6 +671,7 @@ class MultiHeadAttention(nn.Module):
         self.fused = fused
         self.linear_config = linear_config
         self.scale_factor = scale_factor
+        self.has_sinks = has_sinks
 
         self.in_proj: QKV = (FusedQKV if self.fused else UnfusedQKV)(
             self.emb_dim,
@@ -592,6 +682,8 @@ class MultiHeadAttention(nn.Module):
             self.use_bias,
             linear_config=linear_config,
         )
+        if self.has_sinks:
+            self.sinks = nn.Parameter(torch.empty(self.nheads))
 
         self.dense = get_linear(
             self.nheads * self.emb_v_per_head,
@@ -624,7 +716,7 @@ class MultiHeadAttention(nn.Module):
         position_ids=None,
         past_key_value_state: Optional[Tuple[Tensor | None, Tensor | None]] = None,
         use_cache=False,
-        **attn_kwargs: Unpack[AttentionKwargs],
+        **attn_kwargs: Unpack[Union[AttentionKwargs, SinkAttentionKwargs]],
     ):
         """
         past_key_value_state: tuple
@@ -665,6 +757,9 @@ class MultiHeadAttention(nn.Module):
             queries, keys = self.position_encoder.adjusted_qk(
                 queries, keys, position_ids, past_key_value_state, use_cache
             )
+
+        if self.has_sinks:
+            attn_kwargs["sinks"] = self.sinks
 
         attn_compute_dict = get_attention_type(**attn_kwargs)
 
@@ -708,6 +803,7 @@ class MultiHeadAttention(nn.Module):
             )
 
         attn = attn.view(batch_size, q_len, self.nheads * self.emb_v_per_head)
+
         out = self.dense(attn)
 
         # if use_cache=True, we return the hidden_state as well as the kv cache
@@ -878,7 +974,7 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
         position_ids=None,
         past_key_value_state: Optional[Tuple[Tensor | None, Tensor | None]] = None,
         use_cache=False,
-        **attn_kwargs: Unpack[AttentionKwargs],
+        **attn_kwargs: Unpack[Union[AttentionKwargs, SinkAttentionKwargs]],
     ):
         """
         Check MultiHeadAttention for up-to-date arguments and docs
