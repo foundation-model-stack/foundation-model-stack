@@ -315,7 +315,15 @@ class GptOssHeadless(nn.Module):
         # x_in: batch_size x seq_len x emb_dim if input is already embedded, otherwise batch_size x seq_len
         # mask: batch_size x seq_len x seq_len
         # bias: nheads x seq_len x seq_len
-        attn_kwargs["attn_name"] = attn_kwargs.get("attn_name", "sdpa_with_sinks")
+
+        attn_kwargs["attn_name"] = "sdpa_with_sinks"
+
+        get_attention_type(**attn_kwargs)["validate_attn_kwargs"](
+            input_ids=x_in,
+            position_ids=position_ids,
+            past_key_value_states=past_key_value_states,
+            **attn_kwargs,
+        )
 
         if past_key_value_states is None or len(past_key_value_states) == 0:
             past_key_value_states = [None for _ in range(len(self.layers))]
@@ -416,15 +424,6 @@ class GptOss(nn.Module):
         only_last_token: bool = False,
         **attn_kwargs: Unpack[SinkAttentionKwargs],
     ):
-        attn_kwargs["attn_name"] = "sdpa_with_sinks"
-
-        get_attention_type(**attn_kwargs)["validate_attn_kwargs"](
-            input_ids=x,
-            position_ids=position_ids,
-            past_key_value_states=past_key_value_states,
-            **attn_kwargs,
-        )
-
         output, cache = self.base_model(
             x,
             position_ids,
