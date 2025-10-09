@@ -122,6 +122,15 @@ class GptOssBlock(nn.Module):
             use_high_precision_pow=True,
         )
 
+        self.ff_ln = LayerNormParameterized(
+            config.emb_dim,
+            elementwise_scale=True,
+            elementwise_shift=False,
+            use_mean=False,
+            eps=config.norm_eps,
+            use_high_precision_pow=True,
+        )
+
         if self.config.kvheads == 0:
             kvheads = self.config.nheads
         else:
@@ -196,6 +205,8 @@ class GptOssBlock(nn.Module):
 
         # then we do FF and Add&Norm
         residual = x
+
+        x = self.ff_ln(x)
         x = self.ff_sub_layer(x)
         if self.config.p_dropout != 0:
             x = self.dropout(x)
@@ -488,7 +499,7 @@ def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]
         (r"mlp.experts.down_proj_blocks", "ff_sub_layer.cond_ffn.w2"),
         (r"mlp.router", "ff_sub_layer.gate"),
         (r"input_layernorm", "ln"),
-        (r"post_attention_layernorm", "ff_sub_layer.norm"),
+        (r"post_attention_layernorm", "ff_ln"),
         (r"^model.norm", "base_model.dec_norm"),
     ]
     gpt_oss_experts_specific = [

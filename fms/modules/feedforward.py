@@ -19,7 +19,6 @@ from fms.modules.linear import (
     get_linear_type,
 )
 from fms.modules.tp import TPModule
-from fms.modules.layernorm import LayerNormParameterized
 
 
 class FeedForwardBlock(nn.Module):
@@ -709,14 +708,7 @@ class MOEFeedForward(nn.Module):
         )
         self.dim = dim
         self.gate = nn.Linear(dim, num_experts, bias=use_bias)
-        self.norm = LayerNormParameterized(
-            intermediate_size,
-            elementwise_scale=True,
-            elementwise_shift=False,
-            use_mean=False,
-            eps=1e-05,
-            use_high_precision_pow=True,
-        )
+
         self.use_bias = use_bias
         self.intermediate_size = intermediate_size
         self.num_activated_experts = num_activated_experts
@@ -734,7 +726,6 @@ class MOEFeedForward(nn.Module):
         B, S = x.shape[:2]
 
         if self.use_bias:
-            x = self.norm(x)
             x = x.view(-1, self.dim)
             scores = self.gate(x)
             experts = torch.topk(
