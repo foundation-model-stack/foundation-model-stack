@@ -501,11 +501,10 @@ serialization.register_adapter_step(
 
 # *** ALERT *** QKV and Dense Weights are expanded to support Granite 2b and 3b models AIU Compilation
 # When emb_dim // nheads < head_dim
-def _weight_expansion(
+def _weight_expansion_for_mismatched_head_dim(
     input_sd: Mapping[str, Any], model_config: Optional[GraniteConfig] = None
 ) -> Mapping[str, Any]:
     new_sd = dict(input_sd)
-
     if (
         model_config
         and model_config.head_dim > model_config.emb_dim // model_config.nheads
@@ -551,7 +550,9 @@ def _weight_expansion(
 
 
 serialization.register_adapter_step(
-    _architecture_name, "weight_expansion", _weight_expansion
+    _architecture_name,
+    "weight_expansion_for_mismatched_head_dim",
+    _weight_expansion_for_mismatched_head_dim,
 )
 
 
@@ -665,7 +666,7 @@ serialization.register_adapter(
     [
         "hf_to_fms_names",
         "hf_to_fms_rope",
-        "weight_expansion",
+        "weight_expansion_for_mismatched_head_dim",
         "hf_gptq_fusion_check",
         "weight_fusion",
     ],
