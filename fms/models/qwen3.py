@@ -100,12 +100,11 @@ class Qwen3Config(ModelConfig):
     emb_dim: int = 4096  # hf_config.hidden_size:int = 4096
     fused_weights: bool = True  # FMS Specific -- For CPU/GPU = T, AIU = F
     head_dim:int = 128
-
     hidden_grow_factor: float = 6144 / 2048  # hf_config.intermediate_size / hf_config.hidden_size
     initializer_range:float = 0.02
     intermediate_size:int = 22016
     kvheads: int = 32  # hf_config.num_key_value_heads:int = 32
-#    layer_types:List[str] = []
+    # layer_types:List[str] = []
     linear_config: Optional[Mapping[str, Any]] = None  # To support quantization
     max_position_embeddings:int = 32768
     max_expected_seq_len:int = 40960
@@ -116,7 +115,7 @@ class Qwen3Config(ModelConfig):
     norm_eps: float = 1e-06  # hf_config.rms_norm_eps:float = 1e-6
     p_dropout: float = 0.0  # hf_config. attention_dropout:float = 0.0
     pad_id: int = -1  # borrowed from granite, we do need it
-#    rope_scaling: Dict[str, Any] = {}
+    # rope_scaling: Dict[str, Any] = {}
     rope_base:int = 1000000  # hf_config.rope_theta:int = 1000000
     sliding_window:int = 4096
     tie_heads: bool = True  # hf_config.tie_word_embeddings: bool = True
@@ -173,6 +172,23 @@ class Qwen3Block(nn.Module):
             fused=self.config.fused_weights,
             linear_config=self.config.linear_config,
         )
+        # These 2 really need to be in MultiHeadAttention:
+        #          (q_norm): Qwen3RMSNorm((128,), eps=1e-06)
+        #          (k_norm): Qwen3RMSNorm((128,), eps=1e-06)
+        self.q_norm = LayerNormParameterized(
+                                             self.config.head_dim,
+                                             elementwise_scale=True,
+                                             elementwise_shift=False,
+                                             use_mean=False,
+                                             eps=self.config.norm_eps,
+                                             use_high_precision_pow=True,)
+        self.k_norm = LayerNormParameterized(
+                                             self.config.head_dim,
+                                             elementwise_scale=True,
+                                             elementwise_shift=False,
+                                             use_mean=False,
+                                             eps=self.config.norm_eps,
+                                             use_high_precision_pow=True,)
         self.ff_sub_layer = GatedLinearUnit(
             self.config.emb_dim,
             hidden_grow_factor=self.config.hidden_grow_factor,
@@ -582,13 +598,15 @@ def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]
         (r"self_attn\.v_proj", "attn.in_proj.value"),
         (r"self_attn\.q_proj", "attn.in_proj.query"),
         (r"self_attn\.o_proj", "attn.dense"),
+        # (r"self_attn\.k_norm", "attn.in_proj.k_norm"),
+        # (r"self_attn\.q_norm", "attn.in_proj.q_norm"),
+        (r"self_attn\.k_norm", "k_norm"),
+        (r"self_attn\.q_norm", "q_norm"),
         (r"mlp\.gate_proj", "ff_sub_layer.wg"),
         (r"mlp\.up_proj", "ff_sub_layer.w1"),
         (r"mlp\.down_proj", "ff_sub_layer.w2"),
         (r"input_layernorm", "ln"),
         (r"post_attention_layernorm", "ff_ln"),
-        (r"self_attn\.k_norm", "attn.in_proj.k_norm"),
-        (r"self_attn\.q_norm", "attn.in_proj.q_norm"),
     ]
     new_sd = {}
     for name, param in input_sd.items():
