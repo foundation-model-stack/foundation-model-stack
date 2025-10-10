@@ -12,7 +12,7 @@ from torch.utils.data.distributed import DistributedSampler
 
 from fms import datasets, models
 from fms.training import plugins as trainplugins
-from fms.training import trainer
+from fms.training import trainer, optimizers
 from fms.utils import print0, tokenizers
 
 
@@ -51,13 +51,20 @@ parser.add_argument(
     "--architecture",
     type=str,
     default="llama",
-    help="The model architecture to benchmark",
+    help="The model architecture to tune",
 )
 parser.add_argument(
     "--variant",
     type=str,
     default="micro",
-    help="The model variant (configuration) to benchmark. E.g. 7b, 13b, 70b.",
+    help="The model variant (configuration) to tune. E.g. 7b, 13b, 70b.",
+)
+parser.add_argument(
+    "--training_type",
+    type=str,
+    choices=["causal", "classification"],
+    default="causal",
+    help="The type of training being done",
 )
 parser.add_argument(
     "--checkpoint_format",
@@ -84,10 +91,22 @@ parser.add_argument(
     help="Device type. If not specified check for availability of cuda, mps, then cpu",
 )
 parser.add_argument(
+    "--default_dtype",
+    type=str,
+    default=None,
+    choices=["bf16", "fp16", "fp32"],
+    help="If set to one of the choices, overrides the model checkpoint weight format by setting the default pytorch format",
+)
+parser.add_argument(
     "--distributed",
     type=str,
     default=None,
     help="The strategy used for distributing the model. E.g. fsdp, ddp, tp, mp. Default None",
+)
+parser.add_argument(
+    "--unfuse_weights",
+    action="store_true",
+    help="If set to True, this will unfuse any fused weight modules that support the unfuse_weights method",
 )
 parser.add_argument(
     "--peft_method",
@@ -129,6 +148,27 @@ parser.add_argument(
     default="./checkpoints",
     help="Output directory to save trained model checkpoints",
 )
+parser.add_argument(
+    "--compile_model",
+    action="store_true",
+    help="Whether to compile the model.",
+)
+parser.add_argument(
+    "--compile_optimizer",
+    action="store_true",
+    help="Whether to compile the optimizer.",
+)
+parser.add_argument(
+    "--compile_static",
+    action="store_true",
+    help="Enforce static shapes for compilation.",
+)
+parser.add_argument(
+    "--compile_backend",
+    type=str,
+    default="inductor",
+    help="What backend to use for compilation.",
+)
 
 # Training/tuning parameters
 parser.add_argument(
@@ -140,6 +180,29 @@ parser.add_argument(
     type=int,
     default=1,
     help="Number of steps to accumulate gradients before applying",
+)
+parser.add_argument(
+    "--head_only",
+    action="store_true",
+    help="Whether to only tune the head or the whole model.",
+)
+parser.add_argument(
+    "--optimizer",
+    type=str,
+    choices=["adamw", "stepping_adamw"],
+    default="adaw",
+    help="The choice of optimizer, between default Pytorch AdamW and our Spyre-friendly Stepping AdamW",
+)
+parser.add_argument(
+    "--lr",
+    type=float,
+    default=1e-4,
+    help="The learning rate for tuning",
+)
+parser.add_argument(
+    "--run_validation",
+    action="store_true",
+    help="Whether to run validation as part of the tuning loop",
 )
 
 
@@ -165,6 +228,15 @@ if device_type == "cuda":
 else:
     device = torch.device(device_type)
 
+default_dtype = None
+dtypes_map = {
+    "fp16": torch.float16,
+    "bf16": torch.bfloat16,
+    "fp32": torch.float32,
+}
+if args.default_dtype is not None:
+    default_dtype = dtypes_map[args.default_dtype]
+
 group = None
 
 if args.distributed is not None:
@@ -175,14 +247,23 @@ if args.distributed is not None:
     torch._C._distributed_c10d._register_process_group("default", dist.group.WORLD)
 
 
-def get_loss_fn():
+def get_loss_fn(training_type):
     ce_loss = torch.nn.CrossEntropyLoss()
 
-    def loss_fn(output, target):
-        # model output is batch x seq_len x vocab_size.
-        # ce expects batch x vocab x seq_len
-        output = output.transpose(-1, -2)
-        return ce_loss(output, target)
+    if training_type == "causal":
+
+        def loss_fn(output, target):
+            # model output is batch x seq_len x vocab_size.
+            # ce expects batch x vocab x seq_len
+            output = output.transpose(-1, -2)
+            return ce_loss(output, target)
+    elif training_type == "classification":
+
+        def loss_fn(output, target):
+            # no such corrections needed for classification
+            return ce_loss(output, target)
+    else:
+        raise ValueError("Training type not supported")
 
     return loss_fn
 
@@ -243,7 +324,12 @@ def peft_model(model):
 
 
 def training_state(model_path, model, rank):
-    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4)
+    if args.tokenizer == "adamw":
+        optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
+    elif args.tokenizer == "stepping_adamw":
+        optimizer = optimizers.SteppingAdamW(model.parameters(), lr=args.lr)
+    else:
+        raise ValueError(f"Optimizer not supported: {args.optimizer}")
     is_fsdp = isinstance(model, FSDP)
     dataset_sd = {}
     epoch = 0
@@ -292,19 +378,32 @@ def training_state(model_path, model, rank):
 
 
 def main():
-    torch.set_default_dtype(torch.bfloat16)
+    if args.default_dtype:
+        torch.set_default_dtype(default_dtype)
 
     print0("Loading model...")
     model = models.get_model(
         args.architecture,
         args.variant,
-        args.model_path,
+        model_path=args.model_path,
         source=args.checkpoint_format,
         device_type=device_type,
+        data_type=default_dtype,
         distributed_strategy=args.distributed,
         group=group,
+        p_dropout=0.0,
+        fused_weights=not args.unfuse_weights,
     )
-    # model.to(torch.half)
+    if args.head_only:
+        for param in model.parameters():
+            param.requires_grad = False
+        # Untie head (if needed) and activate its gradients
+        if getattr(model, "head", None):
+            model.head.weight = torch.nn.Parameter(model.head.weight.clone().detach())
+            model.head.weight.requires_grad = True
+        if getattr(model, "classification_head", None):
+            for param in model.classification_head.parameters():
+                param.requires_grad = True
     optimizer, dataset_sd, epoch, prev_step, cum_tokens = training_state(
         args.model_path, model, rank
     )
@@ -314,18 +413,34 @@ def main():
     )
     print0("dataset state", dataset_sd)
 
+    if args.compile_model:
+        model = torch.compile(model, backend=args.compile_backend)
+    if args.compile_optimizer:
+        optimizer.step = torch.compile(optimizer.step, backend=args.compile_backend)
+    if args.compile_static:
+        torch._dynamo.config.assume_static_by_default = True
+        torch._dynamo.config.automatic_dynamic_shapes = False
     tokenizer = tokenizers.get_tokenizer(args.tokenizer)
 
     if args.peft_method is not None:
         model = peft_model(model)
 
+    pad_token_id = 0
     bos_token_id = tokenizer.bos_token_id
     eos_token_id = tokenizer.eos_token_id
     bos_token = tokenizer.convert_ids_to_tokens([bos_token_id])[0]
     eos_token = tokenizer.convert_ids_to_tokens([eos_token_id])[0]
 
     # TODO: split a validation dataset
-    dataset = datasets.get_dataset(args.dataset_style, tokenizer, args.dataset_path)
+    dataset = datasets.get_dataset(
+        args.dataset_style,
+        tokenizer,
+        args.dataset_path,
+        pad_token_id=pad_token_id,
+        bos_token_id=bos_token_id,
+        eos_token_id=eos_token_id,
+        max_len=512,
+    )
     if len(dataset_sd):
         dataset.load_state_dict(dataset_sd)
 
@@ -360,22 +475,6 @@ def main():
     sample_prompt = [bos_token] + tokenizer.tokenize(sample_prompt)
     sample_prompt2 = [bos_token] + tokenizer.tokenize(sample_prompt2)
 
-    validator = trainplugins.InferenceValidator(
-        model,
-        sample_prompt,
-        tokenizer,
-        device,
-        steps=args.report_steps,
-        eos_token=eos_token,
-    )
-    validator2 = trainplugins.InferenceValidator(
-        model,
-        sample_prompt2,
-        tokenizer,
-        device,
-        steps=args.report_steps,
-        eos_token=eos_token,
-    )
     if args.distributed == "hsdp":
         ckp_group = dist.new_group(list(range(torch.cuda.device_count())))
         # if current shard group isn't part of the new group, `new_group` returns an int (-100)
@@ -395,14 +494,32 @@ def main():
         device=device,
     )
     reporting = trainplugins.MetricReporter(
-        seconds=20,
+        steps=args.report_steps,
         prev_step=prev_step,
         cumulative_tokens=cum_tokens,
         group=group,
         device=device,
     )
 
-    plugins = [reporting, validator, validator2, checkpointing]
+    plugins = [reporting, checkpointing]
+    if args.run_validation:
+        validator = trainplugins.InferenceValidator(
+            model,
+            sample_prompt,
+            tokenizer,
+            device,
+            steps=args.report_steps,
+            eos_token=eos_token,
+        )
+        validator2 = trainplugins.InferenceValidator(
+            model,
+            sample_prompt2,
+            tokenizer,
+            device,
+            steps=args.report_steps,
+            eos_token=eos_token,
+        )
+        plugins.extend([validator, validator2])
     print0("training...")
     with torch.cuda.device(local_rank) if device.type == "cuda" else nullcontext():
         trainer.train(
@@ -416,6 +533,8 @@ def main():
             prev_step=prev_step,
             trainer_plugins=plugins,
             grad_accum_iters=args.grad_accum_steps,
+            compile_loss=args.compile,
+            compile_backend=args.compile_backend,
         )
 
 
