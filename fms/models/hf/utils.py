@@ -238,6 +238,14 @@ def _infer_model_configuration(
         config_params["norm_eps"] = config.rms_norm_eps
         config_params["rope_base"] = config.rope_theta
         config_params["sliding_window"] = config.sliding_window
+        config_params["src_vocab_size"] = config.vocab_size
+        config_params["nlayers"] = config.num_hidden_layers
+        config_params["nheads"] = config.num_attention_heads
+        config_params["head_dim"]= config.head_dim
+        config_params["attention_bias"] = config.attention_bias
+        config_params["use_sliding_window"] = config.use_sliding_window
+        config_params["max_window_layers"]  = config.max_window_layers
+        config_params["rope_scaling"] = config.rope_scaling
     elif architecture == "BambaForCausalLM":
         inner_dim = config.intermediate_size
         architecture = "bamba"
