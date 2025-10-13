@@ -196,8 +196,12 @@ def _sdpa_store_op(
     values = values.transpose(2, 1)
 
     if key_cache is not None and value_cache is not None and value_cache.numel() > 0:
-        key_cache_result = torch.cat((key_cache, keys), dim=2)
-        value_cache_result = torch.cat((value_cache, values), dim=2)
+        sliding_window = attn_kwargs.get("sliding_window", 0)
+        if sliding_window != 0:
+            sliding_window *= -1
+            sliding_window += 1
+        key_cache_result = torch.cat((key_cache[:,:,sliding_window:,:], keys), dim=2)
+        value_cache_result = torch.cat((value_cache[:,:,sliding_window:,:], values), dim=2)
         return (
             key_cache_result,
             value_cache_result,
@@ -320,17 +324,31 @@ def _math_attention_with_sinks_op(
 
     try:
         attn_sinks = attn_kwargs.get("sinks", None)
-        sliding_window = attn_kwargs.get("sliding_window", None)
+        sliding_window = attn_kwargs.get("sliding_window", 0)
+        mask = attn_kwargs.get("mask", None)
     except TypeError as e:
         print(f"Invalid attention sinks kwargs. {e}")
 
     # https://github.com/openai/gpt-oss/blob/main/gpt_oss/torch/model.py#L153
     # from gpt-oss open ai implementation
     batch, n_heads, n_tokens, d_head = queries.shape
+    kv_tokens = keys_e.shape[2]
     S = attn_sinks.reshape(1, -1, 1, 1).expand(batch, -1, n_tokens, -1)  # type: ignore
 
-    mask = torch.triu(queries.new_full((n_tokens, n_tokens), -float("inf")), diagonal=1)
-    if sliding_window and sliding_window > 0:
+    if mask is not None:
+        # Our expected mask format is bs x q_len x k_len, so to make it broadcastable
+        # we need to create the nheads dimension
+        while len(mask.size()) < 4:  # expects bs (x nheads) x q_len x kv_len
+            mask = mask.unsqueeze(1)
+        if mask.dtype == torch.bool:
+            mask = torch.where(mask.logical_not(), -torch.inf, 0.0)
+        mask = mask.to(dtype=queries.dtype)
+        # truncate for sliding window kv_cache
+        mask = mask[...,-n_tokens:,-kv_tokens:]
+    else:
+        mask = torch.triu(queries.new_full((1,1,n_tokens, kv_tokens), -float("inf")), diagonal=1)
+
+    if sliding_window > kv_tokens and n_tokens == kv_tokens:
         mask += torch.tril(
             mask.new_full((n_tokens, n_tokens), -float("inf")),
             diagonal=-sliding_window,
@@ -341,7 +359,7 @@ def _math_attention_with_sinks_op(
         scale_factor = 1.0 / math.sqrt(d_head)
 
     QK *= scale_factor  # type: ignore[arg-type]
-    QK += mask[None, None, :, :]
+    QK += mask
     QK = torch.cat([QK, S], dim=-1)
     QK = QK - QK.max(dim=-1, keepdim=True).values
     W = torch.softmax(QK, dim=-1)
@@ -381,7 +399,12 @@ register_attention_op(
     _sdpa_compute_op,
     update_attn_kwargs_op=_sdpa_update_attn_kwargs,
 )
-register_attention_op("sdpa_with_sinks", _sdpa_store_op, _math_attention_with_sinks_op)
+register_attention_op(
+    "sdpa_with_sinks",
+    _sdpa_store_op,
+    _math_attention_with_sinks_op,
+    update_attn_kwargs_op=_sdpa_update_attn_kwargs,
+)
 register_attention_op(
     "sdpa_bidirectional",
     _sdpa_store_op,
