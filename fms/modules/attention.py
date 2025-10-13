@@ -200,8 +200,10 @@ def _sdpa_store_op(
         if sliding_window != 0:
             sliding_window *= -1
             sliding_window += 1
-        key_cache_result = torch.cat((key_cache[:,:,sliding_window:,:], keys), dim=2)
-        value_cache_result = torch.cat((value_cache[:,:,sliding_window:,:], values), dim=2)
+        key_cache_result = torch.cat((key_cache[:, :, sliding_window:, :], keys), dim=2)
+        value_cache_result = torch.cat(
+            (value_cache[:, :, sliding_window:, :], values), dim=2
+        )
         return (
             key_cache_result,
             value_cache_result,
@@ -344,9 +346,11 @@ def _math_attention_with_sinks_op(
             mask = torch.where(mask.logical_not(), -torch.inf, 0.0)
         mask = mask.to(dtype=queries.dtype)
         # truncate for sliding window kv_cache
-        mask = mask[...,-n_tokens:,-kv_tokens:]
+        mask = mask[..., -n_tokens:, -kv_tokens:]
     else:
-        mask = torch.triu(queries.new_full((1,1,n_tokens, kv_tokens), -float("inf")), diagonal=1)
+        mask = torch.triu(
+            queries.new_full((1, 1, n_tokens, kv_tokens), -float("inf")), diagonal=1
+        )
 
     if sliding_window > kv_tokens and n_tokens == kv_tokens:
         mask += torch.tril(

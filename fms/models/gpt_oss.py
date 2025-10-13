@@ -263,7 +263,6 @@ class GptOssHeadless(nn.Module):
         ):
             self.rot_emb.compute_freqs_cis(device, self.config.max_expected_seq_len)
 
-
         layers = []
         for i in range(self.config.nlayers):
             config = self.config

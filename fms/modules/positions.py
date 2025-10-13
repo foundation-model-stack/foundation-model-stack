@@ -195,15 +195,8 @@ class RopeLlama3ScalingImpl(RopeNoScalingImpl):
 
 
 class YarnRopeImpl(RopeNoScalingImpl):
-    def __init__(self, 
-                 dim, 
-                 ratio, 
-                 orig_max_seq_len, 
-                 scaling_info):
-        super().__init__(dim, 
-                         ratio, 
-                         orig_max_seq_len, 
-                         scaling_info)
+    def __init__(self, dim, ratio, orig_max_seq_len, scaling_info):
+        super().__init__(dim, ratio, orig_max_seq_len, scaling_info)
         self.concentration: Optional[float] = None
 
     def compute_scaled_freqs(self, device: str, alpha: int):
@@ -212,8 +205,7 @@ class YarnRopeImpl(RopeNoScalingImpl):
         ntk_beta = self.scaling_info["ntk_beta"]
         ntk_alpha = self.scaling_info["ntk_alpha"]
         freq = self.ratio ** (
-            torch.arange(0, self.dim, 2, dtype=torch.float32, device=device)
-            / self.dim
+            torch.arange(0, self.dim, 2, dtype=torch.float32, device=device) / self.dim
         )
         if scaling_factor > 1.0:
             self.concentration = (
@@ -238,8 +230,7 @@ class YarnRopeImpl(RopeNoScalingImpl):
             extrapolation = 1.0 / freq
 
             ramp = (
-                torch.arange(d_half, dtype=torch.float32, device=freq.device)
-                - low
+                torch.arange(d_half, dtype=torch.float32, device=freq.device) - low
             ) / (high - low)
             mask = 1 - ramp.clamp(0, 1)
 
@@ -249,7 +240,7 @@ class YarnRopeImpl(RopeNoScalingImpl):
             inv_freq = 1.0 / freq
 
         return inv_freq
-    
+
     def apply_yarn_rotary_emb(
         self,
         x: torch.Tensor,
@@ -269,6 +260,7 @@ class YarnRopeImpl(RopeNoScalingImpl):
         o1 = x1 * cos - x2 * sin
         o2 = x2 * cos + x1 * sin
         return torch.cat((o1, o2), dim=-1)
+
 
 _rope_scale_mapping = {
     "llama3": RopeLlama3ScalingImpl,
@@ -437,9 +429,9 @@ class RotaryEmbedding(PositionEncoder):
 
         # the max start position should be based on the max first position of each sequence
         max_start_pos = torch.max(position_ids[:, 0])
-        
+
         alpha = self.compute_freqs_cis(q.device, max_start_pos + seq_len)
-    
+
         freqs = self.cached_freqs[q.device.index][alpha][position_ids]
 
         position_ids = position_ids.clamp(max=freqs.size(0) - 1)
