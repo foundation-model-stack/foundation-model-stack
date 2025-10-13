@@ -471,7 +471,7 @@ class YarnRotaryEmbedding(PositionEncoder):
 
         if position_ids is None:
             position_ids = torch.arange(0, seq_length, dtype=torch.long, device=device)
-            position_ids = position_ids.unsqueeze(0).expand(batch_size, -1)
+            position_ids = position_ids.repeat(batch_size, 1)
             if use_cache and past_kv_state and past_kv_state[0] is not None:
                 position_ids += past_kv_state[0].size(2)
 
