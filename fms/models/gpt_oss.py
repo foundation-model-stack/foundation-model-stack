@@ -22,7 +22,7 @@ from fms.modules.feedforward import MOEFeedForward
 
 from fms.modules.layernorm import LayerNormParameterized
 
-from fms.modules.positions import YarnRotaryEmbedding
+from fms.modules.positions import RotaryEmbedding
 
 FP4_VALUES = [
     +0.0,
@@ -107,7 +107,7 @@ class GptOssBlock(nn.Module):
         self,
         config: GptOssConfig,
         layer_sliding_window: int,
-        rotary_emb: YarnRotaryEmbedding,
+        rotary_emb: RotaryEmbedding,
     ):
         super(GptOssBlock, self).__init__()
         self.config = config
@@ -240,16 +240,29 @@ class GptOssHeadless(nn.Module):
             padding_idx=self.config.pad_id,
         )
 
-        self.rot_emb = YarnRotaryEmbedding(
-            self.config.head_dim,
-            self.config.rope_base,
-            torch.bfloat16,
-            initial_context_length=self.config.max_expected_seq_len,
-            scaling_factor=self.config.rope_scaling_factor,
-            ntk_alpha=self.config.rope_ntk_alpha,
-            ntk_beta=self.config.rope_ntk_beta,
-            device=self.embedding.weight.device,
+        scaling_info = {
+            "rope_type": "yarn",
+            "dtype": torch.bfloat16,
+            "scaling_factor": self.config.rope_scaling_factor,
+            "ntk_alpha": self.config.rope_ntk_alpha,
+            "ntk_beta": self.config.rope_ntk_beta,
+            "device": self.embedding.weight.device,
+        }
+
+        self.rot_emb = RotaryEmbedding(
+            dim=self.config.head_dim,
+            ratio=self.config.rope_base,
+            max_seq_len=self.config.max_expected_seq_len,
+            scaling=scaling_info,
         )
+
+        # RoPE init
+        for device in set(
+            [param.device for param in self.parameters()]
+            + [buffer.device for buffer in self.buffers()]
+        ):
+            self.rot_emb.compute_freqs_cis(device, self.config.max_expected_seq_len)
+
 
         layers = []
         for i in range(self.config.nlayers):
