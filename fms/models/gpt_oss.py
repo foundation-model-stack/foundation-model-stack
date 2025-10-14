@@ -143,6 +143,7 @@ class GptOssBlock(nn.Module):
             self.config.emb_dim,
             self.config.emb_dim,
             use_bias=True,
+            topk_first=True,
             swiglu_limit=self.config.swiglu_limit,
         )
 

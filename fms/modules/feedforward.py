@@ -520,7 +520,6 @@ class ConditionalFeedForward(nn.Module):
         self,
         x: torch.Tensor,
         expert_indices: torch.Tensor,
-        expert_weights: torch.Tensor,
         scores: torch.Tensor,
     ) -> torch.Tensor:
         # Check constraints.
@@ -541,10 +540,7 @@ class ConditionalFeedForward(nn.Module):
             mlp2_bias = self.w2_bias[expert_indices, ...]
             scores = torch.einsum("beck,bek->bec", mlp2_weight, scores) + mlp2_bias
 
-            # Weighted sum of experts
-            scores = torch.einsum("bec,be->bc", scores, expert_weights)
-
-            return x + scores
+            return scores
 
         else:
             M, D = x.shape
@@ -696,6 +692,7 @@ class MOEFeedForward(nn.Module):
         dim: int,
         intermediate_size: int,
         use_bias: bool = False,
+        topk_first: Optional[bool] = False,
         swiglu_limit: Optional[float] = None,
     ) -> None:
         super().__init__()
@@ -710,6 +707,7 @@ class MOEFeedForward(nn.Module):
         self.gate = nn.Linear(dim, num_experts, bias=use_bias)
 
         self.use_bias = use_bias
+        self.topk_first = topk_first
         self.intermediate_size = intermediate_size
         self.num_activated_experts = num_activated_experts
 
@@ -725,30 +723,33 @@ class MOEFeedForward(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         B, S = x.shape[:2]
 
-        if self.use_bias:
-            x = x.view(-1, self.dim)
-            scores = self.gate(x)
+        x = x.view(-1, self.dim)
+        # T = num_tokens, E = num_experts, D = hidden dim, A = activated experts
+        # x: [T, D]
+        scores = self.gate(x)  # [T, E]
+
+        if self.topk_first:
             experts = torch.topk(
                 scores, k=self.num_activated_experts, dim=-1, sorted=True
             )
             expert_weights = F.softmax(experts.values, dim=1)
             expert_indices = experts.indices
-            expert_outs = self.cond_ffn(x, expert_indices, expert_weights, x)
-
-            return expert_outs.view(B, S, self.intermediate_size)
+            expert_outs = self.cond_ffn(x, expert_indices, x)
         else:
-            x = x.view(-1, self.dim)
-            # T = num_tokens, E = num_experts, D = hidden dim, A = activated experts
-            # x: [T, D]
-            scores = self.gate(x)  # [T, E]
             expert_weights = F.softmax(scores, dim=-1)
             expert_weights, expert_indices = torch.topk(
                 expert_weights, self.num_activated_experts, dim=-1
             )  # [T, A], [T, A]
             expert_weights /= expert_weights.sum(dim=-1, keepdim=True)  # [T, A]
 
-            expert_outs = self.cond_ffn(x, expert_indices, expert_weights, scores)
-            int_v1 = torch.einsum("tai,ta -> ti", expert_outs, expert_weights)
-            int_v2 = int_v1.view(B, S, self.dim)
+            expert_outs = self.cond_ffn(x, expert_indices, scores)
 
-            return int_v2
+        int_v1 = torch.einsum("tai,ta -> ti", expert_outs, expert_weights)
+
+        # when using bias weights x needs to be added after the weighted sum
+        # this has impact in the output correctness
+        int_v1 = x + int_v1 if self.use_bias else int_v1
+
+        int_v2 = int_v1.view(B, S, self.dim)
+
+        return int_v2
