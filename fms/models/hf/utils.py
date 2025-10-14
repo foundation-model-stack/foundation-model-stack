@@ -204,6 +204,9 @@ def _map_model_config(architecture, config):
         config_params["embedding_multiplier"] = config.embedding_multiplier
         config_params["rope_theta"] = config.rope_theta
         config_params["activation_fn"] = config.hidden_act
+        config_params["head_dim"] = getattr(
+            config, "head_dim", config.hidden_size // config.num_attention_heads
+        )
     elif architecture == "MistralForCausalLM":
         inner_dim = config.intermediate_size
         architecture = "mistral"

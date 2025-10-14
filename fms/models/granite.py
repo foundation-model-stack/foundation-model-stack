@@ -34,6 +34,7 @@ class GraniteConfig(ModelConfig):
     emb_dim: int = 4096
     norm_eps: float = 1e-5
     nheads: int = 32
+    head_dim: int = 128  # getattr(config, "head_dim", emb_dim // nheads)
     kvheads: int = 0
     nlayers: int = 32
     pad_id: int = -1
@@ -59,8 +60,8 @@ class GraniteBlock(nn.Module):
     def __init__(self, config: GraniteConfig, rotary_emb: RotaryEmbedding):
         super(GraniteBlock, self).__init__()
         self.config = config
-        emb_kq = self.config.emb_dim // self.config.nheads
-        emb_v = self.config.emb_dim // self.config.nheads
+        emb_kq = self.config.head_dim
+        emb_v = self.config.head_dim
 
         self.ln = LayerNormParameterized(
             self.config.emb_dim,
@@ -185,7 +186,7 @@ class GraniteHeadless(nn.Module):
         rope_scaling = {"rope_type": "ntk" if self.config.ntk_scaling else "regular"}
 
         self.rot_emb = RotaryEmbedding(
-            dim=self.config.emb_dim // self.config.nheads,
+            dim=self.config.head_dim,
             scaling=rope_scaling,
             max_seq_len=self.config.max_expected_seq_len,
             ratio=self.config.rope_theta,
@@ -498,6 +499,63 @@ serialization.register_adapter_step(
 )
 
 
+# *** ALERT *** QKV and Dense Weights are expanded to support Granite 2b and 3b models AIU Compilation
+# When emb_dim // nheads < head_dim
+def _weight_expansion_for_mismatched_head_dim(
+    input_sd: Mapping[str, Any], model_config: Optional[GraniteConfig] = None
+) -> Mapping[str, Any]:
+    new_sd = dict(input_sd)
+    if (
+        model_config
+        and model_config.head_dim > model_config.emb_dim // model_config.nheads
+    ):
+        expansion_factor = (
+            model_config.head_dim * model_config.nheads
+        ) // model_config.emb_dim
+        assert expansion_factor % 2 == 0
+        # dim of layers to be expanded
+        layer_dim = {
+            "attn.in_proj.query": 0,
+            "attn.in_proj.key": 0,
+            "attn.in_proj.value": 0,
+            "attn.dense": 1,
+        }
+
+        expand_layer_dim = {
+            layer: layer_dim[tgt]
+            for layer in new_sd
+            for tgt in layer_dim
+            if tgt in layer
+        }
+
+        for layer, expand_dim in expand_layer_dim.items():
+            tensor_value = new_sd[layer]
+            original_size = list(tensor_value.size())
+            # print(original_size)
+            expanded_size = original_size.copy()
+            expanded_size[expand_dim] = expanded_size[expand_dim] * expansion_factor
+            print(
+                f"WARNING:fms.models.granite: expanding weights of {('.'.join(layer.split('.')[1:-1])):30.30} {str(original_size):12.12} => {expanded_size}"
+            )
+            slices = [
+                slice(0, None, expansion_factor) if dim == expand_dim else slice(None)
+                for dim in range(tensor_value.ndim)
+            ]
+            # Assign the original weights tensor to the interleaved positions
+            expanded_tensor = torch.zeros(expanded_size)
+            expanded_tensor[tuple(slices)] = tensor_value
+            new_sd[layer] = expanded_tensor
+
+    return new_sd
+
+
+serialization.register_adapter_step(
+    _architecture_name,
+    "weight_expansion_for_mismatched_head_dim",
+    _weight_expansion_for_mismatched_head_dim,
+)
+
+
 def _get_rope_params(linear_type: str) -> list[str]:
     if "gptq" in linear_type:
         return ["qweight", "scales", "qzeros", "bias"]
@@ -605,5 +663,11 @@ serialization.register_adapter_step(
 serialization.register_adapter(
     _architecture_name,
     "hf",
-    ["hf_to_fms_names", "hf_to_fms_rope", "hf_gptq_fusion_check", "weight_fusion"],
+    [
+        "hf_to_fms_names",
+        "hf_to_fms_rope",
+        "weight_expansion_for_mismatched_head_dim",
+        "hf_gptq_fusion_check",
+        "weight_fusion",
+    ],
 )
