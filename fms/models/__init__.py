@@ -125,7 +125,9 @@ def __maybe_infer_model_variant(
             )
             source = "hf"
             for kwarg in kwargs:
-                if kwarg in extra_kwargs and not kwargs.get('override_hf_pretrained_config', False):
+                if kwarg in extra_kwargs and not kwargs.get(
+                    "override_hf_pretrained_config", False
+                ):
                     logger.warning(
                         f"ignoring {kwarg} as the pretrained model config overrides it"
                     )
