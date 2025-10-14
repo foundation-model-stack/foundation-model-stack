@@ -12,6 +12,15 @@ from torch.optim.optimizer import (
 
 
 class SteppingAdamW(Optimizer):
+    """
+    This is essentially the same as the AdamW optimizer in Pytorch.
+    The main difference lies in the computation of bias_correction1_rec and
+    bias_correction2_rec, which are now stored as a state and updated at
+    every step, instead of using a closed formula that requires no state.
+    This is done to help with numerical stability in low precision machines
+    like the AIU.
+    """
+
     def __init__(
         self,
         params: ParamsT,

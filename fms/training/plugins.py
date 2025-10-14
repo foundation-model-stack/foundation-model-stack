@@ -143,7 +143,6 @@ class MetricReporter(TrainerPlugin):
     def step(
         self, epoch: int, step: int, metrics: Dict = {}, end_of_epoch: bool = False
     ):
-        assert self.steps is not None
         if "batch_size" in metrics and "input_length" in metrics:
             self.tokens_seen += metrics["batch_size"] * metrics["input_length"]
         if "loss" in metrics:

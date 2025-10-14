@@ -27,8 +27,11 @@ def __one_step(
     grad_scaler,
     **kwargs,
 ):
+    device_type = input.device.type
     autocast = (
-        torch.autocast(device_type="cuda") if grad_scaler is not None else nullcontext()
+        torch.autocast(device_type=device_type)
+        if grad_scaler is not None
+        else nullcontext()
     )
     with autocast:
         loss = loss_model(input, label, **kwargs)

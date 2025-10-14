@@ -324,9 +324,9 @@ def peft_model(model):
 
 
 def training_state(model_path, model, rank):
-    if args.tokenizer == "adamw":
+    if args.optimizer == "adamw":
         optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
-    elif args.tokenizer == "stepping_adamw":
+    elif args.optimizer == "stepping_adamw":
         optimizer = optimizers.SteppingAdamW(model.parameters(), lr=args.lr)
     else:
         raise ValueError(f"Optimizer not supported: {args.optimizer}")
@@ -391,7 +391,6 @@ def main():
         data_type=default_dtype,
         distributed_strategy=args.distributed,
         group=group,
-        p_dropout=0.0,
         fused_weights=not args.unfuse_weights,
     )
     if args.head_only:
