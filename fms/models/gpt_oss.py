@@ -11,7 +11,7 @@ import torch.nn as nn
 from fms import models
 from fms.distributed.strategy import DistributedStrategy, NoOpStrategy
 from fms.modules.attention import (
-    SinkAttentionKwargs,
+    AttentionKwargs,
     MultiHeadAttention,
     get_attention_type,
 )
@@ -41,33 +41,6 @@ FP4_VALUES = [
     -3.0,
     -4.0,
     -6.0,
-]
-
-LAYER_TYPES = [
-    "sliding_attention",
-    "full_attention",
-    "sliding_attention",
-    "full_attention",
-    "sliding_attention",
-    "full_attention",
-    "sliding_attention",
-    "full_attention",
-    "sliding_attention",
-    "full_attention",
-    "sliding_attention",
-    "full_attention",
-    "sliding_attention",
-    "full_attention",
-    "sliding_attention",
-    "full_attention",
-    "sliding_attention",
-    "full_attention",
-    "sliding_attention",
-    "full_attention",
-    "sliding_attention",
-    "full_attention",
-    "sliding_attention",
-    "full_attention",
 ]
 
 
@@ -100,6 +73,12 @@ class GptOssConfig(ModelConfig):
     p_dropout: float = 0.0
     fused_weights: bool = True
     linear_config: Optional[Mapping[str, Any]] = None
+
+
+LAYER_TYPES = [
+    f"{'sliding' if i % 2 == 0 else 'full'}_attention"
+    for i in range(GptOssConfig.nlayers)
+]
 
 
 class GptOssBlock(nn.Module):
@@ -137,8 +116,6 @@ class GptOssBlock(nn.Module):
             kvheads = self.config.kvheads
             assert self.config.nheads % self.config.kvheads == 0
 
-        scale_factor = 1.0 / math.sqrt(self.config.head_dim)
-
         emb_kq = self.config.head_dim
         emb_v = self.config.head_dim
 
@@ -153,7 +130,7 @@ class GptOssBlock(nn.Module):
             position_encoder=rotary_emb,
             fused=self.config.fused_weights,
             linear_config=self.config.linear_config,
-            scale_factor=scale_factor,
+            scale_factor=None,
             has_sinks=True,
         )
 
@@ -179,7 +156,7 @@ class GptOssBlock(nn.Module):
         position_ids: Optional[torch.Tensor] = None,
         past_key_value_state: Optional[Tuple[torch.Tensor,]] = None,
         use_cache: bool = False,
-        **attn_kwargs: Unpack[SinkAttentionKwargs],
+        **attn_kwargs: Unpack[AttentionKwargs],
     ):
         # if the cache is not empty, we need to get the kv cache for self and cross attention
         self_attn_past_key_value = past_key_value_state
@@ -321,14 +298,14 @@ class GptOssHeadless(nn.Module):
             Tuple[torch.Tensor,] | list[torch.Tensor] | list[None]
         ] = None,
         use_cache: bool = False,
-        **attn_kwargs: Unpack[SinkAttentionKwargs],
+        **attn_kwargs: Unpack[AttentionKwargs],
     ):
         # Embed the given vocabulary indices using the given attention mask, with pre-/post-norm and dropout as specified
         # x_in: batch_size x seq_len x emb_dim if input is already embedded, otherwise batch_size x seq_len
         # mask: batch_size x seq_len x seq_len
         # bias: nheads x seq_len x seq_len
 
-        attn_kwargs["attn_name"] = "sdpa_with_sinks"
+        attn_kwargs["attn_name"] = attn_kwargs.get("attn_name", "sdpa_with_sinks")
 
         get_attention_type(**attn_kwargs)["validate_attn_kwargs"](
             input_ids=x_in,
@@ -347,15 +324,12 @@ class GptOssHeadless(nn.Module):
         present_key_value_states = []
 
         for i, layer in enumerate(self.layers):
-            if layer.layer_sliding_window > 0:  # type: ignore
-                attn_kwargs["sliding_window"] = layer.layer_sliding_window  # type: ignore
-            else:
-                attn_kwargs["sliding_window"] = 0
             output = layer(
                 x=x_in,
                 position_ids=position_ids,
                 past_key_value_state=past_key_value_states[i],
                 use_cache=use_cache,
+                sliding_window=layer.layer_sliding_window,
                 **attn_kwargs,
             )
 
@@ -434,7 +408,7 @@ class GptOss(nn.Module):
         past_key_value_states: Optional[Tuple[torch.Tensor,]] = None,
         use_cache: bool = False,
         only_last_token: bool = False,
-        **attn_kwargs: Unpack[SinkAttentionKwargs],
+        **attn_kwargs: Unpack[AttentionKwargs],
     ):
         output, cache = self.base_model(
             x,

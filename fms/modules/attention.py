@@ -11,6 +11,7 @@ from typing import (
     Optional,
     Tuple,
     TypedDict,
+    cast,
 )
 from typing_extensions import NotRequired, Unpack, Union
 
@@ -67,7 +68,7 @@ class SinkAttentionKwargs(TypedDict):
 
     attn_name: str
     sinks: NotRequired[torch.Tensor]
-    sliding_window: NotRequired[int]
+    sliding_window: NotRequired[int | None]
 
 
 # TODO: add adjusted_mask for alibi as part of attn_compute_dict
@@ -112,10 +113,7 @@ def register_attention_op(
             torch.Tensor,
         ]
     ] = None,
-    update_attn_kwargs_op: Union[
-        Optional[Callable[..., AttentionKwargs]],
-        Optional[Callable[..., SinkAttentionKwargs]],
-    ] = None,
+    update_attn_kwargs_op: Optional[Callable[..., AttentionKwargs]] = None,
     validate_attn_kwargs_op: Optional[
         Callable[
             Concatenate[
@@ -325,9 +323,9 @@ def _math_attention_with_sinks_op(
         values_e = value_cache
 
     try:
-        attn_sinks = attn_kwargs.get("sinks", None)
-        sliding_window = attn_kwargs.get("sliding_window", 0)
-        mask = attn_kwargs.get("mask", None)
+        attn_sinks = cast(torch.Tensor, attn_kwargs.get("sinks"))
+        sliding_window = cast(int, attn_kwargs.get("sliding_window", 0))
+        mask = cast(Optional[torch.Tensor], attn_kwargs.get("mask"))
     except TypeError as e:
         print(f"Invalid attention sinks kwargs. {e}")
 
@@ -349,13 +347,14 @@ def _math_attention_with_sinks_op(
         mask = mask[..., -n_tokens:, -kv_tokens:]
     else:
         mask = torch.triu(
-            queries.new_full((1, 1, n_tokens, kv_tokens), -float("inf")), diagonal=1
+            queries.new_full((n_tokens, kv_tokens), -torch.inf),
+            diagonal=1 + (kv_tokens - n_tokens),
         )
 
-    if sliding_window > kv_tokens and n_tokens == kv_tokens:
+    if 0 < sliding_window < kv_tokens:
         mask += torch.tril(
-            mask.new_full((n_tokens, n_tokens), -float("inf")),
-            diagonal=-sliding_window,
+            mask.new_full((n_tokens, kv_tokens), -torch.inf),
+            diagonal=(kv_tokens - n_tokens) - sliding_window,
         )
     QK = torch.einsum("bhqd,bhkd->bhqk", queries, keys_e)
 
@@ -417,7 +416,7 @@ register_attention_op(
 
 
 def get_attention_type(
-    **attn_kwargs: Unpack[Union[AttentionKwargs, SinkAttentionKwargs]],
+    **attn_kwargs: Unpack[AttentionKwargs],
 ) -> dict[str, Callable]:
     attn_name = attn_kwargs.get("attn_name", "sdpa_causal")
     if attn_name not in __type_factory_map:
@@ -743,7 +742,8 @@ class MultiHeadAttention(nn.Module):
         position_ids=None,
         past_key_value_state: Optional[Tuple[Tensor | None, Tensor | None]] = None,
         use_cache=False,
-        **attn_kwargs: Unpack[Union[AttentionKwargs, SinkAttentionKwargs]],
+        sliding_window: Optional[int] = 0,
+        **attn_kwargs: Unpack[AttentionKwargs],
     ):
         """
         past_key_value_state: tuple
@@ -785,9 +785,6 @@ class MultiHeadAttention(nn.Module):
                 queries, keys, position_ids, past_key_value_state, use_cache
             )
 
-        if self.has_sinks:
-            attn_kwargs["sinks"] = self.sinks
-
         attn_compute_dict = get_attention_type(**attn_kwargs)
 
         if use_cache:
@@ -806,7 +803,18 @@ class MultiHeadAttention(nn.Module):
         else:
             keys_compute, values_compute = keys, values
 
-        if attn_compute_dict["is_prefill"](**attn_kwargs):
+        updated_attn_kwargs: Union[AttentionKwargs, SinkAttentionKwargs]
+
+        if self.has_sinks:
+            updated_attn_kwargs = {
+                "attn_name": "sdpa_with_sinks",
+                "sinks": self.sinks,
+                "sliding_window": sliding_window,
+            }
+        else:
+            updated_attn_kwargs = attn_kwargs
+
+        if attn_compute_dict["is_prefill"](**updated_attn_kwargs):
             attn = attn_compute_dict["compute_prefill"](
                 queries,
                 keys_compute,
@@ -815,7 +823,7 @@ class MultiHeadAttention(nn.Module):
                 self.kvheads,
                 self.p_dropout if self.training else 0.0,
                 self.scale_factor,
-                **attn_kwargs,
+                **updated_attn_kwargs,
             )
         else:
             attn = attn_compute_dict["compute_decode"](
@@ -826,7 +834,7 @@ class MultiHeadAttention(nn.Module):
                 self.kvheads,
                 self.p_dropout if self.training else 0.0,
                 self.scale_factor,
-                **attn_kwargs,
+                **updated_attn_kwargs,
             )
 
         attn = attn.view(batch_size, q_len, self.nheads * self.emb_v_per_head)
@@ -1001,7 +1009,8 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
         position_ids=None,
         past_key_value_state: Optional[Tuple[Tensor | None, Tensor | None]] = None,
         use_cache=False,
-        **attn_kwargs: Unpack[Union[AttentionKwargs, SinkAttentionKwargs]],
+        sliding_window: Optional[int] = 0,
+        **attn_kwargs: Unpack[AttentionKwargs],
     ):
         """
         Check MultiHeadAttention for up-to-date arguments and docs

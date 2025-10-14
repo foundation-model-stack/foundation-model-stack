@@ -413,8 +413,8 @@ class RotaryEmbedding(PositionEncoder):
             query_shape = q.shape
             key_shape = k.shape
 
-            query = self.rope_scaling.apply_yarn_rotary_emb(q, cos, sin, position_ids)
-            key = self.rope_scaling.apply_yarn_rotary_emb(k, cos, sin, position_ids)
+            query = self.rope_scaling.apply_yarn_rotary_emb(q, cos, sin, position_ids)  # type: ignore
+            key = self.rope_scaling.apply_yarn_rotary_emb(k, cos, sin, position_ids)  # type: ignore
 
             return query.reshape(query_shape), key.reshape(key_shape)
 
