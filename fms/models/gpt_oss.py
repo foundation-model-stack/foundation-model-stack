@@ -361,8 +361,6 @@ class GptOss(nn.Module):
             self.config = config
         else:
             self.config = GptOssConfig()
-        if not self.config.layer_types:
-            self.config.layer_types = LAYER_TYPES
         self.config = self.config.updated(**kwargs)
         self.distributed_strategy = distributed_strategy
 
@@ -436,6 +434,8 @@ _20b_config = GptOssConfig()
 
 def _gpt_oss_factory_factory(config):
     def factory(**kwargs):
+        if not config.layer_types:
+            config.layer_types = LAYER_TYPES
         return GptOss(config, **kwargs)
 
     return factory
