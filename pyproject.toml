@@ -45,7 +45,7 @@ dev = [
 "mypy-extensions==1.0.0",
 "pytest==8.3.4",
 "sentencepiece==0.2.0",
-"transformers==4.48.3",
+"transformers==4.55.4",
 "pyarrow-stubs==17.16",
 "types-requests==2.32.0.20241016",
 "lm_eval==0.4.7",
