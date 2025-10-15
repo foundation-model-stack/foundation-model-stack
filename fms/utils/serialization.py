@@ -1,6 +1,7 @@
 import collections
 import os
 import re
+import logging
 from collections import ChainMap
 from collections.abc import Iterable
 from functools import reduce
@@ -10,6 +11,9 @@ from typing import Any, Callable, Mapping, MutableMapping, Optional, Set, Union
 import torch
 
 from fms.modules.tp import TPModule
+
+
+logger = logging.getLogger(__name__)
 
 
 __adapters: MutableMapping[
@@ -567,9 +571,8 @@ def load_state_dict_into_model(
             del fms_partial_sd
 
     if unused_keys and rank == 0:
-        # TODO: start using logger?
-        print(
-            f"[WARNING] Keys from checkpoint (adapted to FMS) "
+        logger.warning(
+            f"Keys from checkpoint (adapted to FMS) "
             f"not copied into model: {unused_keys}"
         )
 
@@ -691,3 +694,59 @@ def _load_partial_state_dict(
                 unused_keys.add(key)
 
     return unused_keys
+
+
+# When emb_dim // nheads < head_dim, expand QKV and Dense Weights
+def _weight_expansion_for_mismatched_head_dim(
+    input_sd: Mapping[str, Any], model_config
+) -> Mapping[str, Any]:
+    new_sd = dict(input_sd)
+    if (
+        model_config
+        and model_config.head_dim > model_config.emb_dim // model_config.nheads
+    ):
+        # Compute the expansion factor  head_dim / query.size(0) / nheads)
+        expansion_factor = 2  # default
+        for layer in input_sd.keys():
+            if "attn.in_proj.query" in layer:
+                expansion_factor = (
+                    model_config.head_dim
+                    * model_config.nheads
+                    // input_sd[layer].size(0)
+                )
+                break
+        assert expansion_factor % 2 == 0
+
+        # dim of layers to be expanded
+        layer_dim = {
+            "attn.in_proj.query": 0,
+            "attn.in_proj.key": 0,
+            "attn.in_proj.value": 0,
+            "attn.dense": 1,
+        }
+
+        expand_layer_dim = {
+            layer: layer_dim[tgt]
+            for layer in new_sd
+            for tgt in layer_dim
+            if tgt in layer
+        }
+
+        for layer, expand_dim in expand_layer_dim.items():
+            tensor_value = new_sd[layer]
+            original_size = list(tensor_value.size())
+            expanded_size = original_size.copy()
+            expanded_size[expand_dim] = expanded_size[expand_dim] * expansion_factor
+            logger.warning(
+                f"expanding weights of {('.'.join(layer.split('.')[1:-1])):30.30} {str(original_size):12.12} => {expanded_size}"
+            )
+            slices = [
+                slice(0, None, expansion_factor) if dim == expand_dim else slice(None)
+                for dim in range(tensor_value.ndim)
+            ]
+            # Assign the original weights tensor to the interleaved positions
+            expanded_tensor = torch.zeros(expanded_size)
+            expanded_tensor[tuple(slices)] = tensor_value
+            new_sd[layer] = expanded_tensor
+
+    return new_sd
