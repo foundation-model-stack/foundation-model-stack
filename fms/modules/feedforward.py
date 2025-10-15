@@ -583,7 +583,7 @@ class ConditionalFeedForward(nn.Module):
                 padded_token_ids_per_block,
                 expert_block_mapping,
                 total_padded_tokens,
-                expert_indices.shape[1],
+                1,
                 padding_size,
             )
 
