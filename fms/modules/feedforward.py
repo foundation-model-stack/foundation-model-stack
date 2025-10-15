@@ -533,6 +533,7 @@ class ConditionalFeedForward(nn.Module):
             mlp1_weight = self.w13[expert_indices, ...]
             mlp1_bias = self.w13_bias[expert_indices, ...]
             scores = torch.einsum("beck,bk->bec", mlp1_weight, scores) + mlp1_bias
+            # Using the clamp swiglu impacts the output correctness
             scores = self.clamp_swiglu(scores, limit=self.swiglu_limit)
 
             # MLP #2
@@ -745,10 +746,6 @@ class MOEFeedForward(nn.Module):
             expert_outs = self.cond_ffn(x, expert_indices, scores)
 
         int_v1 = torch.einsum("tai,ta -> ti", expert_outs, expert_weights)
-
-        # when using bias weights x needs to be added after the weighted sum
-        # this has impact in the output correctness
-        int_v1 = x + int_v1 if self.use_bias else int_v1
 
         int_v2 = int_v1.view(B, S, self.dim)
 
