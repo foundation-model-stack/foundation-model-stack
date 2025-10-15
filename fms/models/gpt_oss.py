@@ -483,31 +483,6 @@ def _weight_fusion(
 serialization.register_adapter_step(_architecture_name, "weight_fusion", _weight_fusion)
 
 
-def _unpack_weights(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]:
-    new_sd = {}
-    for name, param in input_sd.items():
-        new_name = name
-        unpacked_tensors = None
-        if re.search("gate_up_proj|down_proj", name) and "bias" not in name:
-            if "scales" in name:
-                continue
-            elif "blocks" in name:
-                # deal with packed weights
-                blocks = input_sd[name]
-                scales = input_sd[name.replace("blocks", "scales")]
-                new_name = name.replace(".blocks", "")
-                unpacked_tensors = _convert_moe_packed_tensors(
-                    blocks, scales, dtype=torch.bfloat16
-                )
-        new_sd[new_name] = unpacked_tensors if unpacked_tensors is not None else param
-    return new_sd
-
-
-serialization.register_adapter_step(
-    _architecture_name, "unpack_weights", _unpack_weights
-)
-
-
 def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]:
     replacements = [
         (r"^lm_head.weight", "head.weight"),
@@ -520,34 +495,50 @@ def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]
         (r"self_attn.sinks", "attn.sinks"),
         (r"mlp.experts.gate_up_proj_blocks", "ff_sub_layer.cond_ffn.w13"),
         (r"mlp.experts.down_proj_blocks", "ff_sub_layer.cond_ffn.w2"),
+        (r"mlp.experts.gate_up_proj_scales", "ff_sub_layer.cond_ffn.w13_scales"),
+        (r"mlp.experts.down_proj_scales", "ff_sub_layer.cond_ffn.w2_scales"),
+        (r"mlp.experts.gate_up_proj_bias", "ff_sub_layer.cond_ffn.w13_bias"),
+        (r"mlp.experts.down_proj_bias", "ff_sub_layer.cond_ffn.w2_bias"),
         (r"mlp.router", "ff_sub_layer.gate"),
         (r"input_layernorm", "ln"),
         (r"post_attention_layernorm", "ff_ln"),
         (r"^model.norm", "base_model.dec_norm"),
-    ]
-    gpt_oss_experts_specific = [
-        (r"mlp.experts.gate_up_proj_blocks", "ff_sub_layer.cond_ffn.w13"),
-        (r"mlp.experts.down_proj_blocks", "ff_sub_layer.cond_ffn.w2"),
-        (r"mlp.experts.gate_up_proj_bias", "ff_sub_layer.cond_ffn.w13_bias"),
-        (r"mlp.experts.down_proj_bias", "ff_sub_layer.cond_ffn.w2_bias"),
     ]
     new_sd = {}
     for name, param in input_sd.items():
         new_name = name
         for pattern, repl in replacements:
             new_name = re.sub(pattern, repl, new_name)
-
-        if re.search("gate_up_proj|down_proj", new_name) and re.search(
-            "base_model.layers", new_name
-        ):
-            for pattern, repl in gpt_oss_experts_specific:
-                new_name = re.sub(pattern, repl, new_name)
         new_sd[new_name] = param
     return new_sd
 
 
 serialization.register_adapter_step(
     _architecture_name, "hf_to_fms_names", _hf_to_fms_names
+)
+
+
+def _unpack_weights(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]:
+    new_sd = {}
+    for name, param in input_sd.items():
+        new_name = name
+        unpacked_tensors = None
+        if re.search("cond_ffn", name) and "bias" not in name:
+            if "scales" in name:
+                continue
+            elif "w13" in name or "w2" in name:
+                # deal with packed weights
+                blocks = input_sd[name]
+                scales = input_sd[f"{name}_scales"]
+                unpacked_tensors = _convert_moe_packed_tensors(
+                    blocks, scales, dtype=torch.bfloat16
+                )
+        new_sd[name] = unpacked_tensors if unpacked_tensors is not None else param
+    return new_sd
+
+
+serialization.register_adapter_step(
+    _architecture_name, "unpack_weights", _unpack_weights
 )
 
 
@@ -655,5 +646,5 @@ serialization.register_adapter_step(
 serialization.register_adapter(
     _architecture_name,
     "hf",
-    ["unpack_weights", "hf_to_fms_names", "hf_to_fms_rope", "weight_fusion"],
+    ["hf_to_fms_names", "unpack_weights", "hf_to_fms_rope", "weight_fusion"],
 )
