@@ -64,21 +64,17 @@ class GptOssConfig(ModelConfig):
     top_k_experts = 4
     router_aux_loss_coef: float = 0.9
     output_router_logits = False
-    layer_types: Optional[list[Any]] = None
     pad_id: int = -1
     nheads: int = 64
     nlayers: int = 24
+    layer_types = [
+        f"{'sliding' if i % 2 == 0 else 'full'}_attention" for i in range(nlayers)
+    ]
     norm_eps: float = 1e-05
     kvheads: int = 8
     p_dropout: float = 0.0
     fused_weights: bool = True
     linear_config: Optional[Mapping[str, Any]] = None
-
-
-LAYER_TYPES = [
-    f"{'sliding' if i % 2 == 0 else 'full'}_attention"
-    for i in range(GptOssConfig.nlayers)
-]
 
 
 class GptOssBlock(nn.Module):
@@ -215,7 +211,7 @@ class GptOssHeadless(nn.Module):
         self.embedding = nn.Embedding(
             self.config.src_vocab_size,
             self.config.emb_dim,
-            padding_idx=self.config.pad_id,
+            padding_idx=self.config.pad_id
         )
 
         scaling_info = {
@@ -285,11 +281,17 @@ class GptOssHeadless(nn.Module):
     def post_init(self):
         # This function is called in `get_model` after the model is
         # fully initalized on the correct device
+
+        self._clean_up_rot_emb_cache(
+            self.rot_emb.cached_freqs,
+            self.rot_emb.max_seq_len_cached,
+        )
+
         for device in set(
             [param.device for param in self.parameters()]
             + [buffer.device for buffer in self.buffers()]
         ):
-            self.rot_emb.device = device
+            self.rot_emb.compute_freqs_cis(device, self.config.max_expected_seq_len)
 
     def forward(
         self,
@@ -434,8 +436,6 @@ _20b_config = GptOssConfig()
 
 def _gpt_oss_factory_factory(config):
     def factory(**kwargs):
-        if not config.layer_types:
-            config.layer_types = LAYER_TYPES
         return GptOss(config, **kwargs)
 
     return factory
