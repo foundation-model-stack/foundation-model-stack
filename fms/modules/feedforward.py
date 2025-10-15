@@ -566,8 +566,6 @@ class ConditionalFeedForward(nn.Module):
                 torch.ops.moe.moe_mm(
                     x,
                     self.w13,
-                    self.use_bias,
-                    self.w13_bias,
                     expert_indices,
                     padded_token_ids_per_block,
                     expert_block_mapping,
@@ -581,13 +579,11 @@ class ConditionalFeedForward(nn.Module):
             return torch.ops.moe.moe_mm(
                 F.silu(x1) * x3,
                 self.w2,
-                self.use_bias,
-                self.w2_bias,
                 expert_indices,
                 padded_token_ids_per_block,
                 expert_block_mapping,
                 total_padded_tokens,
-                1,
+                expert_indices.shape[1],
                 padding_size,
             )
 
