@@ -502,7 +502,7 @@ serialization.register_adapter_step(
 serialization.register_adapter_step(
     _architecture_name,
     "weight_expansion_for_mismatched_head_dim",
-    serialization._weight_expansion_for_mismatched_head_dim, # type: ignore[arg-type]
+    serialization._weight_expansion_for_mismatched_head_dim,  # type: ignore[arg-type]
 )
 
 
