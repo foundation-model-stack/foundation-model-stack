@@ -211,7 +211,7 @@ class GptOssHeadless(nn.Module):
         self.embedding = nn.Embedding(
             self.config.src_vocab_size,
             self.config.emb_dim,
-            padding_idx=self.config.pad_id
+            padding_idx=self.config.pad_id,
         )
 
         scaling_info = {
@@ -235,7 +235,8 @@ class GptOssHeadless(nn.Module):
             [param.device for param in self.parameters()]
             + [buffer.device for buffer in self.buffers()]
         ):
-            self.rot_emb.compute_freqs_cis(device, self.config.max_expected_seq_len)
+            with torch.no_grad():
+                self.rot_emb.compute_freqs_cis(device, self.config.max_expected_seq_len)
 
         layers = []
         for i in range(self.config.nlayers):
@@ -278,6 +279,20 @@ class GptOssHeadless(nn.Module):
             if isinstance(m, MultiHeadAttention) or isinstance(m, MOEFeedForward):
                 m.reset_parameters()
 
+    def _clean_up_rot_emb_cache(
+        self,
+        cached_freqs: dict[Optional[torch.device], dict[int, torch.Tensor]],
+        max_seq_len_cached: dict[Optional[torch.device], int],
+    ):
+        # remove meta tensors from cached_freqs
+        for dev in list(cached_freqs.keys()):
+            for alp in list(cached_freqs[dev].keys()):
+                if cached_freqs[dev][alp][0].device == torch.device("meta"):
+                    del cached_freqs[dev][alp][0]  # type: ignore
+                    if len(cached_freqs[dev]) == 0:
+                        del cached_freqs[dev]
+                        del max_seq_len_cached[dev]
+
     def post_init(self):
         # This function is called in `get_model` after the model is
         # fully initalized on the correct device
@@ -287,11 +302,15 @@ class GptOssHeadless(nn.Module):
             self.rot_emb.max_seq_len_cached,
         )
 
+        # RoPE init
         for device in set(
             [param.device for param in self.parameters()]
             + [buffer.device for buffer in self.buffers()]
         ):
-            self.rot_emb.compute_freqs_cis(device, self.config.max_expected_seq_len)
+            with torch.no_grad():
+                self.rot_emb.compute_freqs_cis(
+                    device, 2 * self.config.max_expected_seq_len
+                )
 
     def forward(
         self,

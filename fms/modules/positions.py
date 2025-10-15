@@ -338,20 +338,23 @@ class RotaryEmbedding(PositionEncoder):
                 t = torch.arange(scaled_max_seq_len, device=device, dtype=freqs.dtype)
                 freqs = torch.outer(t, freqs).float()
 
+                self.max_seq_len_cached[dev_idx] = scaled_max_seq_len
+
                 if self.rope_type == "yarn":
                     cos = freqs.cos() * self.rope_scaling.concentration
                     sin = freqs.sin() * self.rope_scaling.concentration
-                    return cos, sin
-                self.max_seq_len_cached[dev_idx] = scaled_max_seq_len
-                self.cached_freqs[dev_idx][alpha] = torch.stack(
-                    [
-                        torch.cos(freqs),
-                        -torch.sin(freqs),
-                        torch.sin(freqs),
-                        torch.cos(freqs),
-                    ],
-                    dim=2,
-                ).view(*freqs.size(), 2, 2)
+
+                    self.cached_freqs[dev_idx][alpha] = (cos, sin)
+                else:
+                    self.cached_freqs[dev_idx][alpha] = torch.stack(
+                        [
+                            torch.cos(freqs),
+                            -torch.sin(freqs),
+                            torch.sin(freqs),
+                            torch.cos(freqs),
+                        ],
+                        dim=2,
+                    ).view(*freqs.size(), 2, 2)
 
         return alpha
 
@@ -406,18 +409,6 @@ class RotaryEmbedding(PositionEncoder):
         # the max start position should be based on the max first position of each sequence
         max_start_pos = torch.max(position_ids[:, 0])
 
-        if self.rope_type == "yarn":
-            # Compute cos/sin for max position
-            cos, sin = self.compute_freqs_cis(q.device, max_start_pos + seq_len)
-
-            query_shape = q.shape
-            key_shape = k.shape
-
-            query = self.rope_scaling.apply_yarn_rotary_emb(q, cos, sin, position_ids)  # type: ignore
-            key = self.rope_scaling.apply_yarn_rotary_emb(k, cos, sin, position_ids)  # type: ignore
-
-            return query.reshape(query_shape), key.reshape(key_shape)
-
         if self.partial_rope != 1.0:
             q_rope = q[..., : self.dim]
             k_rope = k[..., : self.dim]
@@ -431,6 +422,21 @@ class RotaryEmbedding(PositionEncoder):
         max_start_pos = torch.max(position_ids[:, 0])
 
         alpha = self.compute_freqs_cis(q.device, max_start_pos + seq_len)
+
+        if self.rope_type == "yarn":
+            # Compute cos/sin for max position
+            freqs = self.cached_freqs[q.device.index][alpha]
+
+            cos = freqs[0]
+            sin = freqs[1]
+
+            query_shape = q.shape
+            key_shape = k.shape
+
+            query = self.rope_scaling.apply_yarn_rotary_emb(q, cos, sin, position_ids)  # type: ignore
+            key = self.rope_scaling.apply_yarn_rotary_emb(k, cos, sin, position_ids)  # type: ignore
+
+            return query.reshape(query_shape), key.reshape(key_shape)
 
         freqs = self.cached_freqs[q.device.index][alpha][position_ids]
 
