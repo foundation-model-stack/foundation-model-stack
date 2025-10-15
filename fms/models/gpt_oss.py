@@ -156,7 +156,6 @@ class GptOssBlock(nn.Module):
         **attn_kwargs: Unpack[AttentionKwargs],
     ):
         # if the cache is not empty, we need to get the kv cache for self and cross attention
-        self_attn_past_key_value = past_key_value_state
         attn_kwargs["attn_name"] = attn_kwargs.get("attn_name", "sdpa_with_sinks")
 
         # first we do MHA and Add&Norm
@@ -165,7 +164,7 @@ class GptOssBlock(nn.Module):
         x = self.attn(
             q=x,
             position_ids=position_ids,
-            past_key_value_state=self_attn_past_key_value,
+            past_key_value_state=past_key_value_state,
             use_cache=use_cache,
             **attn_kwargs,
         )
@@ -201,10 +200,7 @@ class GptOssHeadless(nn.Module):
         **kwargs,
     ):
         super(GptOssHeadless, self).__init__()
-        if config is not None:
-            self.config = config
-        else:
-            self.config = GptOssConfig
+        self.config = config or GptOssConfig()
         self.config = self.config.updated(**kwargs)
         self.distributed_strategy = distributed_strategy
 
@@ -378,10 +374,7 @@ class GptOss(nn.Module):
         **kwargs,
     ):
         super(GptOss, self).__init__()
-        if config is not None:
-            self.config = config
-        else:
-            self.config = GptOssConfig()
+        self.config = config or GptOssConfig()
         self.config = self.config.updated(**kwargs)
         self.distributed_strategy = distributed_strategy
 
