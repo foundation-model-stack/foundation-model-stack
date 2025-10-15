@@ -696,9 +696,6 @@ def _load_partial_state_dict(
     return unused_keys
 
 
-from pycony import *
-
-
 # When emb_dim // nheads < head_dim, expand QKV and Dense Weights
 def _weight_expansion_for_mismatched_head_dim(
     input_sd: Mapping[str, Any], model_config
@@ -713,6 +710,7 @@ def _weight_expansion_for_mismatched_head_dim(
         "attn.dense": (1, model_config.nheads),
     }
 
+    # Computed head_dims for QKV and Dense
     head_dims_qkvd = [
         input_sd[layer].size(dim[0]) // dim[1]
         for layer in input_sd
@@ -724,12 +722,13 @@ def _weight_expansion_for_mismatched_head_dim(
     if len(set(head_dims_qkvd)) == 0:
         return new_sd
 
+    # Computed head_dims for QKV and Dense should match
     assert len(set(head_dims_qkvd)) == 1, (
         "head_dims of QKV, and Dense layers do not agree"
     )
 
     assert model_config.head_dim % head_dims_qkvd[0] == 0, (
-        f"weight expansion factor should not have fraction {model_config.head_dim} / {head_dims_qkvd[0]}"
+        f"weight expansion factor should not have fraction: {model_config.head_dim} / {head_dims_qkvd[0]}"
     )
 
     expansion_factor = model_config.head_dim // head_dims_qkvd[0]
