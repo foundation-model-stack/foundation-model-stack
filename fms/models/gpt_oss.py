@@ -521,7 +521,6 @@ serialization.register_adapter_step(
 def _unpack_weights(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]:
     new_sd = {}
     for name, param in input_sd.items():
-        new_name = name
         unpacked_tensors = None
         if re.search("cond_ffn", name) and "bias" not in name:
             if "scales" in name:
