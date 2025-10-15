@@ -696,39 +696,51 @@ def _load_partial_state_dict(
     return unused_keys
 
 
+from pycony import *
+
+
 # When emb_dim // nheads < head_dim, expand QKV and Dense Weights
 def _weight_expansion_for_mismatched_head_dim(
     input_sd: Mapping[str, Any], model_config
 ) -> Mapping[str, Any]:
     new_sd = dict(input_sd)
-    if (
-        model_config
-        and model_config.head_dim > model_config.emb_dim // model_config.nheads
-    ):
-        # Compute the expansion factor  head_dim / query.size(0) / nheads)
-        expansion_factor = 2  # default
-        for layer in input_sd.keys():
-            if "attn.in_proj.query" in layer:
-                expansion_factor = (
-                    model_config.head_dim
-                    * model_config.nheads
-                    // input_sd[layer].size(0)
-                )
-                break
-        assert expansion_factor % 2 == 0
 
-        # dim of layers to be expanded
-        layer_dim = {
-            "attn.in_proj.query": 0,
-            "attn.in_proj.key": 0,
-            "attn.in_proj.value": 0,
-            "attn.dense": 1,
-        }
+    # dimensions of layers to be expanded if needed
+    layer_dim_div = {
+        "attn.in_proj.query": (0, model_config.nheads),
+        "attn.in_proj.key": (0, model_config.kvheads),
+        "attn.in_proj.value": (0, model_config.kvheads),
+        "attn.dense": (1, model_config.nheads),
+    }
+
+    head_dims_qkvd = [
+        input_sd[layer].size(dim[0]) // dim[1]
+        for layer in input_sd
+        for tgt, dim in layer_dim_div.items()
+        if tgt in layer
+    ]
+
+    # No attention layer in this step
+    if len(set(head_dims_qkvd)) == 0:
+        return new_sd
+
+    assert len(set(head_dims_qkvd)) == 1, (
+        "head_dims of QKV, and Dense layers do not agree"
+    )
+
+    assert model_config.head_dim % head_dims_qkvd[0] == 0, (
+        f"weight expansion factor should not have fraction {model_config.head_dim} / {head_dims_qkvd[0]}"
+    )
+
+    expansion_factor = model_config.head_dim // head_dims_qkvd[0]
+
+    if expansion_factor > 1:
+        assert expansion_factor % 2 == 0, "expansion factor must be an even number"
 
         expand_layer_dim = {
-            layer: layer_dim[tgt]
+            layer: layer_dim_div[tgt][0]
             for layer in new_sd
-            for tgt in layer_dim
+            for tgt in layer_dim_div
             if tgt in layer
         }
 
