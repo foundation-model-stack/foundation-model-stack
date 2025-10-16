@@ -15,7 +15,7 @@ import logging
 import math
 import re
 from dataclasses import dataclass
-from typing import Any, Dict, List, Mapping, Optional, Tuple, Unpack
+from typing import Any, Dict, Mapping, Optional, Tuple, Unpack
 
 import torch
 from torch import nn
@@ -123,6 +123,7 @@ class Qwen3Config(ModelConfig):
     use_sliding_window:bool = False
     src_vocab_size:int = 15193  # hf_config.vocab_size:int = 15193
 
+
 # Qwen3-1.7B
 _1_7b_config = Qwen3Config()
 
@@ -137,23 +138,24 @@ class Qwen3Block(nn.Module):
         emb_kq = self.config.emb_dim // self.config.nheads
         emb_v = self.config.emb_dim // self.config.nheads
 
-        # -----------------------------------------
-        # Can't find the following in Qwen3Config.
-        # fused_weights       fused_weights: bool = True  # FMS Specific -- For CPU/GPU = T, AIU = F
-        # linear_config       linear_config: Optional[Mapping[str, Any]] = None  # To support quantization
-        # hidden_grow_factor  config.intermediate_size/config.hidden_size
-        # multiple_of         multiple_of: int = 256  # borrowed from llama
-        # pad_id              pad_id: int = -1  # borrowed from granite, we do need it
-        # -----------------------------------------
-        # -----------------------------------------
-        # Found these in Qwen3Config:
-        # kvheads        -> num_key_value_heads
-        # nheads         -> num_attention_heads
-        # p_dropout      -> attention_dropout
-        # emb_dim        -> hidden_size
-        # norm_eps       -> rms_norm_eps
-        # src_vocab_size -> vocab_size 
-        # -----------------------------------------
+        self.ln = LayerNormParameterized(
+            self.config.emb_dim,
+            elementwise_scale=True,
+            elementwise_shift=False,
+            use_mean=False,
+            eps=self.config.norm_eps,
+            use_high_precision_pow=True,
+        )
+        self.ff_ln = LayerNormParameterized(
+            self.config.emb_dim,
+            elementwise_scale=True,
+            elementwise_shift=False,
+            use_mean=False,
+            eps=self.config.norm_eps,
+            use_high_precision_pow=True,
+        )
+
+
         if self.config.kvheads == 0:
             kvheads = self.config.nheads
         else:
@@ -172,9 +174,6 @@ class Qwen3Block(nn.Module):
             fused=self.config.fused_weights,
             linear_config=self.config.linear_config,
         )
-        # These 2 really need to be in MultiHeadAttention:
-        #          (q_norm): Qwen3RMSNorm((128,), eps=1e-06)
-        #          (k_norm): Qwen3RMSNorm((128,), eps=1e-06)
         self.q_norm = LayerNormParameterized(
                                              self.config.head_dim,
                                              elementwise_scale=True,
@@ -240,6 +239,21 @@ class Qwen3Block(nn.Module):
             use_cache=use_cache,
             **attn_kwargs,
         )
+
+        # where is hidden_states?
+        hidden_states = x[0]
+        input_shape = hidden_states.shape[:-1]
+        hidden_shape = (*input_shape, -1, self.config.head_dim)
+        
+        # # query_states and key_states
+        query_states = self.q_norm(self.attn.in_proj.query(hidden_states).view(hidden_shape)).transpose(1, 2) # type: ignore
+        key_states = self.k_norm(self.attn.in_proj.key(hidden_states).view(hidden_shape)).transpose(1, 2) # type: ignore
+        # value_states = self.attn.in_proj.value(hidden_states).view(hidden_shape).transpose(1, 2) # type: ignore
+        value_states = self.attn.in_proj.value(hidden_states).view(hidden_shape).transpose(1, 2)
+        print(f"query_states.shape: {query_states.shape}")
+        print(f"key_states.shape: {key_states.shape}")
+        print(f"value_states.shape: {value_states.shape}")
+
         cache = None
         if use_cache:
             x, cache = x
@@ -607,6 +621,8 @@ def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]
         (r"mlp\.down_proj", "ff_sub_layer.w2"),
         (r"input_layernorm", "ln"),
         (r"post_attention_layernorm", "ff_ln"),
+        (r"self_attn\.k_norm", "attn.in_proj.k_norm"),
+        (r"self_attn\.q_norm", "attn.in_proj.q_norm"),
     ]
     new_sd = {}
     for name, param in input_sd.items():
