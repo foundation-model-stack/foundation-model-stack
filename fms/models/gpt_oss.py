@@ -1,5 +1,5 @@
-from dataclasses import dataclass
-from typing import Any, Mapping, Optional, Tuple
+from dataclasses import dataclass, field
+from typing import Any, Mapping, Optional, Tuple, List
 import re
 import math
 
@@ -67,9 +67,12 @@ class GptOssConfig(ModelConfig):
     pad_id: int = -1
     nheads: int = 64
     nlayers: int = 24
-    layer_types = [
-        f"{'sliding' if i % 2 == 0 else 'full'}_attention" for i in range(nlayers)
-    ]
+    layer_types: List = field(
+        default_factory=lambda: [
+            f"{'sliding' if i % 2 == 0 else 'full'}_attention"
+            for i in range(GptOssConfig.nlayers)
+        ]
+    )
     norm_eps: float = 1e-05
     kvheads: int = 8
     p_dropout: float = 0.0

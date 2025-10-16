@@ -149,6 +149,7 @@ def _map_model_config(architecture, config):
         config_params["attn_bias"] = config.attention_bias
         config_params["p_dropout"] = config.attention_dropout
         config_params["eos_token_id"] = config.eos_token_id
+        config_params["tie_heads"] = config.tie_word_embeddings
         config_params["kvheads"] = config.num_key_value_heads
         config_params["activation_fn"] = config.hidden_act
         config_params["emb_dim"] = config.hidden_size
