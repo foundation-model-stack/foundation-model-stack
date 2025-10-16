@@ -508,6 +508,7 @@ class ConditionalFeedForward(nn.Module):
         return TPConditionalFeedForward.import_module(self, group)
 
     def clamp_swiglu(self, x, alpha: float = 1.702, limit: Optional[float] = None):
+        limit = float("inf") if limit is None else limit
         x_glu, x_linear = x[..., ::2], x[..., 1::2]
         # Clamp the input values
         x_glu = x_glu.clamp(min=None, max=limit)
