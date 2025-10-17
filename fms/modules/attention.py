@@ -669,6 +669,14 @@ class MultiHeadAttention(nn.Module):
         (e.g., "torch_linear", "gptq", ...) or a callable for module selection depending
         on module name. Additional config options should be provided as kwargs in
         linear_config.
+    scale_factor : float | None
+        Optional scaling factor applied to the attention logits. If None, a default scaling based
+        on the embedding dimension may be used.
+    has_sinks : bool
+        If True, enables the use of sink tokens, which are represented by learnable parameters
+        (one per attention head). Sink tokens can be used to aggregate information across tokens
+        or to enable certain attention mechanisms such as global context gathering.
+
     """
 
     def __init__(
