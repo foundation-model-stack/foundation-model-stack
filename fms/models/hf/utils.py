@@ -143,6 +143,27 @@ def _map_model_config(architecture, config):
         config_params["multiquery_attn"] = config.multi_query
         config_params["emb_dim"] = config.hidden_size
         config_params["max_expected_seq_len"] = config.n_positions
+    elif architecture == "GptOssForCausalLM":
+        inner_dim = config.intermediate_size
+        architecture = "gpt_oss"
+        config_params["attn_bias"] = config.attention_bias
+        config_params["p_dropout"] = config.attention_dropout
+        config_params["eos_token_id"] = config.eos_token_id
+        config_params["tie_heads"] = config.tie_word_embeddings
+        config_params["kvheads"] = config.num_key_value_heads
+        config_params["activation_fn"] = config.hidden_act
+        config_params["emb_dim"] = config.hidden_size
+        config_params["hidden_dim"] = config.intermediate_size
+        config_params["norm_eps"] = config.rms_norm_eps
+        config_params["layer_types"] = config.layer_types
+        config_params["num_experts"] = config.num_local_experts
+        config_params["top_k_experts"] = config.num_experts_per_tok
+        config_params["max_expected_seq_len"] = config.max_position_embeddings
+        config_params["sliding_window"] = config.sliding_window
+        config_params["head_dim"] = config.head_dim
+        config_params["rope_theta"] = config.rope_theta
+        config_params["rope_scaling"] = config.rope_scaling
+        config_params["swiglu_limit"] = config.swiglu_limit
     elif architecture == "MixtralForCausalLM":
         inner_dim = config.intermediate_size
         architecture = "mixtral"
