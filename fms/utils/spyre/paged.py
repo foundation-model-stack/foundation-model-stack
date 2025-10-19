@@ -12,7 +12,7 @@ from torch.library import custom_op
 import torch.nn.functional as F
 
 
-@custom_op("spyre::paged_attn_store", mutates_args=(), device_types="cpu")
+@custom_op("spyre::paged_attn_store", mutates_args=(), device_types=["cpu", "cuda"])
 def paged_attn_store(
     key: torch.Tensor,
     value: torch.Tensor,
@@ -43,7 +43,7 @@ def paged_attn_store_meta(
     return key_cache, value_cache
 
 
-@custom_op("spyre::paged_attn_compute", mutates_args={}, device_types="cpu")
+@custom_op("spyre::paged_attn_compute", mutates_args={}, device_types=["cpu", "cuda"])
 def paged_attn_compute(
     query: torch.Tensor,
     key_cache: torch.Tensor,
@@ -61,9 +61,9 @@ def paged_attn_compute(
     block_size = value_cache.shape[1]
     num_seqs = query.shape[0]
 
-    block_tables_lst = block_table.cpu().tolist()
+    block_tables_lst = block_table.tolist()
 
-    seq_lens_lst = current_tkv_mask.cpu().tolist()
+    seq_lens_lst = current_tkv_mask.tolist()
     for i in range(num_seqs):
         q = query[i]
         block_table = block_tables_lst[i]
