@@ -696,11 +696,15 @@ def _load_partial_state_dict(
     return unused_keys
 
 
-# When emb_dim // nheads < head_dim, expand QKV and Dense Weights
+# Expand QKV and Dense weights to match head_dim override
 def _weight_expansion_for_mismatched_head_dim(
     input_sd: Mapping[str, Any], model_config
 ) -> Mapping[str, Any]:
     new_sd = dict(input_sd)
+
+    assert getattr(model_config, "head_dim", None) is not None, (
+        "for weight expansion head_dim must be defined in model config"
+    )
 
     # dimensions of layers to be expanded if needed
     layer_dim_div = {
