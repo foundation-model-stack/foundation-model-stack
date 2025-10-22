@@ -15,35 +15,61 @@ import logging
 import math
 import re
 from dataclasses import dataclass
-from typing import Any, Mapping, Optional, Tuple, Unpack
+from typing import Any, Dict, Mapping, Optional, Tuple, Unpack
 
 import torch
 from torch import nn, Tensor
 
 from fms import models
+from fms.modules.positions import PositionEncoder
 from fms.distributed.strategy import (
     DistributedStrategy,
     NoOpStrategy,
 )
-from fms.modules.positions import PositionEncoder
 from fms.modules.attention import (MultiHeadAttention,
                                    AttentionKwargs,
+                                   QKV, FusedQKV, UnfusedQKV,
                                    get_attention_type)
 
 from fms.modules.feedforward import GatedLinearUnit
 from fms.modules.layernorm import LayerNormParameterized
+from fms.modules.linear import get_linear
 from fms.modules.positions import RotaryEmbedding
 from fms.utils import serialization
 from fms.utils.activation import str_to_activation
 from fms.utils.config import ModelConfig
 
-
 logger = logging.getLogger(__name__)
 
 
 class Qwen3MuliHeadAttention(MultiHeadAttention):
-    """Customize for Qwen3"""
+    """Customize for Qwen3
 
+    Args
+    ----
+        emb_dim : int
+            Latent dimensionality of input and output tensors.
+        emb_kq : int
+            Latent dimensionality of each head in key and query projections (attention dimension).
+        emb_v : int
+            Latent dimensionality of each head in value projection (mixing dimension).
+        nheads : int
+            Number of attention heads.
+        p_dropout : float|None
+            Dropout probability. Must be in range [0,1]. If 0 or None, dropout will not be used.
+        use_bias : bool
+            Include bias terms in fully-connected sublayers?
+        fused : bool
+            If True, qkv weights will be fused, otherwise qkv weights will be unfused.
+        linear_config : Mapping[str, Any] | None
+            Configuration for selection of linear modules (QKV, dense).
+            Pass as {"linear_type": [str | callable], <other kwargs>}.
+            "linear_type" should provide the string identifier of a registered type
+            (e.g., "torch_linear", "gptq", ...) or a callable for module selection depending
+            on module name. Additional config options should be provided as kwargs in
+            linear_config.
+    """
+    
     def __init__(
         self,
         emb_dim,
@@ -58,36 +84,54 @@ class Qwen3MuliHeadAttention(MultiHeadAttention):
         linear_config: Optional[Mapping[str, Any]] = None,
         scale_factor: Optional[float] = None,
     ):
-        """_summary_
 
-        Args:           
-            emb_dim  (int): Latent dimensionality of input and output tensors.
-            emb_kq   (int): Latent dimensionality of each head in key and query 
-                            projections (attention dimension).
-            emb_v    (int): Latent dimensionality of each head in value
-                            projection (mixing dimension).
-            nheads   (int): Number of attention heads.
-            p_dropout (float|None): Dropout probability. Must be in range [0,1].
-                                    If 0 or None, dropout will not be used.
-            use_bias  (bool): Include bias terms in fully-connected sublayers?
-            fused     (bool): If True, qkv weights will be fused,
-                              otherwise qkv weights will be unfused.
-            linear_config  (Mapping[str, Any] | None):
-                            Configuration for selection of linear modules (QKV, dense).
-                            Pass as {"linear_type": [str | callable], <other kwargs>}.
-                            "linear_type" should provide the string identifier of a registered type
-                            (e.g., "torch_linear", "gptq", ...) or a callable for module selection
-                            depending on module name.
-                            Additional config options should be provided as kwargs in linear_config.
-
-        Raises:
-            ValueError: _description_
-
-        Returns:
-            _type_: _description_
-        """
         super(MultiHeadAttention, self).__init__()
+        self.nheads = nheads
+        self.kvheads = kvheads
+        self.emb_dim = emb_dim
+        self.emb_kq_per_head = emb_kq
+        self.emb_v_per_head = emb_v
+        self.p_dropout = p_dropout if p_dropout is not None else 0.0
+        self.use_bias = use_bias
+        self.fused = fused
+        self.linear_config = linear_config
+        self.scale_factor = scale_factor
+        self.norm_eps = 1e-6
+        
+        self.in_proj: QKV = (FusedQKV if self.fused else UnfusedQKV)(
+            self.emb_dim,
+            self.nheads,
+            self.kvheads,
+            self.emb_kq_per_head,
+            self.emb_v_per_head,
+            self.use_bias,
+            linear_config=linear_config,
+        )
 
+        self.dense = get_linear(
+            self.nheads * self.emb_v_per_head,
+            self.emb_dim,
+            bias=use_bias,
+            linear_config=linear_config,
+        )
+        self.q_norm = LayerNormParameterized(
+                    self.emb_kq_per_head,
+                    elementwise_scale=True,
+                    elementwise_shift=False,
+                    use_mean=False,
+                    eps=self.norm_eps,
+                    use_high_precision_pow=True,)
+
+        self.k_norm = LayerNormParameterized(
+                self.emb_kq_per_head,
+                elementwise_scale=True,
+                elementwise_shift=False,
+                use_mean=False,
+                eps=self.norm_eps,
+                use_high_precision_pow=True,)
+        if self.p_dropout:
+            self.attn_dropout = nn.Dropout(self.p_dropout)
+        self.position_encoder = position_encoder
 
     def forward(
     self,
@@ -131,8 +175,10 @@ class Qwen3MuliHeadAttention(MultiHeadAttention):
         q_out, k_out, v_out = self.in_proj(q, k, v)
 
         # note: transposes will be moved in a later PR to fix dis-contiguous tensor issues
-        queries = q_out.view(batch_size, q_len, self.nheads, self.emb_kq_per_head)
-        keys = k_out.view(batch_size, q_len, self.kvheads, self.emb_kq_per_head)
+        # queries = q_out.view(batch_size, q_len, self.nheads, self.emb_kq_per_head)
+        queries = self.q_norm(q_out.view(batch_size, q_len, self.nheads, self.emb_kq_per_head))
+        # keys = k_out.view(batch_size, q_len, self.kvheads, self.emb_kq_per_head)
+        keys = self.k_norm(k_out.view(batch_size, q_len, self.kvheads, self.emb_kq_per_head))
         values = v_out.view(batch_size, q_len, self.kvheads, self.emb_v_per_head)
 
         # You want to apply rotary embeddings pre-cache
@@ -188,8 +234,7 @@ class Qwen3MuliHeadAttention(MultiHeadAttention):
         # if use_cache=True, we return the hidden_state as well as the kv cache
         if use_cache:
             return out, (keys_return, values_return) # type: ignore
-        else:
-            return out
+        return out
 
 
 @dataclass
@@ -210,8 +255,8 @@ class Qwen3Config(ModelConfig):
     kvheads: int = 8  # hf_config.num_key_value_heads:int = 8
     # layer_types:List[str] = []
     linear_config: Optional[Mapping[str, Any]] = None  # To support quantization
+    max_position_embeddings:int = 40960
     max_expected_seq_len:int = 40960
-    # max_position_embeddings:int = 40960
     max_window_layers:int = 28
     multiple_of: int = 256  # borrowed from llama
     nheads: int = 16  # hf_config.num_attention_heads:int = 16
@@ -230,12 +275,6 @@ class Qwen3Config(ModelConfig):
 
 # Qwen3-1.7B
 _1_7b_config = Qwen3Config()
-
-
-# pylint: disable=wrong-import-position,wrong-import-order
-import os  # noqa: E402
-KDBG = len(os.getenv('KDBG', "")) > 0
-first_time = True  # pylint: disable=invalid-name
 
 
 class Qwen3Block(nn.Module):
@@ -265,13 +304,14 @@ class Qwen3Block(nn.Module):
             use_high_precision_pow=True,
         )
 
+
         if self.config.kvheads == 0:
             kvheads = self.config.nheads
         else:
             kvheads = self.config.kvheads
             assert self.config.nheads % self.config.kvheads == 0
-
-        self.attn = MultiHeadAttention(
+        # construct MultiHeadAttention object and pass in emb_dim: 2048, emb_kq: 2048/16, emb_v dim: 2048/16, 
+        self.attn = Qwen3MuliHeadAttention(
             self.config.emb_dim,
             emb_kq,
             emb_v,
@@ -283,20 +323,6 @@ class Qwen3Block(nn.Module):
             fused=self.config.fused_weights,
             linear_config=self.config.linear_config,
         )
-        self.q_norm = LayerNormParameterized(
-                                             self.config.head_dim,
-                                             elementwise_scale=True,
-                                             elementwise_shift=False,
-                                             use_mean=False,
-                                             eps=self.config.norm_eps,
-                                             use_high_precision_pow=True,)
-        self.k_norm = LayerNormParameterized(
-                                             self.config.head_dim,
-                                             elementwise_scale=True,
-                                             elementwise_shift=False,
-                                             use_mean=False,
-                                             eps=self.config.norm_eps,
-                                             use_high_precision_pow=True,)
         self.ff_sub_layer = GatedLinearUnit(
             self.config.emb_dim,
             hidden_grow_factor=self.config.hidden_grow_factor,
@@ -325,51 +351,13 @@ class Qwen3Block(nn.Module):
         # first we do MHA and Add&Norm
         residual = x
         x = self.ln(x)
-
-        # where is hidden_states?
-        # hidden_states = x[0]
-        hidden_states = x[:-1]
-        # input_shape = hidden_states.shape[:-1]
-        input_shape = x.shape[:-1]
-        hidden_shape = (*input_shape, -1, self.config.head_dim)
-
-        # From attention.py
-        # queries = q_out.view(batch_size, q_len, self.nheads, self.emb_kq_per_head)
-        # keys = k_out.view(batch_size, q_len, self.kvheads, self.emb_kq_per_head)
-        # values = v_out.view(batch_size, q_len, self.kvheads, self.emb_v_per_head)
-
-        # query_states and key_states
-        # query_states = self.q_norm(self.attn.in_proj.query(hidden_states).
-        #   view(hidden_shape)).transpose(1, 2) # type: ignore
-        # key_states = self.k_norm(self.attn.in_proj.key(hidden_states).
-        #   view(hidden_shape)).transpose(1, 2) # type: ignore
-        # value_states = self.attn.in_proj.value(hidden_states).
-        #   view(hidden_shape).transpose(1, 2)
-        query_states = self.q_norm(self.attn.in_proj.query(hidden_states). # type: ignore
-                                   view(hidden_shape)) # type: ignore
-        queries = self.attn.in_proj.query(x) # type: ignore
-
-        # pylint: disable=global-statement
-        global first_time
-        if KDBG and first_time:
-            print(f"x.shape: {x.shape}")
-            print(f"hidden_shape={hidden_shape}")
-            print(f"query_states.shape: {query_states.shape}")
-            print(f"self.attn.in_proj.query: {self.attn.in_proj.query}")
-            print(f"queries.shape: {queries.shape}")
-            # print(f"key_states.shape: {key_states.shape}")
-            # print(f"value_states.shape: {value_states.shape}")
-            first_time = False
-
         x = self.attn(
-            # q=x,
-            q=queries,
+            q=x,
             position_ids=position_ids,
             past_key_value_state=self_attn_past_key_value,
             use_cache=use_cache,
             **attn_kwargs,
         )
-
         cache = None
         if use_cache:
             x, cache = x
@@ -389,7 +377,8 @@ class Qwen3Block(nn.Module):
 
         if use_cache:
             return (x, cache)
-        return x
+        else:
+            return x
 
 
 class Qwen3Headless(nn.Module):
@@ -549,7 +538,6 @@ class Qwen3(nn.Module):
             self.config = Qwen3Config()
         self.config = self.config.updated(**kwargs)
         self.distributed_strategy = distributed_strategy
-        self.attention_bias = config.attention_bias # type: ignore
 
         self.base_model = Qwen3Headless(self.config, self.distributed_strategy)
         self.head = nn.Linear(
@@ -687,6 +675,27 @@ serialization.register_adapter_step(
     _ARCHITECTURE_NAME, "hf_gptq_fusion_check", _hf_gptq_qwen3_check
 )
 
+# pylint: disable=wrong-import-position,wrong-import-order
+import atexit  # noqa: E402
+import os  # noqa: E402
+KWR_DEBUG = len(os.getenv("KWR_DEBUG", "")) > 0
+mapping_dict: Dict[str, str] = {}
+no_mapping_dict: Dict[str, int] = {}
+if KWR_DEBUG:
+    def mapping_dict_cleanup() -> None:
+        """
+        This function will be called automatically when the script exits.
+        """
+        size = len(mapping_dict)  # noqa: F821
+        print(f"qwen3.py:_hf_to_fms_names():mapping_dict()/{size}", flush=True)
+        for key in sorted(mapping_dict.keys()):  # noqa: F821
+            print(f"  {key:<60} : {mapping_dict[key]}", flush=True)  # noqa: F821
+        size = len(no_mapping_dict)  # noqa: F821
+        print(f"qwen3.py:_hf_to_fms_names():no_mapping_dict()/{size}", flush=True)
+        for key in sorted(no_mapping_dict.keys()):  # noqa: F821
+            print(f"  {key:<60} : {no_mapping_dict[key]}", flush=True)  # noqa: F821
+    atexit.register(mapping_dict_cleanup)
+
 
 def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]:
     """_summary_
@@ -709,8 +718,8 @@ def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]
         (r"self_attn\.o_proj", "attn.dense"),
         # (r"self_attn\.k_norm", "attn.in_proj.k_norm"),
         # (r"self_attn\.q_norm", "attn.in_proj.q_norm"),
-        (r"self_attn\.k_norm", "k_norm"),
-        (r"self_attn\.q_norm", "q_norm"),
+        (r"self_attn\.k_norm", "attn.k_norm"),
+        (r"self_attn\.q_norm", "attn.q_norm"),
         (r"mlp\.gate_proj", "ff_sub_layer.wg"),
         (r"mlp\.up_proj", "ff_sub_layer.w1"),
         (r"mlp\.down_proj", "ff_sub_layer.w2"),
@@ -725,6 +734,18 @@ def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]
         for pattern, repl in replacements:
             new_name = re.sub(pattern, repl, new_name)
         new_sd[new_name] = param
+        if KWR_DEBUG:
+            if new_name == name:
+                global no_mapping_dict   # pylint: disable=global-variable-not-assigned
+                if name in no_mapping_dict:
+                    no_mapping_dict[name] += 1
+                else:
+                    no_mapping_dict[name] = 1
+            global mapping_dict # pylint: disable=global-variable-not-assigned
+            if name in mapping_dict:
+                print(f"[WARNING]: key '{name}' already in mapping_dict")
+            else:
+                mapping_dict[name] = new_name
     return new_sd
 
 
@@ -815,3 +836,7 @@ serialization.register_adapter(
     "hf",
     ["hf_to_fms_names", "hf_to_fms_rope", "hf_gptq_fusion_check", "weight_fusion"],
 )
+
+
+if __name__ == "__main__":
+    print("Nothing to do.")
