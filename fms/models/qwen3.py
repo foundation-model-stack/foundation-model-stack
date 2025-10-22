@@ -15,16 +15,17 @@ import logging
 import math
 import re
 from dataclasses import dataclass
-from typing import Any, Dict, Mapping, Optional, Tuple, Unpack
+from typing import Any, Mapping, Optional, Tuple, Unpack
 
 import torch
-from torch import nn
+from torch import nn, Tensor
 
 from fms import models
 from fms.distributed.strategy import (
     DistributedStrategy,
     NoOpStrategy,
 )
+from fms.modules.positions import PositionEncoder
 from fms.modules.attention import (MultiHeadAttention,
                                    AttentionKwargs,
                                    get_attention_type)
@@ -36,56 +37,159 @@ from fms.utils import serialization
 from fms.utils.activation import str_to_activation
 from fms.utils.config import ModelConfig
 
+
 logger = logging.getLogger(__name__)
 
-"""
-======= Mapping =======
-    # These are independent of model (except architecture)
-    inner_dim = config.intermediate_size
-    architecture = "qwen3"
-    01 + config_params["activation_fn"] = config.hidden_act
-    02 + config_params["emb_dim"] = config.hidden_size
-    03 + config_params["max_expected_seq_len"] = config.max_position_embeddings
-    04 + config_params["kvheads"] = config.num_key_value_heads
-    05 + config_params["p_dropout"] = config.attention_dropout
-    06 + config_params["norm_eps"] = config.rms_norm_eps
-    07 + config_params["rope_base"] = config.rope_theta
-    08 + config_params["src_vocab_size"] = config.vocab_size
-    09 + config_params["nheads"] = config.num_attention_heads
-    10 + config_params["nlayers"] = config.num_hidden_layers
-    11 + config_params["hidden_grow_factor"] = inner_dim / config.hidden_size
-    12 + config_params["tie_heads"] = config.tie_word_embeddings
 
-========= config.json -- https://huggingface.co/Qwen/Qwen3-1.7B/blob/main/config.json
- "architectures": [
-    "Qwen3ForCausalLM"
-  ],
-  "attention_bias": false,
-  + "attention_dropout": 0.0,           # p_dropout (05)
-  "bos_token_id": 151643,               # added 
-  "eos_token_id": 151645,
-  "head_dim": 128,
-  + "hidden_act": "silu",               # activation_fn (01)
-  + "hidden_size": 2048,                # emb_dim (02), hidden_grow_factor (11)
-  "initializer_range": 0.02,
-  + "intermediate_size": 6144,          # inner_dim (hidden_grow_factor/11)
-  + "max_position_embeddings": 40960,   # max_expected_seq_len (03)
-  "max_window_layers": 28,
-  "model_type": "qwen3",
-  + "num_attention_heads": 16,          # nheads (09)
-  + "num_hidden_layers": 28,            # nlayers (10)
-  + "num_key_value_heads": 8,           # kvheads (04)
-  + "rms_norm_eps": 1e-06,              # norm_eps (06)
-  "rope_scaling": null,
-  + "rope_theta": 1000000,              # rope_base (07)
-  "sliding_window": null,
-  + "tie_word_embeddings": true,        # tie_heads (12)
-  - "torch_dtype": "bfloat16",
-  - "transformers_version": "4.51.0",
-  "use_cache": true,
-  "use_sliding_window": false,
-  + "vocab_size": 151936                # src_vocab_size (08)
-"""
+class Qwen3MuliHeadAttention(MultiHeadAttention):
+    """Customize for Qwen3"""
+
+    def __init__(
+        self,
+        emb_dim,
+        emb_kq,
+        emb_v,
+        nheads,
+        kvheads,
+        p_dropout=None,
+        use_bias=False,
+        position_encoder: Optional[PositionEncoder] = None,
+        fused: bool = True,
+        linear_config: Optional[Mapping[str, Any]] = None,
+        scale_factor: Optional[float] = None,
+    ):
+        """_summary_
+
+        Args:           
+            emb_dim  (int): Latent dimensionality of input and output tensors.
+            emb_kq   (int): Latent dimensionality of each head in key and query 
+                            projections (attention dimension).
+            emb_v    (int): Latent dimensionality of each head in value
+                            projection (mixing dimension).
+            nheads   (int): Number of attention heads.
+            p_dropout (float|None): Dropout probability. Must be in range [0,1].
+                                    If 0 or None, dropout will not be used.
+            use_bias  (bool): Include bias terms in fully-connected sublayers?
+            fused     (bool): If True, qkv weights will be fused,
+                              otherwise qkv weights will be unfused.
+            linear_config  (Mapping[str, Any] | None):
+                            Configuration for selection of linear modules (QKV, dense).
+                            Pass as {"linear_type": [str | callable], <other kwargs>}.
+                            "linear_type" should provide the string identifier of a registered type
+                            (e.g., "torch_linear", "gptq", ...) or a callable for module selection
+                            depending on module name.
+                            Additional config options should be provided as kwargs in linear_config.
+
+        Raises:
+            ValueError: _description_
+
+        Returns:
+            _type_: _description_
+        """
+        super(MultiHeadAttention, self).__init__()
+
+
+    def forward(
+    self,
+    q: torch.Tensor,
+    k: Optional[torch.Tensor] = None,
+    v: Optional[torch.Tensor] = None,
+    position_ids=None,
+    past_key_value_state: Optional[Tuple[Tensor | None, Tensor | None]] = None,
+    use_cache=False,
+    **attn_kwargs: Unpack[AttentionKwargs],
+):
+        """
+        past_key_value_state: tuple
+            the cache to be used in attention of the form (<self/cross>_key, <self/cross>_value)
+        position_ids: Optional[torch.LongTensor]
+            The position of each of the tokens encoded in q and k. Used for RoPE embeddings
+        use_cache: bool
+            if True, the kv states for self/cross attention will be saved,
+            otherwise they will not be saved
+
+        Returns
+        -------
+        tensor or tuple
+            If use_cache=False, only the hidden state will be returned as a tensor.
+            If use_cache=True, a tuple will be
+            returned in the form (hidden_state, cache) where hidden_state is a
+            tensor and cache is of the form specified in past_key_value_state
+        """
+        # q, k, v: batch_size x seq_len x emb_dim
+        # mask: batch_size x seq_len x seq_len
+        batch_size, q_len, _ = q.size()
+
+        # if this is self attention, we always recompute
+        # cross attention only gets computed when a cache does not exist
+        # if we dont have the cache yet, we need to compute
+        # d x (h x ds)
+        # b x kvlen x d
+        # b x kvlen x h x ds
+        # b x h x kvlen x ds
+        # todo: Cross attention (This always is true for now)
+        q_out, k_out, v_out = self.in_proj(q, k, v)
+
+        # note: transposes will be moved in a later PR to fix dis-contiguous tensor issues
+        queries = q_out.view(batch_size, q_len, self.nheads, self.emb_kq_per_head)
+        keys = k_out.view(batch_size, q_len, self.kvheads, self.emb_kq_per_head)
+        values = v_out.view(batch_size, q_len, self.kvheads, self.emb_v_per_head)
+
+        # You want to apply rotary embeddings pre-cache
+        if self.position_encoder is not None:
+            queries, keys = self.position_encoder.adjusted_qk(
+                queries, keys, position_ids, past_key_value_state, use_cache
+            )
+
+        attn_compute_dict = get_attention_type(**attn_kwargs)
+
+        if use_cache:
+            if past_key_value_state is None:
+                past_key_value_state = (None, None)
+
+            keys_compute, values_compute, keys_return, values_return = (
+                attn_compute_dict["store"](
+                    keys,
+                    values,
+                    past_key_value_state[0],
+                    past_key_value_state[1],
+                    **attn_kwargs,
+                )
+            )
+        else:
+            keys_compute, values_compute = keys, values
+
+        if attn_compute_dict["is_prefill"](**attn_kwargs):
+            attn = attn_compute_dict["compute_prefill"](
+                queries,
+                keys_compute,
+                values_compute,
+                self.nheads,
+                self.kvheads,
+                self.p_dropout if self.training else 0.0,
+                self.scale_factor,
+                **attn_kwargs,
+            )
+        else:
+            attn = attn_compute_dict["compute_decode"](
+                queries,
+                keys_compute,
+                values_compute,
+                self.nheads,
+                self.kvheads,
+                self.p_dropout if self.training else 0.0,
+                self.scale_factor,
+                **attn_kwargs,
+            )
+
+        attn = attn.view(batch_size, q_len, self.nheads * self.emb_v_per_head)
+        out = self.dense(attn)
+
+        # if use_cache=True, we return the hidden_state as well as the kv cache
+        if use_cache:
+            return out, (keys_return, values_return) # type: ignore
+        else:
+            return out
 
 
 @dataclass
@@ -103,21 +207,21 @@ class Qwen3Config(ModelConfig):
     hidden_grow_factor: float = 6144 / 2048  # hf_config.intermediate_size / hf_config.hidden_size
     initializer_range:float = 0.02
     intermediate_size:int = 22016
-    kvheads: int = 32  # hf_config.num_key_value_heads:int = 32
+    kvheads: int = 8  # hf_config.num_key_value_heads:int = 8
     # layer_types:List[str] = []
     linear_config: Optional[Mapping[str, Any]] = None  # To support quantization
-    max_position_embeddings:int = 32768
     max_expected_seq_len:int = 40960
+    # max_position_embeddings:int = 40960
     max_window_layers:int = 28
     multiple_of: int = 256  # borrowed from llama
-    nheads: int = 32  # hf_config.num_attention_heads:int = 32
-    nlayers: int = 32  # hf_config.num_hidden_layers:int = 32
+    nheads: int = 16  # hf_config.num_attention_heads:int = 16
+    nlayers: int = 28  # hf_config.num_hidden_layers:int = 28
     norm_eps: float = 1e-06  # hf_config.rms_norm_eps:float = 1e-6
     p_dropout: float = 0.0  # hf_config. attention_dropout:float = 0.0
     pad_id: int = -1  # borrowed from granite, we do need it
     # rope_scaling: Dict[str, Any] = {}
     rope_base:int = 1000000  # hf_config.rope_theta:int = 1000000
-    sliding_window:int = 4096
+    sliding_window = None
     tie_heads: bool = True  # hf_config.tie_word_embeddings: bool = True
     use_cache:bool = True
     use_sliding_window:bool = False
@@ -126,6 +230,12 @@ class Qwen3Config(ModelConfig):
 
 # Qwen3-1.7B
 _1_7b_config = Qwen3Config()
+
+
+# pylint: disable=wrong-import-position,wrong-import-order
+import os  # noqa: E402
+KDBG = len(os.getenv('KDBG', "")) > 0
+first_time = True  # pylint: disable=invalid-name
 
 
 class Qwen3Block(nn.Module):
@@ -154,7 +264,6 @@ class Qwen3Block(nn.Module):
             eps=self.config.norm_eps,
             use_high_precision_pow=True,
         )
-
 
         if self.config.kvheads == 0:
             kvheads = self.config.nheads
@@ -198,22 +307,6 @@ class Qwen3Block(nn.Module):
             fused=self.config.fused_weights,
             linear_config=self.config.linear_config,
         )
-        self.ln = LayerNormParameterized(
-            self.config.emb_dim,
-            elementwise_scale=True,
-            elementwise_shift=False,
-            use_mean=False,
-            eps=self.config.norm_eps,
-            use_high_precision_pow=True,
-        )
-        self.ff_ln = LayerNormParameterized(
-            self.config.emb_dim,
-            elementwise_scale=True,
-            elementwise_shift=False,
-            use_mean=False,
-            eps=self.config.norm_eps,
-            use_high_precision_pow=True,
-        )
         if self.config.p_dropout != 0:
             self.dropout = nn.Dropout(self.config.p_dropout)
 
@@ -232,27 +325,50 @@ class Qwen3Block(nn.Module):
         # first we do MHA and Add&Norm
         residual = x
         x = self.ln(x)
+
+        # where is hidden_states?
+        # hidden_states = x[0]
+        hidden_states = x[:-1]
+        # input_shape = hidden_states.shape[:-1]
+        input_shape = x.shape[:-1]
+        hidden_shape = (*input_shape, -1, self.config.head_dim)
+
+        # From attention.py
+        # queries = q_out.view(batch_size, q_len, self.nheads, self.emb_kq_per_head)
+        # keys = k_out.view(batch_size, q_len, self.kvheads, self.emb_kq_per_head)
+        # values = v_out.view(batch_size, q_len, self.kvheads, self.emb_v_per_head)
+
+        # query_states and key_states
+        # query_states = self.q_norm(self.attn.in_proj.query(hidden_states).
+        #   view(hidden_shape)).transpose(1, 2) # type: ignore
+        # key_states = self.k_norm(self.attn.in_proj.key(hidden_states).
+        #   view(hidden_shape)).transpose(1, 2) # type: ignore
+        # value_states = self.attn.in_proj.value(hidden_states).
+        #   view(hidden_shape).transpose(1, 2)
+        query_states = self.q_norm(self.attn.in_proj.query(hidden_states). # type: ignore
+                                   view(hidden_shape)) # type: ignore
+        queries = self.attn.in_proj.query(x) # type: ignore
+
+        # pylint: disable=global-statement
+        global first_time
+        if KDBG and first_time:
+            print(f"x.shape: {x.shape}")
+            print(f"hidden_shape={hidden_shape}")
+            print(f"query_states.shape: {query_states.shape}")
+            print(f"self.attn.in_proj.query: {self.attn.in_proj.query}")
+            print(f"queries.shape: {queries.shape}")
+            # print(f"key_states.shape: {key_states.shape}")
+            # print(f"value_states.shape: {value_states.shape}")
+            first_time = False
+
         x = self.attn(
-            q=x,
+            # q=x,
+            q=queries,
             position_ids=position_ids,
             past_key_value_state=self_attn_past_key_value,
             use_cache=use_cache,
             **attn_kwargs,
         )
-
-        # where is hidden_states?
-        hidden_states = x[0]
-        input_shape = hidden_states.shape[:-1]
-        hidden_shape = (*input_shape, -1, self.config.head_dim)
-        
-        # # query_states and key_states
-        query_states = self.q_norm(self.attn.in_proj.query(hidden_states).view(hidden_shape)).transpose(1, 2) # type: ignore
-        key_states = self.k_norm(self.attn.in_proj.key(hidden_states).view(hidden_shape)).transpose(1, 2) # type: ignore
-        # value_states = self.attn.in_proj.value(hidden_states).view(hidden_shape).transpose(1, 2) # type: ignore
-        value_states = self.attn.in_proj.value(hidden_states).view(hidden_shape).transpose(1, 2)
-        print(f"query_states.shape: {query_states.shape}")
-        print(f"key_states.shape: {key_states.shape}")
-        print(f"value_states.shape: {value_states.shape}")
 
         cache = None
         if use_cache:
@@ -273,8 +389,7 @@ class Qwen3Block(nn.Module):
 
         if use_cache:
             return (x, cache)
-        else:
-            return x
+        return x
 
 
 class Qwen3Headless(nn.Module):
@@ -434,6 +549,7 @@ class Qwen3(nn.Module):
             self.config = Qwen3Config()
         self.config = self.config.updated(**kwargs)
         self.distributed_strategy = distributed_strategy
+        self.attention_bias = config.attention_bias # type: ignore
 
         self.base_model = Qwen3Headless(self.config, self.distributed_strategy)
         self.head = nn.Linear(
@@ -571,27 +687,6 @@ serialization.register_adapter_step(
     _ARCHITECTURE_NAME, "hf_gptq_fusion_check", _hf_gptq_qwen3_check
 )
 
-# pylint: disable=wrong-import-position,wrong-import-order
-import atexit  # noqa: E402
-import os  # noqa: E402
-KWR_DEBUG = len(os.getenv("KWR_DEBUG", "")) > 0
-mapping_dict: Dict[str, str] = {}
-no_mapping_dict: Dict[str, int] = {}
-if KWR_DEBUG:
-    def mapping_dict_cleanup() -> None:
-        """
-        This function will be called automatically when the script exits.
-        """
-        size = len(mapping_dict)  # noqa: F821
-        print(f"qwen3.py:_hf_to_fms_names():mapping_dict()/{size}", flush=True)
-        for key in sorted(mapping_dict.keys()):  # noqa: F821
-            print(f"  {key:<60} : {mapping_dict[key]}", flush=True)  # noqa: F821
-        size = len(no_mapping_dict)  # noqa: F821
-        print(f"qwen3.py:_hf_to_fms_names():no_mapping_dict()/{size}", flush=True)
-        for key in sorted(no_mapping_dict.keys()):  # noqa: F821
-            print(f"  {key:<60} : {no_mapping_dict[key]}", flush=True)  # noqa: F821
-    atexit.register(mapping_dict_cleanup)
-
 
 def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]:
     """_summary_
@@ -630,18 +725,6 @@ def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]
         for pattern, repl in replacements:
             new_name = re.sub(pattern, repl, new_name)
         new_sd[new_name] = param
-        if KWR_DEBUG:
-            if new_name == name:
-                global no_mapping_dict   # pylint: disable=global-variable-not-assigned
-                if name in no_mapping_dict:
-                    no_mapping_dict[name] += 1
-                else:
-                    no_mapping_dict[name] = 1
-            global mapping_dict # pylint: disable=global-variable-not-assigned
-            if name in mapping_dict:
-                print(f"[WARNING]: key '{name}' already in mapping_dict")
-            else:
-                mapping_dict[name] = new_name
     return new_sd
 
 
