@@ -104,7 +104,9 @@ def paged_attn_compute(
         # Generate mask for prefix attention
         mask = torch.ones((1, 1, seq_len_q_i, seq_len_kv), dtype=torch.bool)
         mask[:, :, :, -seq_len_q_i:] = torch.tril(mask[:, :, :, -seq_len_q_i:])
-        mask = torch.where(mask.logical_not(), -torch.inf, 0.0).to(device=query.device, dtype=query.dtype)
+        mask = torch.where(mask.logical_not(), -torch.inf, 0.0).to(
+            device=query.device, dtype=query.dtype
+        )
 
         out = F.scaled_dot_product_attention(
             q.transpose(0, 1).unsqueeze(0),  # format for sdpa
