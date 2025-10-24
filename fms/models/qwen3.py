@@ -43,7 +43,7 @@ logger = logging.getLogger(__name__)
 
 
 class Qwen3MuliHeadAttention(MultiHeadAttention):
-    """Customize for Qwen3
+    """Customized for Qwen3
 
     Args
     ----
@@ -114,21 +114,22 @@ class Qwen3MuliHeadAttention(MultiHeadAttention):
             bias=use_bias,
             linear_config=linear_config,
         )
-        self.q_norm = LayerNormParameterized(
-                    self.emb_kq_per_head,
-                    elementwise_scale=True,
-                    elementwise_shift=False,
-                    use_mean=False,
-                    eps=self.norm_eps,
-                    use_high_precision_pow=True,)
-
-        self.k_norm = LayerNormParameterized(
-                self.emb_kq_per_head,
-                elementwise_scale=True,
-                elementwise_shift=False,
-                use_mean=False,
-                eps=self.norm_eps,
-                use_high_precision_pow=True,)
+        self.q_norm = nn.LayerNorm(emb_dim, self.norm_eps)
+        # self.q_norm1 = LayerNormParameterized(
+        #             self.emb_kq_per_head,
+        #             elementwise_scale=True,
+        #             elementwise_shift=False,
+        #             use_mean=False,
+        #             eps=self.norm_eps,
+        #             use_high_precision_pow=True,)
+        self.k_norm = nn.LayerNorm(emb_dim, self.norm_eps)
+        # self.k_norm = LayerNormParameterized(
+        #         self.emb_kq_per_head,
+        #         elementwise_scale=True,
+        #         elementwise_shift=False,
+        #         use_mean=False,
+        #         eps=self.norm_eps,
+        #         use_high_precision_pow=True,)
         if self.p_dropout:
             self.attn_dropout = nn.Dropout(self.p_dropout)
         self.position_encoder = position_encoder
@@ -176,9 +177,14 @@ class Qwen3MuliHeadAttention(MultiHeadAttention):
 
         # note: transposes will be moved in a later PR to fix dis-contiguous tensor issues
         # queries = q_out.view(batch_size, q_len, self.nheads, self.emb_kq_per_head)
-        queries = self.q_norm(q_out.view(batch_size, q_len, self.nheads, self.emb_kq_per_head))
+        # The next one works.
+        # queries = self.q_norm(q_out.view(batch_size, q_len, self.nheads, self.emb_kq_per_head))
+        q_view = q_out.view(batch_size, q_len, self.nheads, self.emb_kq_per_head)
+        queries = self.q_norm(q_view)
         # keys = k_out.view(batch_size, q_len, self.kvheads, self.emb_kq_per_head)
-        keys = self.k_norm(k_out.view(batch_size, q_len, self.kvheads, self.emb_kq_per_head))
+        k_view = k_out.view(batch_size, q_len, self.kvheads, self.emb_kq_per_head)
+        keys = self.k_norm(k_view)
+        # do not have self.v_norm so just use v_out.view()
         values = v_out.view(batch_size, q_len, self.kvheads, self.emb_v_per_head)
 
         # You want to apply rotary embeddings pre-cache
@@ -246,14 +252,17 @@ class Qwen3Config(ModelConfig):
     # -----------------------------------------------------------------------
     activation_fn:str = "silu"  # hf_config.hidden_act:str = "silu"
     attention_bias:bool = False
+    bos_token_id:int = 151643
     emb_dim: int = 4096  # hf_config.hidden_size:int = 4096
-    fused_weights: bool = True  # FMS Specific -- For CPU/GPU = T, AIU = F
+    eos_token_id:int = 151645
+    fused_weights: bool = True  # FMS Specific -- For CPU/GPU =     linear_config: Optional[Mapping[s_token_id"str, Any]] = None  # To support quantizationT, AIU = F
     head_dim:int = 128
     hidden_grow_factor: float = 6144 / 2048  # hf_config.intermediate_size / hf_config.hidden_size
     initializer_range:float = 0.02
     intermediate_size:int = 22016
     kvheads: int = 8  # hf_config.num_key_value_heads:int = 8
     # layer_types:List[str] = []
+    layer_type = None
     linear_config: Optional[Mapping[str, Any]] = None  # To support quantization
     max_position_embeddings:int = 40960
     max_expected_seq_len:int = 40960
@@ -265,6 +274,7 @@ class Qwen3Config(ModelConfig):
     p_dropout: float = 0.0  # hf_config. attention_dropout:float = 0.0
     pad_id: int = -1  # borrowed from granite, we do need it
     # rope_scaling: Dict[str, Any] = {}
+    rope_scaling = None
     rope_base:int = 1000000  # hf_config.rope_theta:int = 1000000
     sliding_window = None
     tie_heads: bool = True  # hf_config.tie_word_embeddings: bool = True
