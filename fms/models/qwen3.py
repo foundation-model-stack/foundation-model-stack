@@ -114,22 +114,22 @@ class Qwen3MuliHeadAttention(MultiHeadAttention):
             bias=use_bias,
             linear_config=linear_config,
         )
-        self.q_norm = nn.LayerNorm(emb_dim, self.norm_eps)
-        # self.q_norm1 = LayerNormParameterized(
-        #             self.emb_kq_per_head,
-        #             elementwise_scale=True,
-        #             elementwise_shift=False,
-        #             use_mean=False,
-        #             eps=self.norm_eps,
-        #             use_high_precision_pow=True,)
-        self.k_norm = nn.LayerNorm(emb_dim, self.norm_eps)
-        # self.k_norm = LayerNormParameterized(
-        #         self.emb_kq_per_head,
-        #         elementwise_scale=True,
-        #         elementwise_shift=False,
-        #         use_mean=False,
-        #         eps=self.norm_eps,
-        #         use_high_precision_pow=True,)
+        # self.q_norm = nn.LayerNorm(emb_dim, self.norm_eps)
+        self.q_norm = LayerNormParameterized(
+                    self.emb_kq_per_head,
+                    elementwise_scale=True,
+                    elementwise_shift=False,
+                    use_mean=False,
+                    eps=self.norm_eps,
+                    use_high_precision_pow=True,)
+        # self.k_norm = nn.LayerNorm(emb_dim, self.norm_eps)
+        self.k_norm = LayerNormParameterized(
+                self.emb_kq_per_head,
+                elementwise_scale=True,
+                elementwise_shift=False,
+                use_mean=False,
+                eps=self.norm_eps,
+                use_high_precision_pow=True,)
         if self.p_dropout:
             self.attn_dropout = nn.Dropout(self.p_dropout)
         self.position_encoder = position_encoder
