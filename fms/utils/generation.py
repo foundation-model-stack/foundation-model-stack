@@ -249,6 +249,7 @@ def generate(
     next_input = input_ids
     kwargs["past_key_value_states"] = None
     kwargs["use_cache"] = use_cache
+    kwargs["attn_algorithm"] = "math"
     # if we didn't specify last_n_tokens and only_last_token is set to True, set last_n_tokens to 1, otherwise use default
     # we do this since the output shape of only_last_token is different and therefore would change the logic in generate
     if "last_n_tokens" not in kwargs and kwargs.get("only_last_token", False):

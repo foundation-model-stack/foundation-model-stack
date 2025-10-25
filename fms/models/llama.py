@@ -779,6 +779,7 @@ serialization.register_adapter(
         "weight_fusion",
     ],
 )
+
 serialization.register_adapter(
     "llama",
     "fms.pre0.0.6",

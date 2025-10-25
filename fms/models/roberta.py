@@ -104,8 +104,8 @@ class RoBERTaBlock(nn.Module):
             **attn_kwargs,
         )
 
-        if self.config.p_dropout != 0:
-            x = self.dropout(x)
+        # if self.config.p_dropout != 0:
+        #    x = self.dropout(x)
 
         # residual connection
         x = x + residual
@@ -116,8 +116,8 @@ class RoBERTaBlock(nn.Module):
         residual = x
         x = self.ff_sub_layer(x)
 
-        if self.config.p_dropout != 0:
-            x = self.dropout(x)
+        # if self.config.p_dropout != 0:
+        #     x = self.dropout(x)
 
         # another residual
         x = x + residual
@@ -238,8 +238,8 @@ class RoBERTaHeadless(nn.Module):
         x = self.enc_norm(x)
 
         # add dropout
-        if self.config.p_dropout:
-            x = self.dropout(x)
+        # if self.config.p_dropout:
+        #     x = self.dropout(x)
 
         # layers
         for layer in self.layers:
