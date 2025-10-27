@@ -1,6 +1,7 @@
 import collections
 import os
 import re
+import logging
 from collections import ChainMap
 from collections.abc import Iterable
 from functools import reduce
@@ -10,6 +11,9 @@ from typing import Any, Callable, Mapping, MutableMapping, Optional, Set, Union
 import torch
 
 from fms.modules.tp import TPModule
+
+
+logger = logging.getLogger(__name__)
 
 
 __adapters: MutableMapping[
@@ -567,9 +571,8 @@ def load_state_dict_into_model(
             del fms_partial_sd
 
     if unused_keys and rank == 0:
-        # TODO: start using logger?
-        print(
-            f"[WARNING] Keys from checkpoint (adapted to FMS) "
+        logger.warning(
+            f"Keys from checkpoint (adapted to FMS) "
             f"not copied into model: {unused_keys}"
         )
 
@@ -691,3 +694,74 @@ def _load_partial_state_dict(
                 unused_keys.add(key)
 
     return unused_keys
+
+
+# Expand QKV and Dense weights to match head_dim override
+def _weight_expansion_for_mismatched_head_dim(
+    input_sd: Mapping[str, Any], model_config
+) -> Mapping[str, Any]:
+    new_sd = dict(input_sd)
+
+    assert getattr(model_config, "head_dim", None) is not None, (
+        "for weight expansion head_dim must be defined in model config"
+    )
+
+    # dimensions of layers to be expanded if needed
+    layer_dim_div = {
+        "attn.in_proj.query": (0, model_config.nheads),
+        "attn.in_proj.key": (0, model_config.kvheads),
+        "attn.in_proj.value": (0, model_config.kvheads),
+        "attn.dense": (1, model_config.nheads),
+    }
+
+    # Computed head_dims for QKV and Dense
+    head_dims_qkvd = [
+        input_sd[layer].size(dim[0]) // dim[1]
+        for layer in input_sd
+        for tgt, dim in layer_dim_div.items()
+        if tgt in layer
+    ]
+
+    # No attention layer in this step
+    if len(set(head_dims_qkvd)) == 0:
+        return new_sd
+
+    # Computed head_dims for QKV and Dense should match
+    assert len(set(head_dims_qkvd)) == 1, (
+        "head_dims of QKV, and Dense layers do not agree"
+    )
+
+    assert model_config.head_dim % head_dims_qkvd[0] == 0, (
+        f"weight expansion factor should not have fraction: {model_config.head_dim} / {head_dims_qkvd[0]}"
+    )
+
+    expansion_factor = model_config.head_dim // head_dims_qkvd[0]
+
+    if expansion_factor > 1:
+        assert expansion_factor % 2 == 0, "expansion factor must be an even number"
+
+        expand_layer_dim = {
+            layer: layer_dim_div[tgt][0]
+            for layer in new_sd
+            for tgt in layer_dim_div
+            if tgt in layer
+        }
+
+        for layer, expand_dim in expand_layer_dim.items():
+            tensor_value = new_sd[layer]
+            original_size = list(tensor_value.size())
+            expanded_size = original_size.copy()
+            expanded_size[expand_dim] = expanded_size[expand_dim] * expansion_factor
+            logger.warning(
+                f"expanding weights of {('.'.join(layer.split('.')[1:-1])):30.30} {str(original_size):12.12} => {expanded_size}"
+            )
+            slices = [
+                slice(0, None, expansion_factor) if dim == expand_dim else slice(None)
+                for dim in range(tensor_value.ndim)
+            ]
+            # Assign the original weights tensor to the interleaved positions
+            expanded_tensor = torch.zeros(expanded_size)
+            expanded_tensor[tuple(slices)] = tensor_value
+            new_sd[layer] = expanded_tensor
+
+    return new_sd
