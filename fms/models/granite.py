@@ -24,11 +24,9 @@ from fms.utils.activation import str_to_activation
 from fms.utils.config import ModelConfig
 from fms.utils.headless import gather_outputs
 
-from deepview.utils.io_utils import * 
 
 logger = logging.getLogger(__name__)
 
-from pycony import *
 
 @dataclass
 class GraniteConfig(ModelConfig):
@@ -130,8 +128,6 @@ class GraniteBlock(nn.Module):
         # first we do MHA and Add&Norm
         residual = x
         x = self.ln(x)
-        # open_console()
-        
         x = self.attn(
             q=x,
             position_ids=position_ids,
