@@ -22,12 +22,11 @@ from fms.modules.positions import RotaryEmbedding
 from fms.utils import serialization
 from fms.utils.activation import str_to_activation
 from fms.utils.config import ModelConfig
+from fms.utils.headless import gather_outputs
 
-from deepview.utils.io_utils import * 
 
 logger = logging.getLogger(__name__)
 
-from pycony import *
 
 @dataclass
 class GraniteConfig(ModelConfig):
@@ -35,6 +34,7 @@ class GraniteConfig(ModelConfig):
     emb_dim: int = 4096
     norm_eps: float = 1e-5
     nheads: int = 32
+    head_dim: int = 128  # getattr(config, "head_dim", emb_dim // nheads)
     kvheads: int = 0
     nlayers: int = 32
     pad_id: int = -1
@@ -60,8 +60,8 @@ class GraniteBlock(nn.Module):
     def __init__(self, config: GraniteConfig, rotary_emb: RotaryEmbedding):
         super(GraniteBlock, self).__init__()
         self.config = config
-        emb_kq = self.config.emb_dim // self.config.nheads
-        emb_v = self.config.emb_dim // self.config.nheads
+        emb_kq = self.config.head_dim
+        emb_v = self.config.head_dim
 
         self.ln = LayerNormParameterized(
             self.config.emb_dim,
@@ -128,8 +128,6 @@ class GraniteBlock(nn.Module):
         # first we do MHA and Add&Norm
         residual = x
         x = self.ln(x)
-        # open_console()
-        
         x = self.attn(
             q=x,
             position_ids=position_ids,
@@ -188,7 +186,7 @@ class GraniteHeadless(nn.Module):
         rope_scaling = {"rope_type": "ntk" if self.config.ntk_scaling else "regular"}
 
         self.rot_emb = RotaryEmbedding(
-            dim=self.config.emb_dim // self.config.nheads,
+            dim=self.config.head_dim,
             scaling=rope_scaling,
             max_seq_len=self.config.max_expected_seq_len,
             ratio=self.config.rope_theta,
@@ -370,7 +368,7 @@ class Granite(nn.Module):
         position_ids: Optional[torch.LongTensor] = None,
         past_key_value_states: Optional[Tuple[torch.FloatTensor,]] = None,
         use_cache: bool = False,
-        only_last_token: bool = False,
+        last_n_tokens: int = 0,
         **attn_kwargs: Unpack[AttentionKwargs],
     ):
         get_attention_type(**attn_kwargs)["validate_attn_kwargs"](
@@ -388,8 +386,7 @@ class Granite(nn.Module):
             **attn_kwargs,
         )
 
-        if only_last_token:
-            output = output[:, -1, :]
+        output = gather_outputs(output, last_n_tokens, **attn_kwargs)
         preds = self.head(output)
         preds = preds / self.config.logits_scaling
 
@@ -502,6 +499,13 @@ serialization.register_adapter_step(
 )
 
 
+serialization.register_adapter_step(
+    _architecture_name,
+    "weight_expansion_for_mismatched_head_dim",
+    serialization._weight_expansion_for_mismatched_head_dim,  # type: ignore[arg-type]
+)
+
+
 def _get_rope_params(linear_type: str) -> list[str]:
     if "gptq" in linear_type:
         return ["qweight", "scales", "qzeros", "bias"]
@@ -609,5 +613,10 @@ serialization.register_adapter_step(
 serialization.register_adapter(
     _architecture_name,
     "hf",
-    ["hf_to_fms_names", "hf_to_fms_rope", "hf_gptq_fusion_check", "weight_fusion"],
+    [
+        "hf_to_fms_names",
+        "hf_to_fms_rope",
+        "hf_gptq_fusion_check",
+        "weight_fusion",
+    ],
 )
