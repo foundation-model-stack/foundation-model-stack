@@ -13,7 +13,6 @@ from transformers import (  # type: ignore
 
 from fms.models import get_model, list_variants
 
-
 def register_fms_models():
     """Register all FMS models with huggingface AutoModels"""
     from fms.models.hf import (
@@ -222,6 +221,20 @@ def _map_model_config(architecture, config):
         config_params["norm_eps"] = config.rms_norm_eps
         config_params["rope_base"] = config.rope_theta
         config_params["sliding_window"] = config.sliding_window
+    elif architecture == "Mistral3ForConditionalGeneration":
+
+        if getattr(config.text_config, "model_type", None) != "mistral":
+            raise ValueError(
+                "FMS implementation of Mistral3 currently supports only 'mistral' language model"
+            )
+        
+        inner_dim = config.text_config.intermediate_size
+        _, config_params = _map_model_config("MistralForCausalLM", config.text_config)
+       
+        # Normalize the downstream selector used by FMS model registry
+        architecture = architecture = config.model_type # "mistral3"
+        infer_common_params = False
+
     elif architecture == "BambaForCausalLM":
         inner_dim = config.intermediate_size
         architecture = "bamba"
