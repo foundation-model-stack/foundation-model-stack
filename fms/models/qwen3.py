@@ -11,11 +11,13 @@ Part of code to support Qwen3 models
 # pylint: disable=missing-function-docstring
 # pylint: disable=too-many-arguments,too-many-positional-arguments
 
+import glob
 import logging
 import math
+import os
 import re
 from dataclasses import dataclass
-from typing import Any, Dict, Mapping, Optional, Tuple, Unpack
+from typing import Any, Mapping, Optional, Tuple, Unpack
 
 import torch
 from torch import nn, Tensor
@@ -40,6 +42,68 @@ from fms.utils.activation import str_to_activation
 from fms.utils.config import ModelConfig
 
 logger = logging.getLogger(__name__)
+
+@dataclass
+class GlobalData:
+    g_kst_first = True
+
+def _ksave_tensor(a_tensor: Tensor,
+                  tensor_dir: str = "_tensors",
+                  prefix: str = "tensor",
+                  file_name: str = "") -> None:
+    """Save a tensor to a directory with explict or generic name
+
+    Args:
+        a_tensor (Tensor):tensor to save
+        tensor_dir (str, optional): _description_. Defaults to "_tensors".
+        prefix (str, optional): Use a sequenc numbering with this prefix. Defaults to "tensor_".
+        file_name (str, optional): non-null string is explicit file name. Defaults to "".
+
+    Raises:
+        ValueError: _description_
+
+    Returns:
+        _type_: _description_
+    """
+    is_dir = os.path.isdir(tensor_dir)
+    if is_dir is False and GlobalData.g_kst_first:
+        print(f"Directory not found:'{tensor_dir}', tensor NOT saved")
+        GlobalData.g_kst_first = False
+        return
+    if is_dir is False:
+        return
+    filename = ""
+    if len(file_name) > 0:
+        filename = file_name
+    else:
+        # find number of files with prefix
+        pt_files = glob.glob(os.path.join(tensor_dir, f"{prefix}*.pt"))
+        seq_num = len(pt_files) + 1
+        filename = f"{tensor_dir}/{prefix}{seq_num:04d}.pt"
+    if os.path.isfile(filename):
+        print(f"Existing file found:'{filename}', tensor NOT saved")
+        return
+    torch.save(a_tensor, filename)
+
+
+class Qwen3RMSNorm(nn.Module):
+    def __init__(self, hidden_size, eps: float = 1e-6) -> None:
+        """
+        Qwen3RMSNorm is equivalent to T5LayerNorm
+        """
+        super().__init__()
+        self.weight = nn.Parameter(torch.ones(hidden_size))
+        self.variance_epsilon = eps
+
+    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        input_dtype = hidden_states.dtype
+        hidden_states = hidden_states.to(torch.float32)
+        variance = hidden_states.pow(2).mean(-1, keepdim=True)
+        hidden_states = hidden_states * torch.rsqrt(variance + self.variance_epsilon)
+        return self.weight * hidden_states.to(input_dtype)
+
+    def extra_repr(self):
+        return f"{tuple(self.weight.shape)}, eps={self.variance_epsilon}"
 
 
 class Qwen3MuliHeadAttention(MultiHeadAttention):
@@ -69,7 +133,7 @@ class Qwen3MuliHeadAttention(MultiHeadAttention):
             on module name. Additional config options should be provided as kwargs in
             linear_config.
     """
-    
+
     def __init__(
         self,
         emb_dim,
@@ -97,7 +161,7 @@ class Qwen3MuliHeadAttention(MultiHeadAttention):
         self.linear_config = linear_config
         self.scale_factor = scale_factor
         self.norm_eps = 1e-6
-        
+
         self.in_proj: QKV = (FusedQKV if self.fused else UnfusedQKV)(
             self.emb_dim,
             self.nheads,
@@ -114,7 +178,6 @@ class Qwen3MuliHeadAttention(MultiHeadAttention):
             bias=use_bias,
             linear_config=linear_config,
         )
-        # self.q_norm = nn.LayerNorm(emb_dim, self.norm_eps)
         self.q_norm = LayerNormParameterized(
                     self.emb_kq_per_head,
                     elementwise_scale=True,
@@ -122,7 +185,10 @@ class Qwen3MuliHeadAttention(MultiHeadAttention):
                     use_mean=False,
                     eps=self.norm_eps,
                     use_high_precision_pow=True,)
-        # self.k_norm = nn.LayerNorm(emb_dim, self.norm_eps)
+        # self.q_norm = nn.LayerNorm(emb_kq, self.norm_eps)
+        # self.q_norm = Qwen3RMSNorm(hidden_size=self.emb_kq_per_head,
+        #                            eps=self.emb_kq_per_head)
+
         self.k_norm = LayerNormParameterized(
                 self.emb_kq_per_head,
                 elementwise_scale=True,
@@ -130,6 +196,9 @@ class Qwen3MuliHeadAttention(MultiHeadAttention):
                 use_mean=False,
                 eps=self.norm_eps,
                 use_high_precision_pow=True,)
+        # self.k_norm = nn.LayerNorm(emb_v, self.emb_v)
+        # self.k_norm = Qwen3RMSNorm(hidden_size=self.emb_kq_per_head,
+        #                            eps=self.emb_kq_per_head)
         if self.p_dropout:
             self.attn_dropout = nn.Dropout(self.p_dropout)
         self.position_encoder = position_encoder
@@ -175,17 +244,25 @@ class Qwen3MuliHeadAttention(MultiHeadAttention):
         # todo: Cross attention (This always is true for now)
         q_out, k_out, v_out = self.in_proj(q, k, v)
 
+        # q_view = q_out.view(self.nheads, 2, -1, q_out.size(1))
+        # q_print = q_view.transpose(1, 2).reshape(*q_out.size())
+        # k_view = k_out.view(self.kvheads, 2, -1, k_out.size(1))
+        # k_print = k_view.transpose(1, 2).reshape(*k_out.size())
+        # input_shape = q.shape[:-1]
+        # hidden_shape = (*input_shape, -1, self.emb_kq_per_head)
+
         # note: transposes will be moved in a later PR to fix dis-contiguous tensor issues
         # queries = q_out.view(batch_size, q_len, self.nheads, self.emb_kq_per_head)
-        # The next one works.
-        # queries = self.q_norm(q_out.view(batch_size, q_len, self.nheads, self.emb_kq_per_head))
-        q_view = q_out.view(batch_size, q_len, self.nheads, self.emb_kq_per_head)
-        queries = self.q_norm(q_view)
+        # queries = self.q_norm(q_out.view(hidden_shape))
         # keys = k_out.view(batch_size, q_len, self.kvheads, self.emb_kq_per_head)
-        k_view = k_out.view(batch_size, q_len, self.kvheads, self.emb_kq_per_head)
-        keys = self.k_norm(k_view)
-        # do not have self.v_norm so just use v_out.view()
+        # keys = self.k_norm(k_out.view(hidden_shape))
+        # values = v_out.view(hidden_shape)
+        queries = self.q_norm(q_out.view(batch_size, q_len, self.nheads, self.emb_kq_per_head))
+        keys = self.k_norm(k_out.view(batch_size, q_len, self.kvheads, self.emb_kq_per_head))
         values = v_out.view(batch_size, q_len, self.kvheads, self.emb_v_per_head)
+        _ksave_tensor(queries,prefix="MHA-fwd-q")
+        _ksave_tensor(keys,prefix="MHA-fwd-k")
+        _ksave_tensor(values,prefix="MHA-fwd-v")
 
         # You want to apply rotary embeddings pre-cache
         if self.position_encoder is not None:
@@ -237,7 +314,8 @@ class Qwen3MuliHeadAttention(MultiHeadAttention):
         attn = attn.view(batch_size, q_len, self.nheads * self.emb_v_per_head)
         out = self.dense(attn)
 
-        # if use_cache=True, we return the hidden_state as well as the kv cache
+        _ksave_tensor(out,prefix="MHA-fwd-out1")
+        # if use_cache=True, we return the hidden_state as well as the kv cach
         if use_cache:
             return out, (keys_return, values_return) # type: ignore
         return out
@@ -255,11 +333,13 @@ class Qwen3Config(ModelConfig):
     bos_token_id:int = 151643
     emb_dim: int = 4096  # hf_config.hidden_size:int = 4096
     eos_token_id:int = 151645
-    fused_weights: bool = True  # FMS Specific -- For CPU/GPU =     linear_config: Optional[Mapping[s_token_id"str, Any]] = None  # To support quantizationT, AIU = F
+    fused_weights: bool = True  # FMS Specific -- For CPU/GPU =T   AIU = F
+    # linear_config: Optional[Mapping[s_token_id"str, Any]] = None
+    #   To support quantizationT,
     head_dim:int = 128
     hidden_grow_factor: float = 6144 / 2048  # hf_config.intermediate_size / hf_config.hidden_size
     initializer_range:float = 0.02
-    intermediate_size:int = 22016
+    intermediate_size:int = 6144
     kvheads: int = 8  # hf_config.num_key_value_heads:int = 8
     # layer_types:List[str] = []
     layer_type = None
@@ -272,8 +352,7 @@ class Qwen3Config(ModelConfig):
     nlayers: int = 28  # hf_config.num_hidden_layers:int = 28
     norm_eps: float = 1e-06  # hf_config.rms_norm_eps:float = 1e-6
     p_dropout: float = 0.0  # hf_config. attention_dropout:float = 0.0
-    pad_id: int = -1  # borrowed from granite, we do need it
-    # rope_scaling: Dict[str, Any] = {}
+    pad_id: int = 151643  # from generation.json
     rope_scaling = None
     rope_base:int = 1000000  # hf_config.rope_theta:int = 1000000
     sliding_window = None
@@ -320,7 +399,8 @@ class Qwen3Block(nn.Module):
         else:
             kvheads = self.config.kvheads
             assert self.config.nheads % self.config.kvheads == 0
-        # construct MultiHeadAttention object and pass in emb_dim: 2048, emb_kq: 2048/16, emb_v dim: 2048/16, 
+        # construct MultiHeadAttention object and pass in emb_dim: 2048,
+        #    emb_kq: 2048/16, emb_v dim: 2048/16,
         self.attn = Qwen3MuliHeadAttention(
             self.config.emb_dim,
             emb_kq,
@@ -355,7 +435,6 @@ class Qwen3Block(nn.Module):
         use_cache=False,
         **attn_kwargs: Unpack[AttentionKwargs],
     ):
-
         self_attn_past_key_value = past_key_value_state
 
         # first we do MHA and Add&Norm
@@ -685,27 +764,6 @@ serialization.register_adapter_step(
     _ARCHITECTURE_NAME, "hf_gptq_fusion_check", _hf_gptq_qwen3_check
 )
 
-# pylint: disable=wrong-import-position,wrong-import-order
-import atexit  # noqa: E402
-import os  # noqa: E402
-KWR_DEBUG = len(os.getenv("KWR_DEBUG", "")) > 0
-mapping_dict: Dict[str, str] = {}
-no_mapping_dict: Dict[str, int] = {}
-if KWR_DEBUG:
-    def mapping_dict_cleanup() -> None:
-        """
-        This function will be called automatically when the script exits.
-        """
-        size = len(mapping_dict)  # noqa: F821
-        print(f"qwen3.py:_hf_to_fms_names():mapping_dict()/{size}", flush=True)
-        for key in sorted(mapping_dict.keys()):  # noqa: F821
-            print(f"  {key:<60} : {mapping_dict[key]}", flush=True)  # noqa: F821
-        size = len(no_mapping_dict)  # noqa: F821
-        print(f"qwen3.py:_hf_to_fms_names():no_mapping_dict()/{size}", flush=True)
-        for key in sorted(no_mapping_dict.keys()):  # noqa: F821
-            print(f"  {key:<60} : {no_mapping_dict[key]}", flush=True)  # noqa: F821
-    atexit.register(mapping_dict_cleanup)
-
 
 def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]:
     """_summary_
@@ -744,18 +802,6 @@ def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]
         for pattern, repl in replacements:
             new_name = re.sub(pattern, repl, new_name)
         new_sd[new_name] = param
-        if KWR_DEBUG:
-            if new_name == name:
-                global no_mapping_dict   # pylint: disable=global-variable-not-assigned
-                if name in no_mapping_dict:
-                    no_mapping_dict[name] += 1
-                else:
-                    no_mapping_dict[name] = 1
-            global mapping_dict # pylint: disable=global-variable-not-assigned
-            if name in mapping_dict:
-                print(f"[WARNING]: key '{name}' already in mapping_dict")
-            else:
-                mapping_dict[name] = new_name
     return new_sd
 
 
@@ -844,7 +890,8 @@ serialization.register_adapter_step(
 serialization.register_adapter(
     _ARCHITECTURE_NAME,
     "hf",
-    ["hf_to_fms_names", "hf_to_fms_rope", "hf_gptq_fusion_check", "weight_fusion"],
+    # ["hf_to_fms_names", "hf_to_fms_rope", "hf_gptq_fusion_check", "weight_fusion"],
+    ["hf_to_fms_names", "hf_gptq_fusion_check", "weight_fusion"],
 )
 
 
