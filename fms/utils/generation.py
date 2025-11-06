@@ -239,7 +239,7 @@ def generate(
         if not is_batch:
             input_ids = input_ids.unsqueeze(0)
     else:
-        raise TypeError("input_ids must be one of Tensor or List")
+        raise TypeError("input_ids must be a tensor")
 
     eos_found = torch.zeros(
         input_ids.shape[0], dtype=torch.bool, device=input_ids.device
