@@ -1,0 +1,239 @@
+import logging
+from typing import Any, Mapping, Optional, Unpack, Tuple
+import re
+from fms.distributed.strategy import DistributedStrategy, NoOpStrategy
+from fms import models
+from fms.models.llava_next import LlavaNext, LlavaNextConfig
+from fms.utils import serialization
+from fms.modules.attention import AttentionKwargs
+from fms.modules.linear import get_linear_type
+
+import torch
+from torch import nn
+
+logger = logging.getLogger(__name__)
+
+# Granite vision embeddings are very similar to llava next / granite vision.
+# TODO should be the 3.3 config, not 3.2, but that would go in the main vision file...
+_granite_vision_embed_3_3_2b_config = LlavaNextConfig()
+
+_architecture_name = "granite_vision_emb"
+
+def _granite_vision_embed_factory_factory(config):
+    def factory(**kwargs):
+        return GraniteVisionEmb(config, **kwargs)
+
+    return factory
+
+# TODO - add this
+# TODO add custom packing
+# TODO learn to run deepview
+class GraniteVisionEmb(nn.Module):
+    def __init__(
+        self,
+        config: Optional[LlavaNextConfig] = None,
+        distributed_strategy: DistributedStrategy = NoOpStrategy,
+        **kwargs,
+    ):
+        super(GraniteVisionEmb, self).__init__()
+        # Since the config is identical to Llava Next, we leave the default
+        # handling to that class, but we go with encapsulation instead of
+        # inheritance here to better align with the model structure on HF hub.
+        self.model = LlavaNext(config, distributed_strategy, **kwargs)
+
+        # TODO - projector dim is currently hardcoded to 128 in the module,
+        # but it's probably a good idea to pull that out to a config on HF Hub
+        # and pull it out of the config here...
+        self.custom_text_proj = nn.Linear(
+            self.model.config.text_config.emb_dim, 128,
+        )
+
+        # NOTE - this attr is needed to pass this as an adapter kwarg
+        self.config = self.model.config
+        self.distributed_strategy = distributed_strategy
+
+
+    def forward(
+        self,
+        input_ids_or_embeds: torch.Tensor,
+        position_ids: Optional[torch.Tensor] = None,
+        past_key_value_states: Optional[Tuple[torch.FloatTensor,]] = None,
+        use_cache: Optional[bool] = False,
+        **attn_kwargs: Unpack[AttentionKwargs],
+    ):
+        # NOTE - this is the same as calling the underlying llava next model,
+        # but we directly call the LLM here to make it more obvious what is
+        # happening; the preparation of the image inputs takes place in
+        # prepare_inputs_for_generation to better align with llava next impl,
+        # since image inputs only need to be masked into the inital embeddings.
+        # outputs = self.model.language_model(
+        #     input_ids_or_embeds,
+        #     position_ids=position_ids,
+        #     past_key_value_states=past_key_value_states,
+        #     use_cache=use_cache,
+        #     **attn_kwargs,
+        # ) # outputs is a tuple containing the decoder output and kv states
+
+        # TODO - probably a good idea to discuss with forward() actually entails
+        # here since this won't use generate
+        raise NotImplementedError("forward not implemented")
+
+models.register_model(
+    _architecture_name,
+    "_granite_vision_embed_3_3_2b_config",
+    _granite_vision_embed_factory_factory(_granite_vision_embed_3_3_2b_config),
+)
+
+def _weight_fusion(
+    input_sd: Mapping, model_config: Optional[LlavaNextConfig] = None, **kwargs
+):
+    has_fused_weights = True
+    if model_config:
+        if not model_config.fused_weights:
+            has_fused_weights = False
+
+    new_sd = input_sd
+    if has_fused_weights:
+        new_sd = serialization._mlp_glu_unfused_to_fused_adapter_step(
+            serialization._attn_unfused_to_fused_step(new_sd)
+        )
+    return new_sd
+
+
+def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]:
+    # TODO - we use the same replacement scheme as llava next, but it's good
+    # to be aware that there is an extra layer of encapsulation here.
+    replacements = [
+        # vision
+        (r"vision_tower\.vision_model\.head", "vision_tower.head"),
+        (r"vision_tower\.vision_model\.encoder", "vision_tower.base_model.encoder"),
+        (
+            r"vision_tower\.vision_model\.embeddings",
+            "vision_tower.base_model.embeddings",
+        ),
+        (
+            r"vision_tower\.vision_model\.post_layernorm",
+            "vision_tower.base_model.post_layernorm",
+        ),
+        (r"self_attn\.k_proj", "attn.in_proj.key"),
+        (r"self_attn\.v_proj", "attn.in_proj.value"),
+        (r"self_attn\.q_proj", "attn.in_proj.query"),
+        (r"self_attn\.out_proj", "attn.dense"),
+        (r"mlp\.fc1", "mlp.w1"),
+        (r"mlp\.fc2", "mlp.w2"),
+        # language
+        (r"language_model\.lm_head\.weight", "language_model.head.weight"),
+        (
+            r"language_model.model.embed_tokens.weight",
+            "language_model.base_model.embedding.weight",
+        ),
+        (r"language_model.model.norm", "language_model.base_model.dec_norm"),
+        (r"language_model.model.layers", "language_model.base_model.layers"),
+        (r"self_attn\.o_proj", "attn.dense"),
+        (r"mlp\.gate_proj", "ff_sub_layer.wg"),
+        (r"mlp\.up_proj", "ff_sub_layer.w1"),
+        (r"mlp\.down_proj", "ff_sub_layer.w2"),
+        (r"input_layernorm", "ln"),
+        (r"post_attention_layernorm", "ff_ln"),
+    ]
+    new_sd = {}
+    for name, param in input_sd.items():
+        new_name = name
+        for pattern, repl in replacements:
+            new_name = re.sub(f"{pattern}", repl, new_name)
+        new_sd[new_name] = param
+    return new_sd
+
+# From Granite model
+def _get_rope_params(linear_type: str) -> list[str]:
+    if "gptq" in linear_type:
+        return ["qweight", "scales", "qzeros", "bias"]
+    if "int8" in linear_type:
+        # quantize_weight is fms-model-optimizer identifier of weight clip values
+        return ["weight", "bias", "quantize_weight"]
+    else:  # torch.nn.Linear
+        return ["weight", "bias"]
+
+
+# From Granite model
+def _hf_to_fms_rope(
+    input_sd: Mapping[str, Any],
+    model_config=None,
+    **kwargs,
+) -> Mapping[str, Any]:
+    new_sd = {}
+    if model_config:
+        model_config = model_config.text_config
+
+    if model_config:
+        head_size = model_config.emb_dim // model_config.nheads
+        linear_type_str = "torch_linear"
+        if model_config.linear_config:
+            linear_type_str = get_linear_type(
+                model_config.linear_config,
+                module_name=None,  # if callable, linear_type should return default str
+            )
+    else:
+        logger.warning("Missing model_config, assuming defaults for head_size")
+        head_size = 128  # Good default for most models
+        linear_type_str = "torch_linear"
+
+    rope_params = _get_rope_params(linear_type_str)
+    trans_required_pattern = re.compile(
+        f"language_model.base_model.layers.[0-9]+.attn.in_proj.(query|key).({'|'.join(rope_params)})"
+    )
+    for name, param in input_sd.items():
+        # hf -> fms requires a transpose operation for the query and key
+        # weight and bias parameters for Llama models
+        # This transpose is due to the different implementation of RoPE in
+        # HF and FMS. While FMS follows the original RoPE paper
+        # (https://arxiv.org/abs/2104.09864), HF has its own implementation
+        # that doesn't respect the order of outputs. This is OK as long as you
+        # rearrange the weights of the query and key projections, as the
+        # combination projection + RoPE ends up producing the same outputs.
+        # Therefore, to make FMS produce the correct order of outputs when
+        # loading from an HF checkpoint, we need to undo the transformation
+        # that HF does from the original Meta weights
+        is_gptq_2d_qparam = "gptq" in linear_type_str and param.dim() == 2
+        if bool(trans_required_pattern.match(name)) and param.numel() > 1:
+            temp = param
+            if is_gptq_2d_qparam:
+                # GPTQ qweights are [in_feat, out_feat] (unlike usual [out_feat, in_feat])
+                # and are fully transposed before & after process.
+                # GPTQ scales and qzeros are also transposed accordingly
+                temp = temp.transpose(0, 1)
+            # num_heads is used in the transformation required for hf->fms
+            # can't be precomputed because q and k might have different num_heads
+            num_heads = temp.size(0) // head_size
+
+            if temp.dim() == 2:  # weight
+                temp_view = temp.view(num_heads, 2, -1, temp.size(1))
+            else:  # 1-dim parameters
+                temp_view = temp.view(num_heads, 2, -1)
+            temp = temp_view.transpose(1, 2).reshape(*temp.size())
+
+            if is_gptq_2d_qparam:
+                temp = temp.transpose(0, 1)
+
+            new_sd[name] = temp
+        else:
+            new_sd[name] = param
+
+    return new_sd
+
+
+serialization.register_adapter_step(_architecture_name, "weight_fusion", _weight_fusion)
+
+serialization.register_adapter_step(
+    _architecture_name, "hf_to_fms_names", _hf_to_fms_names
+)
+
+serialization.register_adapter_step(
+    _architecture_name, "hf_to_fms_rope", _hf_to_fms_rope
+)
+
+serialization.register_adapter(
+    _architecture_name,
+    "hf",
+    ["hf_to_fms_names", "hf_to_fms_rope", "weight_fusion"],
+)

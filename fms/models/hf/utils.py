@@ -253,7 +253,10 @@ def _map_model_config(architecture, config):
         config_params["hidden_act"] = config.hidden_act
         config_params["layer_norm_eps"] = config.layer_norm_eps
         config_params["attention_dropout"] = config.attention_dropout
-    elif architecture == "LlavaNextForConditionalGeneration":
+    elif architecture in ["LlavaNextForConditionalGeneration", "GraniteVisionEmb"]:
+        # NOTE - granite vision embeddings & granite vision have identical configs
+        # (granite vision is llava next with multiple vision feature layers and
+        # siglip as the visual encoder instead of clip).
         from fms.models.siglip_vision import SiglipVisionConfig
         from fms.models.granite import GraniteConfig
 
@@ -267,7 +270,7 @@ def _map_model_config(architecture, config):
             )
 
         infer_common_params = False
-        architecture = "llava_next"
+        architecture = "llava_next" if architecture == "LlavaNextForConditionalGeneration" else "granite_vision_emb"
         config_params["image_token_index"] = config.image_token_index
         config_params["image_grid_pinpoints"] = config.image_grid_pinpoints
         config_params["vision_feature_layer"] = config.vision_feature_layer
@@ -377,7 +380,10 @@ def _infer_model_configuration(
     else:
         model_path = str(model_id_or_path)
 
-    config = AutoConfig.from_pretrained(model_path)
+    # FIXME - needed for granite vision emebddings, which bundle their own
+    # code; this should probably be specified in the model config mapping
+    # or passed by the user directly
+    config = AutoConfig.from_pretrained(model_path, trust_remote_code=True)
     architecture = config.architectures[0]
     architecture, config_params = _map_model_config(architecture, config)
 
