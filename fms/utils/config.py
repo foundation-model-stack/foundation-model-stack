@@ -6,7 +6,6 @@ import os
 from dataclasses import asdict, dataclass
 from typing import TypeVar, Union
 
-
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T", bound="ModelConfig")
@@ -55,7 +54,14 @@ class ModelConfig:
         unknown_params = []
         for k, v in kwargs.items():
             if hasattr(copied_config, k):
-                setattr(copied_config, k, v)
+                # for multi-model hierarchical config
+                if isinstance(getattr(copied_config, k), ModelConfig) and isinstance(
+                    v, dict
+                ):
+                    sub_config = getattr(copied_config, k)
+                    setattr(copied_config, k, sub_config.updated(**v))
+                else:
+                    setattr(copied_config, k, v)
             else:
                 unknown_params.append(k)
         if len(unknown_params) > 0:
