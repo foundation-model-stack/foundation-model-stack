@@ -44,6 +44,10 @@ class ModelConfig:
         kwargs
             all possibly ModelConfig dataclass named parameters to override
 
+        Note: To override parameters of nested ModelConfig a dict can be passed, e.g. the following kwargs
+        text_config = {'head_dim': 128}
+        would update the `head_dim` parameter of `text_config`
+
         Returns
         -------
         ModelConfig
@@ -54,7 +58,10 @@ class ModelConfig:
         unknown_params = []
         for k, v in kwargs.items():
             if hasattr(copied_config, k):
-                # for multi-model hierarchical config
+                # For multi-model hierarchical configs, ModelConfig are nested
+                # i.e. ModelConfig may contain sub ModelConfig(s).
+                # A dict passed passed as kwarg can update parameter(s) in the nested hierarchy
+                # for this the key must be an existing sub config of ModelConfig and the value must be a dict
                 if isinstance(getattr(copied_config, k), ModelConfig) and isinstance(
                     v, dict
                 ):
