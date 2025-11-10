@@ -11,10 +11,9 @@ Part of code to support Qwen3 models
 # pylint: disable=missing-function-docstring
 # pylint: disable=too-many-arguments,too-many-positional-arguments
 
-import glob
+
 import logging
 import math
-import os
 import re
 from dataclasses import dataclass
 from typing import Any, Mapping, Optional, Tuple, Unpack
@@ -42,69 +41,6 @@ from fms.utils.activation import str_to_activation
 from fms.utils.config import ModelConfig
 
 logger = logging.getLogger(__name__)
-
-@dataclass
-class GlobalData:
-    g_kst_first = True
-
-def _ksave_tensor(a_tensor: Tensor,
-                  tensor_dir: str = "_tensors",
-                  prefix: str = "tensor",
-                  file_name: str = "") -> None:
-    """Save a tensor to a directory with explict or generic name
-
-    Args:
-        a_tensor (Tensor):tensor to save
-        tensor_dir (str, optional): _description_. Defaults to "_tensors".
-        prefix (str, optional): Use a sequenc numbering with this prefix. Defaults to "tensor_".
-        file_name (str, optional): non-null string is explicit file name. Defaults to "".
-
-    Raises:
-        ValueError: _description_
-
-    Returns:
-        _type_: _description_
-    """
-    is_dir = os.path.isdir(tensor_dir)
-    if is_dir is False and GlobalData.g_kst_first:
-        print(f"Directory not found:'{tensor_dir}', tensor NOT saved")
-        GlobalData.g_kst_first = False
-        return
-    if is_dir is False:
-        return
-    filename = ""
-    if len(file_name) > 0:
-        filename = file_name
-    else:
-        # find number of files with prefix
-        pt_files = glob.glob(os.path.join(tensor_dir, f"{prefix}*.pt"))
-        seq_num = len(pt_files) + 1
-        filename = f"{tensor_dir}/{prefix}{seq_num:04d}.pt"
-    if os.path.isfile(filename):
-        print(f"Existing file found:'{filename}', tensor NOT saved")
-        return
-    torch.save(a_tensor, filename)
-
-
-class Qwen3RMSNorm(nn.Module):
-    def __init__(self, hidden_size, eps: float = 1e-6) -> None:
-        """
-        Qwen3RMSNorm is equivalent to T5LayerNorm
-        """
-        super().__init__()
-        self.weight = nn.Parameter(torch.ones(hidden_size))
-        self.variance_epsilon = eps
-
-    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        input_dtype = hidden_states.dtype
-        hidden_states = hidden_states.to(torch.float32)
-        variance = hidden_states.pow(2).mean(-1, keepdim=True)
-        hidden_states = hidden_states * torch.rsqrt(variance + self.variance_epsilon)
-        return self.weight * hidden_states.to(input_dtype)
-
-    def extra_repr(self):
-        return f"{tuple(self.weight.shape)}, eps={self.variance_epsilon}"
-
 
 class Qwen3MuliHeadAttention(MultiHeadAttention):
     """Customized for Qwen3
@@ -260,9 +196,6 @@ class Qwen3MuliHeadAttention(MultiHeadAttention):
         queries = self.q_norm(q_out.view(batch_size, q_len, self.nheads, self.emb_kq_per_head))
         keys = self.k_norm(k_out.view(batch_size, q_len, self.kvheads, self.emb_kq_per_head))
         values = v_out.view(batch_size, q_len, self.kvheads, self.emb_v_per_head)
-        _ksave_tensor(queries,prefix="MHA-fwd-q")
-        _ksave_tensor(keys,prefix="MHA-fwd-k")
-        _ksave_tensor(values,prefix="MHA-fwd-v")
 
         # You want to apply rotary embeddings pre-cache
         if self.position_encoder is not None:
@@ -314,7 +247,6 @@ class Qwen3MuliHeadAttention(MultiHeadAttention):
         attn = attn.view(batch_size, q_len, self.nheads * self.emb_v_per_head)
         out = self.dense(attn)
 
-        _ksave_tensor(out,prefix="MHA-fwd-out1")
         # if use_cache=True, we return the hidden_state as well as the kv cach
         if use_cache:
             return out, (keys_return, values_return) # type: ignore
