@@ -588,6 +588,13 @@ serialization.register_adapter_step(
     _architecture_name, "hf_to_fms_names", _hf_to_fms_names
 )
 
+
+serialization.register_adapter_step(
+    _architecture_name,
+    "weight_expansion_for_mismatched_head_dim",
+    serialization._weight_expansion_for_mismatched_head_dim,  # type: ignore[arg-type]
+)
+
 serialization.register_adapter_step(
     _architecture_name, "hf_to_fms_rope", _hf_to_fms_rope
 )

@@ -11,7 +11,7 @@ from typing import Any, Callable, Mapping, MutableMapping, Optional, Set, Union
 import torch
 
 from fms.modules.tp import TPModule
-
+from fms.utils.config import ModelConfig
 
 logger = logging.getLogger(__name__)
 
@@ -701,6 +701,14 @@ def _weight_expansion_for_mismatched_head_dim(
     input_sd: Mapping[str, Any], model_config
 ) -> Mapping[str, Any]:
     new_sd = dict(input_sd)
+
+    # For multi model this expansion will be applicable only to the language_model
+    if hasattr(model_config, "text_config") and isinstance(
+        getattr(model_config, "text_config"), ModelConfig
+    ):
+        model_config = getattr(model_config, "text_config", model_config)
+        if not all(["language_model" in layer for layer in input_sd]):
+            return new_sd
 
     assert getattr(model_config, "head_dim", None) is not None, (
         "for weight expansion head_dim must be defined in model config"
