@@ -16,7 +16,6 @@ logger = logging.getLogger(__name__)
 # Granite vision embeddings are very similar to llava next / granite vision.
 # TODO should be the 3.3 config, not 3.2, but that would go in the main vision file...
 _granite_vision_embed_3_3_2b_config = LlavaNextConfig()
-
 _architecture_name = "granite_vision_emb"
 
 def _granite_vision_embed_factory_factory(config):
@@ -52,6 +51,29 @@ class GraniteVisionEmb(nn.Module):
         self.config = self.model.config
         self.distributed_strategy = distributed_strategy
 
+    def prepare_inputs_for_generation(
+        self,
+        iteration,
+        input_ids,
+        kwargs,
+    ):
+        """Extracts the image features and creates the multimodal inputs.
+        NOTE: We should rework this interface to make sense for embed,
+        because we don't really need a prefill type operation for running
+        the vision tower since there is only forward call / iteration anyway.
+        However, for now we right it this way so that the usage matches
+        generate(), and the pattern aligns with llava next.
+        """
+        inputs = kwargs.get("inputs")
+        if input_ids is None and inputs is None:
+            raise ValueError("input_ids and inputs can't both be None")
+
+        # embedded inputs supersede input_ids; note the extra
+        # layer of wrapping here when compared to llava next.
+        if inputs is None:
+            inputs = self.model.language_model.base_model.embedding(input_ids)
+        # TODO run the vision tower vision
+        return inputs, kwargs
 
     def forward(
         self,
@@ -61,22 +83,30 @@ class GraniteVisionEmb(nn.Module):
         use_cache: Optional[bool] = False,
         **attn_kwargs: Unpack[AttentionKwargs],
     ):
+        if use_cache: # only kept for compatability
+            logger.warning("Setting use_cache to False for embedding models")
+            use_cache = False
+
         # NOTE - this is the same as calling the underlying llava next model,
         # but we directly call the LLM here to make it more obvious what is
         # happening; the preparation of the image inputs takes place in
         # prepare_inputs_for_generation to better align with llava next impl,
         # since image inputs only need to be masked into the inital embeddings.
-        # outputs = self.model.language_model(
-        #     input_ids_or_embeds,
-        #     position_ids=position_ids,
-        #     past_key_value_states=past_key_value_states,
-        #     use_cache=use_cache,
-        #     **attn_kwargs,
-        # ) # outputs is a tuple containing the decoder output and kv states
+        last_hidden_states = self.model.language_model(
+            input_ids_or_embeds,
+            position_ids=position_ids,
+            past_key_value_states=past_key_value_states,
+            use_cache=False,
+            run_headless=True,
+            **attn_kwargs,
+        )
 
-        # TODO - probably a good idea to discuss with forward() actually entails
-        # here since this won't use generate
-        raise NotImplementedError("forward not implemented")
+        # Get the last hidden states and apply the text projector
+        proj = self.custom_text_proj(last_hidden_states)  # (batch_size, sequence_length, dim)
+
+        # L2 normalization
+        proj = proj / (proj.norm(dim=-1, keepdim=True) + 1e-8)
+        return proj
 
 models.register_model(
     _architecture_name,
@@ -179,8 +209,11 @@ def _hf_to_fms_rope(
         linear_type_str = "torch_linear"
 
     rope_params = _get_rope_params(linear_type_str)
+    # TODO - this is exactly the same as llava_next, but we prepended model. to capture correctly
+    # we should refactor this into a common util and also warn / throw if SD entries are mapped
+    # properly.
     trans_required_pattern = re.compile(
-        f"language_model.base_model.layers.[0-9]+.attn.in_proj.(query|key).({'|'.join(rope_params)})"
+        f"model.language_model.base_model.layers.[0-9]+.attn.in_proj.(query|key).({'|'.join(rope_params)})"
     )
     for name, param in input_sd.items():
         # hf -> fms requires a transpose operation for the query and key
