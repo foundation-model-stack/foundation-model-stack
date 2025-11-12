@@ -60,8 +60,9 @@ class ModelConfig:
             if hasattr(copied_config, k):
                 # For multi-model hierarchical configs, ModelConfig are nested
                 # i.e. ModelConfig may contain sub ModelConfig(s).
-                # A dict passed passed as kwarg can update parameter(s) in the nested hierarchy
+                # A dict passed as kwarg can update parameter(s) in the nested hierarchy
                 # for this the key must be an existing sub config of ModelConfig and the value must be a dict
+                # Since we are recursively calling `updated` method it is possible to have sub-configs in sub-configs
                 if isinstance(getattr(copied_config, k), ModelConfig) and isinstance(
                     v, dict
                 ):
