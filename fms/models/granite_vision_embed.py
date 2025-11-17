@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 import logging
 from typing import Any, Mapping, Optional, Unpack, Tuple
 import re
@@ -7,15 +8,28 @@ from fms.models.llava_next import LlavaNext, LlavaNextConfig
 from fms.utils import serialization
 from fms.modules.attention import AttentionKwargs
 from fms.modules.linear import get_linear_type
+from fms.utils.config import ModelConfig
 
 import torch
 from torch import nn
 
 logger = logging.getLogger(__name__)
 
+@dataclass
+class GraniteVisionEmbConfig(LlavaNextConfig):
+    # TODO: abstract configs for underlying granite/siglip configs under
+    # granite vision since we will use the same ones here, and should be
+    # able to just pass the version through.
+    emb_dim_query: int = 128
+    emb_dim_doc: int = 128
+    base_image_feature_location: str = "last"
+    # NOTE: For now we exclude adapter_path since it's not actually used;
+    # seems like maybe a LoRA adapter might have been initially present,
+    # and merged with the weights?
+
 # Granite vision embeddings are very similar to llava next / granite vision.
 # TODO should be the 3.3 config, not 3.2, but that would go in the main vision file...
-_granite_vision_embed_3_3_2b_config = LlavaNextConfig()
+_granite_vision_embed_3_3_2b_config = GraniteVisionEmbConfig()
 _architecture_name = "granite_vision_emb"
 
 def _granite_vision_embed_factory_factory(config):
