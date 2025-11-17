@@ -94,6 +94,7 @@ class MistralConfig(ModelConfig):
     pad_id: int = -1  # borrowed from granite, we do need it
     linear_config: Optional[Mapping[str, Any]] = None  # To suppor quantization
 
+
 _7b_config = MistralConfig()
 
 
