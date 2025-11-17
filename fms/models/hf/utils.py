@@ -256,21 +256,21 @@ def _map_model_config(architecture, config):
     elif architecture in ["LlavaNextForConditionalGeneration", "GraniteVisionEmb"]:
         # NOTE - granite vision embeddings & granite vision have identical configs
         # (granite vision is llava next with multiple vision feature layers and
-        # siglip as the visual encoder instead of clip).
+        # siglip as the visual encoder instead of clip). The only difference is
+        # that granite vision emb has ~3 extra attributes.
         from fms.models.siglip_vision import SiglipVisionConfig
         from fms.models.granite import GraniteConfig
 
         if config.text_config.model_type != "granite":
             raise ValueError(
-                "FMS implementation of LlavaNext currently supports only Granite language model"
+                "FMS implementation of Granite Vision currently supports only Granite language model"
             )
         if config.vision_config.model_type != "siglip_vision_model":
             raise ValueError(
-                "FMS implementation of LlavaNext currently supports only Siglip vision model"
+                "FMS implementation of Granite Vision currently supports only Siglip vision model"
             )
 
         infer_common_params = False
-        architecture = "llava_next" if architecture == "LlavaNextForConditionalGeneration" else "granite_vision_emb"
         config_params["image_token_index"] = config.image_token_index
         config_params["image_grid_pinpoints"] = config.image_grid_pinpoints
         config_params["vision_feature_layer"] = config.vision_feature_layer
@@ -283,6 +283,15 @@ def _map_model_config(architecture, config):
             "GraniteForCausalLM", config.text_config
         )
         config_params["text_config"] = GraniteConfig(**text_config_params)
+        if architecture == "LlavaNextForConditionalGeneration":
+            architecture = "llava_next"
+        else:
+            architecture = "granite_vision_emb"
+            # Granite vision embedding specific attributes
+            config_params["emb_dim_query"] = config.emb_dim_query
+            config_params["emb_dim_doc"] = config.emb_dim_doc
+            config_params["base_image_feature_location"] = config.base_image_feature_location
+
     elif architecture == "MPNetForMaskedLM":
         inner_dim = config.intermediate_size
         architecture = "mpnet"
