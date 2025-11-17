@@ -157,6 +157,7 @@ class MetricReporter(TrainerPlugin):
             steps = step - self.last_reported_step
             self.last_reported_step = 0
         else:
+            assert self.steps is not None, "This subclass should have steps defined"
             self.last_step = step
             if step == self.last_reported_step:
                 return
