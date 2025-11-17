@@ -26,6 +26,7 @@ _granite_3_2_2b_text_config = GraniteConfig(
     emb_dim=2048,
     norm_eps=1e-5,
     nheads=32,
+    head_dim=64,
     kvheads=8,
     nlayers=40,
     hidden_grow_factor=8192 / 2048,
@@ -585,6 +586,13 @@ serialization.register_adapter_step(_architecture_name, "weight_fusion", _weight
 
 serialization.register_adapter_step(
     _architecture_name, "hf_to_fms_names", _hf_to_fms_names
+)
+
+
+serialization.register_adapter_step(
+    _architecture_name,
+    "weight_expansion_for_mismatched_head_dim",
+    serialization._weight_expansion_for_mismatched_head_dim,  # type: ignore[arg-type]
 )
 
 serialization.register_adapter_step(

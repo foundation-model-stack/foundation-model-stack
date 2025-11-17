@@ -34,6 +34,7 @@ class GraniteConfig(ModelConfig):
     emb_dim: int = 4096
     norm_eps: float = 1e-5
     nheads: int = 32
+    head_dim: int = 128  # getattr(config, "head_dim", emb_dim // nheads)
     kvheads: int = 0
     nlayers: int = 32
     pad_id: int = -1
@@ -59,8 +60,8 @@ class GraniteBlock(nn.Module):
     def __init__(self, config: GraniteConfig, rotary_emb: RotaryEmbedding):
         super(GraniteBlock, self).__init__()
         self.config = config
-        emb_kq = self.config.emb_dim // self.config.nheads
-        emb_v = self.config.emb_dim // self.config.nheads
+        emb_kq = self.config.head_dim
+        emb_v = self.config.head_dim
 
         self.ln = LayerNormParameterized(
             self.config.emb_dim,
@@ -185,7 +186,7 @@ class GraniteHeadless(nn.Module):
         rope_scaling = {"rope_type": "ntk" if self.config.ntk_scaling else "regular"}
 
         self.rot_emb = RotaryEmbedding(
-            dim=self.config.emb_dim // self.config.nheads,
+            dim=self.config.head_dim,
             scaling=rope_scaling,
             max_seq_len=self.config.max_expected_seq_len,
             ratio=self.config.rope_theta,
@@ -498,6 +499,13 @@ serialization.register_adapter_step(
 )
 
 
+serialization.register_adapter_step(
+    _architecture_name,
+    "weight_expansion_for_mismatched_head_dim",
+    serialization._weight_expansion_for_mismatched_head_dim,  # type: ignore[arg-type]
+)
+
+
 def _get_rope_params(linear_type: str) -> list[str]:
     if "gptq" in linear_type:
         return ["qweight", "scales", "qzeros", "bias"]
@@ -605,5 +613,10 @@ serialization.register_adapter_step(
 serialization.register_adapter(
     _architecture_name,
     "hf",
-    ["hf_to_fms_names", "hf_to_fms_rope", "hf_gptq_fusion_check", "weight_fusion"],
+    [
+        "hf_to_fms_names",
+        "hf_to_fms_rope",
+        "hf_gptq_fusion_check",
+        "weight_fusion",
+    ],
 )
