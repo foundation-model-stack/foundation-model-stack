@@ -47,7 +47,7 @@ class Mistral3Config(ModelConfig):
     max_expected_seq_len: int = 32768
     kvheads: int = 8
     norm_eps: float = 1e-5
-    sliding_window: int = 4000
+    sliding_window: int = None
     rope_base: float = 100_0000.0  # Same as rope_theta
     rope_scaling: dict = field(default_factory=lambda: {})
     fused_weights: bool = True  # FMS Specific -- For CPU/GPU = T, AIU = F
@@ -180,7 +180,7 @@ class Mistral3Headless(nn.Module):
 
         self.rot_emb = RotaryEmbedding(
             dim=self.config.head_dim,
-            scaling=self.config.rope_scaling,
+            scaling=rope_scaling,
             max_seq_len=self.config.max_expected_seq_len,
             ratio=self.config.rope_base,
         )
@@ -490,7 +490,7 @@ def _hf_to_fms_rope(
     new_sd = {}
 
     if model_config:
-        head_size = model_config.emb_dim // model_config.nheads
+        head_size = model_config.head_dim
         linear_type = "torch_linear"
         if model_config.linear_config:
             linear_type = model_config.linear_config["linear_type"]
@@ -515,7 +515,7 @@ def _hf_to_fms_rope(
         # Therefore, to make FMS produce the correct order of outputs when
         # loading from an HF checkpoint, we need to undo the transformation
         # that HF does from the original Meta weights:
-        if bool(trans_required_pattern.match(name)):
+        if bool(trans_required_pattern.search(name)):
             temp = param
             if "gptq" in linear_type and temp.dim() == 2:
                 # GPTQ qweights are [in_feat, out_feat] (unlike usual [out_feat, in_feat])
