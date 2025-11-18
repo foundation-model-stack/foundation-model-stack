@@ -6,6 +6,13 @@ class LayerNormParameterized(nn.Module):
     """
     A generalized LayerNorm implementation. With all optional arguments set to True, equivalent to nn.LayerNorm up to epsilon stabilization term
     (this class divides inputs by min(norm, eps), while nn.LayerNorm divides by norm + eps).
+
+    NOTE: This implementation does not apply Bessel's Correction and may cause numeric
+    inputs to diverge a bit if a model uses many layer normalizations, e.g., siglip,
+    which has 2 layer norms in every encoder block.
+
+    https://github.com/pytorch/pytorch/blob/main/torch/_refs/__init__.py#L3289
+
     ...
     Args
     ----
