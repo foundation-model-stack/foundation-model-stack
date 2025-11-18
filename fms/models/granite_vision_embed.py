@@ -1,3 +1,4 @@
+# /models/huggingface_cache/modules/transformers_modules/ibm-granite/granite-vision-3.3-2b-embedding/baa53d1e1ac95baefb15e4aa9fdcc471ac728c83
 from dataclasses import dataclass
 import logging
 from typing import Any, Mapping, Optional, Unpack, Tuple
@@ -8,7 +9,11 @@ from fms.models.llava_next import LlavaNext, LlavaNextConfig
 from fms.utils import serialization
 from fms.modules.attention import AttentionKwargs
 from fms.modules.linear import get_linear_type
-from fms.utils.config import ModelConfig
+
+import numpy as np
+import torch
+# Used in custom unpadding utils
+from transformers.models.llava_next.modeling_llava_next import unpad_image, get_anyres_image_grid_shape
 
 import torch
 from torch import nn
@@ -79,15 +84,180 @@ class GraniteVisionEmb(nn.Module):
         generate(), and the pattern aligns with llava next.
         """
         inputs = kwargs.get("inputs")
+
+        pixel_values = kwargs.get("pixel_values")
+        image_sizes = kwargs.get("image_sizes")
+
+        # No image data to pre-process
+        if pixel_values is None or pixel_values.size(0) == 0:
+            return input_ids, kwargs
+
         if input_ids is None and inputs is None:
+            # Image token is still needed for image encoding, so
+            # technically we always need to have text, even for just
+            # encoding images.
             raise ValueError("input_ids and inputs can't both be None")
 
         # embedded inputs supersede input_ids; note the extra
         # layer of wrapping here when compared to llava next.
         if inputs is None:
             inputs = self.model.language_model.base_model.embedding(input_ids)
-        # TODO run the vision tower vision
+
+        # Retrieving the visual encoder outputs and repack
+        image_features = self.get_image_features(
+            pixel_values,
+            image_sizes,
+        )
+
+        image_features, _ = self.pack_image_features(
+            image_features,
+            image_sizes,
+            image_newline=self.model.image_newline,
+        )
+
+        # Rescatter the image features into the corresponding <image> features indices
+        special_image_mask = (input_ids == self.config.image_token_index).unsqueeze(-1)
+        special_image_mask = special_image_mask.expand_as(inputs).to(inputs.device)
+        image_features = image_features.to(inputs.device, inputs.dtype)
+        inputs = inputs.masked_scatter(special_image_mask, image_features)
         return inputs, kwargs
+
+    # HF impl - copy paste from llava next, we should share code more cleanly
+    def get_image_features(
+        self,
+        pixel_values: torch.Tensor,
+        image_sizes: torch.Tensor,
+    ):
+        # ! infer image_num_patches from image_sizes
+        image_num_patches = [
+            self.model.image_size_to_num_patches( # HACK - added extra nest level
+                image_size=imsize,
+                grid_pinpoints=self.config.image_grid_pinpoints,
+                patch_size=self.config.vision_config.image_size,
+            )
+            for imsize in image_sizes
+        ]
+
+        if pixel_values.dim() == 5:
+            # stacked if input is (batch_size, num_patches, num_channels, height, width)
+            _pixel_values_list = [
+                pix_val[:num_patch]
+                for pix_val, num_patch in zip(pixel_values, image_num_patches)
+            ]
+            pixel_values = torch.cat(_pixel_values_list, dim=0)
+        elif pixel_values.dim() != 4:
+            # otherwise has to be stacked from list of (num_patches, num_channels, height, width)
+            raise ValueError(
+                f"pixel_values of shape {pixel_values.shape}, expect to be of 4 or 5 dimensions"
+            )
+
+
+        _, _, image_features = self.model.vision_tower( #FIXME - extra layer of wrapping
+            pixel_values,
+            output_hidden_states=True,
+        )
+
+        if isinstance(self.config.vision_feature_layer, int):
+            selected_image_feature = image_features[self.config.vision_feature_layer]
+        else:
+            hs_pool = [
+                image_features[layer_idx]
+                for layer_idx in self.config.vision_feature_layer
+            ]
+            selected_image_feature = torch.cat(hs_pool, dim=-1)
+
+        if self.config.vision_feature_select_strategy == "default":
+            selected_image_feature = selected_image_feature[:, 1:]
+
+        image_features = self.model.multi_modal_projector(selected_image_feature) # FIXME extra layer of wrapping
+        image_features = torch.split(image_features, image_num_patches, dim=0)
+        return image_features
+
+    def post_init(self):
+        # Post init of the granite vision VLM encapsulates
+        # post init calls for both the visual encoder and LLM.
+        self.model.post_init()
+
+    def pack_image_features(
+            self,
+            image_features,
+            image_sizes,
+            # vision feature select is always all for siglip (no CLS)
+            image_newline=None
+    ):
+        """
+        # NOTE - currently a copy/paste from the original code to see what breaks.
+        Would be best to align this with the llava next implementation.
+
+        Reshape, unpad and then pack each image_feature into a single image_features tensor containing all visual vectors.
+        Args:
+            image_features (`List[torch.Tensor]` of length num_images, each of shape `(num_patches, image_length, embed_dim)`)
+                List of image feature tensor, each contains all the visual feature of all patches.
+            image_sizes (`torch.Tensor` of shape `(num_images, 2)`)
+                Actual image size of each images (H, W).
+            image_newline (`torch.Tensor` of shape `(embed_dim)`)
+                New line embedding vector.
+        Returns:
+            image_features (`torch.Tensor` of shape `(all_feat_len, embed_dim)`)
+            feature_lens (`List[int]`)
+                token length of each image in image_features
+        """
+        base_image_feature_location = self.config.base_image_feature_location
+        new_image_features = []
+        feature_lens = []
+        for image_idx, image_feature in enumerate(image_features):
+            if image_feature.shape[0] > 1:
+                base_image_feature = image_feature[0]
+                image_feature = image_feature[1:]
+                height = width = self.config.vision_config.image_size // self.config.vision_config.patch_size
+
+                num_patch_height, num_patch_width = get_anyres_image_grid_shape(
+                    image_sizes[image_idx],
+                    self.config.image_grid_pinpoints,
+                    self.config.vision_config.image_size,
+                )
+
+                # if (
+                #         np.prod(image_feature.shape) % (num_patch_height * num_patch_width * height * width) != 0
+                #         and vision_feature_select_strategy == "default"
+                # ):
+                #     print(
+                #         "Image feature shape does not line up with the provided patch size. "
+                #         "You may be using the `default` vision_feature_select_strategy with a"
+                #         " visual encoder that does not have CLS."
+                #     )
+
+                image_feature = image_feature.view(num_patch_height, num_patch_width, height, width, -1)
+                image_feature = image_feature.permute(4, 0, 2, 1, 3).contiguous()
+                image_feature = image_feature.flatten(1, 2).flatten(2, 3)
+                image_feature = unpad_image(image_feature, image_sizes[image_idx])
+                if image_newline is not None:
+                    image_feature = torch.cat(
+                        (
+                            image_feature,
+                            image_newline[:, None, None]
+                            .expand(*image_feature.shape[:-1], 1)
+                            .to(image_feature.device, image_feature.dtype),
+                        ),
+                        dim=-1,
+                    )
+                image_feature = image_feature.flatten(1, 2).transpose(0, 1)
+                if base_image_feature_location == "last":
+                    image_feature = torch.cat((image_feature, base_image_feature), dim=0)
+                else:
+                    image_feature = torch.cat((base_image_feature, image_feature), dim=0)
+
+            else:
+                image_feature = image_feature[0]
+                if image_newline is not None:
+                    image_feature = torch.cat((image_feature, image_newline[None].to(image_feature)), dim=0)
+            new_image_features.append(image_feature)
+            feature_lens.append(image_feature.size(0))
+        image_features = torch.cat(new_image_features, dim=0)
+        feature_lens = torch.tensor(feature_lens, dtype=torch.long, device=image_features.device)
+        return image_features, feature_lens
+
+
 
     def forward(
         self,
