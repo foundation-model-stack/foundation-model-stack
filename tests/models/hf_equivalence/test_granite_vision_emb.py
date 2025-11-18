@@ -30,6 +30,7 @@ def _get_hf_model_output(model_path, inputs):
     model = AutoModel.from_pretrained(
         model_path,
         trust_remote_code=True,
+        _attn_implementation="sdpa",
     )
 
     with torch.no_grad():
@@ -57,7 +58,7 @@ def _get_fms_model_output(model_path, inputs):
             model,
             input_ids,
             prepare_model_inputs_hook=model.prepare_inputs_for_generation,
-            extra_kwargs={},
+            extra_kwargs=inputs,
         )
 
     return output
@@ -78,7 +79,6 @@ def test_granite_vision_embed_3_3_2b_equivalence_text_only():
 
     torch.testing.assert_close(fms_model_output, hf_model_output)
 
-@pytest.mark.skip("forward pass for images not added to FMS yet")
 def test_granite_vision_embed_3_3_2b_image_only():
     from transformers import AutoProcessor
     # for now, this test won't be run, but it has been verified
@@ -93,4 +93,5 @@ def test_granite_vision_embed_3_3_2b_image_only():
     inputs = _get_image_input(processor)
 
     hf_model_output = _get_hf_model_output(model_path, inputs)
-    raise ValueError(hf_model_output)
+    fms_model_output = _get_fms_model_output(model_path, inputs)
+    torch.testing.assert_close(hf_model_output, fms_model_output)
