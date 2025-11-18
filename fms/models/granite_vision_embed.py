@@ -115,12 +115,31 @@ class GraniteVisionEmb(nn.Module):
             image_newline=self.model.image_newline,
         )
 
+        squeezed_image_mask = (input_ids == self.config.image_token_index)
+
         # Rescatter the image features into the corresponding <image> features indices
-        special_image_mask = (input_ids == self.config.image_token_index).unsqueeze(-1)
+        special_image_mask = squeezed_image_mask.unsqueeze(-1)
         special_image_mask = special_image_mask.expand_as(inputs).to(inputs.device)
         image_features = image_features.to(inputs.device, inputs.dtype)
+
         inputs = inputs.masked_scatter(special_image_mask, image_features)
+
+        # HACK get the last_k_indices here...
+        last_k_indices = self.get_topk_indices(squeezed_image_mask)
+        kwargs["last_k_indices"] = last_k_indices
         return inputs, kwargs
+
+    def get_topk_indices(self, image_mask):
+        N, M = image_mask.shape # We should have a 2D mask here (not unsqueezed)
+
+        # Create an index matrix: each row is 0, 1, ..., M-1
+        idx = torch.arange(M, device=image_mask.device).expand(N, M)
+        # Replace False positions with -1 so they are ignored by topk (since all valid indices are >=0)
+        masked_idx = torch.where(image_mask, idx, torch.tensor(-1, device=image_mask.device))
+        topk_values, _ = torch.topk(masked_idx, k=729, dim=1)
+        last_k_indices, _ = torch.sort(topk_values, dim=1)
+        return last_k_indices
+
 
     # HF impl - copy paste from llava next, we should share code more cleanly
     def get_image_features(
@@ -265,6 +284,7 @@ class GraniteVisionEmb(nn.Module):
         position_ids: Optional[torch.Tensor] = None,
         past_key_value_states: Optional[Tuple[torch.FloatTensor,]] = None,
         use_cache: Optional[bool] = False,
+        last_k_indices = None,
         **attn_kwargs: Unpack[AttentionKwargs],
     ):
         if use_cache: # only kept for compatability
@@ -285,11 +305,24 @@ class GraniteVisionEmb(nn.Module):
             **attn_kwargs,
         )
 
+        # TODO - check masking correctness across different implementations besides SDPA
+        attention_mask = attn_kwargs["attention_mask"] # [bsz, N]
+
+        # Apply top k
+        if last_k_indices is not None:
+            last_k_indices_exp = last_k_indices.unsqueeze(-1).expand(-1, -1, last_hidden_states.size(-1))
+            last_hidden_states = torch.gather(last_hidden_states, 1, last_k_indices_exp)
+            attention_mask = torch.gather(attention_mask, 1, last_k_indices)
+
+        attention_mask = attention_mask.unsqueeze(-1)
+
         # Get the last hidden states and apply the text projector
         proj = self.custom_text_proj(last_hidden_states)  # (batch_size, sequence_length, dim)
 
         # L2 normalization
         proj = proj / (proj.norm(dim=-1, keepdim=True) + 1e-8)
+
+        proj = proj  * attention_mask  # (batch_size, sequence_length, dim)
         return proj
 
 models.register_model(
