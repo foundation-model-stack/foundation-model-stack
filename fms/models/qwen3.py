@@ -193,6 +193,9 @@ class Qwen3MuliHeadAttention(MultiHeadAttention):
         # keys = k_out.view(batch_size, q_len, self.kvheads, self.emb_kq_per_head)
         # keys = self.k_norm(k_out.view(hidden_shape))
         # values = v_out.view(hidden_shape)
+
+        # print(self.q_norm.weight, self.q_norm.weight.shape, self.k_norm.weight, self.k_norm.weight.shape)
+
         queries = self.q_norm(q_out.view(batch_size, q_len, self.nheads, self.emb_kq_per_head))
         keys = self.k_norm(k_out.view(batch_size, q_len, self.kvheads, self.emb_kq_per_head))
         values = v_out.view(batch_size, q_len, self.kvheads, self.emb_v_per_head)
@@ -202,6 +205,13 @@ class Qwen3MuliHeadAttention(MultiHeadAttention):
             queries, keys = self.position_encoder.adjusted_qk(
                 queries, keys, position_ids, past_key_value_state, use_cache
             )
+
+        # Expand kv so black-box attn will work
+        expansion = 4
+        keys_e = keys.transpose(1, 2).unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
+
+        # print(f"Attn QKt : {queries.shape} {keys.shape} {torch.matmul(queries.transpose(1, 2), keys_e.permute([0, 1, 3, 2]))}")
+        # print(f"Attn V : {values.transpose(1, 2)}")
 
         attn_compute_dict = get_attention_type(**attn_kwargs)
 
@@ -371,7 +381,9 @@ class Qwen3Block(nn.Module):
 
         # first we do MHA and Add&Norm
         residual = x
+        # print(f"Layer begin logits: {x}")
         x = self.ln(x)
+        # print(f"Layer input ln logits: {x}")
         x = self.attn(
             q=x,
             position_ids=position_ids,
@@ -386,15 +398,18 @@ class Qwen3Block(nn.Module):
             x = self.dropout(x)
         # residual connection
         x = x + residual
+        # print(f"Layer post attn logits: {x}")
 
         # then we do FF and Add&Norm
         residual = x
         x = self.ff_ln(x)
+        # print(f"Layer post attn ln logits: {x}")
         x = self.ff_sub_layer(x)
         if self.config.p_dropout != 0:
             x = self.dropout(x)
         # another residual
         x = x + residual
+        # print(f"Layer post mlp logits: {x}")
 
         if use_cache:
             return (x, cache)
@@ -535,6 +550,8 @@ class Qwen3Headless(nn.Module):
                 present_key_value_states.append(present_key_value_state)
             else:
                 x_in = output
+            
+            # print(f"Layer {i} end logits: {x_in}")
 
         dec_out = x_in
         dec_out = self.dec_norm(dec_out)
@@ -611,6 +628,7 @@ class Qwen3(nn.Module):
 
         if only_last_token:
             output = output[:, -1, :]
+        # print(f"End logits: {output[:, -1:, :]} {output[:, -1:, :].shape}")
         preds = self.head(output)
 
         if use_cache:
@@ -764,7 +782,7 @@ def _hf_to_fms_rope(
     new_sd = {}
 
     if model_config:
-        head_size = model_config.emb_dim // model_config.nheads
+        head_size = model_config.head_dim
         linear_type = "torch_linear"
         if model_config.linear_config:
             linear_type = model_config.linear_config["linear_type"]
@@ -777,6 +795,7 @@ def _hf_to_fms_rope(
     trans_required_pattern = re.compile(
         f"layers.[0-9]+.attn.in_proj.(query|key).({'|'.join(rope_params)})"
     )
+    trans_required_pattern_norm = re.compile("layers.[0-9]+.attn.(q_norm|k_norm).weight")
     for name, param in input_sd.items():
         # hf -> fms requires a transpose operation for the query and key
         # weight and bias parameters for Llama models
@@ -789,7 +808,8 @@ def _hf_to_fms_rope(
         # Therefore, to make FMS produce the correct order of outputs when
         # loading from an HF checkpoint, we need to undo the transformation
         # that HF does from the original Meta weights:
-        if bool(trans_required_pattern.match(name)):
+        # print(name, bool(trans_required_pattern.search(name)), bool(trans_required_pattern_norm.search(name)))
+        if bool(trans_required_pattern.search(name)):
             temp = param
             if "gptq" in linear_type and temp.dim() == 2:
                 # GPTQ qweights are [in_feat, out_feat] (unlike usual [out_feat, in_feat])
@@ -809,7 +829,13 @@ def _hf_to_fms_rope(
                 temp = temp.transpose(0, 1)
 
             new_sd[name] = temp
+        elif bool(trans_required_pattern_norm.search(name)):
+            temp = param
+            temp_view = temp.view(2, -1)
+            temp = temp_view.transpose(0, 1).reshape(*temp.size())
+            new_sd[name] = temp
         else:
+
             new_sd[name] = param
 
     return new_sd
@@ -822,8 +848,8 @@ serialization.register_adapter_step(
 serialization.register_adapter(
     _ARCHITECTURE_NAME,
     "hf",
-    # ["hf_to_fms_names", "hf_to_fms_rope", "hf_gptq_fusion_check", "weight_fusion"],
-    ["hf_to_fms_names", "hf_gptq_fusion_check", "weight_fusion"],
+    ["hf_to_fms_names", "hf_to_fms_rope", "hf_gptq_fusion_check", "weight_fusion"],
+    # ["hf_to_fms_names", "hf_gptq_fusion_check", "weight_fusion"],
 )
 
 
