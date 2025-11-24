@@ -12,7 +12,7 @@ from torch.library import custom_op
 import torch.nn.functional as F
 
 
-@custom_op("spyre::paged_attn_store", mutates_args=(), device_types="cpu")
+@custom_op("spyre::paged_attn_store", mutates_args=(), device_types=["cpu", "cuda"])
 def paged_attn_store(
     key: torch.Tensor,
     value: torch.Tensor,
@@ -22,10 +22,11 @@ def paged_attn_store(
 ) -> tuple[torch.Tensor, torch.Tensor]:
     result_key_cache = key_cache.clone()
     result_value_cache = value_cache.clone()
+    block_size = value_cache.shape[1]
     for seq_i, slot_mapping_seq in enumerate(slot_mapping):
         for tok_i, slot in enumerate(slot_mapping_seq):
-            block_number = slot.item() // 64
-            position = slot.item() % 64
+            block_number = slot.item() // block_size
+            position = slot.item() % block_size
 
             result_key_cache[block_number, position, :, :] = key[seq_i, tok_i, :, :]
             result_value_cache[block_number, position, :, :] = value[seq_i, tok_i, :, :]
@@ -43,7 +44,7 @@ def paged_attn_store_meta(
     return key_cache, value_cache
 
 
-@custom_op("spyre::paged_attn_compute", mutates_args={}, device_types="cpu")
+@custom_op("spyre::paged_attn_compute", mutates_args={}, device_types=["cpu", "cuda"])
 def paged_attn_compute(
     query: torch.Tensor,
     key_cache: torch.Tensor,
@@ -59,16 +60,18 @@ def paged_attn_compute(
     num_kv_heads = value_cache.shape[2]
     head_size = value_cache.shape[3]
     block_size = value_cache.shape[1]
+    seq_len_q = query.shape[1]
     num_seqs = query.shape[0]
 
-    block_tables_lst = block_table.cpu().tolist()
+    block_tables_lst = block_table.tolist()
 
-    seq_lens_lst = current_tkv_mask.cpu().tolist()
+    seq_lens_lst = current_tkv_mask.tolist()
     for i in range(num_seqs):
         q = query[i]
         block_table = block_tables_lst[i]
         start_pos = int(left_padded_prompt_mask[i].item())
         seq_len = int(seq_lens_lst[i])
+        seq_len_q_i = seq_len_q
 
         keys_lst: list[torch.Tensor] = []
         values_lst: list[torch.Tensor] = []
@@ -84,6 +87,13 @@ def paged_attn_compute(
             values_lst.append(v)
         keys = torch.stack(keys_lst, dim=0)
         values = torch.stack(values_lst, dim=0)
+        seq_len_kv = keys.shape[0]
+
+        # cut the pads for first prefill
+        if q.shape[0] > seq_len_kv:
+            seq_len_q_i = seq_len_kv
+            q = q[-seq_len_kv:]
+
         if num_kv_heads > 1:
             # Handle MQA and GQA
             keys = torch.repeat_interleave(keys, num_query_heads // num_kv_heads, dim=1)
@@ -91,16 +101,23 @@ def paged_attn_compute(
                 values, num_query_heads // num_kv_heads, dim=1
             )
 
+        # Generate mask for prefix attention
+        mask = torch.ones((1, 1, seq_len_q_i, seq_len_kv), dtype=torch.bool)
+        mask[:, :, :, -seq_len_q_i:] = torch.tril(mask[:, :, :, -seq_len_q_i:])
+        mask = torch.where(mask.logical_not(), -torch.inf, 0.0).to(
+            device=query.device, dtype=query.dtype
+        )
+
         out = F.scaled_dot_product_attention(
             q.transpose(0, 1).unsqueeze(0),  # format for sdpa
             keys.transpose(0, 1).unsqueeze(0),  # format for sdpa
             values.transpose(0, 1).unsqueeze(0),  # format for sdpa
-            is_causal=False,  # decode assumes no causal mask
+            attn_mask=mask,
             scale=scale,
         )
 
-        out = out.view(num_query_heads, head_size)
-        output[i].copy_(out, non_blocking=True)
+        out = out.transpose(1, 2).view(seq_len_q_i, num_query_heads, head_size)
+        output[i][-seq_len_q_i:] = out
     return output
 
 

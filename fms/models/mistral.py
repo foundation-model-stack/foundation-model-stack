@@ -222,6 +222,7 @@ class MistralHeadless(nn.Module):
             max_seq_len=self.config.max_expected_seq_len,
             ratio=self.config.rope_base,
         )
+
         # RoPE init
         for device in set(
             [param.device for param in self.parameters()]
@@ -528,7 +529,7 @@ def _hf_to_fms_rope(
     new_sd = {}
 
     if model_config:
-        head_size = model_config.emb_dim // model_config.nheads
+        head_size = model_config.head_dim
         linear_type = "torch_linear"
         if model_config.linear_config:
             linear_type = model_config.linear_config["linear_type"]
@@ -553,7 +554,7 @@ def _hf_to_fms_rope(
         # Therefore, to make FMS produce the correct order of outputs when
         # loading from an HF checkpoint, we need to undo the transformation
         # that HF does from the original Meta weights:
-        if bool(trans_required_pattern.match(name)):
+        if bool(trans_required_pattern.search(name)):
             temp = param
             if "gptq" in linear_type and temp.dim() == 2:
                 # GPTQ qweights are [in_feat, out_feat] (unlike usual [out_feat, in_feat])

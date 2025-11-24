@@ -391,6 +391,7 @@ class LlavaNext(nn.Module):
 
         if kwargs["use_cache"] and iteration > 0:
             # No need to process image data again in cached decoding stage.
+            input_ids = self.language_model.base_model.embedding(input_ids)
             return input_ids, kwargs
 
         pixel_values = kwargs.get("pixel_values")
@@ -586,6 +587,13 @@ serialization.register_adapter_step(_architecture_name, "weight_fusion", _weight
 
 serialization.register_adapter_step(
     _architecture_name, "hf_to_fms_names", _hf_to_fms_names
+)
+
+
+serialization.register_adapter_step(
+    _architecture_name,
+    "weight_expansion_for_mismatched_head_dim",
+    serialization._weight_expansion_for_mismatched_head_dim,  # type: ignore[arg-type]
 )
 
 serialization.register_adapter_step(

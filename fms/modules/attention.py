@@ -655,11 +655,15 @@ class MultiHeadAttention(nn.Module):
     emb_v : int
         Latent dimensionality of each head in value projection (mixing dimension).
     nheads : int
-        Number of attention heads.
+        Number of query attention heads.
+    kvheads: int
+        Number of key and value attention heads.
     p_dropout : float|None
         Dropout probability. Must be in range [0,1]. If 0 or None, dropout will not be used.
     use_bias : bool
         Include bias terms in fully-connected sublayers?
+    position_encoder : PositionEncoder | None
+        Optional position encoder applied to query and key tensors before attention
     fused : bool
         If True, qkv weights will be fused, otherwise qkv weights will be unfused.
     linear_config : Mapping[str, Any] | None
