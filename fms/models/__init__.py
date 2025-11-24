@@ -496,8 +496,9 @@ from fms.models import (  # noqa: E402
     bamba,
     gpt_bigcode,
     granite,
+    granite_vision_embed,
     llama,
-    llava_next,
+    llava_next, # granite vision
     mistral,
     mixtral,
     roberta,
@@ -510,8 +511,9 @@ __all__ = [
     "bamba",
     "gpt_bigcode",
     "granite",
+    "granite_vision_embed",
     "llama",
-    "llava_next",
+    "llava_next", # granite vision
     "mistral",
     "mixtral",
     "roberta",

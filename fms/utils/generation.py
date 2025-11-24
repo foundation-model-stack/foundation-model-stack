@@ -389,3 +389,34 @@ def trim_prefix(result: torch.Tensor, pad_token_id: int = 0) -> torch.Tensor:
     bos_index = first_real_token_idx[0][0]
     result = result[bos_index + 1 :]
     return result
+
+def encode(
+    model: Union[Callable, torch.nn.Module],
+    input_ids: torch.Tensor,
+    prepare_model_inputs_hook: Optional[
+        Callable[
+            [int, torch.Tensor, MutableMapping[str, Any]],
+            Tuple[torch.Tensor, MutableMapping[str, Any]],
+        ]
+    ] = None,
+    extra_kwargs: Optional[MutableMapping[str, Any]] = None,
+):
+    """A trivial implementation for embedding. The interface here is a bit
+    awkward at the moment for multimodal, but is set to align with .generate;
+    to use it with images, you should pass the model input hook for
+    model.prepare_inputs_for_generation().
+    """
+    kwargs: MutableMapping[str, Any] = dict()
+    if extra_kwargs is not None:
+        kwargs.update(extra_kwargs)
+
+    # The model input hook for embedding is always 0 since it's just one call
+    if prepare_model_inputs_hook is not None:
+        # Currently this prepares the image features and text embeddings.
+        # TODO - we should discuss the Processor boundary here wrt the HF
+        # implementation if we want this to be usable in other places, like
+        # in vLLM spyre.
+        input_ids, kwargs = prepare_model_inputs_hook(0, input_ids, kwargs)
+    # Get the multimodal embeddings
+    output = model(input_ids, **kwargs)
+    return output
