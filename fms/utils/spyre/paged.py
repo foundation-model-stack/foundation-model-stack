@@ -12,7 +12,7 @@ from torch.library import custom_op
 import torch.nn.functional as F
 
 
-@custom_op("spyre::paged_attn_store", mutates_args=(), device_types="cpu")
+@custom_op("spyre::paged_attn_store", mutates_args=(), device_types=["cpu", "cuda"])
 def paged_attn_store(
     key: torch.Tensor,
     value: torch.Tensor,
@@ -44,7 +44,7 @@ def paged_attn_store_meta(
     return key_cache, value_cache
 
 
-@custom_op("spyre::paged_attn_compute", mutates_args={}, device_types="cpu")
+@custom_op("spyre::paged_attn_compute", mutates_args={}, device_types=["cpu", "cuda"])
 def paged_attn_compute(
     query: torch.Tensor,
     key_cache: torch.Tensor,
@@ -63,9 +63,9 @@ def paged_attn_compute(
     seq_len_q = query.shape[1]
     num_seqs = query.shape[0]
 
-    block_tables_lst = block_table.cpu().tolist()
+    block_tables_lst = block_table.tolist()
 
-    seq_lens_lst = current_tkv_mask.cpu().tolist()
+    seq_lens_lst = current_tkv_mask.tolist()
     for i in range(num_seqs):
         q = query[i]
         block_table = block_tables_lst[i]
@@ -104,7 +104,9 @@ def paged_attn_compute(
         # Generate mask for prefix attention
         mask = torch.ones((1, 1, seq_len_q_i, seq_len_kv), dtype=torch.bool)
         mask[:, :, :, -seq_len_q_i:] = torch.tril(mask[:, :, :, -seq_len_q_i:])
-        mask = torch.where(mask.logical_not(), -torch.inf, 0.0)
+        mask = torch.where(mask.logical_not(), -torch.inf, 0.0).to(
+            device=query.device, dtype=query.dtype
+        )
 
         out = F.scaled_dot_product_attention(
             q.transpose(0, 1).unsqueeze(0),  # format for sdpa
