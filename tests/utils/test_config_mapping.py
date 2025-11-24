@@ -11,8 +11,10 @@ import os
 import pytest
 from fms.utils.config import ModelConfig
 
-RESOURCE_DIR = "tests/resources"
-FMS_CONFIGS_DIR = os.path.join(RESOURCE_DIR, "fms_model_kwargs")
+# TODO: centralize access to resources w/ the testing module
+FMS_CONFIGS_DIR = os.path.join(
+    os.path.dirname(__file__), "..", "resources", "fms_model_kwargs"
+)
 
 # Models to be validated; we should have (at least) one model of each architecture
 # that is supported here. To get the current kwargs for a new model, add it to this
