@@ -1,0 +1,14 @@
+{
+    "architecture": "gpt_bigcode",
+    "emb_dim": 2048,
+    "hidden_grow_factor": 4.0,
+    "ln_eps": 1e-05,
+    "max_expected_seq_len": 2048,
+    "model_path": null,
+    "multiquery_attn": true,
+    "nheads": 16,
+    "nlayers": 24,
+    "src_vocab_size": 49280,
+    "tie_heads": true,
+    "variant": "micro"
+}
