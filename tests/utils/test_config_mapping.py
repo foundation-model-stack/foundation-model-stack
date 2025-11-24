@@ -74,10 +74,9 @@ def export_config_mappings():
         cfg_filename = get_file_kwargs_filename(model_name)
         fms_kwargs_path = os.path.join(FMS_CONFIGS_DIR, cfg_filename)
         if os.path.isfile(fms_kwargs_path):
-            print(f"FMS / HF model {model_name} were already exported - skipping...")
+            print(f"FMS model kwargs for {model_name} were already exported - skipping...")
             continue
 
-        print(f"Exporting or validating FMS / HF for {model_name} - [architecture {arch}]")
         hf_config = AutoConfig.from_pretrained(model_name)
         model_arch = hf_config.architectures[0]
         if model_arch != arch:
@@ -95,7 +94,7 @@ def export_config_mappings():
                     fms_config_kwargs, f_path, indent=4, sort_keys=True,
                     default=lambda obj: obj.as_dict(),
                 )
-            print(f"FMS kwargs for {model_name} were exported!")
+            print(f"FMS model kwargs for {model_name} were exported!")
 
 if __name__ == "__main__":
     export_config_mappings()
