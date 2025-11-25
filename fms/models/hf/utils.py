@@ -11,8 +11,8 @@ from transformers import (  # type: ignore
     AutoModelForMaskedLM,
 )
 
-from fms.models import get_model, list_variants
-from fms.models.hf.fms_config_utils import map_model_config
+from fms.models import get_model
+from fms.models.hf.config_utils import _FMS_MODEL_CONFIG_REGISTRY
 
 def register_fms_models():
     """Register all FMS models with huggingface AutoModels"""
@@ -157,29 +157,12 @@ def infer_model_configuration(
         model_path = str(model_id_or_path)
 
     config = AutoConfig.from_pretrained(model_path)
-    architecture = config.architectures[0]
-    architecture, config_params = map_model_config(architecture, config)
 
-    # infer get_model params
-    config_params["architecture"] = architecture
-    config_params["variant"] = list_variants(architecture)[0]
-    config_params["model_path"] = model_path if download_weights else None
-
-    ## infer quantization parameters
-    quant_config = getattr(config, "quantization_config", None)
-    if quant_config is not None:
-        try:
-            from fms_mo.aiu_addons import _infer_quantization_config  # type: ignore[import-untyped,import-not-found]
-        except ImportError:
-            raise RuntimeError(
-                "You need to install fms-model-optimizer to load quantized models"
-            )
-        linear_config = _infer_quantization_config(quant_config)
-        if linear_config:
-            config_params["linear_config"] = linear_config
-
+    config_params = _FMS_MODEL_CONFIG_REGISTRY.hf_config_to_fms_config_params(
+        config,
+        model_path=model_path if download_weights else None,
+    )
     return config_params
-
 
 def as_fms_model(
     model_id_or_path: Union[str, os.PathLike],
@@ -213,7 +196,7 @@ def as_fms_model(
     nn.Module
         an fms equivalent implementation of an HF model
     """
-    get_model_kwargs = _infer_model_configuration(
+    get_model_kwargs = infer_model_configuration(
         model_id_or_path, download_weights=initialize_model_with_weights
     )
 

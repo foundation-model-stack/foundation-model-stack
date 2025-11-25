@@ -1,8 +1,8 @@
 """
-Model specific utils for converting HF PretrainedConfig objects -> FMS kwargs.
+Builder funcs, which consume a transformers PretrainedConfig, and create
+a dict of config_params, which should be expanded and passed as overrides
+to the model at init time.
 """
-
-### Config builders for different model architectures
 def build_llama_params(config):
     config_params = {
         "attn_bias": getattr(config, "attention_bias", False),
@@ -124,7 +124,10 @@ def build_bamba_params(config):
     return model_params_with_common_opts(config, config_params, inner_dim=config.intermediate_size)
 
 def build_siglip_vision_params(config):
-    config = config.vision_config # vision encoder only
+    # If the recevied the outer siglip model config, pass only the vision
+    # encoder config, because we do not care about the text encoder here.
+    if hasattr(config, "vision_config"):
+        config = config.vision_config
     config_params = {
         "hidden_size": config.hidden_size,
         "intermediate_size": config.intermediate_size,
@@ -141,7 +144,6 @@ def build_siglip_vision_params(config):
     return config_params
 
 def build_llava_next_params(config):
-    # TODO - make this generic
     from fms.models.siglip_vision import SiglipVisionConfig
     from fms.models.granite import GraniteConfig
     config_params = {
@@ -153,7 +155,7 @@ def build_llava_next_params(config):
         ),
     }
 
-    # TODO make this a warning and abstract the visual encoder / LLM implementations
+    # TODO abstract and allow recursive config param / model config init
     if config.text_config.model_type != "granite":
         raise ValueError(
             "FMS implementation of LlavaNext currently supports only Granite language model"
@@ -163,11 +165,9 @@ def build_llava_next_params(config):
             "FMS implementation of LlavaNext currently supports only Siglip vision model"
         )
 
-    _, vision_config_params = map_model_config("SiglipModel", config)
+    vision_config_params = build_siglip_vision_params(config)
     config_params["vision_config"] = SiglipVisionConfig(**vision_config_params)
-    _, text_config_params = map_model_config(
-        "GraniteForCausalLM", config.text_config
-    )
+    text_config_params = build_granite_params(config.text_config)
     config_params["text_config"] = GraniteConfig(**text_config_params)
     # Don't see common opts for the VLM; they'll generally be set in the LLM recursively
     return config_params
@@ -217,35 +217,3 @@ def model_params_with_common_opts(config, config_params, inner_dim):
     # Should not have overlap
     assert not any(common_params) in config_params
     return {**config_params, **common_params}
-
-# Maps HF model architectures to tuples containing the corresponding
-# FMS arch name & builder for grabbing FMS model kwarg overrides from
-# the HF pretrained config.
-from functools import partial
-
-
-MODEL_ARCH_REGISTRY = {
-    "LlamaForCausalLM": ("llama", build_llama_params),
-    "GPTBigCodeForCausalLM": ("gpt_bigcode", build_gpt_bigcode_params),
-    "MixtralForCausalLM": ("mixtral", build_mixtral_params),
-    "RobertaForMaskedLM": ("roberta", build_roberta_params),
-    "RobertaForQuestionAnswering": ("roberta_question_answering", build_roberta_params),
-    "GraniteForCausalLM": ("granite", build_granite_params),
-    "MistralForCausalLM": ("mistral", build_mistral_params),
-    "BambaForCausalLM": ("bamba", build_bamba_params),
-    "SiglipModel": ("siglip_vision", build_siglip_vision_params),
-    "LlavaNextForConditionalGeneration": ("llava_next", build_llava_next_params),
-    "MPNetForMaskedLM": ("mpnet", build_mpnet_params),
-    "BertForMaskedLM": ("bert", build_bert_params),
-    # Classify arches have some extra keys for labels
-    "RobertaForSequenceClassification": ("roberta_classification", partial(build_roberta_params, is_classify=True)),
-    "BertForSequenceClassification": ("bert_classification", partial(build_bert_params, is_classify=True)),
-}
-
-def map_model_config(architecture, config):
-    # Map HF model config to FMS model config
-    if architecture in MODEL_ARCH_REGISTRY:
-        fms_arch, param_builder = MODEL_ARCH_REGISTRY[architecture]
-        config_params = param_builder(config)
-        return fms_arch, config_params
-    raise KeyError(f"HF architecture {architecture} is unsupported! Supported architectures: {list(MODEL_ARCH_REGISTRY.keys())}")
