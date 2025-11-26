@@ -2,7 +2,10 @@
 Model specific utils for converting HF PretrainedConfig objects -> FMS kwargs.
 """
 
+import logging
 from fms.models import list_variants
+
+logger = logging.getLogger(__name__)
 
 
 class ModelConfigRegistry:
@@ -40,6 +43,12 @@ class ModelConfigRegistry:
 
     def hf_config_to_fms_config_params(self, config, model_path):
         architecture = config.architectures[0]
+        if len(config.architectures) > 1:
+            logger.warning(
+                "The provided HF config supports multiple architectures; only the first, "
+                "%s, will be used in building the FMS model's config params"
+                % architecture
+            )
 
         config_params = self.map_hf_arch_to_fms_params(architecture, config)
         fms_arch = self.map_hf_to_fms_arch(architecture)
