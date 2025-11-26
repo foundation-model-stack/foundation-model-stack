@@ -119,7 +119,7 @@
         "emb_dim": 2048,
         "embedding_multiplier": 12.0,
         "fused_weights": true,
-        "head_dim": 128,
+        "head_dim": 64,
         "hidden_grow_factor": 4.0,
         "kvheads": 8,
         "linear_config": null,
