@@ -23,7 +23,7 @@ FMS_CONFIGS_DIR = os.path.join(
 MODEL_CONFIG_MAP = {
     "LlamaForCausalLM": "meta-llama/Meta-Llama-3-8B-Instruct",
     "GPTBigCodeForCausalLM": "bigcode/gpt_bigcode-santacoder",
-    "MixtralForCausalLM": "mistralai/Mixtral-8x7B-v0.1", 
+    "MixtralForCausalLM": "mistralai/Mixtral-8x7B-v0.1",
     "RobertaForMaskedLM": "FacebookAI/roberta-base",
     "RobertaForQuestionAnswering": "deepset/roberta-base-squad2",
     "RobertaForSequenceClassification": "cardiffnlp/twitter-roberta-base-sentiment-latest",
@@ -37,11 +37,16 @@ MODEL_CONFIG_MAP = {
     "BertForSequenceClassification": "nlptown/bert-base-multilingual-uncased-sentiment",
 }
 
-get_file_kwargs_filename = lambda model_name: f"{model_name.split("/")[-1]}.json"
+
+def get_file_kwargs_filename(model_name: str) -> str:
+    """Get the name json file containing the FMS model kwargs."""
+    return f"{model_name.split('/')[-1]}.json"
+
 
 @pytest.mark.parametrize("arch,model_name", MODEL_CONFIG_MAP.items())
 def test_config_mapping(arch: str, model_name: str):
     from fms.models.hf.utils import infer_model_configuration
+
     cfg_filename = get_file_kwargs_filename(model_name)
     kwargs_path = os.path.join(FMS_CONFIGS_DIR, cfg_filename)
     if not os.path.isfile(kwargs_path):
@@ -74,15 +79,21 @@ def export_config_mappings():
         cfg_filename = get_file_kwargs_filename(model_name)
         fms_kwargs_path = os.path.join(FMS_CONFIGS_DIR, cfg_filename)
         if os.path.isfile(fms_kwargs_path):
-            print(f"FMS model kwargs for {model_name} were already exported - skipping...")
+            print(
+                f"FMS model kwargs for {model_name} were already exported - skipping..."
+            )
             continue
 
         hf_config = AutoConfig.from_pretrained(model_name)
         model_arch = hf_config.architectures[0]
         if model_arch != arch:
-            raise ValueError(f"Arch {arch} does not match value {model_arch} inferred from the model config!")
+            raise ValueError(
+                f"Arch {arch} does not match value {model_arch} inferred from the model config!"
+            )
 
-        fms_config_kwargs = infer_model_configuration(model_name, download_weights=False)
+        fms_config_kwargs = infer_model_configuration(
+            model_name, download_weights=False
+        )
 
         if not os.path.isfile(fms_kwargs_path):
             with open(fms_kwargs_path, "w") as f_path:
@@ -91,10 +102,14 @@ def export_config_mappings():
                 # for now we're just dumping the kwargs to the model, and
                 # not the model configs themselves
                 json.dump(
-                    fms_config_kwargs, f_path, indent=4, sort_keys=True,
+                    fms_config_kwargs,
+                    f_path,
+                    indent=4,
+                    sort_keys=True,
                     default=lambda obj: obj.as_dict(),
                 )
             print(f"FMS model kwargs for {model_name} were exported!")
+
 
 if __name__ == "__main__":
     export_config_mappings()
