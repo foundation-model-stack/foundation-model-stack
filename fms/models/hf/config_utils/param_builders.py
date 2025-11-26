@@ -3,6 +3,8 @@ Builder funcs, which consume a transformers PretrainedConfig, and create
 a dict of config_params, which should be expanded and passed as overrides
 to the model at init time.
 """
+
+
 def build_llama_params(config):
     config_params = {
         "attn_bias": getattr(config, "attention_bias", False),
@@ -21,9 +23,12 @@ def build_llama_params(config):
     rope_scaling = getattr(config, "rope_scaling", None)
     if rope_scaling is not None:
         config_params["rope_scaling"] = rope_scaling
-    
+
     # Apply the common params
-    return model_params_with_common_opts(config, config_params, inner_dim=config.intermediate_size)
+    return model_params_with_common_opts(
+        config, config_params, inner_dim=config.intermediate_size
+    )
+
 
 def build_gpt_bigcode_params(config):
     config_params = {
@@ -32,7 +37,10 @@ def build_gpt_bigcode_params(config):
         "emb_dim": config.hidden_size,
         "max_expected_seq_len": config.n_positions,
     }
-    return model_params_with_common_opts(config, config_params, inner_dim=config.n_inner)
+    return model_params_with_common_opts(
+        config, config_params, inner_dim=config.n_inner
+    )
+
 
 def build_mixtral_params(config):
     inner_dim = config.intermediate_size
@@ -47,6 +55,7 @@ def build_mixtral_params(config):
         "max_expected_seq_len": config.max_position_embeddings,
     }
     return model_params_with_common_opts(config, config_params, inner_dim=inner_dim)
+
 
 def build_roberta_params(config, is_classify: bool = False):
     config_params = {
@@ -63,7 +72,9 @@ def build_roberta_params(config, is_classify: bool = False):
     if is_classify:
         # The only difference for classify is num_classes
         config_params["num_classes"] = config.num_labels
-    return model_params_with_common_opts(config, config_params, inner_dim=config.intermediate_size)
+    return model_params_with_common_opts(
+        config, config_params, inner_dim=config.intermediate_size
+    )
 
 
 def build_granite_params(config):
@@ -85,7 +96,10 @@ def build_granite_params(config):
             config, "head_dim", config.hidden_size // config.num_attention_heads
         ),
     }
-    return model_params_with_common_opts(config, config_params, inner_dim=config.intermediate_size)
+    return model_params_with_common_opts(
+        config, config_params, inner_dim=config.intermediate_size
+    )
+
 
 def build_mistral_params(config):
     config_params = {
@@ -102,7 +116,10 @@ def build_mistral_params(config):
         "rope_base": config.rope_theta,
         "sliding_window": config.sliding_window,
     }
-    return model_params_with_common_opts(config, config_params, inner_dim=config.intermediate_size)
+    return model_params_with_common_opts(
+        config, config_params, inner_dim=config.intermediate_size
+    )
+
 
 def build_bamba_params(config):
     config_params = {
@@ -121,7 +138,10 @@ def build_bamba_params(config):
         "use_bias": config.mamba_proj_bias,
         "norm_eps": config.rms_norm_eps,
     }
-    return model_params_with_common_opts(config, config_params, inner_dim=config.intermediate_size)
+    return model_params_with_common_opts(
+        config, config_params, inner_dim=config.intermediate_size
+    )
+
 
 def build_siglip_vision_params(config):
     # If the recevied the outer siglip model config, pass only the vision
@@ -143,16 +163,16 @@ def build_siglip_vision_params(config):
     # Don't build common opts for the vision encoder
     return config_params
 
+
 def build_llava_next_params(config):
     from fms.models.siglip_vision import SiglipVisionConfig
     from fms.models.granite import GraniteConfig
+
     config_params = {
         "image_token_index": config.image_token_index,
         "image_grid_pinpoints": config.image_grid_pinpoints,
         "vision_feature_layer": config.vision_feature_layer,
-        "vision_feature_select_strategy": (
-            config.vision_feature_select_strategy
-        ),
+        "vision_feature_select_strategy": (config.vision_feature_select_strategy),
     }
 
     # TODO abstract and allow recursive config param / model config init
@@ -172,6 +192,7 @@ def build_llava_next_params(config):
     # Don't see common opts for the VLM; they'll generally be set in the LLM recursively
     return config_params
 
+
 def build_mpnet_params(config):
     config_params = {
         "p_dropout": config.attention_probs_dropout_prob,
@@ -183,11 +204,12 @@ def build_mpnet_params(config):
         "emb_dim": config.hidden_size,
         "max_expected_seq_len": config.max_position_embeddings,
         "pad_id": config.pad_token_id,
-        "relative_attention_num_buckets": (
-            config.relative_attention_num_buckets
-        ),
+        "relative_attention_num_buckets": (config.relative_attention_num_buckets),
     }
-    return model_params_with_common_opts(config, config_params, inner_dim=config.intermediate_size)
+    return model_params_with_common_opts(
+        config, config_params, inner_dim=config.intermediate_size
+    )
+
 
 def build_bert_params(config, is_classify: bool = False):
     config_params = {
@@ -204,13 +226,16 @@ def build_bert_params(config, is_classify: bool = False):
     if is_classify:
         # The only difference for classify is num_classes
         config_params["num_classes"] = config.num_labels
-    return model_params_with_common_opts(config, config_params, inner_dim=config.intermediate_size)
+    return model_params_with_common_opts(
+        config, config_params, inner_dim=config.intermediate_size
+    )
+
 
 def model_params_with_common_opts(config, config_params, inner_dim):
     common_params = {
         "src_vocab_size": config.vocab_size,
         "nheads": config.num_attention_heads,
-        "nlayers": config.num_hidden_layers, 
+        "nlayers": config.num_hidden_layers,
         "hidden_grow_factor": inner_dim / config.hidden_size,
         "tie_heads": config.tie_word_embeddings,
     }

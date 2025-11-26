@@ -14,6 +14,7 @@ from transformers import (  # type: ignore
 from fms.models import get_model
 from fms.models.hf.config_utils import _FMS_MODEL_CONFIG_REGISTRY
 
+
 def register_fms_models():
     """Register all FMS models with huggingface AutoModels"""
     from fms.models.hf import (
@@ -163,6 +164,7 @@ def infer_model_configuration(
         model_path=model_path if download_weights else None,
     )
     return config_params
+
 
 def as_fms_model(
     model_id_or_path: Union[str, os.PathLike],

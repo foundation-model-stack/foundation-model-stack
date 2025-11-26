@@ -4,8 +4,10 @@ Model specific utils for converting HF PretrainedConfig objects -> FMS kwargs.
 
 from fms.models import list_variants
 
+
 class ModelConfigRegistry:
     """Wrapper class that handles converting hf config -> FMS kwargs."""
+
     def __init__(self, registry_map=None):
         self.model_param_builders = {}
         self.model_arch_mappings = {}
@@ -13,9 +15,7 @@ class ModelConfigRegistry:
         if registry_map is not None:
             # Default registry initialization for all in tree models
             for hf_arch_name, fms_info in registry_map.items():
-                self.register_model_arch_info(
-                    hf_arch_name, *fms_info
-                )
+                self.register_model_arch_info(hf_arch_name, *fms_info)
 
     def register_model_arch_info(self, hf_arch_name, fms_arch_name, param_builder):
         self.model_param_builders[hf_arch_name] = param_builder
@@ -25,7 +25,9 @@ class ModelConfigRegistry:
         if architecture in self.model_arch_mappings:
             fms_arch = self.model_arch_mappings[architecture]
             return fms_arch
-        raise KeyError(f"HF architecture {architecture} is unsupported! Registered architectures: {list(self.model_arch_mappings.keys())}")
+        raise KeyError(
+            f"HF architecture {architecture} is unsupported! Registered architectures: {list(self.model_arch_mappings.keys())}"
+        )
 
     def map_hf_arch_to_fms_params(self, architecture, config):
         # Map HF model config to FMS model config
@@ -33,7 +35,9 @@ class ModelConfigRegistry:
             param_builder = self.model_param_builders[architecture]
             config_params = param_builder(config)
             return config_params
-        raise KeyError(f"HF architecture {architecture} is unsupported! Registered architectures: {list(self.model_arch_mappings.keys())}")
+        raise KeyError(
+            f"HF architecture {architecture} is unsupported! Registered architectures: {list(self.model_arch_mappings.keys())}"
+        )
 
     def hf_config_to_fms_config_params(self, config, model_path):
         architecture = config.architectures[0]
