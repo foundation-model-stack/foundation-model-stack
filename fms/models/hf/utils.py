@@ -334,7 +334,7 @@ def _map_model_config(architecture, config):
     return architecture, config_params
 
 
-def _infer_model_configuration(
+def infer_model_configuration(
     model_id_or_path: str | os.PathLike,
     download_weights: bool = True,
 ) -> Dict[str, Any]:
@@ -434,7 +434,7 @@ def as_fms_model(
     nn.Module
         an fms equivalent implementation of an HF model
     """
-    get_model_kwargs = _infer_model_configuration(
+    get_model_kwargs = infer_model_configuration(
         model_id_or_path, download_weights=initialize_model_with_weights
     )
 
