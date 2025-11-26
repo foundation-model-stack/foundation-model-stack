@@ -21,7 +21,7 @@ FMS_CONFIGS_DIR = os.path.join(
 # dictionary, and run this file as `main` to export the corresponding file to the
 # resources subdir.
 MODEL_CONFIG_MAP = {
-    "LlamaForCausalLM": "meta-llama/Meta-Llama-3-8B-Instruct",
+    "LlamaForCausalLM": "trl-internal-testing/tiny-LlamaForCausalLM-3.2",
     "GPTBigCodeForCausalLM": "bigcode/gpt_bigcode-santacoder",
     "MixtralForCausalLM": "mistralai/Mixtral-8x7B-v0.1",
     "RobertaForMaskedLM": "FacebookAI/roberta-base",
