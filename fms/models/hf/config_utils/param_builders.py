@@ -239,6 +239,18 @@ def model_params_with_common_opts(config, config_params, inner_dim):
         "hidden_grow_factor": inner_dim / config.hidden_size,
         "tie_heads": config.tie_word_embeddings,
     }
-    # Should not have overlap
-    assert not any(common_params) in config_params
+
+    # If we have any overlapping keys with the common params coming
+    # from the builder, raise if they have conflicting values.
+    overlap = set(common_params.keys()).intersection(set(config_params.keys()))
+    mismatches = [
+        dup_key
+        for dup_key in overlap
+        if common_params[dup_key] != config_params[dup_key]
+    ]
+    if mismatches:
+        raise ValueError(
+            f"Model param builder uses common params, but has conflicting values for key(s) {mismatches}"
+        )
+
     return {**config_params, **common_params}
