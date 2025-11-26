@@ -146,19 +146,19 @@ def build_bamba_params(config):
 def build_siglip_vision_params(config):
     # If the recevied the outer siglip model config, pass only the vision
     # encoder config, because we do not care about the text encoder here.
-    if hasattr(config, "vision_config"):
-        config = config.vision_config
+    vision_cfg = config.vision_config if hasattr(config, "vision_config") else config
+
     config_params = {
-        "hidden_size": config.hidden_size,
-        "intermediate_size": config.intermediate_size,
-        "nlayers": config.num_hidden_layers,
-        "nheads": config.num_attention_heads,
-        "num_channels": config.num_channels,
-        "image_size": config.image_size,
-        "patch_size": config.patch_size,
-        "hidden_act": config.hidden_act,
-        "layer_norm_eps": config.layer_norm_eps,
-        "attention_dropout": config.attention_dropout,
+        "hidden_size": vision_cfg.hidden_size,
+        "intermediate_size": vision_cfg.intermediate_size,
+        "nlayers": vision_cfg.num_hidden_layers,
+        "nheads": vision_cfg.num_attention_heads,
+        "num_channels": vision_cfg.num_channels,
+        "image_size": vision_cfg.image_size,
+        "patch_size": vision_cfg.patch_size,
+        "hidden_act": vision_cfg.hidden_act,
+        "layer_norm_eps": vision_cfg.layer_norm_eps,
+        "attention_dropout": vision_cfg.attention_dropout,
     }
     # Don't build common opts for the vision encoder
     return config_params
