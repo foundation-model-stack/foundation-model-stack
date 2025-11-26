@@ -8,14 +8,13 @@ from fms.models import list_variants
 class ModelConfigRegistry:
     """Wrapper class that handles converting hf config -> FMS kwargs."""
 
-    def __init__(self, registry_map=None):
+    def __init__(self, registry_map):
         self.model_param_builders = {}
         self.model_arch_mappings = {}
 
-        if registry_map is not None:
-            # Default registry initialization for all in tree models
-            for hf_arch_name, fms_info in registry_map.items():
-                self.register_model_arch_info(hf_arch_name, *fms_info)
+        # Default registry initialization for all in tree models
+        for hf_arch_name, fms_info in registry_map.items():
+            self.register_model_arch_info(hf_arch_name, *fms_info)
 
     def register_model_arch_info(self, hf_arch_name, fms_arch_name, param_builder):
         self.model_param_builders[hf_arch_name] = param_builder
