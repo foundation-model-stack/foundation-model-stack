@@ -67,6 +67,7 @@ class ModelConfigRegistry:
         Args:
         architecture: transformers architecture; note that if multiple
             are present, we typically pass architectures[0] currently.
+        config: the HF transformers PretrainedConfig to be mapped.
         """
         # Map HF model config to FMS model config
         if architecture in self.model_param_builders:

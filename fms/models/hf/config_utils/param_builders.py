@@ -162,10 +162,16 @@ def build_bamba_params(config: PretrainedConfig) -> dict:
 
 
 def build_siglip_vision_params(config: PretrainedConfig) -> dict:
-    """Param builder for mapping SiglipModel to FMS."""
-    # If the recevied the outer siglip model config, pass only the vision
-    # encoder config, because we do not care about the text encoder here.
-    vision_cfg = config.vision_config if hasattr(config, "vision_config") else config
+    """
+    Param builder for extracting the Siglip vision encoder for wrapping modules,
+    i.e.,
+        - LlavaNextForConditionalGeneration (granite vision only)
+        - SiglipModel
+    to FMS.
+
+    NOTE that this does not consider the text encoder for standalone siglip.
+    """
+    vision_cfg = config.vision_config
 
     config_params = {
         "hidden_size": vision_cfg.hidden_size,
