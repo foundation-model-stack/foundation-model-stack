@@ -4,8 +4,15 @@ a dict of config_params, which should be expanded and passed as overrides
 to the model at init time.
 """
 
+# Used in Llava Next for Granite vision
+from fms.models.siglip_vision import SiglipVisionConfig
+from fms.models.granite import GraniteConfig
 
-def build_llama_params(config):
+from transformers import PretrainedConfig
+
+
+def build_llama_params(config: PretrainedConfig) -> dict:
+    """Param builder for mapping LlamaForCausalLM to FMS."""
     config_params = {
         "attn_bias": getattr(config, "attention_bias", False),
         "mlp_bias": getattr(config, "mlp_bias", False),
@@ -30,7 +37,8 @@ def build_llama_params(config):
     )
 
 
-def build_gpt_bigcode_params(config):
+def build_gpt_bigcode_params(config: PretrainedConfig) -> dict:
+    """Param builder for mapping GPTBigCodeForCausalLM to FMS."""
     config_params = {
         "ln_eps": config.layer_norm_epsilon,
         "multiquery_attn": config.multi_query,
@@ -42,7 +50,8 @@ def build_gpt_bigcode_params(config):
     )
 
 
-def build_mixtral_params(config):
+def build_mixtral_params(config: PretrainedConfig) -> dict:
+    """Param builder for mapping MixtralForCausalLM to FMS."""
     inner_dim = config.intermediate_size
     config_params = {
         "dim": config.hidden_size,
@@ -57,7 +66,13 @@ def build_mixtral_params(config):
     return model_params_with_common_opts(config, config_params, inner_dim=inner_dim)
 
 
-def build_roberta_params(config, is_classify: bool = False):
+def build_roberta_params(config: PretrainedConfig, is_classify: bool = False) -> dict:
+    """Param builder for mapping
+        - RobertaForMaskedLM, RobertaForQuestionAnswering when is_classify is False
+        - RobertaForSequenceClassification when is_classify is True
+    to FMS. In the latter case, this should be wrapped in a partial at registration
+    time to override the default value and align with the ParamBuilderFunc signature.
+    """
     config_params = {
         "emb_dim": config.hidden_size,
         "pad_id": config.pad_token_id,
@@ -77,7 +92,8 @@ def build_roberta_params(config, is_classify: bool = False):
     )
 
 
-def build_granite_params(config):
+def build_granite_params(config: PretrainedConfig) -> dict:
+    """Param builder for mapping GraniteForCausalLM to FMS."""
     config_params = {
         "attn_bias": getattr(config, "attention_bias", False),
         "mlp_bias": getattr(config, "mlp_bias", False),
@@ -101,7 +117,8 @@ def build_granite_params(config):
     )
 
 
-def build_mistral_params(config):
+def build_mistral_params(config: PretrainedConfig) -> dict:
+    """Param builder for mapping MistralForCausalLM to FMS."""
     config_params = {
         "activation_fn": config.hidden_act,
         "emb_dim": config.hidden_size,
@@ -121,7 +138,8 @@ def build_mistral_params(config):
     )
 
 
-def build_bamba_params(config):
+def build_bamba_params(config: PretrainedConfig) -> dict:
+    """Param builder for mapping BambaForCausalLM to FMS."""
     config_params = {
         "kvheads": config.num_key_value_heads,
         "p_dropout": config.attention_dropout,
@@ -143,7 +161,8 @@ def build_bamba_params(config):
     )
 
 
-def build_siglip_vision_params(config):
+def build_siglip_vision_params(config: PretrainedConfig) -> dict:
+    """Param builder for mapping SiglipModel to FMS."""
     # If the recevied the outer siglip model config, pass only the vision
     # encoder config, because we do not care about the text encoder here.
     vision_cfg = config.vision_config if hasattr(config, "vision_config") else config
@@ -164,10 +183,8 @@ def build_siglip_vision_params(config):
     return config_params
 
 
-def build_llava_next_params(config):
-    from fms.models.siglip_vision import SiglipVisionConfig
-    from fms.models.granite import GraniteConfig
-
+def build_llava_next_params(config: PretrainedConfig) -> dict:
+    """Param builder for mapping LlavaNextForConditionalGeneration to FMS."""
     config_params = {
         "image_token_index": config.image_token_index,
         "image_grid_pinpoints": config.image_grid_pinpoints,
@@ -193,7 +210,8 @@ def build_llava_next_params(config):
     return config_params
 
 
-def build_mpnet_params(config):
+def build_mpnet_params(config: PretrainedConfig) -> dict:
+    """Param builder for mapping MPNetForMaskedLM to FMS."""
     config_params = {
         "p_dropout": config.attention_probs_dropout_prob,
         "hidden_dropout_prob": config.hidden_dropout_prob,
@@ -211,7 +229,13 @@ def build_mpnet_params(config):
     )
 
 
-def build_bert_params(config, is_classify: bool = False):
+def build_bert_params(config: PretrainedConfig, is_classify: bool = False) -> dict:
+    """Param builder for mapping
+        - BertForMaskedLM when is_classify is False
+        - BertForSequenceClassification when is_classify is True
+    to FMS. In the latter case, this should be wrapped in a partial at registration
+    time to override the default value and align with the ParamBuilderFunc signature.
+    """
     config_params = {
         "emb_dim": config.hidden_size,
         "pad_id": config.pad_token_id,
@@ -231,7 +255,19 @@ def build_bert_params(config, is_classify: bool = False):
     )
 
 
-def model_params_with_common_opts(config, config_params, inner_dim):
+def model_params_with_common_opts(
+    config: PretrainedConfig, config_params: dict, inner_dim: int
+) -> dict:
+    """
+    Adds additional kwargs to the config params that are common
+    to most non multimodal architectures.
+
+    Args:
+    config: The Transformers PretrainedConfig being mapped.
+    config_params: The FMS model kwargs created by the corresponding param builder.
+    inner_dim: The internal dimension of the model; this is explicitly passed since
+        the key is not standardized across HF config subclasses.
+    """
     common_params = {
         "src_vocab_size": config.vocab_size,
         "nheads": config.num_attention_heads,

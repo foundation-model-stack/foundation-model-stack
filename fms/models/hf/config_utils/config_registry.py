@@ -78,8 +78,16 @@ class ModelConfigRegistry:
         )
 
     def hf_config_to_fms_config_params(
-        self, config: PretrainedConfig, model_path: str
+        self, config: PretrainedConfig, model_path: Optional[str]
     ) -> dict:
+        """
+        Given a transformers config and the path to the model, build the params dict to be
+        passed to the initializer of the FMS model.
+
+        Args:
+        config: The model's transformers config.
+        model_path: The path to the model, or None if the weights are to be downloaded.
+        """
         if config.architectures is None:
             raise ValueError("HF Config must contain a model architecture")
 
