@@ -6,6 +6,7 @@ import logging
 from fms.models import list_variants
 from fms.models.hf.config_utils.config_utils_types import ParamBuilderFunc, RegistryMap
 from transformers import PretrainedConfig
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +41,7 @@ class ModelConfigRegistry:
         self.model_param_builders[hf_arch_name] = param_builder
         self.model_arch_mappings[hf_arch_name] = fms_arch_name
 
-    def map_hf_to_fms_arch(self, architecture: str) -> str:
+    def map_hf_to_fms_arch(self, architecture: str) -> Optional[str]:
         """
         Map the transformers architecture to the FMS architecture.
 
@@ -51,13 +52,13 @@ class ModelConfigRegistry:
         if architecture in self.model_arch_mappings:
             fms_arch = self.model_arch_mappings[architecture]
             return fms_arch
-        raise KeyError(
-            f"HF architecture {architecture} is unsupported! Registered architectures: {list(self.model_arch_mappings.keys())}"
+        logger.warning(
+            f"HF architecture {architecture} does not map to a registered FMS architecture!"
         )
 
     def map_hf_arch_to_fms_params(
         self, architecture: str, config: PretrainedConfig
-    ) -> dict:
+    ) -> Optional[dict]:
         """
         Map the transformers architecture to the callable that produces
         the config params dict to be passed as additional kwargs when
@@ -68,12 +69,12 @@ class ModelConfigRegistry:
             are present, we typically pass architectures[0] currently.
         """
         # Map HF model config to FMS model config
-        if architecture in self.model_arch_mappings:
+        if architecture in self.model_param_builders:
             param_builder = self.model_param_builders[architecture]
             config_params = param_builder(config)
             return config_params
-        raise KeyError(
-            f"HF architecture {architecture} is unsupported! Registered architectures: {list(self.model_arch_mappings.keys())}"
+        logger.warning(
+            f"HF architecture {architecture} does not map to a registered model param builder!"
         )
 
     def hf_config_to_fms_config_params(
@@ -92,6 +93,11 @@ class ModelConfigRegistry:
         architecture = config.architectures[0]
         config_params = self.map_hf_arch_to_fms_params(architecture, config)
         fms_arch = self.map_hf_to_fms_arch(architecture)
+
+        if config_params is None or fms_arch is None:
+            raise KeyError(
+                f"The HF architecture {architecture} must map to both a config params builder and an fms architecture in the model config registry!"
+            )
 
         # infer get_model params
         config_params["architecture"] = fms_arch
