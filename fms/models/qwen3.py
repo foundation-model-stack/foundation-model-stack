@@ -42,7 +42,7 @@ from fms.utils.config import ModelConfig
 
 logger = logging.getLogger(__name__)
 
-class Qwen3MuliHeadAttention(MultiHeadAttention):
+class Qwen3MultiHeadAttention(MultiHeadAttention):
     """Customized for Qwen3
 
     Args
@@ -180,22 +180,6 @@ class Qwen3MuliHeadAttention(MultiHeadAttention):
         # todo: Cross attention (This always is true for now)
         q_out, k_out, v_out = self.in_proj(q, k, v)
 
-        # q_view = q_out.view(self.nheads, 2, -1, q_out.size(1))
-        # q_print = q_view.transpose(1, 2).reshape(*q_out.size())
-        # k_view = k_out.view(self.kvheads, 2, -1, k_out.size(1))
-        # k_print = k_view.transpose(1, 2).reshape(*k_out.size())
-        # input_shape = q.shape[:-1]
-        # hidden_shape = (*input_shape, -1, self.emb_kq_per_head)
-
-        # note: transposes will be moved in a later PR to fix dis-contiguous tensor issues
-        # queries = q_out.view(batch_size, q_len, self.nheads, self.emb_kq_per_head)
-        # queries = self.q_norm(q_out.view(hidden_shape))
-        # keys = k_out.view(batch_size, q_len, self.kvheads, self.emb_kq_per_head)
-        # keys = self.k_norm(k_out.view(hidden_shape))
-        # values = v_out.view(hidden_shape)
-
-        # print(self.q_norm.weight, self.q_norm.weight.shape, self.k_norm.weight, self.k_norm.weight.shape)
-
         queries = self.q_norm(q_out.view(batch_size, q_len, self.nheads, self.emb_kq_per_head))
         keys = self.k_norm(k_out.view(batch_size, q_len, self.kvheads, self.emb_kq_per_head))
         values = v_out.view(batch_size, q_len, self.kvheads, self.emb_v_per_head)
@@ -205,13 +189,6 @@ class Qwen3MuliHeadAttention(MultiHeadAttention):
             queries, keys = self.position_encoder.adjusted_qk(
                 queries, keys, position_ids, past_key_value_state, use_cache
             )
-
-        # Expand kv so black-box attn will work
-        expansion = 4
-        keys_e = keys.transpose(1, 2).unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
-
-        # print(f"Attn QKt : {queries.shape} {keys.shape} {torch.matmul(queries.transpose(1, 2), keys_e.permute([0, 1, 3, 2]))}")
-        # print(f"Attn V : {values.transpose(1, 2)}")
 
         attn_compute_dict = get_attention_type(**attn_kwargs)
 
@@ -343,7 +320,7 @@ class Qwen3Block(nn.Module):
             assert self.config.nheads % self.config.kvheads == 0
         # construct MultiHeadAttention object and pass in emb_dim: 2048,
         #    emb_kq: 2048/16, emb_v dim: 2048/16,
-        self.attn = Qwen3MuliHeadAttention(
+        self.attn = Qwen3MultiHeadAttention(
             self.config.emb_dim,
             emb_kq,
             emb_v,
