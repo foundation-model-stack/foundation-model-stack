@@ -294,7 +294,7 @@ class Qwen3Config(ModelConfig):
     nlayers: int = 28  # hf_config.num_hidden_layers:int = 28
     norm_eps: float = 1e-06  # hf_config.rms_norm_eps:float = 1e-6
     p_dropout: float = 0.0  # hf_config. attention_dropout:float = 0.0
-    pad_id: int = 151643  # from generation.json
+    pad_token_id: int = 151643  # from generation.json
     rope_scaling = None
     rope_base:int = 1000000  # hf_config.rope_theta:int = 1000000
     sliding_window = None
@@ -431,7 +431,7 @@ class Qwen3Headless(nn.Module):
         self.embedding = nn.Embedding(
             self.config.src_vocab_size,
             self.config.emb_dim,
-            padding_idx=self.config.pad_id,
+            padding_idx=self.config.pad_token_id,
         )
 
         self.rot_emb = RotaryEmbedding(
@@ -633,8 +633,7 @@ class Qwen3(nn.Module):
 
         if use_cache:
             return preds, cache
-        else:
-            return preds
+        return preds
 
 
 _ARCHITECTURE_NAME = "qwen3"
@@ -851,7 +850,3 @@ serialization.register_adapter(
     ["hf_to_fms_names", "hf_to_fms_rope", "hf_gptq_fusion_check", "weight_fusion"],
     # ["hf_to_fms_names", "hf_gptq_fusion_check", "weight_fusion"],
 )
-
-
-if __name__ == "__main__":
-    print("Nothing to do.")
