@@ -128,6 +128,18 @@ parser.add_argument(
     default="https://raw.githubusercontent.com/tatsu-lab/stanford_alpaca/main/alpaca_data.json",
     help="The path or URI refering to data to use in tuning or training",
 )
+parser.add_argument(
+    "--pad_token_id",
+    type=int,
+    default=0,
+    help="The default padding token id, used to created batches for training",
+)
+parser.add_argument(
+    "--max_data_sequence_length",
+    type=int,
+    default=512,
+    help="The default sentence length for training, 512 for encoder models",
+)
 
 # Metrics/reporting/output
 parser.add_argument(
@@ -424,7 +436,7 @@ def main():
     if args.peft_method is not None:
         model = peft_model(model)
 
-    pad_token_id = 0
+    pad_token_id = args.pad_token_id
     bos_token_id = tokenizer.bos_token_id
     eos_token_id = tokenizer.eos_token_id
     bos_token = tokenizer.convert_ids_to_tokens([bos_token_id])[0]
@@ -438,7 +450,7 @@ def main():
         pad_token_id=pad_token_id,
         bos_token_id=bos_token_id,
         eos_token_id=eos_token_id,
-        max_len=512,
+        max_len=args.max_data_sequence_length,
     )
     if len(dataset_sd):
         dataset.load_state_dict(dataset_sd)
