@@ -1,10 +1,60 @@
 import torch
+import gc
+import os
+import json
+
 from transformers import GptOssConfig, GptOssForCausalLM
+from modelopt.torch.quantization.qtensor import MXFP4QTensor
 
 from fms.models.hf.gpt_oss.modeling_gpt_oss_hf import (
     HFAdaptedGptOssConfig,
     HFAdaptedGptOssForCausalLM,
 )
+
+
+def _to_oai_mxfp4_weight_only(model, block_size=32):
+    new_state_dict = {}
+
+    for name, param in model.state_dict().items():
+        # Only convert experts weights, skip bias and other modules
+        if "experts" in name and "bias" not in name:
+            param = param.transpose(-1, -2).contiguous()
+            quantized_tensors = []
+            scales_tensors = []
+            for expert in param:
+                quantized, scales = MXFP4QTensor.quantize(expert, block_size=block_size)
+                quantized_tensors.append(quantized._quantized_data)
+                scales_tensors.append(scales)
+            quantized = torch.stack(quantized_tensors)
+            scales = torch.stack(scales_tensors)
+
+            shape = quantized.shape
+            # Add converted weights and scales to state_dict
+            new_state_dict.update(
+                {
+                    f"{name}_blocks": quantized.view(
+                        shape[0], shape[1], -1, block_size // 2
+                    ).cpu(),
+                    f"{name}_scales": scales.view(shape[0], shape[1], -1).cpu(),
+                }
+            )
+            # Free GPU memory immediately after processing each parameter
+            del param, quantized, scales
+            torch.cuda.empty_cache()
+            gc.collect()
+        else:
+            new_state_dict[name] = param
+
+    return new_state_dict
+
+
+def convert_and_load(model):
+    # Convert weights to mxfp4
+    quantized_state_dict = _to_oai_mxfp4_weight_only(model)
+
+    model.load_state_dict(quantized_state_dict)
+
+    return model
 
 
 def convert_to_hf(
@@ -47,6 +97,7 @@ def convert_to_hf(
         oss_hf_model.model.embed_tokens.weight.copy_(
             fms_hf_model.decoder.model.embedding.weight
         )
+        fms_hf_model = convert_and_load(fms_hf_model)
         for i, oss_hf_layer in enumerate(oss_hf_model.model.layers):
             fms_hf_layer = fms_hf_model.decoder.model.layers[i]
             hf_q, hf_k, hf_v = torch.split(
@@ -60,15 +111,11 @@ def convert_to_hf(
 
             # self attn (+ HF RoPE transpose)
             hf_q = (
-                hf_q.view(hf_config.nheads, 2, -1, hf_q.size(1))
-                .transpose(1, 2)
-                .reshape(*hf_q.size())
+                hf_q.view(16, 2, -1, hf_q.size(1)).transpose(1, 2).reshape(*hf_q.size())
             )
             oss_hf_layer.self_attn.q_proj.weight.copy_(hf_q)
             hf_k = (
-                hf_k.view(hf_config.kvheads, 2, -1, hf_k.size(1))
-                .transpose(1, 2)
-                .reshape(*hf_k.size())
+                hf_k.view(1, 2, -1, hf_k.size(1)).transpose(1, 2).reshape(*hf_k.size())
             )
             oss_hf_layer.self_attn.k_proj.weight.copy_(hf_k)
             oss_hf_layer.self_attn.v_proj.weight.copy_(hf_v)
@@ -76,6 +123,25 @@ def convert_to_hf(
 
             # MoE SwiGLU
             oss_hf_layer.mlp.router.weight.copy_(fms_hf_layer.ff_sub_layer.gate.weight)
+
+            oss_hf_layer.mlp.experts.gate_up_proj.copy_(
+                fms_hf_layer.ff_sub_layer.cond_ffn.w13.transpose(1, 2)
+            )
+            oss_hf_layer.mlp.experts.down_proj.copy_(
+                fms_hf_layer.ff_sub_layer.cond_ffn.w2
+            )
+            oss_hf_layer.mlp.experts.gate_up_proj_bias.copy_(
+                fms_hf_layer.ff_sub_layer.cond_ffn.w13_bias
+            )
+            oss_hf_layer.mlp.experts.down_proj_bias.copy_(
+                fms_hf_layer.ff_sub_layer.cond_ffn.w2_bias
+            )
+
+            # layer norm
+            oss_hf_layer.input_layernorm.weight.copy_(fms_hf_layer.ln.weight)
+            oss_hf_layer.post_attention_layernorm.weight.copy_(
+                fms_hf_layer.ff_ln.weight
+            )
 
             # layer norm
             oss_hf_layer.input_layernorm.weight.copy_(fms_hf_layer.ln.weight)
