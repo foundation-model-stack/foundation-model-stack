@@ -1,7 +1,5 @@
 import torch
 import gc
-import os
-import json
 
 from transformers import GptOssConfig, GptOssForCausalLM
 from modelopt.torch.quantization.qtensor import MXFP4QTensor
@@ -121,6 +119,9 @@ def convert_to_hf(
             oss_hf_layer.self_attn.v_proj.weight.copy_(hf_v)
             oss_hf_layer.self_attn.o_proj.weight.copy_(fms_hf_layer.attn.dense.weight)
 
+            # sinks
+            oss_hf_layer.self_attn.sinks.copy_(fms_hf_layer.attn.sinks)
+
             # MoE SwiGLU
             oss_hf_layer.mlp.router.weight.copy_(fms_hf_layer.ff_sub_layer.gate.weight)
 
@@ -142,9 +143,6 @@ def convert_to_hf(
             oss_hf_layer.post_attention_layernorm.weight.copy_(
                 fms_hf_layer.ff_ln.weight
             )
-
-            # layer norm
-            oss_hf_layer.input_layernorm.weight.copy_(fms_hf_layer.ln.weight)
 
         # LM Head
         oss_hf_model.model.norm.weight.copy_(fms_hf_model.decoder.model.dec_norm.weight)

@@ -1,4 +1,3 @@
-import platform
 import pytest
 import torch
 import itertools
@@ -9,8 +8,6 @@ from transformers import (
     PreTrainedTokenizer,
     AutoTokenizer,
 )
-from torch._dynamo.testing import CompileCounterWithBackend
-from torch._dynamo.exc import TorchDynamoException
 
 from fms.models.hf.gpt_oss import convert_to_hf
 from fms.models.hf.gpt_oss.configuration_gpt_oss_hf import HFAdaptedGptOssConfig
@@ -26,7 +23,6 @@ from fms.testing._internal.hf.model_test_suite import (
     HFModelGenerationTestSuite,
 )
 from fms.testing._internal.model_test_suite import ModelFixtureMixin
-from fms.testing.comparison import HFModelSignatureParams, get_signature
 from fms.utils.config import ModelConfig
 
 from ..test_gpt_oss import GptOssFixtures
