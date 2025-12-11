@@ -2,57 +2,11 @@ import torch
 import gc
 
 from transformers import GptOssConfig, GptOssForCausalLM
-from modelopt.torch.quantization.qtensor import MXFP4QTensor
 
 from fms.models.hf.gpt_oss.modeling_gpt_oss_hf import (
     HFAdaptedGptOssConfig,
     HFAdaptedGptOssForCausalLM,
 )
-
-
-def _to_oai_mxfp4_weight_only(model, block_size=32):
-    new_state_dict = {}
-
-    for name, param in model.state_dict().items():
-        # Only convert experts weights, skip bias and other modules
-        if "experts" in name and "bias" not in name:
-            param = param.transpose(-1, -2).contiguous()
-            quantized_tensors = []
-            scales_tensors = []
-            for expert in param:
-                quantized, scales = MXFP4QTensor.quantize(expert, block_size=block_size)
-                quantized_tensors.append(quantized._quantized_data)
-                scales_tensors.append(scales)
-            quantized = torch.stack(quantized_tensors)
-            scales = torch.stack(scales_tensors)
-
-            shape = quantized.shape
-            # Add converted weights and scales to state_dict
-            new_state_dict.update(
-                {
-                    f"{name}_blocks": quantized.view(
-                        shape[0], shape[1], -1, block_size // 2
-                    ).cpu(),
-                    f"{name}_scales": scales.view(shape[0], shape[1], -1).cpu(),
-                }
-            )
-            # Free GPU memory immediately after processing each parameter
-            del param, quantized, scales
-            torch.cuda.empty_cache()
-            gc.collect()
-        else:
-            new_state_dict[name] = param
-
-    return new_state_dict
-
-
-def convert_and_load(model):
-    # Convert weights to mxfp4
-    quantized_state_dict = _to_oai_mxfp4_weight_only(model)
-
-    model.load_state_dict(quantized_state_dict)
-
-    return model
 
 
 def convert_to_hf(
@@ -95,7 +49,6 @@ def convert_to_hf(
         oss_hf_model.model.embed_tokens.weight.copy_(
             fms_hf_model.decoder.model.embedding.weight
         )
-        fms_hf_model = convert_and_load(fms_hf_model)
         for i, oss_hf_layer in enumerate(oss_hf_model.model.layers):
             fms_hf_layer = fms_hf_model.decoder.model.layers[i]
             hf_q, hf_k, hf_v = torch.split(
