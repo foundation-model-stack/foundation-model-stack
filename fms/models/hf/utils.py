@@ -207,6 +207,24 @@ def _map_model_config(architecture, config):
         config_params["head_dim"] = getattr(
             config, "head_dim", config.hidden_size // config.num_attention_heads
         )
+    elif architecture == "GraniteMoeHybridForCausalLM":
+        inner_dim = config.intermediate_size
+        architecture = "granite_v4"
+        config_params["attn_bias"] = getattr(config, "attention_bias", False)
+        config_params["kvheads"] = config.num_key_value_heads
+        config_params["norm_eps"] = config.rms_norm_eps
+        config_params["multiple_of"] = 1
+        config_params["emb_dim"] = config.hidden_size
+        config_params["max_expected_seq_len"] = config.max_position_embeddings
+        config_params["residual_multiplier"] = config.residual_multiplier
+        config_params["attention_multiplier"] = config.attention_multiplier
+        config_params["logits_scaling"] = config.logits_scaling
+        config_params["embedding_multiplier"] = config.embedding_multiplier
+        config_params["rope_theta"] = config.rope_theta
+        config_params["activation_fn"] = config.hidden_act
+        config_params["head_dim"] = getattr(
+            config, "head_dim", config.hidden_size // config.num_attention_heads
+        )
     elif architecture == "MistralForCausalLM":
         inner_dim = config.intermediate_size
         architecture = "mistral"
@@ -320,7 +338,7 @@ def _map_model_config(architecture, config):
         config_params["num_classes"] = config.num_labels
     else:
         raise ValueError(
-            "FMS model implementations currently only support LlamaForCausalLM, GPTBigCodeForCausalLM, MixtralForCausalLM, RobertaForMaskedLM, RobertaForQuestionAnswering, RobertaForSequenceClassification, GraniteForCausalLM, MistralForCausalLM, BambaForCausalLM, SiglipModel, LlavaNextForConditionalGeneration, MPNetForMaskedLM, BertForMaskedLM, and BertForSequenceClassification"
+            "FMS model implementations currently only support LlamaForCausalLM, GPTBigCodeForCausalLM, MixtralForCausalLM, RobertaForMaskedLM, RobertaForQuestionAnswering, RobertaForSequenceClassification, GraniteForCausalLM, GraniteMoeHybridForCausalLM, MistralForCausalLM, BambaForCausalLM, SiglipModel, LlavaNextForConditionalGeneration, MPNetForMaskedLM, BertForMaskedLM, and BertForSequenceClassification"
         )
 
     # infer common params
