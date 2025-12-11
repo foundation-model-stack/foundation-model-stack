@@ -321,7 +321,7 @@ def _map_model_config(architecture, config):
     elif architecture == "GraniteMoeHybridForCausalLM":
         # NOTE: Currently this is same as GraniteForCausalLM
         inner_dim = config.intermediate_size
-        architecture = "granite"
+        architecture = "granite_v4"
         config_params["attn_bias"] = getattr(config, "attention_bias", False)
         config_params["mlp_bias"] = getattr(config, "mlp_bias", False)
         config_params["kvheads"] = config.num_key_value_heads
@@ -340,7 +340,7 @@ def _map_model_config(architecture, config):
         )
     else:
         raise ValueError(
-            "FMS model implementations currently only support LlamaForCausalLM, GPTBigCodeForCausalLM, MixtralForCausalLM, RobertaForMaskedLM, RobertaForQuestionAnswering, RobertaForSequenceClassification, GraniteForCausalLM, MistralForCausalLM, BambaForCausalLM, SiglipModel, LlavaNextForConditionalGeneration, MPNetForMaskedLM, BertForMaskedLM, and BertForSequenceClassification"
+            "FMS model implementations currently only support LlamaForCausalLM, GPTBigCodeForCausalLM, MixtralForCausalLM, RobertaForMaskedLM, RobertaForQuestionAnswering, RobertaForSequenceClassification, GraniteForCausalLM, GraniteMoeHybridForCausalLM, MistralForCausalLM, BambaForCausalLM, SiglipModel, LlavaNextForConditionalGeneration, MPNetForMaskedLM, BertForMaskedLM, and BertForSequenceClassification"
         )
 
     # infer common params
