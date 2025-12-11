@@ -503,6 +503,7 @@ from fms.models import (  # noqa: E402
     roberta,
     siglip_vision,
     mpnet,
+    granite_moe_hybrid
 )
 
 
@@ -517,4 +518,5 @@ __all__ = [
     "roberta",
     "siglip_vision",
     "mpnet",
+    "granite_moe_hybrid"
 ]

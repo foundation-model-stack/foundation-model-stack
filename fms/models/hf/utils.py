@@ -319,8 +319,10 @@ def _map_model_config(architecture, config):
         config_params["pos_emb"] = "bert"
         config_params["num_classes"] = config.num_labels
     elif architecture == "GraniteMoeHybridForCausalLM":
-        # NOTE: Currently this is same as GraniteForCausalLM
         inner_dim = config.intermediate_size
+
+        # NOTE: Currently all of the following mapping is same as GraniteForCausalLM
+        # Depending on this configuration, we will route to different versions of the model
         architecture = "granite_v4"
         config_params["attn_bias"] = getattr(config, "attention_bias", False)
         config_params["mlp_bias"] = getattr(config, "mlp_bias", False)
