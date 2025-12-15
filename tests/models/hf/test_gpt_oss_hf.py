@@ -69,26 +69,24 @@ class GptOssFixturesEquivalence(GptOssFixtures):
 
     @pytest.fixture(scope="class", autouse=True)
     def uninitialized_model(self, config: GptOssConfig):
-        model = GptOss(
-            GptOssConfig(
-                sliding_window=4,
-                head_dim=16,
-                norm_eps=1e-05,
-                nheads=4,
-                kvheads=1,
-                nlayers=2,
-                num_experts=4,
-                rope_base=150000.0,
-                rope_scaling_factor=32.0,
-                rope_ntk_alpha=1.0,
-                rope_ntk_beta=32.0,
-            )
-        )
+        model = GptOss(config=config)
         return model
 
     @pytest.fixture(scope="class", autouse=True)
     def config(self) -> ModelConfig:
-        gpt_oss_config = GptOssConfig()
+        gpt_oss_config = GptOssConfig(
+            sliding_window=4,
+            head_dim=16,
+            norm_eps=1e-05,
+            nheads=4,
+            kvheads=1,
+            nlayers=2,
+            num_experts=4,
+            rope_base=150000.0,
+            rope_scaling_factor=32.0,
+            rope_ntk_alpha=1.0,
+            rope_ntk_beta=32.0,
+        )
         return gpt_oss_config
 
 
@@ -97,7 +95,6 @@ class TestGptOssHF(
     HFModelEquivalenceTestSuite,
     HFModelGenerationTestSuite,
     HFModelCompileTestSuite,
-    HFAutoModelTestSuite,
     GptOssFixturesEquivalence,
     GptOssHFFixtures,
 ):

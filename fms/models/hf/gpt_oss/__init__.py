@@ -3,7 +3,6 @@ import torch
 from transformers import GptOssConfig, GptOssForCausalLM
 
 from fms.models.hf.gpt_oss.modeling_gpt_oss_hf import (
-    HFAdaptedGptOssConfig,
     HFAdaptedGptOssForCausalLM,
 )
 
