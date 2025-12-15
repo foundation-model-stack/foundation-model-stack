@@ -13,7 +13,6 @@ from fms.models.hf.gpt_oss.configuration_gpt_oss_hf import HFAdaptedGptOssConfig
 from fms.models.hf.gpt_oss.modeling_gpt_oss_hf import HFAdaptedGptOssForCausalLM
 from fms.models.gpt_oss import GptOss, GptOssConfig
 from fms.testing._internal.hf.model_test_suite import (
-    HFAutoModelTestSuite,
     HFConfigFixtureMixin,
     HFConfigTestSuite,
     HFModelCompileTestSuite,
