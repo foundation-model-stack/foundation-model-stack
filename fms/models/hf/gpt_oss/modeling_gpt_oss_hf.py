@@ -1,10 +1,11 @@
 from typing import Optional, Tuple
 from typing_extensions import Unpack
 
-from fms.modules.attention import SDPAAttentionKwargs
+from fms.modules.attention import SinkAttentionKwargs
 import torch
 import torch.nn as nn
 from transformers import PretrainedConfig
+from transformers.cache_utils import DynamicCache
 from transformers.modeling_outputs import BaseModelOutputWithPastAndCrossAttentions
 
 from fms.models.hf.lm_head_mixins import LMHeadModelLMHeadMixin
@@ -22,9 +23,9 @@ class HFAdaptedGptOssDecoder(HFDecoder):
         input_ids: Optional[torch.LongTensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
-        past_key_value: Optional[Tuple[torch.Tensor]] = None,
+        past_key_values: Optional[Tuple[torch.Tensor]] = None,
         use_cache: Optional[bool] = False,
-        **kwargs: Unpack[SDPAAttentionKwargs],
+        **kwargs: Unpack[SinkAttentionKwargs],
     ) -> BaseModelOutputWithPastAndCrossAttentions:
         if kwargs.get("mask", None) is None:
             kwargs["mask"] = attention_mask
@@ -32,7 +33,7 @@ class HFAdaptedGptOssDecoder(HFDecoder):
         output = self.model(
             x_in=input_ids,
             position_ids=position_ids,
-            past_key_value_states=past_key_value,
+            past_key_value_states=past_key_values,
             use_cache=use_cache,
             **kwargs,
         )
@@ -68,6 +69,70 @@ class HFAdaptedGptOssHeadless(HFDecoderModelArchitecture):
         decoder = HFAdaptedGptOssDecoder(decoder, config)
         super().__init__(decoder, embedding, config, *args, **kwargs)
 
+    def prepare_inputs_for_generation(
+        self,
+        input_ids,
+        past_key_values=None,
+        use_cache=None,
+        inputs_embeds=None,
+        *args,
+        **kwargs,
+    ):
+        """handles caching logic required for generation input and calls its base classes method of the same name"""
+
+        # labels is a special parameter which is used for computing loss, and should not be part of generation
+        # so remove it
+        if "labels" in kwargs:
+            kwargs.pop("labels")
+
+        token_type_ids = kwargs.get("token_type_ids", None)
+        # only last token for inputs_ids if past is defined in kwargs
+
+        print(f"{type(past_key_values)=}")
+        if isinstance(past_key_values, DynamicCache):
+            past_key_values = None
+
+        if past_key_values:
+            input_ids = input_ids[:, -1].unsqueeze(-1)
+            if token_type_ids is not None:
+                token_type_ids = token_type_ids[:, -1].unsqueeze(-1)
+
+        attention_mask = kwargs.get("attention_mask", None)
+        position_ids = kwargs.get("position_ids", None)
+
+        if attention_mask is not None and position_ids is None:
+            # create position_ids on the fly for batch generation
+            position_ids = attention_mask.long().cumsum(-1) - 1
+            position_ids.masked_fill_(attention_mask == 0, 1)
+            if past_key_values:
+                position_ids = position_ids[:, -1].unsqueeze(-1)
+        else:
+            position_ids = None
+
+        # if `inputs_embeds` are passed, we only want to use them in the 1st generation step
+        if inputs_embeds is not None and past_key_values is None:
+            model_inputs = {"inputs_embeds": inputs_embeds}
+        else:
+            model_inputs = {"input_ids": input_ids}
+
+        model_inputs.update(
+            {
+                "past_key_values": past_key_values,
+                "use_cache": use_cache,
+                "position_ids": position_ids,
+                "attention_mask": attention_mask,
+                "token_type_ids": token_type_ids,
+            }
+        )
+        for k, v in kwargs.items():
+            if k not in model_inputs:
+                model_inputs[k] = v
+
+        return self._prepare_inputs_for_generation(
+            *args,
+            **model_inputs,
+        )
+
     def _prepare_inputs_for_generation(
         self,
         input_ids: torch.Tensor,
@@ -80,9 +145,6 @@ class HFAdaptedGptOssHeadless(HFDecoderModelArchitecture):
         Overriding _prepare_inputs_for_generation to include position_ids requirements for granite batch processing
         """
         position_ids = model_kwargs.pop("position_ids", None)
-
-        if position_ids is None and attention_mask is not None:
-            position_ids = attention_mask.long().cumsum(-1)
 
         # Add more cached rope freqs if over cached number
         max_expected_len = input_ids.shape[1] + torch.max(position_ids)
@@ -106,12 +168,7 @@ class HFAdaptedGptOssForCausalLM(LMHeadModelLMHeadMixin, HFAdaptedGptOssHeadless
     _tied_weights_keys = ["embedding.weight", "lm_head.weight"]
 
     def __init__(self, config: HFAdaptedGptOssConfig, *args, **kwargs):
-        super().__init__(config=config, bias=False, *args, **kwargs)
-
-    def _tie_weights(self):
-        # We know that FMS always saves the LM head weight, so ensure the right pointer is shared
-        self.embedding.weight = self.lm_head.weight
-        self.decoder.model.embedding.weight = self.embedding.weight
+        super().__init__(config=config, bias=True, *args, **kwargs)
 
     @classmethod
     def _hf_model_from_fms(

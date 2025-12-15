@@ -64,11 +64,13 @@ def convert_to_hf(
                 hf_q.view(16, 2, -1, hf_q.size(1)).transpose(1, 2).reshape(*hf_q.size())
             )
             oss_hf_layer.self_attn.q_proj.weight.copy_(hf_q)
+
             hf_k = (
                 hf_k.view(1, 2, -1, hf_k.size(1)).transpose(1, 2).reshape(*hf_k.size())
             )
             oss_hf_layer.self_attn.k_proj.weight.copy_(hf_k)
             oss_hf_layer.self_attn.v_proj.weight.copy_(hf_v)
+
             oss_hf_layer.self_attn.o_proj.weight.copy_(fms_hf_layer.attn.dense.weight)
 
             # sinks
