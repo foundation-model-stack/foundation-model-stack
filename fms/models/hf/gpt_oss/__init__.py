@@ -24,7 +24,6 @@ def convert_to_hf(
     GptOssForCausalLM,
         an HF equivalent model
     """
-    hf_config: HFAdaptedGptOssConfig = fms_hf_model.config
     oss_hf_model = GptOssForCausalLM(
         GptOssConfig(
             sliding_window=4,
