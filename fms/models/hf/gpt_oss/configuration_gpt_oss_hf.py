@@ -18,6 +18,7 @@ class HFAdaptedGptOssConfig(PretrainedConfig):
         "attention_dropout": "p_dropout",
         "attention_bias": "attn_bias",
         "eos_token_id": "eos_token_id",
+        "bos_token_id": "bos_token_id",
         "hidden_act": "activation_fn",
         "hidden_size": "emb_dim",
         "sliding_window": "sliding_window",

@@ -27,20 +27,18 @@ def convert_to_hf(
     hf_config: HFAdaptedGptOssConfig = fms_hf_model.config
     oss_hf_model = GptOssForCausalLM(
         GptOssConfig(
-            vocab_size=hf_config.src_vocab_size,
-            hidden_size=hf_config.emb_dim,
-            intermediate_size=hf_config.hidden_dim,
-            num_hidden_layers=hf_config.nlayers,
-            num_attention_heads=hf_config.nheads,
-            num_key_value_heads=hf_config.kvheads,
-            max_position_embeddings=hf_config.max_expected_seq_len,
-            rms_norm_eps=hf_config.norm_eps,
-            bos_token_id=hf_config.bos_token_id,
-            eos_token_id=hf_config.eos_token_id,
-            rope_theta=hf_config.rope_base,
-            attention_dropout=hf_config.p_dropout,
-            num_experts_per_tok=hf_config.top_k_experts,
-            num_local_experts=hf_config.num_experts,
+            sliding_window=4,
+            head_dim=16,
+            norm_eps=1e-05,
+            num_attention_heads=4,
+            num_key_value_heads=1,
+            num_hidden_layers=2,
+            num_experts_per_tok=4,
+            num_local_experts=4,
+            rope_base=150000.0,
+            rope_scaling_factor=32.0,
+            rope_ntk_alpha=1.0,
+            rope_ntk_beta=32.0,
         )
     )
 

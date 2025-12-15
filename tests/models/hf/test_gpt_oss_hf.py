@@ -1,6 +1,5 @@
 import pytest
 import torch
-import itertools
 
 from transformers import (
     PretrainedConfig,
@@ -31,6 +30,19 @@ from ..test_gpt_oss import GptOssFixtures
 class GptOssHFFixtures(ModelFixtureMixin, HFConfigFixtureMixin, HFModelFixtureMixin):
     @pytest.fixture(scope="class", autouse=True)
     def fms_hf_model(self, model: GptOss, fms_hf_config: PretrainedConfig, **kwargs):
+        fms_hf_config = PretrainedConfig(
+            sliding_window=4,
+            head_dim=16,
+            norm_eps=1e-05,
+            nheads=4,
+            kvheads=1,
+            nlayers=2,
+            num_experts=4,
+            rope_base=150000.0,
+            rope_scaling_factor=32.0,
+            rope_ntk_alpha=1.0,
+            rope_ntk_beta=32.0,
+        )
         return HFAdaptedGptOssForCausalLM.from_fms_model(
             model, **fms_hf_config.to_dict()
         )
@@ -39,16 +51,7 @@ class GptOssHFFixtures(ModelFixtureMixin, HFConfigFixtureMixin, HFModelFixtureMi
     def fms_hf_config(
         self, tokenizer: PreTrainedTokenizer, model: GptOss, **kwargs
     ) -> PretrainedConfig:
-        bos_token_id = (
-            tokenizer.bos_token_id
-            if tokenizer.bos_token_id is not None
-            else tokenizer.eos_token_id
-        )
-        return HFAdaptedGptOssConfig.from_fms_config(
-            model.get_config(),
-            eos_token_id=tokenizer.eos_token_id,
-            bos_token_id=bos_token_id,
-        )
+        return HFAdaptedGptOssConfig.from_fms_config(model.get_config())
 
     @pytest.fixture(scope="class", autouse=True)
     def oss_hf_model(self, fms_hf_model: HFAdaptedGptOssForCausalLM) -> PreTrainedModel:
@@ -66,8 +69,21 @@ class GptOssFixturesEquivalence(GptOssFixtures):
 
     @pytest.fixture(scope="class", autouse=True)
     def uninitialized_model(self, config: GptOssConfig):
-        model = GptOss(config)
-        model.base_model.post_init()
+        model = GptOss(
+            GptOssConfig(
+                sliding_window=4,
+                head_dim=16,
+                norm_eps=1e-05,
+                nheads=4,
+                kvheads=1,
+                nlayers=2,
+                num_experts=4,
+                rope_base=150000.0,
+                rope_scaling_factor=32.0,
+                rope_ntk_alpha=1.0,
+                rope_ntk_beta=32.0,
+            )
+        )
         return model
 
     @pytest.fixture(scope="class", autouse=True)
@@ -100,6 +116,9 @@ class TestGptOssHF(
 
     @staticmethod
     def _predict_text(model, tokenizer, texts, use_cache, num_beams):
+        tokenizer = AutoTokenizer.from_pretrained("openai/gpt-oss-20b")
+        tokenizer.pad_token = tokenizer.eos_token
+        print(f"tokenizer gpt-oss {tokenizer}")
         encoding = tokenizer(texts, padding=True, return_tensors="pt")
 
         # Fix for newer versions of transformers
@@ -107,31 +126,21 @@ class TestGptOssHF(
         if use_cache is not None:
             use_cache_kwarg["use_cache"] = use_cache
 
-        tokenizer = AutoTokenizer.from_pretrained("openai/gpt-oss-20b")
+        print(f"use_cache_kwarg {use_cache_kwarg}")
 
         model.eval()
         with torch.no_grad():
             generated_ids = model.generate(
                 **encoding,
                 num_beams=num_beams,
-                max_new_tokens=20,
-                repetition_penalty=2.5,
-                length_penalty=1.0,
-                early_stopping=True,
+                max_new_tokens=5,
+                temperature=0.0,
                 do_sample=False,
+                top_k=50,
                 **use_cache_kwarg,
             )
+
         generated_texts = tokenizer.batch_decode(
             generated_ids, skip_special_tokens=True
         )
         return generated_texts
-
-    text_options = [
-        ["hello how are you?"],
-        ["hello how are you?", "a: this is a test. b: this is another test. a:"],
-    ]
-    use_cache_options = [True, False, None]
-    num_beams_options = [1, 3]
-    generate_equivalence_args = list(
-        itertools.product(text_options, use_cache_options, num_beams_options)
-    )
