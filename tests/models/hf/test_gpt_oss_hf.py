@@ -30,13 +30,12 @@ class GptOssHFFixtures(ModelFixtureMixin, HFConfigFixtureMixin, HFModelFixtureMi
     @pytest.fixture(scope="class", autouse=True)
     def fms_hf_model(self, model: GptOss, fms_hf_config: PretrainedConfig, **kwargs):
         fms_hf_config = PretrainedConfig(
-            sliding_window=4,
-            head_dim=16,
+            head_dim=64,
             norm_eps=1e-05,
-            nheads=4,
-            kvheads=1,
-            nlayers=2,
-            num_experts=4,
+            nheads=64,
+            kvheads=8,
+            nlayers=4,
+            num_experts=32,
             rope_base=150000.0,
             rope_scaling_factor=32.0,
             rope_ntk_alpha=1.0,
@@ -69,18 +68,18 @@ class GptOssFixturesEquivalence(GptOssFixtures):
     @pytest.fixture(scope="class", autouse=True)
     def uninitialized_model(self, config: GptOssConfig):
         model = GptOss(config=config)
+        model.base_model.post_init()
         return model
 
     @pytest.fixture(scope="class", autouse=True)
     def config(self) -> ModelConfig:
         gpt_oss_config = GptOssConfig(
-            sliding_window=4,
-            head_dim=16,
+            head_dim=64,
             norm_eps=1e-05,
-            nheads=4,
-            kvheads=1,
-            nlayers=2,
-            num_experts=4,
+            nheads=64,
+            kvheads=8,
+            nlayers=4,
+            num_experts=32,
             rope_base=150000.0,
             rope_scaling_factor=32.0,
             rope_ntk_alpha=1.0,
