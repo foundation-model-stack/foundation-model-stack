@@ -111,10 +111,6 @@ class TestGptOssHF(
     # implementation of abstract property _get_hf_signature_params
     _get_hf_signature_params = ["input_ids", "labels"]
 
-    def test_hf_model_compile_no_graph_breaks(self, fms_hf_model):
-        pytest.skip("Local passing but CI failing - needs more debug")
-
-
     @staticmethod
     def _predict_text(model, tokenizer, texts, use_cache, num_beams):
         tokenizer = AutoTokenizer.from_pretrained("openai/gpt-oss-20b")
