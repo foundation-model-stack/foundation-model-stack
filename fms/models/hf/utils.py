@@ -13,6 +13,8 @@ from transformers import (  # type: ignore
 
 from fms.models import get_model, list_variants
 
+from pycony import *
+
 
 def register_fms_models():
     """Register all FMS models with huggingface AutoModels"""
@@ -253,6 +255,26 @@ def _map_model_config(architecture, config):
         config_params["hidden_act"] = config.hidden_act
         config_params["layer_norm_eps"] = config.layer_norm_eps
         config_params["attention_dropout"] = config.attention_dropout
+    elif architecture == "PixtralVisionModel":
+        # ToDo: Complete the PixtralVisionModel
+        if getattr(config, "model_type", None) != "pixtral":
+            raise ValueError("PixtralVisionModel mapping expects model_type 'pixtral'")
+
+        config_params["image_size"] = config.image_size
+        config_params["patch_size"] = config.patch_size
+        config_params["nchannels"] = config.num_channels
+        config_params["hidden_size"] = config.hidden_size
+        config_params["intermediate_size"] = config.intermediate_size
+        config_params["nlayers"] = config.num_hidden_layers
+        config_params["nheads"] = config.num_attention_heads
+        config_params["head_dim"] = config.head_dim
+        config_params["attention_dropout"] = config.attention_dropout
+        config_params["initializer_range"] = config.initializer_range
+        config_params["hidden_act"] = config.hidden_act
+        config_params["rope_theta"] = config.rope_theta
+
+        architecture = "pixtral"
+        infer_common_params = False
     elif architecture == "LlavaNextForConditionalGeneration":
         from fms.models.siglip_vision import SiglipVisionConfig
         from fms.models.granite import GraniteConfig
@@ -318,6 +340,43 @@ def _map_model_config(architecture, config):
         config_params["type_vocab_size"] = config.type_vocab_size
         config_params["pos_emb"] = "bert"
         config_params["num_classes"] = config.num_labels
+
+    elif architecture == "Mistral3ForConditionalGeneration":
+        # text (LM) config -> FMS MistralConfig
+        from fms.models.mistral import MistralConfig
+        # vision (Pixtral) config -> FMS PixtralVisionConfig
+        from fms.models.pixtral import PixtralVisionConfig
+
+        # Sanity checks – we currently support only Mistral text + Pixtral vision
+        if getattr(config.text_config, "model_type", None) != "mistral":
+            raise ValueError(
+                "FMS implementation of Mistral3 currently supports only 'mistral' language model"
+            )
+
+        if not hasattr(config, "vision_config") or getattr(config.vision_config, "model_type", None) != "pixtral":
+            raise ValueError(
+                "FMS implementation of Mistral3 currently supports only 'pixtral' vision tower"
+            )
+
+        # Map sub-configs using existing helpers so dtype, rope, norm eps, etc. are normalized
+        _, text_config_params = _map_model_config("MistralForCausalLM", config.text_config)
+        _, vision_config_params = _map_model_config("PixtralVisionModel", config.vision_config)
+
+        # Instantiate FMS config objects for each modality
+        config_params["text_config"] = MistralConfig(**text_config_params)
+        config_params["vision_config"] = PixtralVisionConfig(**vision_config_params)
+
+        # Top-level Mistral3 multimodal parameters pass-through 
+
+        config_params["projector_hidden_act"] = config.projector_hidden_act
+        config_params["multimodal_projector_bias"] = config.multimodal_projector_bias
+        config_params["spatial_merge_size"] = config.spatial_merge_size
+        config_params["image_token_index"] = config.image_token_index
+        config_params["vision_feature_layer"] = config.vision_feature_layer
+
+        # Normalize the downstream selector used by FMS model registry
+        architecture = "mistral3"
+        infer_common_params = False
     else:
         raise ValueError(
             "FMS model implementations currently only support LlamaForCausalLM, GPTBigCodeForCausalLM, MixtralForCausalLM, RobertaForMaskedLM, RobertaForQuestionAnswering, RobertaForSequenceClassification, GraniteForCausalLM, MistralForCausalLM, BambaForCausalLM, SiglipModel, LlavaNextForConditionalGeneration, MPNetForMaskedLM, BertForMaskedLM, and BertForSequenceClassification"
