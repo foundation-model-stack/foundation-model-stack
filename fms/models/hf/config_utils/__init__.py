@@ -31,7 +31,7 @@ from fms.models.hf.config_utils.config_utils_types import RegistryMap
 
 # Any models that should be initializable from HF params should be added here.
 # fmt: off
-_FMS_MODEL_REGISTRY_MAP: RegistryMap = {
+__FMS_MODEL_REGISTRY_MAP: RegistryMap = {
     "LlamaForCausalLM": ("llama", pb.build_llama_params),
     "GPTBigCodeForCausalLM": ("gpt_bigcode", pb.build_gpt_bigcode_params),
     "MixtralForCausalLM": ("mixtral", pb.build_mixtral_params),
@@ -50,4 +50,4 @@ _FMS_MODEL_REGISTRY_MAP: RegistryMap = {
 }
 # fmt: on
 
-_FMS_MODEL_CONFIG_REGISTRY = ModelConfigRegistry(_FMS_MODEL_REGISTRY_MAP)
+_FMS_MODEL_CONFIG_REGISTRY = ModelConfigRegistry(__FMS_MODEL_REGISTRY_MAP)
