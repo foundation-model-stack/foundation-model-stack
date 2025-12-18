@@ -55,6 +55,7 @@ class ModelConfigRegistry:
         logger.warning(
             f"HF architecture {architecture} does not map to a registered FMS architecture!"
         )
+        return None
 
     def map_hf_arch_to_fms_params(
         self, architecture: str, config: PretrainedConfig
@@ -77,6 +78,7 @@ class ModelConfigRegistry:
         logger.warning(
             f"HF architecture {architecture} does not map to a registered model param builder!"
         )
+        return None
 
     def hf_config_to_fms_config_params(
         self, config: PretrainedConfig, model_path: Optional[str]
