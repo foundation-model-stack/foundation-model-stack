@@ -88,6 +88,12 @@ parser.add_argument(
     default=None,
     help="Number of examples in few-shot context",
 )
+parser.add_argument(
+    "--confirm_run_unsafe_code",
+    type=bool,
+    default=False,
+    help="Will be passed to lm_eval",
+)
 
 args = parser.parse_args()
 
@@ -147,6 +153,8 @@ results = lm_eval.simple_evaluate(
     model=lm_obj,
     tasks=args.tasks.split(","),
     num_fewshot=args.num_fewshot,
+    verbosity=logging.DEBUG,
+    confirm_run_unsafe_code=args.confirm_run_unsafe_code
 )
 print(make_table(results))
 if "groups" in results:
