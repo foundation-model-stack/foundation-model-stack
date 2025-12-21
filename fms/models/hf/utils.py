@@ -318,9 +318,66 @@ def _map_model_config(architecture, config):
         config_params["type_vocab_size"] = config.type_vocab_size
         config_params["pos_emb"] = "bert"
         config_params["num_classes"] = config.num_labels
+    elif architecture == "GraniteSpeechForConditionalGeneration":
+        from fms.models.conformer import ConformerConfig
+        from fms.models.granite import GraniteConfig
+        from fms.modules.projector import SpeechProjectorConfig
+
+        if config.text_config.model_type != "granite":
+            raise ValueError(
+                "FMS implementation of GraniteSpeech currently supports only Granite language model"
+            )
+
+        infer_common_params = False
+        architecture = "granite_speech"
+
+        # Top-level config params
+        config_params["audio_token_index"] = config.audio_token_index
+        config_params["window_size"] = config.window_size
+        config_params["downsample_rate"] = config.downsample_rate
+        config_params["has_lora_adapter"] = getattr(config, "has_lora_adapter", True)
+
+        # Map encoder config (HF GraniteSpeechEncoderConfig -> FMS ConformerConfig)
+        enc_cfg = config.encoder_config
+        config_params["encoder_config"] = ConformerConfig(
+            num_features=enc_cfg.input_dim,
+            hidden_dim=enc_cfg.hidden_dim,
+            num_layers=enc_cfg.num_layers,
+            num_heads=enc_cfg.num_heads,
+            dim_head=enc_cfg.dim_head,
+            conv_kernel_size=enc_cfg.conv_kernel_size,
+            conv_expansion_factor=enc_cfg.conv_expansion_factor,
+            feedforward_mult=enc_cfg.feedforward_mult,
+            dropout=enc_cfg.dropout,
+            max_pos_emb=enc_cfg.max_pos_emb,
+            context_size=enc_cfg.context_size,
+            output_dim=enc_cfg.output_dim,
+        )
+
+        # Map projector config (HF Blip2QFormerConfig -> FMS SpeechProjectorConfig)
+        proj_cfg = config.projector_config
+        config_params["projector_config"] = SpeechProjectorConfig(
+            encoder_dim=proj_cfg.hidden_size,
+            decoder_dim=config.text_config.hidden_size,
+            num_hidden_layers=proj_cfg.num_hidden_layers,
+            num_attention_heads=proj_cfg.num_attention_heads,
+            intermediate_size=proj_cfg.intermediate_size,
+            hidden_dropout_prob=proj_cfg.hidden_dropout_prob,
+            attention_dropout_prob=proj_cfg.attention_probs_dropout_prob,
+            hidden_act=proj_cfg.hidden_act,
+            layer_norm_eps=proj_cfg.layer_norm_eps,
+            initializer_range=proj_cfg.initializer_range,
+            cross_attention_frequency=proj_cfg.cross_attention_frequency,
+        )
+
+        # Map text/decoder config (HF GraniteConfig -> FMS GraniteConfig)
+        _, text_config_params = _map_model_config(
+            "GraniteForCausalLM", config.text_config
+        )
+        config_params["decoder_config"] = GraniteConfig(**text_config_params)
     else:
         raise ValueError(
-            "FMS model implementations currently only support LlamaForCausalLM, GPTBigCodeForCausalLM, MixtralForCausalLM, RobertaForMaskedLM, RobertaForQuestionAnswering, RobertaForSequenceClassification, GraniteForCausalLM, MistralForCausalLM, BambaForCausalLM, SiglipModel, LlavaNextForConditionalGeneration, MPNetForMaskedLM, BertForMaskedLM, and BertForSequenceClassification"
+            "FMS model implementations currently only support LlamaForCausalLM, GPTBigCodeForCausalLM, MixtralForCausalLM, RobertaForMaskedLM, RobertaForQuestionAnswering, RobertaForSequenceClassification, GraniteForCausalLM, MistralForCausalLM, BambaForCausalLM, SiglipModel, LlavaNextForConditionalGeneration, MPNetForMaskedLM, BertForMaskedLM, BertForSequenceClassification, and GraniteSpeechForConditionalGeneration"
         )
 
     # infer common params
