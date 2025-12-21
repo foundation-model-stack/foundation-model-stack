@@ -6,6 +6,26 @@ import torch
 from torch import nn
 
 
+def _get_model_device(model: nn.Module) -> torch.device:
+    """Get the device of a model by checking its first parameter."""
+    try:
+        return next(model.parameters()).device
+    except StopIteration:
+        return torch.device("cpu")
+
+
+def _move_to_device(value, device):
+    """Recursively move tensors to the specified device."""
+    if isinstance(value, torch.Tensor):
+        return value.to(device)
+    elif isinstance(value, dict):
+        return {k: _move_to_device(v, device) for k, v in value.items()}
+    elif isinstance(value, (list, tuple)):
+        return type(value)(_move_to_device(v, device) for v in value)
+    else:
+        return value
+
+
 @dataclasses.dataclass
 class ModelSignatureParams:
     """Model Signature params dataclass for readability"""
@@ -73,6 +93,9 @@ def get_signature(
 
         if not optional_params:
             optional_params = {}
+        else:
+            # Move optional_params tensors to the same device
+            optional_params = _move_to_device(optional_params, device)
 
         if isinstance(params, list):
             inps = {p: inp for p in params}
@@ -125,12 +148,18 @@ def compare_model_signatures(
     """
     model_params_1.model.eval()
     model_params_2.model.eval()
+
+    # Infer device from each model
+    device_1 = _get_model_device(model_params_1.model)
+    device_2 = _get_model_device(model_params_2.model)
+
     signature = get_signature(
         model_params_1.model,
         params=model_params_1.params,
         optional_params=model_params_1.other_params,
         logits_getter_fn=model_params_1.logits_getter_fn,
         inp=model_params_1.inp,
+        device=device_1,
     )
     signature2 = get_signature(
         model_params_2.model,
@@ -138,6 +167,7 @@ def compare_model_signatures(
         optional_params=model_params_2.other_params,
         logits_getter_fn=model_params_2.logits_getter_fn,
         inp=model_params_2.inp,
+        device=device_2,
     )
 
     signature = np.array(signature)
