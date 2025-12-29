@@ -66,7 +66,6 @@ class SinkAttentionKwargs(AttentionKwargs):
         this is the sliding window size for sinks attention
     """
 
-    attn_name: str
     sinks: NotRequired[torch.Tensor]
     sliding_window: NotRequired[int | None]
 
