@@ -517,6 +517,17 @@ class ConditionalFeedForward(nn.Module):
         # Note we add an extra bias of 1 to the linear layer
         return out_glu * (x_linear + 1)
 
+    def add_expert_bias(self, out, bias, token_expert_mapping):
+        flat = out.view(-1, out.shape[-1])
+        expert_ids = token_expert_mapping.view(-1)
+
+        for e in range(bias.shape[0]):
+            mask = expert_ids == e
+            if mask.any():
+                flat[mask] += bias[e]
+
+        return out
+
     def forward(
         self,
         x: torch.Tensor,
@@ -529,40 +540,54 @@ class ConditionalFeedForward(nn.Module):
         assert self.w13.is_contiguous(), "Expert weights 1 must be contiguous"
         assert self.w2.is_contiguous(), "Expert weights 2 must be contiguous"
 
-        if self.use_bias:
-            # MLP #1
-            mlp1_weight = self.w13[expert_indices, ...]
-            mlp1_bias = self.w13_bias[expert_indices, ...]
-            scores = torch.einsum("beck,bk->bec", mlp1_weight, scores) + mlp1_bias
-            # Using the clamp swiglu impacts the output correctness
-            scores = self.clamp_swiglu(scores, limit=self.swiglu_limit)
+        M, D = x.shape
+        E, N, _ = self.w13.shape
+        _, A = expert_indices.shape
 
-            # MLP #2
-            mlp2_weight = self.w2[expert_indices, ...]
-            mlp2_bias = self.w2_bias[expert_indices, ...]
-            scores = torch.einsum("beck,bek->bec", mlp2_weight, scores) + mlp2_bias
+        #  if x.device.type == "cuda":
+        ## Triton path
 
-            return scores
-
+        if expert_indices.numel() <= E:
+            padding_size = 16
         else:
-            M, D = x.shape
-            E, N, _ = self.w13.shape
-            _, A = expert_indices.shape
+            padding_size = 64
 
-            #  if x.device.type == "cuda":
-            ## Triton path
+        (
+            padded_token_ids_per_block,
+            expert_block_mapping,
+            total_padded_tokens,
+        ) = triton_ops.moe_align_block_size(expert_indices, padding_size, E)
 
-            if expert_indices.numel() <= E:
-                padding_size = 16
-            else:
-                padding_size = 64
-
-            (
+        if self.use_bias:
+            h = torch.ops.moe.moe_mm(
+                x,
+                self.w13,
+                expert_indices,
                 padded_token_ids_per_block,
                 expert_block_mapping,
                 total_padded_tokens,
-            ) = triton_ops.moe_align_block_size(expert_indices, padding_size, E)
+                expert_indices.shape[1],
+                padding_size,
+            )
+            h = self.add_expert_bias(h, self.w13_bias, expert_indices)
+            h = self.clamp_swiglu(h, limit=self.swiglu_limit)
 
+            T, topk, H = h.shape
+            h = h.view(T * topk, H)
+
+            y = torch.ops.moe.moe_mm(
+                h,
+                self.w2,
+                expert_indices,
+                padded_token_ids_per_block,
+                expert_block_mapping,
+                total_padded_tokens,
+                1,
+                padding_size,
+            )
+            return self.add_expert_bias(y, self.w2_bias, expert_indices)
+
+        else:
             x1, x3 = (
                 torch.ops.moe.moe_mm(
                     x,

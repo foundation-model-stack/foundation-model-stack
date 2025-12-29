@@ -197,7 +197,7 @@ def _sdpa_store_op(
         sliding_window = attn_kwargs.get("sliding_window", 0)
         if sliding_window != 0:
             sliding_window *= -1
-            sliding_window += 1
+            sliding_window += keys.shape[2]
         key_cache_result = torch.cat((key_cache[:, :, sliding_window:, :], keys), dim=2)
         value_cache_result = torch.cat(
             (value_cache[:, :, sliding_window:, :], values), dim=2
@@ -742,6 +742,9 @@ class MultiHeadAttention(nn.Module):
                     m.bias.data.zero_()
             elif isinstance(m, QKV):
                 m.reset_parameters()
+        if self.has_sinks:
+            with torch.no_grad():
+                self.sinks.zero_()
 
     def to_tp(self, group: ProcessGroup) -> "TPMultiHeadAttention":
         return TPMultiHeadAttention.import_module(self, group)
