@@ -821,11 +821,9 @@ class MultiHeadAttention(nn.Module):
         updated_attn_kwargs: Union[AttentionKwargs, SinkAttentionKwargs]
 
         if self.has_sinks:
-            updated_attn_kwargs = {
-                "attn_name": "sdpa_with_sinks",
-                "sinks": self.sinks,
-                "sliding_window": sliding_window,
-            }
+            updated_attn_kwargs = {"sinks": self.sinks, 
+                                   "sliding_window": sliding_window, 
+                                   **attn_kwargs}
         else:
             updated_attn_kwargs = attn_kwargs
 
