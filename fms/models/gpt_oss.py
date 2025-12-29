@@ -386,13 +386,6 @@ class GptOss(nn.Module):
             self.config.emb_dim, self.config.src_vocab_size, bias=False
         )
 
-        # handle assignment of non-meta weights to meta parameters
-        if self.head.weight.device == torch.device("meta"):
-            assert self.base_model.embedding.weight != torch.device("meta")
-            self.head.weight = self.base_model.embedding.weight
-        else:
-            self.base_model.embedding.weight = self.head.weight
-
     @classmethod
     def from_config(cls, config: GptOssConfig) -> "GptOss":
         return cls(config)
