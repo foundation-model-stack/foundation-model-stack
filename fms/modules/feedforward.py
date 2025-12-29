@@ -470,13 +470,28 @@ class ConditionalFeedForward(nn.Module):
         The intermediate size for the expert networks.
     """
 
-    def __init__(self, num_experts: int, dim: int, intermediate_size: int):
+    def __init__(
+        self,
+        num_experts: int,
+        dim: int,
+        intermediate_size: int,
+        use_bias: bool = False,
+        swiglu_limit: Optional[float] = None,
+    ):
         super().__init__()
         self.num_experts = num_experts
         self.dim = dim
         self.intermediate_size = intermediate_size
         self.w13 = nn.Parameter(torch.empty(num_experts, 2 * intermediate_size, dim))
         self.w2 = nn.Parameter(torch.empty(num_experts, dim, intermediate_size))
+        self.use_bias = use_bias
+        self.swiglu_limit = swiglu_limit
+
+        if self.use_bias:
+            self.w13_bias = torch.nn.Parameter(
+                torch.empty(num_experts, 2 * intermediate_size)
+            )
+            self.w2_bias = torch.nn.Parameter(torch.empty(num_experts, dim))
 
     def reset_parameters(self):
         for param in ["w13", "w2"]:
@@ -486,10 +501,39 @@ class ConditionalFeedForward(nn.Module):
                 std=0.02,
             )
 
+    def is_parameter_initialized(self, param: nn.Parameter):
+        return param is not None and isinstance(param, nn.Parameter)
+
     def to_tp(self, group: ProcessGroup) -> "TPConditionalFeedForward":
         return TPConditionalFeedForward.import_module(self, group)
 
-    def forward(self, x: torch.Tensor, expert_indices: torch.Tensor) -> torch.Tensor:
+    def clamp_swiglu(self, x, alpha: float = 1.702, limit: Optional[float] = None):
+        limit = float("inf") if limit is None else limit
+        x_glu, x_linear = x[..., ::2], x[..., 1::2]
+        # Clamp the input values
+        x_glu = x_glu.clamp(min=None, max=limit)
+        x_linear = x_linear.clamp(min=-limit, max=limit)  # type: ignore
+        out_glu = x_glu * torch.sigmoid(alpha * x_glu)
+        # Note we add an extra bias of 1 to the linear layer
+        return out_glu * (x_linear + 1)
+
+    def add_expert_bias(self, out, bias, token_expert_mapping):
+        flat = out.view(-1, out.shape[-1])
+        expert_ids = token_expert_mapping.view(-1)
+
+        for e in range(bias.shape[0]):
+            mask = expert_ids == e
+            if mask.any():
+                flat[mask] += bias[e]
+
+        return out
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        expert_indices: torch.Tensor,
+        scores: torch.Tensor,
+    ) -> torch.Tensor:
         # Check constraints.
         assert x.shape[1] == self.w13.shape[2], "Hidden size mismatch"
         assert x.is_contiguous(), "Hidden_states must be contiguous"
@@ -514,8 +558,8 @@ class ConditionalFeedForward(nn.Module):
             total_padded_tokens,
         ) = triton_ops.moe_align_block_size(expert_indices, padding_size, E)
 
-        x1, x3 = (
-            torch.ops.moe.moe_mm(
+        if self.use_bias:
+            h = torch.ops.moe.moe_mm(
                 x,
                 self.w13,
                 expert_indices,
@@ -525,19 +569,49 @@ class ConditionalFeedForward(nn.Module):
                 expert_indices.shape[1],
                 padding_size,
             )
-            .view(-1, N)
-            .chunk(2, dim=1)
-        )
-        return torch.ops.moe.moe_mm(
-            F.silu(x1) * x3,
-            self.w2,
-            expert_indices,
-            padded_token_ids_per_block,
-            expert_block_mapping,
-            total_padded_tokens,
-            1,
-            padding_size,
-        )
+            h = self.add_expert_bias(h, self.w13_bias, expert_indices)
+            h = self.clamp_swiglu(h, limit=self.swiglu_limit)
+
+            T, topk, H = h.shape
+            h = h.view(T * topk, H)
+
+            y = torch.ops.moe.moe_mm(
+                h,
+                self.w2,
+                expert_indices,
+                padded_token_ids_per_block,
+                expert_block_mapping,
+                total_padded_tokens,
+                1,
+                padding_size,
+            )
+            return self.add_expert_bias(y, self.w2_bias, expert_indices)
+
+        else:
+            x1, x3 = (
+                torch.ops.moe.moe_mm(
+                    x,
+                    self.w13,
+                    expert_indices,
+                    padded_token_ids_per_block,
+                    expert_block_mapping,
+                    total_padded_tokens,
+                    expert_indices.shape[1],
+                    padding_size,
+                )
+                .view(-1, N)
+                .chunk(2, dim=1)
+            )
+            return torch.ops.moe.moe_mm(
+                F.silu(x1) * x3,
+                self.w2,
+                expert_indices,
+                padded_token_ids_per_block,
+                expert_block_mapping,
+                total_padded_tokens,
+                1,
+                padding_size,
+            )
 
 
 class TPConditionalFeedForward(ConditionalFeedForward, TPModule):
@@ -640,11 +714,24 @@ class MOEFeedForward(nn.Module):
         num_activated_experts: int,
         dim: int,
         intermediate_size: int,
+        use_bias: bool = False,
+        topk_first: Optional[bool] = False,
+        swiglu_limit: Optional[float] = None,
     ) -> None:
         super().__init__()
-        self.gate = nn.Linear(dim, num_experts, bias=False)
-        self.cond_ffn = ConditionalFeedForward(num_experts, dim, intermediate_size)
+        self.cond_ffn = ConditionalFeedForward(
+            num_experts,
+            dim,
+            intermediate_size,
+            use_bias=use_bias,
+            swiglu_limit=swiglu_limit,
+        )
         self.dim = dim
+        self.gate = nn.Linear(dim, num_experts, bias=use_bias)
+
+        self.use_bias = use_bias
+        self.topk_first = topk_first
+        self.intermediate_size = intermediate_size
         self.num_activated_experts = num_activated_experts
 
     def reset_parameters(self):
@@ -658,16 +745,30 @@ class MOEFeedForward(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         B, S = x.shape[:2]
+
         x = x.view(-1, self.dim)
         # T = num_tokens, E = num_experts, D = hidden dim, A = activated experts
         # x: [T, D]
         scores = self.gate(x)  # [T, E]
-        expert_weights = F.softmax(scores, dim=-1)
-        expert_weights, expert_indices = torch.topk(
-            expert_weights, self.num_activated_experts, dim=-1
-        )  # [T, A], [T, A]
-        expert_weights /= expert_weights.sum(dim=-1, keepdim=True)  # [T, A]
-        expert_outs = self.cond_ffn(x, expert_indices)
+
+        if self.topk_first:
+            experts = torch.topk(
+                scores, k=self.num_activated_experts, dim=-1, sorted=True
+            )
+            expert_weights = F.softmax(experts.values, dim=1)
+            expert_indices = experts.indices
+            expert_outs = self.cond_ffn(x, expert_indices, x)
+        else:
+            expert_weights = F.softmax(scores, dim=-1)
+            expert_weights, expert_indices = torch.topk(
+                expert_weights, self.num_activated_experts, dim=-1
+            )  # [T, A], [T, A]
+            expert_weights /= expert_weights.sum(dim=-1, keepdim=True)  # [T, A]
+
+            expert_outs = self.cond_ffn(x, expert_indices, scores)
+
         int_v1 = torch.einsum("tai,ta -> ti", expert_outs, expert_weights)
+
         int_v2 = int_v1.view(B, S, self.dim)
+
         return int_v2

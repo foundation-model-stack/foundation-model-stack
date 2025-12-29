@@ -194,10 +194,73 @@ class RopeLlama3ScalingImpl(RopeNoScalingImpl):
         return freqs
 
 
+class YarnRopeImpl(RopeNoScalingImpl):
+    def __init__(self, dim, ratio, orig_max_seq_len, scaling_info):
+        super().__init__(dim, ratio, orig_max_seq_len, scaling_info)
+        self.concentration: Optional[float] = None
+
+    def compute_scaled_freqs(self, device: str, alpha: int):
+        """See YaRN paper: https://arxiv.org/abs/2309.00071"""
+        scaling_factor = self.scaling_info["scaling_factor"]
+        ntk_beta = self.scaling_info["ntk_beta"]
+        ntk_alpha = self.scaling_info["ntk_alpha"]
+        freq = self.ratio ** (
+            torch.arange(0, self.dim, 2, dtype=torch.float32, device=device) / self.dim
+        )
+        if scaling_factor > 1.0:
+            self.concentration = (
+                0.1 * math.log(scaling_factor) + 1.0
+            )  # YaRN concentration
+
+            d_half = self.dim / 2
+            # NTK by parts
+            low = (
+                d_half
+                * math.log(self.orig_max_seq_len / (ntk_beta * 2 * math.pi))
+                / math.log(self.ratio)
+            )
+            high = (
+                d_half
+                * math.log(self.orig_max_seq_len / (ntk_alpha * 2 * math.pi))
+                / math.log(self.ratio)
+            )
+            assert 0 < low < high < d_half - 1
+
+            interpolation = 1.0 / (scaling_factor * freq)
+            extrapolation = 1.0 / freq
+
+            ramp = (
+                torch.arange(d_half, dtype=torch.float32, device=freq.device) - low
+            ) / (high - low)
+            mask = 1 - ramp.clamp(0, 1)
+
+            inv_freq = interpolation * (1 - mask) + extrapolation * mask
+        else:
+            self.concentration = 1.0
+            inv_freq = 1.0 / freq
+
+        return inv_freq
+
+    def apply_yarn_rotary_emb(
+        self,
+        x: torch.Tensor,
+        cos: torch.Tensor,
+        sin: torch.Tensor,
+        position_ids: torch.Tensor,
+    ) -> torch.Tensor:
+        cos = cos[position_ids].unsqueeze(-2).to(x.dtype)
+        sin = sin[position_ids].unsqueeze(-2).to(x.dtype)
+        x1, x2 = torch.chunk(x, 2, dim=-1)
+        o1 = x1 * cos - x2 * sin
+        o2 = x2 * cos + x1 * sin
+        return torch.cat((o1, o2), dim=-1)
+
+
 _rope_scale_mapping = {
     "llama3": RopeLlama3ScalingImpl,
     "ntk": RopeNtkScalingImpl,
     "regular": RopeNoScalingImpl,
+    "yarn": YarnRopeImpl,
 }
 
 
@@ -236,6 +299,7 @@ class RotaryEmbedding(PositionEncoder):
         own_scaling = copy.deepcopy(scaling)
         if "rope_type" not in own_scaling:
             own_scaling["rope_type"] = "regular"
+        self.rope_type = own_scaling["rope_type"]
         self.rope_scaling: RopeNoScalingImpl = _rope_scale_mapping[
             own_scaling["rope_type"]
         ](self.dim, ratio, max_seq_len, own_scaling)
@@ -260,22 +324,31 @@ class RotaryEmbedding(PositionEncoder):
             scaled_max_seq_len = self.rope_scaling.scaled_max_seq_len(
                 max_seq_len, alpha
             )
+
             if scaled_max_seq_len > self.max_seq_len_cached[dev_idx]:
                 # This only runs if a particular combination of alpha
                 # and max_seq_len hasn't been seen before
                 freqs = self.rope_scaling.compute_scaled_freqs(device, alpha)
                 t = torch.arange(scaled_max_seq_len, device=device, dtype=freqs.dtype)
                 freqs = torch.outer(t, freqs).float()
+
                 self.max_seq_len_cached[dev_idx] = scaled_max_seq_len
-                self.cached_freqs[dev_idx][alpha] = torch.stack(
-                    [
-                        torch.cos(freqs),
-                        -torch.sin(freqs),
-                        torch.sin(freqs),
-                        torch.cos(freqs),
-                    ],
-                    dim=2,
-                ).view(*freqs.size(), 2, 2)
+
+                if self.rope_type == "yarn":
+                    cos = freqs.cos() * self.rope_scaling.concentration
+                    sin = freqs.sin() * self.rope_scaling.concentration
+
+                    self.cached_freqs[dev_idx][alpha] = (cos, sin)
+                else:
+                    self.cached_freqs[dev_idx][alpha] = torch.stack(
+                        [
+                            torch.cos(freqs),
+                            -torch.sin(freqs),
+                            torch.sin(freqs),
+                            torch.cos(freqs),
+                        ],
+                        dim=2,
+                    ).view(*freqs.size(), 2, 2)
 
         return alpha
 
@@ -327,6 +400,9 @@ class RotaryEmbedding(PositionEncoder):
             ):
                 position_ids += past_kv_state[0].size(2)
 
+        # the max start position should be based on the max first position of each sequence
+        max_start_pos = torch.max(position_ids[:, 0])
+
         if self.partial_rope != 1.0:
             q_rope = q[..., : self.dim]
             k_rope = k[..., : self.dim]
@@ -338,10 +414,30 @@ class RotaryEmbedding(PositionEncoder):
 
         # the max start position should be based on the max first position of each sequence
         max_start_pos = torch.max(position_ids[:, 0])
+
         alpha = self.compute_freqs_cis(q.device, max_start_pos + seq_len)
+
+        if self.rope_type == "yarn":
+            # Compute cos/sin for max position
+            freqs = self.cached_freqs[q.device.index][alpha]
+
+            cos = freqs[0]
+            sin = freqs[1]
+
+            query_shape = q.shape
+            key_shape = k.shape
+
+            query = self.rope_scaling.apply_yarn_rotary_emb(q, cos, sin, position_ids)  # type: ignore
+            key = self.rope_scaling.apply_yarn_rotary_emb(k, cos, sin, position_ids)  # type: ignore
+
+            return query.reshape(query_shape), key.reshape(key_shape)
+
         freqs = self.cached_freqs[q.device.index][alpha][position_ids]
 
+        position_ids = position_ids.clamp(max=freqs.size(0) - 1)
+
         freqs = freqs.float()  # 1 L D/2 2 2
+
         q_out = (
             freqs[:, -q.size(1) :, None, :, :, :]
             .mul(q_.unsqueeze(-2))

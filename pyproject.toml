@@ -39,7 +39,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-hf = ["transformers==4.48.3"]
+hf = ["transformers==4.55.4"]
 dev = [
 "mypy==1.15.0",
 "mypy-extensions==1.0.0",
