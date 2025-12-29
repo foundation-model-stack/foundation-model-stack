@@ -54,7 +54,7 @@ class AttentionKwargs(TypedDict, total=False):
     attn_name: str
 
 
-class SinkAttentionKwargs(TypedDict):
+class SinkAttentionKwargs(AttentionKwargs):
     """
     The sinks attention kwargs to be passed to fms model forward.
 
@@ -821,9 +821,11 @@ class MultiHeadAttention(nn.Module):
         updated_attn_kwargs: Union[AttentionKwargs, SinkAttentionKwargs]
 
         if self.has_sinks:
-            updated_attn_kwargs = {"sinks": self.sinks, 
-                                   "sliding_window": sliding_window, 
-                                   **attn_kwargs}
+            updated_attn_kwargs = {
+                "sinks": self.sinks,
+                "sliding_window": sliding_window,
+                **attn_kwargs,
+            }
         else:
             updated_attn_kwargs = attn_kwargs
 
