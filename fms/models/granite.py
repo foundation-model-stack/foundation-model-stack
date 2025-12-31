@@ -369,6 +369,7 @@ class Granite(nn.Module):
         past_key_value_states: Optional[Tuple[torch.FloatTensor,]] = None,
         use_cache: bool = False,
         last_n_tokens: int = 0,
+        run_headless: bool=False,
         **attn_kwargs: Unpack[AttentionKwargs],
     ):
         get_attention_type(**attn_kwargs)["validate_attn_kwargs"](
@@ -387,6 +388,15 @@ class Granite(nn.Module):
         )
 
         output = gather_outputs(output, last_n_tokens, **attn_kwargs)
+
+        if run_headless:
+            # Added for compatibility, but most of the time we do not
+            # want to do this since we use run_headless for embeddings,
+            # which only do one pass.
+            if use_cache:
+                preds, cache
+            return output
+
         preds = self.head(output)
         preds = preds / self.config.logits_scaling
 

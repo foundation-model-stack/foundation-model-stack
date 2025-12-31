@@ -253,21 +253,24 @@ def _map_model_config(architecture, config):
         config_params["hidden_act"] = config.hidden_act
         config_params["layer_norm_eps"] = config.layer_norm_eps
         config_params["attention_dropout"] = config.attention_dropout
-    elif architecture == "LlavaNextForConditionalGeneration":
+    elif architecture in ["LlavaNextForConditionalGeneration", "GraniteVisionEmb"]:
+        # NOTE - granite vision embeddings & granite vision have identical configs
+        # (granite vision is llava next with multiple vision feature layers and
+        # siglip as the visual encoder instead of clip). The only difference is
+        # that granite vision emb has ~3 extra attributes.
         from fms.models.siglip_vision import SiglipVisionConfig
         from fms.models.granite import GraniteConfig
 
         if config.text_config.model_type != "granite":
             raise ValueError(
-                "FMS implementation of LlavaNext currently supports only Granite language model"
+                "FMS implementation of Granite Vision currently supports only Granite language model"
             )
         if config.vision_config.model_type != "siglip_vision_model":
             raise ValueError(
-                "FMS implementation of LlavaNext currently supports only Siglip vision model"
+                "FMS implementation of Granite Vision currently supports only Siglip vision model"
             )
 
         infer_common_params = False
-        architecture = "llava_next"
         config_params["image_token_index"] = config.image_token_index
         config_params["image_grid_pinpoints"] = config.image_grid_pinpoints
         config_params["vision_feature_layer"] = config.vision_feature_layer
@@ -280,6 +283,15 @@ def _map_model_config(architecture, config):
             "GraniteForCausalLM", config.text_config
         )
         config_params["text_config"] = GraniteConfig(**text_config_params)
+        if architecture == "LlavaNextForConditionalGeneration":
+            architecture = "llava_next"
+        else:
+            architecture = "granite_vision_emb"
+            # Granite vision embedding specific attributes
+            config_params["emb_dim_query"] = config.emb_dim_query
+            config_params["emb_dim_doc"] = config.emb_dim_doc
+            config_params["base_image_feature_location"] = config.base_image_feature_location
+
     elif architecture == "MPNetForMaskedLM":
         inner_dim = config.intermediate_size
         architecture = "mpnet"
@@ -377,7 +389,10 @@ def _infer_model_configuration(
     else:
         model_path = str(model_id_or_path)
 
-    config = AutoConfig.from_pretrained(model_path)
+    # FIXME - needed for granite vision emebddings, which bundle their own
+    # code; this should probably be specified in the model config mapping
+    # or passed by the user directly
+    config = AutoConfig.from_pretrained(model_path, trust_remote_code=True)
     architecture = config.architectures[0]
     architecture, config_params = _map_model_config(architecture, config)
 

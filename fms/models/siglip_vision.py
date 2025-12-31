@@ -105,13 +105,25 @@ class SiglipEncoderLayer(nn.Module):
         kvheads = self.config.nheads
         attn_scale_factor = head_dim**-0.5
 
-        self.layer_norm1 = LayerNormParameterized(
-            self.embed_dim,
-            elementwise_shift=True,
-            use_mean=True,
-            eps=config.layer_norm_eps,
-            use_high_precision_pow=True,
-        )
+        # Hack for equivalence testing
+        self.layer_norm1 = nn.LayerNorm(self.embed_dim, eps=config.layer_norm_eps)
+        self.layer_norm2 = nn.LayerNorm(self.embed_dim, eps=config.layer_norm_eps)
+
+        # self.layer_norm1 = LayerNormParameterized(
+        #     self.embed_dim,
+        #     elementwise_shift=True,
+        #     use_mean=True,
+        #     eps=config.layer_norm_eps,
+        #     use_high_precision_pow=True,
+        # )
+
+        # self.layer_norm2 = LayerNormParameterized(
+        #     self.embed_dim,
+        #     elementwise_shift=True,
+        #     use_mean=True,
+        #     eps=config.layer_norm_eps,
+        #     use_high_precision_pow=True,
+        # )
 
         self.attn = MultiHeadAttention(
             self.embed_dim,
@@ -124,14 +136,6 @@ class SiglipEncoderLayer(nn.Module):
             linear_config=self.config.linear_config,
             fused=self.config.fused_weights,
             scale_factor=attn_scale_factor,
-        )
-
-        self.layer_norm2 = LayerNormParameterized(
-            self.embed_dim,
-            elementwise_shift=True,
-            use_mean=True,
-            eps=config.layer_norm_eps,
-            use_high_precision_pow=True,
         )
 
         self.mlp = FeedForwardBlock(
@@ -340,6 +344,9 @@ class SiglipVision(nn.Module):
         last_hidden_state, hidden_states = self.base_model(
             pixel_values, output_hidden_states=output_hidden_states, **attn_kwargs
         )
+        # TODO: We should disable Siglip's pooling head if the HF config sets
+        # vision_use_head to False, but for currently supported models, it's always
+        # true
         pooler_output = self.head(last_hidden_state)
         if output_hidden_states:
             return last_hidden_state, pooler_output, hidden_states

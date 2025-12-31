@@ -17,6 +17,10 @@ from fms.utils import serialization
 from fms.utils.activation import str_to_activation
 from fms.utils.config import ModelConfig
 
+# NOTE: This implementation is currently specific to granite vision, which uses siglip
+# visual encoder, different image grid pinpoints, and multiple vision feature layers.
+# To support other Llava next models, we'd need to support Clip as the visual encoder.
+
 # TODO: percolate ditributed_strategy, taking care of _no_split_modules from original transformers code
 
 logger = logging.getLogger(__name__)
