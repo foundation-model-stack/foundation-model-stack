@@ -6,7 +6,6 @@ import os
 from dataclasses import asdict, dataclass
 from typing import TypeVar, Union
 
-
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T", bound="ModelConfig")
@@ -45,6 +44,10 @@ class ModelConfig:
         kwargs
             all possibly ModelConfig dataclass named parameters to override
 
+        Note: To override parameters of nested ModelConfig a dict can be passed, e.g. the following kwargs
+        text_config = {'head_dim': 128}
+        would update the `head_dim` parameter of `text_config`
+
         Returns
         -------
         ModelConfig
@@ -55,7 +58,18 @@ class ModelConfig:
         unknown_params = []
         for k, v in kwargs.items():
             if hasattr(copied_config, k):
-                setattr(copied_config, k, v)
+                # For multi-model hierarchical configs, ModelConfig are nested
+                # i.e. ModelConfig may contain sub ModelConfig(s).
+                # A dict passed as kwarg can update parameter(s) in the nested hierarchy
+                # for this the key must be an existing sub config of ModelConfig and the value must be a dict
+                # Since we are recursively calling `updated` method it is possible to have sub-configs in sub-configs
+                if isinstance(getattr(copied_config, k), ModelConfig) and isinstance(
+                    v, dict
+                ):
+                    sub_config = getattr(copied_config, k)
+                    setattr(copied_config, k, sub_config.updated(**v))
+                else:
+                    setattr(copied_config, k, v)
             else:
                 unknown_params.append(k)
         if len(unknown_params) > 0:
