@@ -1,0 +1,19 @@
+{
+    "activation_fn": "silu",
+    "architecture": "mistral",
+    "emb_dim": 5120,
+    "head_dim": 128,
+    "hidden_grow_factor": 6.4,
+    "kvheads": 8,
+    "max_expected_seq_len": 32768,
+    "model_path": null,
+    "nheads": 32,
+    "nlayers": 40,
+    "norm_eps": 1e-05,
+    "p_dropout": 0.0,
+    "rope_base": 100000000.0,
+    "sliding_window": null,
+    "src_vocab_size": 131072,
+    "tie_heads": false,
+    "variant": "7b"
+}
