@@ -12,6 +12,12 @@ class MockModelConfig(ModelConfig):
     default_b: str = "default"
 
 
+@dataclasses.dataclass
+class NestedMockModelConfig(ModelConfig):
+    inner_config: MockModelConfig
+    default_c: str = "something else"
+
+
 def test_round_trip():
     config = MockModelConfig(required_a=1)
     with tempfile.TemporaryDirectory() as workdir:
@@ -22,6 +28,25 @@ def test_round_trip():
         config_loaded = MockModelConfig.load(config_path)
         assert config.required_a == config_loaded.required_a
         assert config.default_b == config_loaded.default_b
+
+
+def test_nested_round_trip():
+    config = NestedMockModelConfig(
+        MockModelConfig(required_a=32, default_b="hello"),
+        default_c="nesting",
+    )
+    with tempfile.TemporaryDirectory() as workdir:
+        config_path = f"{workdir}/config.json"
+        assert not os.path.exists(config_path)
+        config.save(config_path)
+        assert os.path.exists(config_path) and os.path.isfile(config_path)
+        config_loaded = NestedMockModelConfig.load(config_path)
+        # Ensure that we correctly reload the model class based
+        # on the type annotations, instead of as a dictionary
+        assert isinstance(config_loaded.inner_config, MockModelConfig)
+        assert config.inner_config.required_a == config_loaded.inner_config.required_a
+        assert config.inner_config.default_b == config_loaded.inner_config.default_b
+        assert config.default_c == config_loaded.default_c
 
 
 def test_as_dict():

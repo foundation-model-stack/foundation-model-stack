@@ -19,13 +19,22 @@ class ModelConfig:
             text = reader.read()
         json_dict = json.loads(text)
 
-        return cls(
-            **{
-                k: v
-                for k, v in json_dict.items()
-                if k in inspect.signature(cls).parameters
-            }
-        )
+        return cls._load_from_dict(json_dict)
+
+    @classmethod
+    def _load_from_dict(cls, json_dict: dict):
+        model_kwargs = {}
+        for k, v in json_dict.items():
+            if k not in inspect.signature(cls).parameters:
+                continue
+            param_type = inspect.signature(cls).parameters[k].annotation
+            # If a value maps to another model config, recursively load it
+            if inspect.isclass(param_type) and issubclass(param_type, ModelConfig):
+                model_kwargs[k] = param_type._load_from_dict(v)
+            else:
+                model_kwargs[k] = v
+
+        return cls(**model_kwargs)
 
     def as_dict(self) -> dict:
         return asdict(self)
