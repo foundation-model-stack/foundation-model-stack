@@ -11,7 +11,8 @@ from transformers import (  # type: ignore
     AutoModelForMaskedLM,
 )
 
-from fms.models import get_model, list_variants
+from fms.models import get_model
+from fms.models.hf.config_utils import _FMS_MODEL_CONFIG_REGISTRY
 
 
 def register_fms_models():
@@ -113,227 +114,6 @@ def mask_2d_to_3d_bidirectional(
     return mask_encoder.unsqueeze(1) == mask_decoder.unsqueeze(2)
 
 
-def _map_model_config(architecture, config):
-    # Map HF model config to FMS model config
-    infer_common_params = True
-    config_params = {}
-
-    if architecture == "LlamaForCausalLM":
-        inner_dim = config.intermediate_size
-        architecture = "llama"
-        config_params["attn_bias"] = getattr(config, "attention_bias", False)
-        config_params["mlp_bias"] = getattr(config, "mlp_bias", False)
-        config_params["kvheads"] = config.num_key_value_heads
-        config_params["norm_eps"] = config.rms_norm_eps
-        config_params["multiple_of"] = 1
-        config_params["emb_dim"] = config.hidden_size
-        config_params["max_expected_seq_len"] = config.max_position_embeddings
-        # New in Llama 3
-        rope_theta = getattr(config, "rope_theta", None)
-        if rope_theta is not None:
-            config_params["rope_theta"] = rope_theta
-        # New in Llama 3.1
-        rope_scaling = getattr(config, "rope_scaling", None)
-        if rope_scaling is not None:
-            config_params["rope_scaling"] = rope_scaling
-    elif architecture == "GPTBigCodeForCausalLM":
-        inner_dim = config.n_inner
-        architecture = "gpt_bigcode"
-        config_params["ln_eps"] = config.layer_norm_epsilon
-        config_params["multiquery_attn"] = config.multi_query
-        config_params["emb_dim"] = config.hidden_size
-        config_params["max_expected_seq_len"] = config.n_positions
-    elif architecture == "MixtralForCausalLM":
-        inner_dim = config.intermediate_size
-        architecture = "mixtral"
-        config_params["dim"] = config.hidden_size
-        config_params["hidden_dim"] = inner_dim
-        config_params["norm_eps"] = config.rms_norm_eps
-        config_params["kv_heads"] = config.num_key_value_heads
-        config_params["num_experts"] = config.num_local_experts
-        config_params["top_k_experts"] = config.num_experts_per_tok
-        config_params["rope_base"] = config.rope_theta
-        config_params["max_expected_seq_len"] = config.max_position_embeddings
-    elif architecture == "RobertaForMaskedLM":
-        inner_dim = config.intermediate_size
-        architecture = "roberta"
-        config_params["emb_dim"] = config.hidden_size
-        config_params["pad_id"] = config.pad_token_id
-        config_params["max_pos"] = config.max_position_embeddings - 2
-        config_params["p_dropout"] = config.hidden_dropout_prob
-        config_params["norm_eps"] = config.layer_norm_eps
-        config_params["activation_fn"] = config.hidden_act
-        config_params["type_vocab_size"] = config.type_vocab_size
-        config_params["pos_emb"] = "roberta"
-    elif architecture == "RobertaForQuestionAnswering":
-        inner_dim = config.intermediate_size
-        architecture = "roberta_question_answering"
-        config_params["emb_dim"] = config.hidden_size
-        config_params["pad_id"] = config.pad_token_id
-        config_params["max_pos"] = config.max_position_embeddings - 2
-        config_params["p_dropout"] = config.hidden_dropout_prob
-        config_params["norm_eps"] = config.layer_norm_eps
-        config_params["activation_fn"] = config.hidden_act
-        config_params["type_vocab_size"] = config.type_vocab_size
-        config_params["pos_emb"] = "roberta"
-    elif architecture == "RobertaForSequenceClassification":
-        inner_dim = config.intermediate_size
-        architecture = "roberta_classification"
-        config_params["emb_dim"] = config.hidden_size
-        config_params["pad_id"] = config.pad_token_id
-        config_params["max_pos"] = config.max_position_embeddings - 2
-        config_params["p_dropout"] = config.hidden_dropout_prob
-        config_params["norm_eps"] = config.layer_norm_eps
-        config_params["activation_fn"] = config.hidden_act
-        config_params["num_classes"] = config.num_labels
-        config_params["type_vocab_size"] = config.type_vocab_size
-        config_params["pos_emb"] = "roberta"
-    elif architecture == "GraniteForCausalLM":
-        inner_dim = config.intermediate_size
-        architecture = "granite"
-        config_params["attn_bias"] = getattr(config, "attention_bias", False)
-        config_params["mlp_bias"] = getattr(config, "mlp_bias", False)
-        config_params["kvheads"] = config.num_key_value_heads
-        config_params["norm_eps"] = config.rms_norm_eps
-        config_params["multiple_of"] = 1
-        config_params["emb_dim"] = config.hidden_size
-        config_params["max_expected_seq_len"] = config.max_position_embeddings
-        config_params["residual_multiplier"] = config.residual_multiplier
-        config_params["attention_multiplier"] = config.attention_multiplier
-        config_params["logits_scaling"] = config.logits_scaling
-        config_params["embedding_multiplier"] = config.embedding_multiplier
-        config_params["rope_theta"] = config.rope_theta
-        config_params["activation_fn"] = config.hidden_act
-        config_params["head_dim"] = getattr(
-            config, "head_dim", config.hidden_size // config.num_attention_heads
-        )
-    elif architecture == "MistralForCausalLM":
-        inner_dim = config.intermediate_size
-        architecture = "mistral"
-        config_params["activation_fn"] = config.hidden_act
-        config_params["emb_dim"] = config.hidden_size
-        config_params["max_expected_seq_len"] = config.max_position_embeddings
-        config_params["kvheads"] = config.num_key_value_heads
-        config_params["p_dropout"] = config.attention_dropout
-        config_params["head_dim"] = (
-            getattr(config, "head_dim", None)
-            or config.hidden_size // config.num_attention_heads
-        )
-        config_params["norm_eps"] = config.rms_norm_eps
-        config_params["rope_base"] = config.rope_theta
-        config_params["sliding_window"] = config.sliding_window
-    elif architecture == "BambaForCausalLM":
-        inner_dim = config.intermediate_size
-        architecture = "bamba"
-        config_params["kvheads"] = config.num_key_value_heads
-        config_params["p_dropout"] = config.attention_dropout
-        config_params["activation_fn"] = config.hidden_act
-        config_params["emb_dim"] = config.hidden_size
-        config_params["chunk_size"] = config.mamba_chunk_size
-        config_params["use_conv_bias"] = config.mamba_conv_bias
-        config_params["conv_kernel"] = config.mamba_d_conv
-        config_params["head_dim"] = config.mamba_d_head
-        config_params["state_size"] = config.mamba_d_state
-        config_params["mamba_expand"] = config.mamba_expand
-        config_params["n_groups"] = config.mamba_n_groups
-        config_params["mamba_n_heads"] = config.mamba_n_heads
-        config_params["use_bias"] = config.mamba_proj_bias
-        config_params["norm_eps"] = config.rms_norm_eps
-    elif architecture == "SiglipModel":
-        infer_common_params = False
-        config = config.vision_config
-        architecture = "siglip_vision"
-        config_params["hidden_size"] = config.hidden_size
-        config_params["intermediate_size"] = config.intermediate_size
-        config_params["nlayers"] = config.num_hidden_layers
-        config_params["nheads"] = config.num_attention_heads
-        config_params["num_channels"] = config.num_channels
-        config_params["image_size"] = config.image_size
-        config_params["patch_size"] = config.patch_size
-        config_params["hidden_act"] = config.hidden_act
-        config_params["layer_norm_eps"] = config.layer_norm_eps
-        config_params["attention_dropout"] = config.attention_dropout
-    elif architecture == "LlavaNextForConditionalGeneration":
-        from fms.models.siglip_vision import SiglipVisionConfig
-        from fms.models.granite import GraniteConfig
-
-        if config.text_config.model_type != "granite":
-            raise ValueError(
-                "FMS implementation of LlavaNext currently supports only Granite language model"
-            )
-        if config.vision_config.model_type != "siglip_vision_model":
-            raise ValueError(
-                "FMS implementation of LlavaNext currently supports only Siglip vision model"
-            )
-
-        infer_common_params = False
-        architecture = "llava_next"
-        config_params["image_token_index"] = config.image_token_index
-        config_params["image_grid_pinpoints"] = config.image_grid_pinpoints
-        config_params["vision_feature_layer"] = config.vision_feature_layer
-        config_params["vision_feature_select_strategy"] = (
-            config.vision_feature_select_strategy
-        )
-        _, vision_config_params = _map_model_config("SiglipModel", config)
-        config_params["vision_config"] = SiglipVisionConfig(**vision_config_params)
-        _, text_config_params = _map_model_config(
-            "GraniteForCausalLM", config.text_config
-        )
-        config_params["text_config"] = GraniteConfig(**text_config_params)
-    elif architecture == "MPNetForMaskedLM":
-        inner_dim = config.intermediate_size
-        architecture = "mpnet"
-        config_params["p_dropout"] = config.attention_probs_dropout_prob
-        config_params["hidden_dropout_prob"] = config.hidden_dropout_prob
-        config_params["layer_norm_eps"] = config.layer_norm_eps
-        config_params["bos_token_id"] = config.bos_token_id
-        config_params["eos_token_id"] = config.eos_token_id
-        config_params["activation_fn"] = config.hidden_act
-        config_params["emb_dim"] = config.hidden_size
-        config_params["max_expected_seq_len"] = config.max_position_embeddings
-        config_params["pad_id"] = config.pad_token_id
-        config_params["relative_attention_num_buckets"] = (
-            config.relative_attention_num_buckets
-        )
-    elif architecture == "BertForMaskedLM":
-        inner_dim = config.intermediate_size
-        architecture = "bert"
-        config_params["emb_dim"] = config.hidden_size
-        config_params["pad_id"] = config.pad_token_id
-        config_params["max_pos"] = config.max_position_embeddings
-        config_params["p_dropout"] = config.hidden_dropout_prob
-        config_params["norm_eps"] = config.layer_norm_eps
-        config_params["activation_fn"] = config.hidden_act
-        config_params["type_vocab_size"] = config.type_vocab_size
-        config_params["pos_emb"] = "bert"
-    elif architecture == "BertForSequenceClassification":
-        inner_dim = config.intermediate_size
-        architecture = "bert_classification"
-        config_params["emb_dim"] = config.hidden_size
-        config_params["pad_id"] = config.pad_token_id
-        config_params["max_pos"] = config.max_position_embeddings
-        config_params["p_dropout"] = config.hidden_dropout_prob
-        config_params["norm_eps"] = config.layer_norm_eps
-        config_params["activation_fn"] = config.hidden_act
-        config_params["type_vocab_size"] = config.type_vocab_size
-        config_params["pos_emb"] = "bert"
-        config_params["num_classes"] = config.num_labels
-    else:
-        raise ValueError(
-            "FMS model implementations currently only support LlamaForCausalLM, GPTBigCodeForCausalLM, MixtralForCausalLM, RobertaForMaskedLM, RobertaForQuestionAnswering, RobertaForSequenceClassification, GraniteForCausalLM, MistralForCausalLM, BambaForCausalLM, SiglipModel, LlavaNextForConditionalGeneration, MPNetForMaskedLM, BertForMaskedLM, and BertForSequenceClassification"
-        )
-
-    # infer common params
-    if infer_common_params:
-        config_params["src_vocab_size"] = config.vocab_size
-        config_params["nheads"] = config.num_attention_heads
-        config_params["nlayers"] = config.num_hidden_layers
-        config_params["hidden_grow_factor"] = inner_dim / config.hidden_size
-        config_params["tie_heads"] = config.tie_word_embeddings
-
-    return architecture, config_params
-
-
 def infer_model_configuration(
     model_id_or_path: str | os.PathLike,
     download_weights: bool = True,
@@ -378,27 +158,11 @@ def infer_model_configuration(
         model_path = str(model_id_or_path)
 
     config = AutoConfig.from_pretrained(model_path)
-    architecture = config.architectures[0]
-    architecture, config_params = _map_model_config(architecture, config)
 
-    # infer get_model params
-    config_params["architecture"] = architecture
-    config_params["variant"] = list_variants(architecture)[0]
-    config_params["model_path"] = model_path if download_weights else None
-
-    ## infer quantization parameters
-    quant_config = getattr(config, "quantization_config", None)
-    if quant_config is not None:
-        try:
-            from fms_mo.aiu_addons import _infer_quantization_config  # type: ignore[import-untyped,import-not-found]
-        except ImportError:
-            raise RuntimeError(
-                "You need to install fms-model-optimizer to load quantized models"
-            )
-        linear_config = _infer_quantization_config(quant_config)
-        if linear_config:
-            config_params["linear_config"] = linear_config
-
+    config_params = _FMS_MODEL_CONFIG_REGISTRY.hf_config_to_fms_config_params(
+        config,
+        model_path=model_path if download_weights else None,
+    )
     return config_params
 
 
