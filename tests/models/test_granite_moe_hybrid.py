@@ -1,7 +1,7 @@
 import pytest
 import torch
 
-from fms.models.granite_v4 import GraniteMoeHybrid, GraniteConfig, GraniteMoeHybridHeadless
+from fms.models.granite_moe_hybrid import GraniteMoeHybrid, GraniteConfig, GraniteMoeHybridHeadless
 from fms.testing._internal.model_test_suite import (
     ConfigFixtureMixin,
     ModelCompileTestSuite,

@@ -93,17 +93,17 @@ _8b_config = GraniteConfig(
     attention_multiplier=0.0078125,
 )
 
-_architecture_name = "granite_v4"
+_architecture_name = "granite_moe_hybrid"
 
 
-def _granite_v4_factory_factory(config):
+def _granite_moe_hybrid_factory(config):
     def factory(**kwargs):
         return GraniteMoeHybrid(config, **kwargs)
 
     return factory
 
 
-models.register_model(_architecture_name, "8b", _granite_v4_factory_factory(_8b_config))
+models.register_model(_architecture_name, "8b", _granite_moe_hybrid_factory(_8b_config))
 
 
 serialization.register_adapter_step(_architecture_name, "weight_fusion", _weight_fusion)
