@@ -209,6 +209,9 @@ def _map_model_config(architecture, config):
         )
     elif architecture == "GraniteMoeHybridForCausalLM":
         inner_dim = config.intermediate_size
+        # Currently we are routing to single granite_v4 configuration which
+        # supports granite-v4 dense model. In future, based on the configuration
+        # we may route to different architectures or classes.
         architecture = "granite_v4"
         config_params["attn_bias"] = getattr(config, "attention_bias", False)
         config_params["kvheads"] = config.num_key_value_heads
