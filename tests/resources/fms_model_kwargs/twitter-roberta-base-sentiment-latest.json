@@ -1,0 +1,19 @@
+{
+    "activation_fn": "gelu",
+    "architecture": "roberta_classification",
+    "emb_dim": 768,
+    "hidden_grow_factor": 4.0,
+    "max_pos": 512,
+    "model_path": null,
+    "nheads": 12,
+    "nlayers": 12,
+    "norm_eps": 1e-05,
+    "num_classes": 3,
+    "p_dropout": 0.1,
+    "pad_id": 1,
+    "pos_emb": "roberta",
+    "src_vocab_size": 50265,
+    "tie_heads": true,
+    "type_vocab_size": 1,
+    "variant": "base"
+}
