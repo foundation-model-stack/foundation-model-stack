@@ -144,6 +144,7 @@ def build_granite_moe_hybrid_params(config: PretrainedConfig) -> dict:
         config, config_params, inner_dim=config.intermediate_size
     )
 
+
 def build_mistral_params(config: PretrainedConfig) -> dict:
     """Param builder for mapping MistralForCausalLM to FMS."""
     config_params = {

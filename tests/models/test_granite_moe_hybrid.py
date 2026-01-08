@@ -1,7 +1,11 @@
 import pytest
 import torch
 
-from fms.models.granite_moe_hybrid import GraniteMoeHybrid, GraniteConfig, GraniteMoeHybridHeadless
+from fms.models.granite_moe_hybrid import (
+    GraniteMoeHybrid,
+    GraniteConfig,
+    GraniteMoeHybridHeadless,
+)
 from fms.testing._internal.model_test_suite import (
     ConfigFixtureMixin,
     ModelCompileTestSuite,
@@ -75,4 +79,3 @@ class TestGranite(
     @pytest.fixture
     def headless_model(self, model: GraniteMoeHybrid) -> GraniteMoeHybridHeadless:
         return model.base_model
-

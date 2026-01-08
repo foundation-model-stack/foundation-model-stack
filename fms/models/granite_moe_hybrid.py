@@ -13,7 +13,8 @@ from fms.models.granite import (
     GraniteHeadless,
     _hf_gptq_granite_check,
     _hf_to_fms_rope,
-    _weight_fusion)
+    _weight_fusion,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -26,11 +27,9 @@ class GraniteMoeHybridHeadless(GraniteHeadless):
         distributed_strategy: DistributedStrategy = NoOpStrategy,
         **kwargs,
     ):
-
         super(GraniteMoeHybridHeadless, self).__init__(
-            config,
-            distributed_strategy,
-            **kwargs)
+            config, distributed_strategy, **kwargs
+        )
 
 
 class GraniteMoeHybrid(Granite):
@@ -41,6 +40,7 @@ class GraniteMoeHybrid(Granite):
     GraniteMoeHybrid class will eventually support various versions of
     Granite-v4 model and we will modify this class in future accordingly.
     """
+
     def __init__(
         self,
         config: Optional[GraniteConfig] = None,
@@ -57,8 +57,8 @@ class GraniteMoeHybrid(Granite):
         self.config = self.config.updated(**kwargs)
 
         # NOTE: GraniteMoeHybrid-Dense requires following values specifically
-        self.config.mlp_bias=False # Does not define MLP bias
-        self.fused_weights=True # Comes with fused weights
+        self.config.mlp_bias = False  # Does not define MLP bias
+        self.fused_weights = True  # Comes with fused weights
 
         self.distributed_strategy = distributed_strategy
 
@@ -122,7 +122,6 @@ def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]
         # Following layers are different in granite-v4-dense from granite-3
         (r"shared_mlp\.input_linear", "ff_sub_layer.wg1_fused"),
         (r"shared_mlp\.output_linear", "ff_sub_layer.w2"),
-
         (r"input_layernorm", "ln"),
         (r"post_attention_layernorm", "ff_ln"),
     ]
