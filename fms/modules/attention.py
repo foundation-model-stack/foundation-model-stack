@@ -674,9 +674,9 @@ class MultiHeadAttention(nn.Module):
         q_out, k_out, v_out = self.in_proj(q, k, v)
 
         # note: transposes will be moved in a later PR to fix dis-contiguous tensor issues
-        queries = q_out.cpu().reshape(batch_size, q_len, self.nheads, self.emb_kq_per_head).to("spyre")
-        keys = k_out.cpu().reshape(batch_size, q_len, self.kvheads, self.emb_kq_per_head).to("spyre")
-        values = v_out.cpu().reshape(batch_size, q_len, self.kvheads, self.emb_v_per_head).to("spyre")
+        queries = q_out.view(batch_size, q_len, self.nheads, self.emb_kq_per_head).contiguous()
+        keys = k_out.view(batch_size, q_len, self.kvheads, self.emb_kq_per_head).contiguous()
+        values = v_out.view(batch_size, q_len, self.kvheads, self.emb_v_per_head).contiguous()
 
         # You want to apply rotary embeddings pre-cache
         if self.position_encoder is not None:
