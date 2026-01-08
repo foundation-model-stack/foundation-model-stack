@@ -185,6 +185,12 @@ def _sdpa_store_op(
     else:
         return (keys, values, keys, values)
 
+def attn_spyre(q, k, v, sm_scale):
+    qk = q @ k.transpose(-1, -2).contiguous()
+    qk = qk.cpu() * sm_scale
+    qk = qk.to(q.device)
+    p = qk.softmax(dim=-1)
+    return p @ v
 
 def _sdpa_compute_op(
     query: torch.Tensor,
@@ -243,16 +249,19 @@ def _sdpa_compute_op(
         mask is None and not (key_cache.shape[2] != 1 and queries.shape[2] == 1),
     )
 
-    # TODO: when updating to 2.7, use enable_gqa and stop using keys_e and values_e
-    attn = F.scaled_dot_product_attention(
-        queries,
-        keys_e,
-        values_e,
-        attn_mask=attn_mask,
-        dropout_p=p_dropout,
-        is_causal=is_causal,
-        scale=scale_factor,
-    )
+    attn = attn_spyre(queries, keys_e, values_e, 0.08838834764831843)
+    # qk = q @ k.transpose(-1, -2).contiguous()
+
+    # # TODO: when updating to 2.7, use enable_gqa and stop using keys_e and values_e
+    # attn = F.scaled_dot_product_attention(
+    #     queries,
+    #     keys_e,
+    #     values_e,
+    #     attn_mask=attn_mask,
+    #     dropout_p=p_dropout,
+    #     is_causal=is_causal,
+    #     scale=scale_factor,
+    # )
 
     if attn_algorithm:
         torch.backends.cuda.enable_flash_sdp(__sdpa_previous_flash)
@@ -440,6 +449,9 @@ class UnfusedQKV(QKV):
             )
 
         # b x h x qlen x ds
+        # queries = torch.mm(q, self.query.weight.T.contiguous())
+        print(self.query.weight)
+        print(q)
         queries = self.query(q)
         keys = self.key(k)
         values = self.value(v)
@@ -662,9 +674,9 @@ class MultiHeadAttention(nn.Module):
         q_out, k_out, v_out = self.in_proj(q, k, v)
 
         # note: transposes will be moved in a later PR to fix dis-contiguous tensor issues
-        queries = q_out.view(batch_size, q_len, self.nheads, self.emb_kq_per_head)
-        keys = k_out.view(batch_size, q_len, self.kvheads, self.emb_kq_per_head)
-        values = v_out.view(batch_size, q_len, self.kvheads, self.emb_v_per_head)
+        queries = q_out.cpu().reshape(batch_size, q_len, self.nheads, self.emb_kq_per_head).to("spyre")
+        keys = k_out.cpu().reshape(batch_size, q_len, self.kvheads, self.emb_kq_per_head).to("spyre")
+        values = v_out.cpu().reshape(batch_size, q_len, self.kvheads, self.emb_v_per_head).to("spyre")
 
         # You want to apply rotary embeddings pre-cache
         if self.position_encoder is not None:

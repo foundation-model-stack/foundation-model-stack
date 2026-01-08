@@ -58,9 +58,9 @@ class LayerNormParameterized(nn.Module):
             x = x - x.mean(-1, keepdim=True)
         # x = F.normalize(x, dim=-1)*math.sqrt(x.size(-1))
         xf = x
-        if self.use_high_precision_pow:
-            xf = x.float()
-        xf = xf * torch.rsqrt(xf.pow(2).mean(-1, keepdim=True) + self.eps)
+        # if self.use_high_precision_pow:
+        #     xf = x.float()
+        xf = xf * torch.rsqrt((xf * xf).mean(-1, keepdim=True) + self.eps)
         x = xf.type_as(x)
         if self.elementwise_scale:
             x = self.weight * x

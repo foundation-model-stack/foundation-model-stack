@@ -66,22 +66,8 @@ class SimpleLlamaBlock(nn.Module):
         emb_kq = self.config.emb_dim // self.config.nheads
         emb_v = self.config.emb_dim // self.config.nheads
 
-        self.ln = LayerNormParameterized(
-            self.config.emb_dim,
-            elementwise_scale=True,
-            elementwise_shift=False,
-            use_mean=False,
-            eps=self.config.norm_eps,
-            use_high_precision_pow=True,
-        )
-        self.ff_ln = LayerNormParameterized(
-            self.config.emb_dim,
-            elementwise_scale=True,
-            elementwise_shift=False,
-            use_mean=False,
-            eps=self.config.norm_eps,
-            use_high_precision_pow=True,
-        )
+        self.ln = nn.LayerNorm(self.config.emb_dim, eps=self.config.norm_eps)
+        self.ff_ln = nn.LayerNorm(self.config.emb_dim, eps=self.config.norm_eps)
 
         if self.config.kvheads == 0:
             kvheads = self.config.nheads
@@ -132,9 +118,9 @@ class SimpleLlamaBlock(nn.Module):
 
         # first we do MHA and Add&Norm
         residual = x
-        x = self.ln(x)
-        x = self.attn(
-            q=x,
+        x_ln = self.ln(x)
+        x_attn = self.attn(
+            q=x_ln,
             position_ids=position_ids,
             past_key_value_state=self_attn_past_key_value,
             use_cache=use_cache,
@@ -142,7 +128,7 @@ class SimpleLlamaBlock(nn.Module):
         )
         cache = None
         if use_cache:
-            x, cache = x
+            x, cache = x_attn
         if self.config.p_dropout != 0:
             x = self.dropout(x)
         # residual connection
@@ -150,8 +136,8 @@ class SimpleLlamaBlock(nn.Module):
 
         # then we do FF and Add&Norm
         residual = x
-        x = self.ff_ln(x)
-        x = self.ff_sub_layer(x)
+        x_ff_ln = self.ff_ln(x)
+        x = self.ff_sub_layer(x_ff_ln)
         if self.config.p_dropout != 0:
             x = self.dropout(x)
         # another residual
@@ -178,21 +164,21 @@ class SimpleLlamaHeadless(nn.Module):
         self.config = self.config.updated(**kwargs)
         self.distributed_strategy = distributed_strategy
 
-        embedding = nn.Embedding(
-            self.config.src_vocab_size, self.config.emb_dim, self.config.pad_id
-        )
+        # embedding = nn.Embedding(
+        #     self.config.src_vocab_size, self.config.emb_dim, self.config.pad_id
+        # )
         # TP does not work with tied weights
-        if (
-            not isinstance(self.distributed_strategy, TensorParallelStrategy)
-            or not self.config.tie_heads
-        ):
-            self.embedding = self.distributed_strategy.distribute_module(embedding)
-        else:
-            logger.warning(
-                "You're using TP on a model with tied weights between head and embedding. "
-                "The tied weights won't be sharded, which can result in unexpected OOMs."
-            )
-            self.embedding = embedding
+        # if (
+        #     not isinstance(self.distributed_strategy, TensorParallelStrategy)
+        #     or not self.config.tie_heads
+        # ):
+        #     self.embedding = self.distributed_strategy.distribute_module(embedding)
+        # else:
+        #     logger.warning(
+        #         "You're using TP on a model with tied weights between head and embedding. "
+        #         "The tied weights won't be sharded, which can result in unexpected OOMs."
+        #     )
+        #     self.embedding = embedding
 
         layers = []
         for i in range(self.config.nlayers):
@@ -201,14 +187,7 @@ class SimpleLlamaHeadless(nn.Module):
             layers.append(block)
         self.layers = nn.ModuleList(layers)
 
-        dec_norm = LayerNormParameterized(
-            self.config.emb_dim,
-            elementwise_scale=True,
-            elementwise_shift=False,
-            use_mean=False,
-            eps=self.config.norm_eps,
-            use_high_precision_pow=True,
-        )
+        dec_norm = nn.LayerNorm(self.config.emb_dim, eps=self.config.norm_eps)
         self.dec_norm = self.distributed_strategy.distribute_module(
             dec_norm, final_layers=True
         )
@@ -224,10 +203,10 @@ class SimpleLlamaHeadless(nn.Module):
         return cls(config)
 
     def reset_parameters(self):
-        assert isinstance(self.embedding, torch.nn.Embedding)
-        nn.init.trunc_normal_(
-            self.embedding.weight, mean=0.0, std=self.config.emb_dim**-0.5
-        )
+        # assert isinstance(self.embedding, torch.nn.Embedding)
+        # nn.init.trunc_normal_(
+        #     self.embedding.weight, mean=0.0, std=self.config.emb_dim**-0.5
+        # )
 
         
         # Call reset_parameters for relevant sub-layers
@@ -280,7 +259,7 @@ class SimpleLlamaHeadless(nn.Module):
 
     def forward(
         self,
-        x_in,
+        embedded_x_in,
         position_ids=None,
         past_key_value_states=None,
         use_cache=False,
@@ -292,7 +271,8 @@ class SimpleLlamaHeadless(nn.Module):
         # bias: nheads x seq_len x seq_len
         if past_key_value_states is None or len(past_key_value_states) == 0:
             past_key_value_states = [None for _ in range(len(self.layers))]
-        x_in = self.embedding(x_in)
+        # x_in = self.embedding(x_in)
+        x_in = embedded_x_in
 
         # this is the output cache for all the decoder layers
         present_key_value_states = []
