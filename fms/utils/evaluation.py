@@ -22,12 +22,14 @@ class FMSEvalHarnessLM(LM):
         self,
         model: nn.Module,
         tokenizer: tokenizers.BaseTokenizer,
+        use_cache: bool = False,
         device="cpu",
         rank=0,
         world_size=1,
     ):
         self.wrapped_model = model
         self.tokenizer = tokenizer
+        self.use_cache = use_cache
         self._rank = rank
         self._world_size = world_size
         self.device = device
@@ -91,9 +93,12 @@ class FMSEvalHarnessLM(LM):
         kwargs: MutableMapping[str, Any] = dict()
 
         # KV caching settings
-        kwargs["use_cache"] = 'Mamba' not in self.wrapped_model.__class__.__name__
+        kwargs["use_cache"] = 'Mamba' not in self.wrapped_model.__class__.__name__ and self.use_cache
         if kwargs["use_cache"]:
+            print('KV caching enabled')
             kwargs["contiguous_cache"] = True
+        else:
+            print('KV caching disabled')
 
         eos_id = getattr(self.tokenizer, "eos_token_id", None)
 
