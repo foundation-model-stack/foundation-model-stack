@@ -1,5 +1,4 @@
 import pytest
-import torch
 
 from fms.models.granite_moe_hybrid import (
     GraniteMoeHybrid,
