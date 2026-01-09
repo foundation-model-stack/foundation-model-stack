@@ -55,6 +55,12 @@ parser.add_argument(
     help="Path to the tokenizer (e.g. ~/tokenizer.model)",
 )
 parser.add_argument(
+    "--num_samples",
+    type=int,
+    default=None,
+    help="Number of samples to use in benchmark",
+)
+parser.add_argument(
     "--no_use_cache",
     action="store_false",
     help="Disable the kv-cache (on by default)",
@@ -152,6 +158,7 @@ lm_obj = evaluation.FMSEvalHarnessLM(model=model, tokenizer=tokenizer, device=de
 results = lm_eval.simple_evaluate(
     model=lm_obj,
     tasks=args.tasks.split(","),
+    limit=args.num_samples,
     num_fewshot=args.num_fewshot,
     verbosity=logging.DEBUG,
     confirm_run_unsafe_code=args.confirm_run_unsafe_code
