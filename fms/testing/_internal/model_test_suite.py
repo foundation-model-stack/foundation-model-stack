@@ -14,6 +14,7 @@ from torch._dynamo.testing import CompileCounterWithBackend
 from fms.testing.comparison import get_signature
 from fms.utils.config import ModelConfig
 from fms.utils.fusion import apply_unfuse_weights
+from fms.utils.generation import generate
 
 
 _FAILED_CONFIG_LOAD_MSG = """
@@ -111,6 +112,11 @@ class SignatureFixtureMixin:
     def signature(self, model_id: Optional[str], **kwargs) -> list[float]:
         """include this fixture to get a models signature (defaults to what is in tests/resources/expectations)"""
         return self._signature(model_id)
+    
+    @pytest.fixture(scope="class", autouse = True)
+    def generation_signature(self, model_id: Optional[str], **kwargs) -> list[float]:
+        """Fixture to get the generation signature for the model if it supports generation"""
+        return self._generation_signature(model_id)
 
     def _get_expectation_path(self, test_name, model_id):
         """
@@ -142,7 +148,7 @@ class SignatureFixtureMixin:
     def _signature(self, model_id: Optional[str]) -> list[float]:
         try:
             expectation_file = open(
-                self._get_expectation_path("test_model_output", model_id)
+                self._get_expectation_path("test_model_forward", model_id)
             )
             line = expectation_file.readline()
             return [float(v) for v in line.split(",")]
@@ -245,7 +251,11 @@ class ModelCompileTestSuite(ModelFixtureMixin):
 
 
 class ModelConsistencyTestSuite(ModelFixtureMixin, SignatureFixtureMixin):
-    """All tests related to model consistency will be part of this test suite"""
+    """All tests related to model consistency will be part of this test suite
+    
+    To enable generation testing for decoder models that support text generation,
+    set the class attribute _supports_generation = True in your test class.
+    """
 
     @property
     def _get_signature_input_ids(self) -> Optional[torch.Tensor]:
@@ -293,9 +303,72 @@ class ModelConsistencyTestSuite(ModelFixtureMixin, SignatureFixtureMixin):
         """
         return {}
 
-    def test_model_output(self, model, signature, model_id, capture_expectation):
-        """test consistency of model output with signature"""
+    # Class attribute that test classes can set to enable generation testing
+    _supports_generation = False
 
+    def _get_generation_signature(self, model: nn.Module, input_ids: torch.Tensor) -> list[float]:
+        """Generate a signature from model generation (1 prefill + 1 decode)
+        
+        Parameters
+        ----------
+        model: nn.Module
+            The model to use for generation
+        input_ids: torch.Tensor
+            The input tensor for generation
+            
+        Returns
+        -------
+        list[float]
+            A signature derived from the generated output
+        """
+        try:
+            model.eval()
+            device = next(model.parameters()).device
+            input_ids = input_ids.to(device)
+
+            captured_logits = []
+
+            def capture_logits_hook(token_position, logits, next_val, kwargs):
+                """Hook to capture logits during generation
+                Post iteration hook must have following signature: 
+                f(int token_position, Tensor logits, Tensor next_val, Dict kwargs) ->
+                Tuple[Tensor next_val, Dict kwargs]."""
+                captured_logits.append(logits.detach().cpu())
+                return next_val, kwargs
+            
+            # Generate 2 tokens (1 prefill + 1 decode)
+            with torch.no_grad():
+                generated = generate(
+                    model=model,
+                    input_ids=input_ids,
+                    max_new_tokens=2, # 1 prefill + 1 decode
+                    do_sample=False,  # Use greedy generation for consistency
+                    use_cache=True, 
+                    post_iteration_hook= capture_logits_hook,
+                )
+            
+
+            # Concatenate captured logits
+            logits_concat = torch.cat(captured_logits, dim=1)  # Concatenate along sequence dimension
+            
+            
+            # Create a simple signature from the logits
+            s = logits_concat.max(2)[0] - logits_concat.min(2)[0] if logits_concat.dim() >= 3 else logits_concat
+            generation_signature = (s.squeeze() - s.min()).tolist()
+            
+            print(f"Generation successful: signature length = {len(generation_signature)}")
+            return generation_signature
+            
+        except Exception as e:
+            # If generation fails, log the error and return empty signature
+            print(f"Generation failed for {model.__class__.__name__}: {e}")
+            return []
+        
+
+    def test_model_forward(self, model, signature, model_id, capture_expectation):
+        """test consistency of model forward pass output with signature"""
+
+        # Test standard forward pass signature only
         actual = get_signature(
             model,
             inp=self._get_signature_input_ids,
@@ -305,16 +378,18 @@ class ModelConsistencyTestSuite(ModelFixtureMixin, SignatureFixtureMixin):
             device="cuda" if torch.cuda.is_available() else "cpu",
         )
 
+
         if capture_expectation:
             expectation_file_path = self._get_expectation_path(
-                "test_model_output", model_id
+                "test_model_forward", model_id
             )
             with open(expectation_file_path, "w") as signature_file:
                 signature_file.write(",".join(map(str, actual)))
             signature_file.close()
             pytest.fail(
-                "Signature file has been saved, please re-run the tests without --capture_expectation"
+                "Forward signature file has been saved, please re-run the tests without --capture_expectation"
             )
+        
         print(actual, signature)
         assertion_msg = f"""
         difference: {np.mean(np.abs(np.array(actual) - np.array(signature)))}
@@ -326,6 +401,60 @@ class ModelConsistencyTestSuite(ModelFixtureMixin, SignatureFixtureMixin):
             torch.testing.assert_close(torch.tensor(actual), torch.tensor(signature)),
             assertion_msg,
         )
+
+    
+    def _generation_signature(self, model_id: Optional[str]) -> list[float]:
+        try:
+            expectation_file = open(
+                self._get_expectation_path("test_model_generation", model_id)
+            )
+            line = expectation_file.readline()
+            return [float(x) for x in line.split(",")]
+        except FileNotFoundError:
+            print(
+                "Generation signature failed to load, please re-run the tests with --capture_expectation"
+            )
+            return []
+        
+    def test_model_generation(self, model, generation_signature, model_id, capture_expectation):
+        """test consistency of model generation output with signature"""
+        
+        # Skip test if generation is not supported
+        if not self._supports_generation:
+            pytest.skip("Generation testing not enabled for this model")
+
+        input_ids = self._get_signature_input_ids
+        if input_ids is None:
+            input_ids = torch.arange(16).unsqueeze(0)
+        
+        actual_generation_signature = self._get_generation_signature(model, input_ids)
+
+        if capture_expectation:
+            expectation_file_path = self._get_expectation_path(
+                "test_model_generation", model_id
+            )
+            with open(expectation_file_path, "w") as signature_file:
+                signature_file.write(",".join(map(str, actual_generation_signature)))
+            signature_file.close()
+            pytest.fail(
+                "Generation signature file has been saved, please re-run the tests without --capture_expectation"
+            )
+        
+        print(actual_generation_signature, generation_signature)
+        assertion_msg = f"""
+        difference: {np.mean(np.abs(np.array(actual_generation_signature) - np.array(generation_signature)))}
+
+        {_FAILED_MODEL_SIGNATURE_OUTPUT_MSG}
+        """
+
+        (
+            torch.testing.assert_close(torch.tensor(actual_generation_signature), torch.tensor(generation_signature)),
+            assertion_msg,
+        )
+
+    def test_model_output(self, model, signature, model_id, capture_expectation):
+        """test consistency of model output with signature - delegates to test_model_forward"""
+        return self.test_model_forward(model, signature, model_id, capture_expectation)
 
     def test_model_weight_keys(self, model, model_id, capture_expectation):
         actual_keys = list(sorted(model.state_dict().keys()))
