@@ -9,15 +9,37 @@ from fms.distributed.strategy import DistributedStrategy, NoOpStrategy
 from fms.utils import serialization
 from fms.models.granite import (
     Granite,
+    GraniteBlock,
     GraniteConfig,
     GraniteHeadless,
     _hf_gptq_granite_check,
     _hf_to_fms_rope,
     _weight_fusion,
 )
-
+from fms.modules.feedforward import GatedLinearUnit
+from fms.modules.layernorm import LayerNormParameterized
+from fms.modules.positions import RotaryEmbedding
+from fms.utils.activation import str_to_activation
 
 logger = logging.getLogger(__name__)
+
+
+class GraniteMoeHybridBlock(GraniteBlock):
+    def __init__(self, config: GraniteConfig, rotary_emb: RotaryEmbedding):
+        super(GraniteMoeHybridBlock, self).__init__(config, rotary_emb)
+
+        # Override ff_sub_layer with granite-4-dense specific settings
+        # as it comes with fused weights
+        self.ff_sub_layer = GatedLinearUnit(
+            self.config.emb_dim,
+            hidden_grow_factor=self.config.hidden_grow_factor,
+            multiple_of=self.config.multiple_of,
+            activation_fn=str_to_activation(self.config.activation_fn),
+            p_dropout=self.config.p_dropout,
+            use_bias=False,  # Granite 4 does not define MLP bias
+            fused=True,  # Granite 4 comes with fused weights
+            linear_config=self.config.linear_config,
+        )
 
 
 class GraniteMoeHybridHeadless(GraniteHeadless):
@@ -27,9 +49,61 @@ class GraniteMoeHybridHeadless(GraniteHeadless):
         distributed_strategy: DistributedStrategy = NoOpStrategy,
         **kwargs,
     ):
-        super(GraniteMoeHybridHeadless, self).__init__(
-            config, distributed_strategy, **kwargs
+        super(GraniteMoeHybridHeadless, self).__init__()
+        if config is not None:
+            self.config = config
+        else:
+            self.config = GraniteConfig()
+        self.config = self.config.updated(**kwargs)
+        self.distributed_strategy = distributed_strategy
+
+        self.width = self.config.emb_dim
+        self.pad_id = self.config.pad_id
+        self.max_expected_seq_len = self.config.max_expected_seq_len
+
+        self.embedding = nn.Embedding(
+            self.config.src_vocab_size,
+            self.config.emb_dim,
+            padding_idx=self.config.pad_id,
         )
+
+        rope_scaling = {"rope_type": "ntk" if self.config.ntk_scaling else "regular"}
+
+        self.rot_emb = RotaryEmbedding(
+            dim=self.config.head_dim,
+            scaling=rope_scaling,
+            max_seq_len=self.config.max_expected_seq_len,
+            ratio=self.config.rope_theta,
+        )
+
+        # RoPE init
+        for device in set(
+            [param.device for param in self.parameters()]
+            + [buffer.device for buffer in self.buffers()]
+        ):
+            self.rot_emb.compute_freqs_cis(device, self.config.max_expected_seq_len)
+
+        layers = []
+        for i in range(self.config.nlayers):
+            block: nn.Module = GraniteMoeHybridBlock(self.config, self.rot_emb)
+            block = self.distributed_strategy.distribute_layer(block, i)
+            layers.append(block)
+        self.layers = nn.ModuleList(layers)
+
+        dec_norm = LayerNormParameterized(
+            self.config.emb_dim,
+            elementwise_scale=True,
+            elementwise_shift=False,
+            use_mean=False,
+            eps=self.config.norm_eps,
+            use_high_precision_pow=True,
+        )
+        self.dec_norm = self.distributed_strategy.distribute_module(
+            dec_norm, final_layers=True
+        )
+
+        if self.config.p_dropout:
+            self.dropout = nn.Dropout(self.config.p_dropout)
 
 
 class GraniteMoeHybrid(Granite):
@@ -56,10 +130,6 @@ class GraniteMoeHybrid(Granite):
 
         self.config = self.config.updated(**kwargs)
 
-        # NOTE: GraniteMoeHybrid-Dense requires following values specifically
-        self.config.mlp_bias = False  # Does not define MLP bias
-        self.fused_weights = True  # Comes with fused weights
-
         self.distributed_strategy = distributed_strategy
 
         self.base_model = GraniteMoeHybridHeadless(
@@ -75,7 +145,7 @@ class GraniteMoeHybrid(Granite):
 
 
 _8b_config = GraniteConfig(
-    src_vocab_size=49155,
+    src_vocab_size=100352,
     emb_dim=4096,
     norm_eps=1e-5,
     nheads=32,
@@ -83,8 +153,8 @@ _8b_config = GraniteConfig(
     nlayers=40,
     hidden_grow_factor=12800 / 4096,
     max_expected_seq_len=8192,
-    rope_theta=10_000.0,
-    pad_id=0,
+    rope_theta=10000000,
+    pad_id=100256,
     p_dropout=0.0,  # overwriting config.json
     tie_heads=True,
     embedding_multiplier=12.0,
