@@ -97,7 +97,7 @@ class FMSEvalHarnessLM(LM):
 
         eos_id = getattr(self.tokenizer, "eos_token_id", None)
 
-        for request in tqdm.tqdm(requests):
+        for idx, request in tqdm.tqdm(enumerate(requests), total=len(requests)):
             # lm-eval passes: args = (prompt: str, gen_kwargs: dict)
             if isinstance(request.args, tuple):
                 prompt, gen_kwargs = request.args
@@ -106,8 +106,14 @@ class FMSEvalHarnessLM(LM):
                 prompt, gen_kwargs = request.args, {}
 
             until: List[str] = gen_kwargs.get("until", []) or []
-            # TODO: what is a meaningful value here? 
-            max_gen_toks: int = int(gen_kwargs.get("max_gen_toks", 1024))
+
+            max_gen_toks_value = gen_kwargs.get("max_gen_toks")
+            if max_gen_toks_value is None:
+                if idx == 0: # only emit the warning once
+                    print("Warning: max_gen_toks not provided, using default 256")
+                max_gen_toks = 256
+            else:
+                max_gen_toks = int(max_gen_toks_value)
             
             if kwargs["use_cache"]:
                 # reset KV cache
