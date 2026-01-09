@@ -18,12 +18,16 @@ class FMSEvalHarnessLM(LM):
         self,
         model: nn.Module,
         tokenizer: tokenizers.BaseTokenizer,
+        use_cache: bool = False,
+        batch_size: int = 1,
         device="cpu",
         rank=0,
         world_size=1,
     ):
         self.wrapped_model = model
         self.tokenizer = tokenizer
+        self.use_cache = use_cache
+        self.batch_size = batch_size
         self._rank = rank
         self._world_size = world_size
         self.device = device
@@ -59,11 +63,10 @@ class FMSEvalHarnessLM(LM):
     def loglikelihood(
         self,
         requests: List[Instance],
-        batch_size: int = 16,
         sorting: bool = True,
     ) -> List[Tuple[float, bool]]:
 
-        if batch_size > 1:
+        if self.batch_size > 1:
             if not sorting:
                 print('Sorting can reduce padding and therefore increase throughput considerably.')
         else:
@@ -93,8 +96,8 @@ class FMSEvalHarnessLM(LM):
             pad_id = getattr(self.tokenizer, "eos_token_id")
 
         # looping over batches
-        for start in tqdm.tqdm(range(0, len(indexed_requests), batch_size)):
-            batch = indexed_requests[start : start + batch_size]
+        for start in tqdm.tqdm(range(0, len(indexed_requests), self.batch_size)):
+            batch = indexed_requests[start : start + self.batch_size]
 
             context_lens = []
             continuation_ids_list = []
@@ -153,5 +156,3 @@ class FMSEvalHarnessLM(LM):
 
     def generate_until(self, requests: List[Instance]) -> List[str]:
         raise NotImplementedError("not implemented yet")
-
-# Made with Bob
