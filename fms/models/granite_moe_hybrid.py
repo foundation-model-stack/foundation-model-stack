@@ -101,8 +101,6 @@ def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]
         (r"self_attn\.v_proj", "attn.in_proj.value"),
         (r"self_attn\.q_proj", "attn.in_proj.query"),
         (r"self_attn\.o_proj", "attn.dense"),
-        # Following layers are different in granite-v4-dense from granite-3
-        # (r"shared_mlp\.input_linear", "ff_sub_layer.wg1_fused"),
         (r"shared_mlp\.output_linear", "ff_sub_layer.w2"),
         (r"input_layernorm", "ln"),
         (r"post_attention_layernorm", "ff_ln"),
@@ -112,6 +110,10 @@ def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]
         for pattern, repl in replacements:
             new_name = re.sub(pattern, repl, new_name)
 
+        # input_linear in granite-v4-dense is fused unlike granite-3
+        # below processing is done so that we let the GraniteBlock code
+        # work with both fused and fused configuration and not hardcode fused weights
+        # value over there.
         if "shared_mlp.input_linear.weight" in new_name:
             gate_name = new_name.replace("shared_mlp.input_linear", "ff_sub_layer.wg")
             up_proj_name = new_name.replace(
