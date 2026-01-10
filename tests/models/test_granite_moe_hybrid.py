@@ -3,7 +3,7 @@ import pytest
 from fms.models.granite_moe_hybrid import (
     GraniteMoeHybrid,
     GraniteConfig,
-    GraniteMoeHybridHeadless,
+    GraniteHeadless,
 )
 from fms.testing._internal.model_test_suite import (
     ConfigFixtureMixin,
@@ -76,5 +76,5 @@ class TestGranite(
         pytest.skip("weight unfuse is not implemented for GraniteMoeHybrid")
 
     @pytest.fixture
-    def headless_model(self, model: GraniteMoeHybrid) -> GraniteMoeHybridHeadless:
+    def headless_model(self, model: GraniteMoeHybrid) -> GraniteHeadless:
         return model.base_model

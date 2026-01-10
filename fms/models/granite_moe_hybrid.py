@@ -9,101 +9,14 @@ from fms.distributed.strategy import DistributedStrategy, NoOpStrategy
 from fms.utils import serialization
 from fms.models.granite import (
     Granite,
-    GraniteBlock,
     GraniteConfig,
     GraniteHeadless,
     _hf_gptq_granite_check,
     _hf_to_fms_rope,
     _weight_fusion,
 )
-from fms.modules.feedforward import GatedLinearUnit
-from fms.modules.layernorm import LayerNormParameterized
-from fms.modules.positions import RotaryEmbedding
-from fms.utils.activation import str_to_activation
 
 logger = logging.getLogger(__name__)
-
-
-class GraniteMoeHybridBlock(GraniteBlock):
-    def __init__(self, config: GraniteConfig, rotary_emb: RotaryEmbedding):
-        super(GraniteMoeHybridBlock, self).__init__(config, rotary_emb)
-
-        # Override ff_sub_layer with granite-4-dense specific settings
-        # as it comes with fused weights
-        self.ff_sub_layer = GatedLinearUnit(
-            self.config.emb_dim,
-            hidden_grow_factor=self.config.hidden_grow_factor,
-            multiple_of=self.config.multiple_of,
-            activation_fn=str_to_activation(self.config.activation_fn),
-            p_dropout=self.config.p_dropout,
-            use_bias=False,  # Granite 4 does not define MLP bias
-            fused=True,  # Granite 4 comes with fused weights
-            linear_config=self.config.linear_config,
-        )
-
-
-class GraniteMoeHybridHeadless(GraniteHeadless):
-    def __init__(
-        self,
-        config: Optional[GraniteConfig] = None,
-        distributed_strategy: DistributedStrategy = NoOpStrategy,
-        **kwargs,
-    ):
-        super(GraniteMoeHybridHeadless, self).__init__()
-        if config is not None:
-            self.config = config
-        else:
-            self.config = GraniteConfig()
-        self.config = self.config.updated(**kwargs)
-        self.distributed_strategy = distributed_strategy
-
-        self.width = self.config.emb_dim
-        self.pad_id = self.config.pad_id
-        self.max_expected_seq_len = self.config.max_expected_seq_len
-
-        self.embedding = nn.Embedding(
-            self.config.src_vocab_size,
-            self.config.emb_dim,
-            padding_idx=self.config.pad_id,
-        )
-
-        rope_scaling = {"rope_type": "ntk" if self.config.ntk_scaling else "regular"}
-
-        self.rot_emb = RotaryEmbedding(
-            dim=self.config.head_dim,
-            scaling=rope_scaling,
-            max_seq_len=self.config.max_expected_seq_len,
-            ratio=self.config.rope_theta,
-        )
-
-        # RoPE init
-        for device in set(
-            [param.device for param in self.parameters()]
-            + [buffer.device for buffer in self.buffers()]
-        ):
-            self.rot_emb.compute_freqs_cis(device, self.config.max_expected_seq_len)
-
-        layers = []
-        for i in range(self.config.nlayers):
-            block: nn.Module = GraniteMoeHybridBlock(self.config, self.rot_emb)
-            block = self.distributed_strategy.distribute_layer(block, i)
-            layers.append(block)
-        self.layers = nn.ModuleList(layers)
-
-        dec_norm = LayerNormParameterized(
-            self.config.emb_dim,
-            elementwise_scale=True,
-            elementwise_shift=False,
-            use_mean=False,
-            eps=self.config.norm_eps,
-            use_high_precision_pow=True,
-        )
-        self.dec_norm = self.distributed_strategy.distribute_module(
-            dec_norm, final_layers=True
-        )
-
-        if self.config.p_dropout:
-            self.dropout = nn.Dropout(self.config.p_dropout)
 
 
 class GraniteMoeHybrid(Granite):
@@ -132,9 +45,7 @@ class GraniteMoeHybrid(Granite):
 
         self.distributed_strategy = distributed_strategy
 
-        self.base_model = GraniteMoeHybridHeadless(
-            self.config, self.distributed_strategy
-        )
+        self.base_model = GraniteHeadless(self.config, self.distributed_strategy)
         self.head = nn.Linear(
             self.config.emb_dim, self.config.src_vocab_size, bias=False
         )
@@ -161,6 +72,7 @@ _8b_config = GraniteConfig(
     logits_scaling=16.0,
     residual_multiplier=0.22,
     attention_multiplier=0.0078125,
+    fused_weights=False,
 )
 
 _architecture_name = "granite_moe_hybrid"
@@ -190,17 +102,27 @@ def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]
         (r"self_attn\.q_proj", "attn.in_proj.query"),
         (r"self_attn\.o_proj", "attn.dense"),
         # Following layers are different in granite-v4-dense from granite-3
-        (r"shared_mlp\.input_linear", "ff_sub_layer.wg1_fused"),
+        # (r"shared_mlp\.input_linear", "ff_sub_layer.wg1_fused"),
         (r"shared_mlp\.output_linear", "ff_sub_layer.w2"),
         (r"input_layernorm", "ln"),
         (r"post_attention_layernorm", "ff_ln"),
     ]
     new_sd = {}
-    for name, param in input_sd.items():
-        new_name = name
+    for new_name, param in input_sd.items():
         for pattern, repl in replacements:
             new_name = re.sub(pattern, repl, new_name)
-        new_sd[new_name] = param
+
+        if "shared_mlp.input_linear.weight" in new_name:
+            gate_name = new_name.replace("shared_mlp.input_linear", "ff_sub_layer.wg")
+            up_proj_name = new_name.replace(
+                "shared_mlp.input_linear", "ff_sub_layer.w1"
+            )
+            gate_proj_weight, up_proj_weight = param.chunk(2, dim=0)
+            new_sd[gate_name] = gate_proj_weight
+            new_sd[up_proj_name] = up_proj_weight
+
+        else:
+            new_sd[new_name] = param
     return new_sd
 
 
