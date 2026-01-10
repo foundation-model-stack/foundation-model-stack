@@ -496,6 +496,7 @@ from fms.models import (  # noqa: E402
     bamba,
     gpt_bigcode,
     granite,
+    granite_moe_hybrid,
     llama,
     llava_next,
     mistral,
@@ -505,11 +506,11 @@ from fms.models import (  # noqa: E402
     mpnet,
 )
 
-
 __all__ = [
     "bamba",
     "gpt_bigcode",
     "granite",
+    "granite_moe_hybrid",
     "llama",
     "llava_next",
     "mistral",

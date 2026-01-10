@@ -38,6 +38,7 @@ __FMS_MODEL_REGISTRY_MAP: RegistryMap = {
     "RobertaForMaskedLM": ("roberta", pb.build_roberta_params),
     "RobertaForQuestionAnswering": ("roberta_question_answering", pb.build_roberta_params),
     "GraniteForCausalLM": ("granite", pb.build_granite_params),
+    "GraniteMoeHybridForCausalLM": ("granite_moe_hybrid", pb.build_granite_moe_hybrid_params),
     "MistralForCausalLM": ("mistral", pb.build_mistral_params),
     "BambaForCausalLM": ("bamba", pb.build_bamba_params),
     "SiglipModel": ("siglip_vision", pb.build_siglip_vision_params),
