@@ -2,15 +2,12 @@ import logging
 import re
 from typing import Any, Mapping, Optional
 
-import torch.nn as nn
-
 from fms import models
 from fms.distributed.strategy import DistributedStrategy, NoOpStrategy
 from fms.utils import serialization
 from fms.models.granite import (
     Granite,
     GraniteConfig,
-    GraniteHeadless,
     _hf_gptq_granite_check,
     _hf_to_fms_rope,
     _weight_fusion,
@@ -34,25 +31,7 @@ class GraniteMoeHybrid(Granite):
         distributed_strategy: DistributedStrategy = NoOpStrategy,
         **kwargs,
     ):
-        super(GraniteMoeHybrid, self).__init__()
-
-        if config is not None:
-            self.config = config
-        else:
-            self.config = GraniteConfig()
-
-        self.config = self.config.updated(**kwargs)
-
-        self.distributed_strategy = distributed_strategy
-
-        self.base_model = GraniteHeadless(self.config, self.distributed_strategy)
-        self.head = nn.Linear(
-            self.config.emb_dim, self.config.src_vocab_size, bias=False
-        )
-
-    @classmethod
-    def from_config(cls, config: GraniteConfig) -> "GraniteMoeHybrid":
-        return cls(config)
+        super().__init__(config, distributed_strategy, **kwargs)
 
 
 _8b_config = GraniteConfig(

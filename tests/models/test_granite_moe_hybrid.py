@@ -3,8 +3,8 @@ import pytest
 from fms.models.granite_moe_hybrid import (
     GraniteMoeHybrid,
     GraniteConfig,
-    GraniteHeadless,
 )
+from fms.models.granite import GraniteHeadless
 from fms.testing._internal.model_test_suite import (
     ConfigFixtureMixin,
     ModelCompileTestSuite,
@@ -30,6 +30,7 @@ class GraniteMoeHybridFixtures(ConfigFixtureMixin, ModelFixtureMixin):
     def config(self) -> ModelConfig:
         # NOTE: we are purposefully not setting fused_weights and mlp_bias
         # as those should get handled automatically by GraniteMoeHybrid class
+
         return GraniteConfig(
             src_vocab_size=384,
             emb_dim=16,
