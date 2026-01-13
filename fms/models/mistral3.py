@@ -11,9 +11,15 @@ from fms.distributed.strategy import (
     NoOpStrategy,
 )
 
+
+from fms.modules.attention import (
+    AttentionKwargs,
+    get_attention_type,
+)
+
 from fms.utils.config import ModelConfig
+from fms.utils.headless import gather_outputs
 from fms.utils import serialization
-from fms.models.mistral import MistralConfig
 
 from fms import models
 from fms.utils.activation import str_to_activation
@@ -42,7 +48,8 @@ class Mistral3Config(ModelConfig):
     """
     # ----- model identity -----
     model_type: str = "mistral3"
-
+    tie_heads: bool = False
+    
     # ----- sub-configs -----
     text_config: MistralConfig = field(default_factory=MistralConfig)
     vision_config: PixtralVisionConfig = field(default_factory=PixtralVisionConfig)
@@ -231,9 +238,9 @@ class Mistral3Headless(nn.Module):
                 "FMS implementation of Mistral3 supports only Mistral language models"
             )
 
-        self.language_model = Mistral(self.config.text_config)
+        self.language_model = Mistral(self.config.text_config, distributed_strategy,)
 
-        self.vision_tower = PixtralVision(self.config.vision_config)
+        self.vision_tower = PixtralVision(self.config.vision_config, distributed_strategy,)
 
         # Vision->text projector
         self.multi_modal_projector = Mistral3MultiModalProjector(config)
@@ -312,78 +319,97 @@ class Mistral3Headless(nn.Module):
             )
         return special_image_mask
 
-
+    # Text Only Forward
+    # =================
     def forward(
         self,
-        input_ids: torch.LongTensor = None,
-        pixel_values: torch.FloatTensor = None,
-        attention_mask: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.LongTensor] = None,
-        past_key_values: Optional[Any] = None,
-        inputs_embeds: Optional[torch.FloatTensor] = None,
-        vision_feature_layer: Optional[Union[int, list[int]]] = None,
-        use_cache: Optional[bool] = None,
-        output_attentions: Optional[bool] = None,
-        output_hidden_states: Optional[bool] = None,
-        return_dict: Optional[bool] = None,
-        cache_position: Optional[torch.LongTensor] = None,
-        image_sizes: torch.Tensor = None,
-        **kwargs,
-    ):
-        output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
-        output_hidden_states = (
-            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
-        )
-        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
-        vision_feature_layer = (
-            vision_feature_layer if vision_feature_layer is not None else self.config.vision_feature_layer
-        )
-
-        if (input_ids is None) ^ (inputs_embeds is not None):
-            raise ValueError("You must specify exactly one of input_ids or inputs_embeds")
-
-        if inputs_embeds is None:
-            inputs_embeds = self.language_model.base_model.embedding(input_ids)
-
-        if pixel_values is not None:
-            image_features = self.get_image_features(
-                pixel_values=pixel_values,
-                vision_feature_layer=vision_feature_layer,
-                image_sizes=image_sizes,
-            )
-            image_features = torch.cat(image_features, dim=0).to(inputs_embeds.device, inputs_embeds.dtype)
-            special_image_mask = self.get_placeholder_mask(
-                input_ids, inputs_embeds=inputs_embeds, image_features=image_features
-            )
-            inputs_embeds = inputs_embeds.masked_scatter(special_image_mask, image_features)
-
-        outputs = self.language_model(
-            attention_mask=attention_mask,
+        x_in,
+        position_ids=None,
+        past_key_value_states=None,
+        use_cache=False,
+        **attn_kwargs: Unpack[AttentionKwargs],
+        ):
+        return self.language_model.base_model(x_in,
             position_ids=position_ids,
-            past_key_values=past_key_values,
-            inputs_embeds=inputs_embeds,
+            past_key_value_states=past_key_value_states,
             use_cache=use_cache,
-            output_attentions=output_attentions,
-            output_hidden_states=output_hidden_states,
-            return_dict=True,
-            cache_position=cache_position,
-            **kwargs,
-        )
+            **attn_kwargs)
+         
 
-        # return Mistral3ModelOutputWithPast(
-        #     last_hidden_state=outputs.last_hidden_state,
-        #     past_key_values=outputs.past_key_values,
-        #     hidden_states=outputs.hidden_states,
-        #     attentions=outputs.attentions,
-        #     image_hidden_states=image_features if pixel_values is not None else None,
-        # )
-        return OrderedDict([
-            ("last_hidden_state", outputs.last_hidden_state), 
-            ("past_key_values", outputs.past_key_values),
-            ("hidden_states", outputs.hidden_states),
-            ("attentions", outputs.attentions),
-            ("image_hidden_states", image_features if pixel_values is not None else None)
-        ])
+
+    # ToDo: Multi Model Forward wiring to be fixed later
+    # ==================================================
+    # def forward(
+    #     self,
+    #     input_ids: torch.LongTensor = None,
+    #     pixel_values: torch.FloatTensor = None,
+    #     attention_mask: Optional[torch.Tensor] = None,
+    #     position_ids: Optional[torch.LongTensor] = None,
+    #     past_key_values: Optional[Any] = None,
+    #     inputs_embeds: Optional[torch.FloatTensor] = None,
+    #     vision_feature_layer: Optional[Union[int, list[int]]] = None,
+    #     use_cache: Optional[bool] = None,
+    #     # output_attentions: Optional[bool] = None,
+    #     # output_hidden_states: Optional[bool] = None,
+    #     # return_dict: Optional[bool] = None,
+    #     cache_position: Optional[torch.LongTensor] = None,
+    #     image_sizes: torch.Tensor = None,
+    #     **kwargs,
+    # ):
+    #     # output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
+    #     # output_hidden_states = (
+    #     #     output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
+    #     # )
+    #     # return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+    #     vision_feature_layer = (
+    #         vision_feature_layer if vision_feature_layer is not None else self.config.vision_feature_layer
+    #     )
+
+    #     if (input_ids is None) ^ (inputs_embeds is not None):
+    #         raise ValueError("You must specify exactly one of input_ids or inputs_embeds")
+
+    #     if inputs_embeds is None:
+    #         inputs_embeds = self.language_model.base_model.embedding(input_ids)
+
+    #     if pixel_values is not None:
+    #         image_features = self.get_image_features(
+    #             pixel_values=pixel_values,
+    #             vision_feature_layer=vision_feature_layer,
+    #             image_sizes=image_sizes,
+    #         )
+    #         image_features = torch.cat(image_features, dim=0).to(inputs_embeds.device, inputs_embeds.dtype)
+    #         special_image_mask = self.get_placeholder_mask(
+    #             input_ids, inputs_embeds=inputs_embeds, image_features=image_features
+    #         )
+    #         inputs_embeds = inputs_embeds.masked_scatter(special_image_mask, image_features)
+
+    #     outputs = self.language_model(
+    #         x=inputs_embeds,
+    #         attention_mask=attention_mask,
+    #         position_ids=position_ids,
+    #         past_key_values=past_key_values,
+    #         use_cache=use_cache,
+    #         # output_attentions=output_attentions,
+    #         # output_hidden_states=output_hidden_states,
+    #         # return_dict=True,
+    #         # cache_position=cache_position,
+    #         **kwargs,
+    #     )
+
+    #     # return Mistral3ModelOutputWithPast(
+    #     #     last_hidden_state=outputs.last_hidden_state,
+    #     #     past_key_values=outputs.past_key_values,
+    #     #     hidden_states=outputs.hidden_states,
+    #     #     attentions=outputs.attentions,
+    #     #     image_hidden_states=image_features if pixel_values is not None else None,
+    #     # )
+    #     return OrderedDict([
+    #         ("last_hidden_state", outputs.last_hidden_state), 
+    #         ("past_key_values", outputs.past_key_values),
+    #         ("hidden_states", outputs.hidden_states),
+    #         ("attentions", outputs.attentions),
+    #         ("image_hidden_states", image_features if pixel_values is not None else None)
+    #     ])
 
 class Mistral3(nn.Module):
     _checkpoint_conversion_mapping = {
@@ -411,8 +437,8 @@ class Mistral3(nn.Module):
         self.distributed_strategy = distributed_strategy
 
         self.model = Mistral3Headless(self.config, self.distributed_strategy)
-        self.lm_head = nn.Linear(config.text_config.emb_dim, config.text_config.src_vocab_size, bias=False)
-
+        self.head = nn.Linear(self.config.text_config.emb_dim, self.config.text_config.src_vocab_size, bias=False)
+    
 
     def get_input_embeddings(self):
         return self.model.get_input_embeddings()
@@ -444,101 +470,6 @@ class Mistral3(nn.Module):
     def multi_modal_projector(self):
         return self.model.multi_modal_projector
 
-    def forward(
-        self,
-        input_ids: torch.LongTensor = None,
-        pixel_values: torch.FloatTensor = None,
-        attention_mask: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.LongTensor] = None,
-        past_key_values: Optional[Any] = None,
-        inputs_embeds: Optional[torch.FloatTensor] = None,
-        labels: Optional[torch.LongTensor] = None,
-        use_cache: Optional[bool] = None,
-        output_attentions: Optional[bool] = None,
-        output_hidden_states: Optional[bool] = None,
-        return_dict: Optional[bool] = None,
-        cache_position: Optional[torch.LongTensor] = None,
-        logits_to_keep: Union[int, torch.Tensor] = 0,
-        image_sizes: Optional[torch.Tensor] = None,
-        **kwargs,
-    ):
-        r"""
-        labels (`torch.LongTensor` of shape `(batch_size, sequence_length)`, *optional*):
-            Labels for computing the masked language modeling loss. Indices should either be in `[0, ...,
-            config.vocab_size]` or -100 (see `input_ids` docstring). Tokens with indices set to `-100` are ignored
-            (masked), the loss is only computed for the tokens with labels in `[0, ..., config.vocab_size]`.
-
-        Example:
-
-        ```python
-        >>> from PIL import Image
-        >>> import requests
-        >>> from transformers import AutoProcessor, Mistral3ForConditionalGeneration
-
-        >>> model = Mistral3ForConditionalGeneration.from_pretrained("mistralai/Mistral-Small-3.1-24B-Instruct-2503")
-        >>> processor = AutoProcessor.from_pretrained("mistralai/Mistral-Small-3.1-24B-Instruct-2503")
-
-        >>> prompt = "<s>[INST][IMG]What is the image?[/INST]"
-        >>> url = "http://images.cocodataset.org/val2017/000000039769.jpg"
-        >>> image = Image.open(requests.get(url, stream=True).raw)
-
-        >>> inputs = processor(images=image, text=prompt, return_tensors="pt")
-
-        >>> # Generate
-        >>> generate_ids = model.generate(**inputs, max_new_tokens=15)
-        >>> processor.batch_decode(generate_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0]
-        "What is the image?The image depicts two cats lying on a pink blanket."
-        ```"""
-        output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
-        output_hidden_states = (
-            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
-        )
-        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
-
-        outputs = self.model(
-            input_ids=input_ids,
-            pixel_values=pixel_values,
-            attention_mask=attention_mask,
-            position_ids=position_ids,
-            past_key_values=past_key_values,
-            inputs_embeds=inputs_embeds,
-            use_cache=use_cache,
-            output_attentions=output_attentions,
-            output_hidden_states=output_hidden_states,
-            return_dict=True,
-            cache_position=cache_position,
-            image_sizes=image_sizes,
-            **kwargs,
-        )
-
-        hidden_states = outputs[0]
-        # Only compute necessary logits, and do not upcast them to float if we are not computing the loss
-        slice_indices = slice(-logits_to_keep, None) if isinstance(logits_to_keep, int) else logits_to_keep
-        logits = self.lm_head(hidden_states[:, slice_indices, :])
-
-        loss = None
-        if labels is not None:
-            loss = self.loss_function(
-                logits=logits, labels=labels, vocab_size=self.config.text_config.src_vocab_size, **kwargs
-            )
-
-        # return Mistral3CausalLMOutputWithPast(
-        #     loss=loss,
-        #     logits=logits,
-        #     past_key_values=outputs.past_key_values,
-        #     hidden_states=outputs.hidden_states,
-        #     attentions=outputs.attentions,
-        #     image_hidden_states=outputs.image_hidden_states,
-        # )
-        return OrderedDict([
-            ("loss", loss),
-            ("logits", logits),
-            ("past_key_values", outputs.past_key_values),
-            ("hidden_states", outputs.hidden_states),
-            ("attentions", outputs.attentions),
-            ("image_hidden_states", outputs.image_hidden_states)
-        ])
-
     def prepare_inputs_for_generation(
         self,
         input_ids,
@@ -568,6 +499,160 @@ class Mistral3(nn.Module):
             model_inputs["pixel_values"] = pixel_values
 
         return model_inputs
+    
+    # Text Only Forward
+    # =================
+
+    @classmethod
+    def from_config(cls, config: Mistral3Config) -> "Mistral3":
+        return cls(config)
+
+    def get_config(self) -> Mistral3Config:
+        return self.config
+
+    def reset_parameters(self):
+        self.head.weight.data.normal_(
+            0,
+            1 / math.sqrt(math.sqrt(self.config.text_config.emb_dim * self.config.text_config.src_vocab_size)),
+        )
+        self.model.language_model.base_model.reset_parameters()
+
+    def post_init(self):
+        # if this model ties weights, they are tied here
+        if self.config.tie_heads:
+            # handle assignment of non-meta weights to meta parameters
+            if self.head.weight.device == torch.device("meta"):
+                self.head.weight = self.model.language_model.base_model.embedding.weight
+            else:
+                self.model.language_model.base_model.embedding.weight = self.head.weight
+
+        self.model.language_model.base_model.post_init()
+
+    def forward(
+        self,
+        x: torch.LongTensor,
+        position_ids: Optional[torch.LongTensor] = None,
+        past_key_value_states: Optional[Tuple[torch.FloatTensor,]] = None,
+        use_cache: bool = False,
+        last_n_tokens: int = 0,
+        **attn_kwargs: Unpack[AttentionKwargs],
+    ):
+        get_attention_type(**attn_kwargs)["validate_attn_kwargs"](
+            input_ids=x,
+            position_ids=position_ids,
+            past_key_value_states=past_key_value_states,
+            **attn_kwargs,
+        )
+        output, cache = self.model.language_model.base_model(
+            x, position_ids, past_key_value_states, use_cache, **attn_kwargs
+        )
+
+        output = gather_outputs(output, last_n_tokens, **attn_kwargs)
+        preds = self.head(output)
+
+        if use_cache:
+            return preds, cache
+        else:
+            return preds
+
+
+    # ToDo: Multi Model Forward wiring to be fixed later
+    # ==================================================
+    # def forward(
+    #     self,
+    #     input_ids: torch.LongTensor = None,
+    #     pixel_values: torch.FloatTensor = None,
+    #     attention_mask: Optional[torch.Tensor] = None,
+    #     position_ids: Optional[torch.LongTensor] = None,
+    #     past_key_values: Optional[Any] = None,
+    #     inputs_embeds: Optional[torch.FloatTensor] = None,
+    #     labels: Optional[torch.LongTensor] = None,
+    #     use_cache: Optional[bool] = None,
+    #     # output_attentions: Optional[bool] = None,
+    #     # output_hidden_states: Optional[bool] = None,
+    #     # return_dict: Optional[bool] = None,
+    #     cache_position: Optional[torch.LongTensor] = None,
+    #     logits_to_keep: Union[int, torch.Tensor] = 0,
+    #     image_sizes: Optional[torch.Tensor] = None,
+    #     **kwargs,
+    # ):
+    #     r"""
+    #     labels (`torch.LongTensor` of shape `(batch_size, sequence_length)`, *optional*):
+    #         Labels for computing the masked language modeling loss. Indices should either be in `[0, ...,
+    #         config.vocab_size]` or -100 (see `input_ids` docstring). Tokens with indices set to `-100` are ignored
+    #         (masked), the loss is only computed for the tokens with labels in `[0, ..., config.vocab_size]`.
+
+    #     Example:
+
+    #     ```python
+    #     >>> from PIL import Image
+    #     >>> import requests
+    #     >>> from transformers import AutoProcessor, Mistral3ForConditionalGeneration
+
+    #     >>> model = Mistral3ForConditionalGeneration.from_pretrained("mistralai/Mistral-Small-3.1-24B-Instruct-2503")
+    #     >>> processor = AutoProcessor.from_pretrained("mistralai/Mistral-Small-3.1-24B-Instruct-2503")
+
+    #     >>> prompt = "<s>[INST][IMG]What is the image?[/INST]"
+    #     >>> url = "http://images.cocodataset.org/val2017/000000039769.jpg"
+    #     >>> image = Image.open(requests.get(url, stream=True).raw)
+
+    #     >>> inputs = processor(images=image, text=prompt, return_tensors="pt")
+
+    #     >>> # Generate
+    #     >>> generate_ids = model.generate(**inputs, max_new_tokens=15)
+    #     >>> processor.batch_decode(generate_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0]
+    #     "What is the image?The image depicts two cats lying on a pink blanket."
+    #     ```"""
+    #     # output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
+    #     # output_hidden_states = (
+    #     #     output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
+    #     # )
+    #     # return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+
+    #     outputs = self.model(
+    #         input_ids=input_ids,
+    #         pixel_values=pixel_values,
+    #         attention_mask=attention_mask,
+    #         position_ids=position_ids,
+    #         past_key_values=past_key_values,
+    #         inputs_embeds=inputs_embeds,
+    #         use_cache=use_cache,
+    #         # output_attentions=output_attentions,
+    #         # output_hidden_states=output_hidden_states,
+    #         return_dict=True,
+    #         cache_position=cache_position,
+    #         image_sizes=image_sizes,
+    #         **kwargs,
+    #     )
+
+    #     hidden_states = outputs[0]
+    #     # Only compute necessary logits, and do not upcast them to float if we are not computing the loss
+    #     slice_indices = slice(-logits_to_keep, None) if isinstance(logits_to_keep, int) else logits_to_keep
+    #     logits = self.lm_head(hidden_states[:, slice_indices, :])
+
+    #     loss = None
+    #     if labels is not None:
+    #         loss = self.loss_function(
+    #             logits=logits, labels=labels, vocab_size=self.config.text_config.src_vocab_size, **kwargs
+    #         )
+
+    #     # return Mistral3CausalLMOutputWithPast(
+    #     #     loss=loss,
+    #     #     logits=logits,
+    #     #     past_key_values=outputs.past_key_values,
+    #     #     hidden_states=outputs.hidden_states,
+    #     #     attentions=outputs.attentions,
+    #     #     image_hidden_states=outputs.image_hidden_states,
+    #     # )
+    #     return OrderedDict([
+    #         ("loss", loss),
+    #         ("logits", logits),
+    #         ("past_key_values", outputs.past_key_values),
+    #         ("hidden_states", outputs.hidden_states),
+    #         ("attentions", outputs.attentions),
+    #         ("image_hidden_states", outputs.image_hidden_states)
+    #     ])
+
 
 
 def _mistral3_factory_factory(config):
@@ -575,7 +660,6 @@ def _mistral3_factory_factory(config):
         return Mistral3(config, **kwargs)
 
     return factory
-
 
 models.register_model(_architecture_name, "24b", _mistral3_factory_factory(_24b_config))
 
@@ -692,10 +776,10 @@ def _hf_to_fms_rope(
     
     for name, param in input_sd.items():
         # Check if this parameter requires RoPE transformation for language model
-        if trans_required_pattern_lang.match(name):
+        if trans_required_pattern_lang.search(name):
             # Apply RoPE transformation for language model
             new_sd[name] = _rope_transpose(param, lang_head_size, lang_linear_type )
-        elif trans_required_pattern_vision.match(name):
+        elif trans_required_pattern_vision.search(name):
             # Apply RoPE transformation for vision model
             new_sd[name] = _rope_transpose(param, vision_head_size, vision_linear_type)
         else:
