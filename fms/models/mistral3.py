@@ -104,9 +104,6 @@ class Mistral3(nn.Module):
         self.config.text_config = self.config.text_config.updated(**kwargs)
         self.config.vision_config = self.config.vision_config.updated(**kwargs)
 
-        # Text Only for now
-        # self.config = self.config.text_config
-
         self.distributed_strategy = distributed_strategy
 
         self.base_model = MistralHeadless(
@@ -247,7 +244,6 @@ serialization.register_adapter_step(
 def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]:
     replacements = replacements = [
         # Language Model
-        # Language Model
         (r"^language_model.lm_head.weight", "head.weight"),
         (r"^language_model.model.embed_tokens.weight", "base_model.embedding.weight"),
         (r"^language_model.model.norm", "base_model.dec_norm"),
@@ -261,7 +257,6 @@ def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]
         (r"mlp\.down_proj", "ff_sub_layer.w2"),
         (r"input_layernorm", "ln"),
         (r"post_attention_layernorm", "ff_ln"),
-        # Vision Model
         # Vision Model
         (r"feed_forward\.gate_proj", "ff_sub_layer.wg"),
         (r"feed_forward\.up_proj", "ff_sub_layer.w1"),
