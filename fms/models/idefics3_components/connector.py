@@ -1,6 +1,5 @@
 import torch
 import torch.nn as nn
-import math
 
 
 class Idefics3Connector(nn.Module):
@@ -26,7 +25,7 @@ class Idefics3Connector(nn.Module):
         self.proj = nn.Linear(self.in_features, self.out_features, bias=False)
 
     @staticmethod
-    def pixel_unshuffle(x: torch.Tensor, scale: int) -> torch.Tensor:
+    def pixel_unshuffle(x: torch.Tensor, H: int, W: int, scale: int) -> torch.Tensor:
         """
         Convert (B, H*W, C) → (B, (H//scale)*(W//scale), scale²*C)
 
@@ -38,9 +37,8 @@ class Idefics3Connector(nn.Module):
             (B, L', scale²*C) where L' = (H//scale)*(W//scale)
         """
         B, HW, C = x.shape
-        H = W = math.isqrt(HW)  # assumes square input (true for all ViTs we use)
         if H * W != HW:
-            raise ValueError(f"Non-square grid detected: HW={HW}, sqrt≈{HW**0.5}")
+            raise ValueError(f"Expected H*W={H * W}, got HW={HW} (H={H}, W={W})")
         if H % scale != 0 or W % scale != 0:
             raise ValueError(f"H={H}, W={W} not divisible by scale={scale}")
 
@@ -59,7 +57,7 @@ class Idefics3Connector(nn.Module):
             raise ValueError(f"Expected {H * W} patches, got {patch_embeds.shape[1]}")
 
         tokens = self.pixel_unshuffle(
-            patch_embeds, scale=self.scale
+            patch_embeds, H=H, W=W, scale=self.scale
         )  # (B, L', scale²*C)
 
         # Validate output length

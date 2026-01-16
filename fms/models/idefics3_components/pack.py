@@ -20,13 +20,15 @@ def pack_image_embeddings(
     # Normalize image_features to (B, N, L, D)
     if image_features.ndim == 3:
         Bf, L, D_img = image_features.shape
-        assert Bf == B, f"B mismatch: embeds={B} vs img={Bf}"
+        if Bf != B:
+            raise ValueError(f"B mismatch: embeds={B} vs img={Bf}")
         image_features = image_features.unsqueeze(1)  # (B,1,L,D)
     elif image_features.ndim == 4:
         Bf, Nf, L, D_img = image_features.shape
-        assert Bf == B, f"B mismatch: embeds={B} vs img={Bf}"
+        if Bf != B:
+            raise ValueError(f"B mismatch: embeds={B} vs img={Bf}")
     else:
-        raise AssertionError(
+        raise ValueError(
             f"image_features must be (B,L,D) or (B,N,L,D), got {tuple(image_features.shape)}"
         )
 
@@ -60,33 +62,41 @@ def pack_image_embeddings(
 
         total = idx.numel()
         expected_total = len(runs) * L
+        if len(runs) > N:
+            raise ValueError(
+                f"[PackError] batch={b}: found {len(runs)} image spans but only {N} image(s) provided"
+            )
 
         # ----- precedence: single span → per-span first; multiple spans → total first
         if len(runs) == 1:
             # single span: prefer span length error first
             a, z = runs[0]
             span_len = z - a + 1
-            assert span_len == L, (
-                f"[PackError] batch={b}: span 0 len {span_len}, expected {L} (a={a}, z={z})"
-            )
+            if span_len != L:
+                raise ValueError(
+                    f"[PackError] batch={b}: span 0 len {span_len}, expected {L} (a={a}, z={z})"
+                )
             # then enforce total (should match if span len matched)
-            assert total == expected_total, (
-                f"[PackError] batch={b}: total {total} != expected {expected_total}"
-            )
+            if total != expected_total:
+                raise ValueError(
+                    f"[PackError] batch={b}: total {total} != expected {expected_total}"
+                )
         else:
             # multiple spans: prefer total mismatch error first
-            assert total == expected_total, (
-                f"[PackError] batch={b}: total {total} != expected {expected_total}"
-            )
+            if total != expected_total:
+                raise ValueError(
+                    f"[PackError] batch={b}: total {total} != expected {expected_total}"
+                )
             # then validate each span length
             for k, (a, z) in enumerate(runs):
                 span_len = z - a + 1
-                assert span_len == L, (
-                    f"[PackError] batch={b}: span {k} len {span_len}, expected {L} (a={a}, z={z})"
-                )
+                if span_len != L:
+                    raise ValueError(
+                        f"[PackError] batch={b}: span {k} len {span_len}, expected {L} (a={a}, z={z})"
+                    )
 
         # masked replace
         for img_i, (a, z) in enumerate(runs):
-            out[b, a : z + 1, :] = image_features[b, min(img_i, N - 1), :, :]
+            out[b, a : z + 1, :] = image_features[b, img_i, :, :]
 
     return out

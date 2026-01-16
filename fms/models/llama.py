@@ -349,6 +349,10 @@ class LLaMAHeadless(nn.Module):
         if past_key_value_states is None or len(past_key_value_states) == 0:
             past_key_value_states = [None for _ in range(len(self.layers))]
         if inputs_embeds is None:
+            if x_in is None:
+                raise ValueError(
+                    "Must provide either `x_in` (token ids) or `inputs_embeds`"
+                )
             x_in = self.embedding(x_in)
         else:
             x_in = inputs_embeds

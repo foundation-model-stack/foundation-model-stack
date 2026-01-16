@@ -14,10 +14,45 @@ from .connector import Idefics3Connector
 from .pack import pack_image_embeddings
 
 
+def _left_pad_to_max_len(
+    input_ids: torch.Tensor, attention_mask: torch.Tensor, pad_id: int
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """
+    Normalize a batch of (possibly right-padded) sequences to left-padded form.
+
+    This avoids generation bugs where cached decoding starts from padded positions.
+    Assumes `attention_mask` is 1 for tokens and 0 for pads, with no "holes".
+    """
+    B, T = input_ids.shape
+    new_input_ids = input_ids.new_full((B, T), int(pad_id))
+    new_attention_mask = attention_mask.new_zeros((B, T))
+    for b in range(B):
+        m = attention_mask[b].to(dtype=torch.bool)
+        # "Holes" means the mask changes more than once (e.g., 1..0..1 or 0..1..0).
+        # Left-padding (0..0..1..1) and right-padding (1..1..0..0) are both allowed.
+        transitions = (m[1:] != m[:-1]).sum()
+        if int(transitions.item()) > 1:
+            raise ValueError("attention_mask must be contiguous (no 0/1 holes)")
+        tokens = input_ids[b][m]
+        L = int(tokens.numel())
+        if L == 0:
+            continue
+        new_input_ids[b, T - L : T] = tokens
+        new_attention_mask[b, T - L : T] = 1
+    return new_input_ids, new_attention_mask
+
+
 def _attention_mask_2d_to_3d(attention_mask: torch.Tensor) -> torch.Tensor:
     """
     Convert a standard HF-style attention mask (1=token, 0=pad) into the 3D boolean
-    mask expected by FMS SDPA attention (padding block-diagonal; causality handled separately).
+    mask expected by FMS SDPA attention.
+
+    FMS passes boolean masks through to `torch.nn.functional.scaled_dot_product_attention`,
+    where boolean `attn_mask` is interpreted as an "allowed" mask (True = can attend).
+
+    We use a block-diagonal padding mask (token↔token allowed; pad↔pad allowed; cross blocked).
+    Allowing pad↔pad avoids all-False rows for padded query positions, which can otherwise
+    produce NaNs in SDPA. Causality is handled separately via `is_causal_mask=True`.
     """
     is_pad = attention_mask == 0
     return is_pad.unsqueeze(-1) == is_pad.unsqueeze(-2)
@@ -228,10 +263,16 @@ class Idefics3(nn.Module):
         loss = None
         if labels is not None:
             labels = labels.clone()
+            # Mask out image span positions and padding positions
             labels = labels.masked_fill(input_ids == self.config.image_token_id, -100)
+            labels = labels.masked_fill(attention_mask == 0, -100)
+
+            # HF-style causal LM loss: predict token t+1 from logits at t
+            shift_logits = logits[:, :-1, :].contiguous()
+            shift_labels = labels[:, 1:].contiguous()
             loss = F.cross_entropy(
-                logits.view(-1, logits.size(-1)),
-                labels.view(-1),
+                shift_logits.view(-1, shift_logits.size(-1)),
+                shift_labels.view(-1),
                 ignore_index=-100,
             )
 
@@ -259,6 +300,11 @@ class Idefics3(nn.Module):
             images = pixel_values
         if attention_mask is None:
             attention_mask = torch.ones_like(input_ids)
+
+        # Normalize right-padded batches to left-padding for correct cached decoding behavior.
+        input_ids, attention_mask = _left_pad_to_max_len(
+            input_ids, attention_mask, pad_id=self.config.text_config.pad_id
+        )
 
         # Prefill (packed embeds)
         text_embeds = self.text_model.base_model.embedding(input_ids)
@@ -298,10 +344,21 @@ class Idefics3(nn.Module):
                 if torch.all(next_token.squeeze(1) == eos_token_id):
                     break
 
+            # Extend attention mask and position ids for the new token.
+            attention_mask = torch.cat(
+                [
+                    attention_mask,
+                    torch.ones_like(next_token, dtype=attention_mask.dtype),
+                ],
+                dim=1,
+            )
+
             # decode step: embed only the new token
             next_embeds = self.text_model.base_model.embedding(next_token)
-            # no padding during generation; mask can be omitted
             pos_next = position_ids[:, -1:] + 1
+
+            # Recompute 3D mask so cached decoding remains padding-aware.
+            mask_3d = _attention_mask_2d_to_3d(attention_mask)
 
             hidden, past = self.text_model.base_model(
                 None,
@@ -309,6 +366,7 @@ class Idefics3(nn.Module):
                 position_ids=pos_next,
                 past_key_value_states=past,
                 use_cache=True,
+                mask=mask_3d[:, -1:, :],
             )
 
             last_logits = self.text_model.head(hidden[:, -1:, :]).squeeze(1)

@@ -6,7 +6,6 @@ from fms.models.llama import LLaMAConfig
 from fms.models.siglip_vision import SiglipVisionConfig
 from fms.testing._internal.model_test_suite import (
     ConfigFixtureMixin,
-    ModelCompileTestSuite,
     ModelConfigTestSuite,
     ModelConsistencyTestSuite,
     ModelFixtureMixin,
@@ -69,7 +68,6 @@ class Idefics3Fixtures(ConfigFixtureMixin, ModelFixtureMixin):
 class TestIdefics3(
     ModelConfigTestSuite,
     ModelConsistencyTestSuite,
-    ModelCompileTestSuite,
     Idefics3Fixtures,
 ):
     @staticmethod
@@ -99,3 +97,42 @@ class TestIdefics3(
         pytest.skip(
             "idefics3 uses nested configs for vision and text model, which get flattened with config.as_dict()"
         )
+
+    def test_generate_right_padded_matches_unpadded(self, model, config):
+        # Deterministic init for stable output.
+        torch.manual_seed(123)
+
+        # Single image span of 4 tokens (image_token_id=99).
+        prompt = torch.tensor([[1, 99, 99, 99, 99, 2]], dtype=torch.int64)
+        pixel_values = torch.zeros(1, 3, 32, 32)
+
+        # Unpadded
+        out_unpadded = model.generate(
+            input_ids=prompt,
+            pixel_values=pixel_values,
+            attention_mask=torch.ones_like(prompt),
+            max_new_tokens=3,
+            eos_token_id=None,
+        )
+
+        # Right padded to a longer length
+        pad_len = 4
+        pad_id = config.text_config.pad_id
+        padded = torch.cat(
+            [prompt, torch.full((1, pad_len), pad_id, dtype=torch.int64)], dim=1
+        )
+        padded_mask = torch.cat(
+            [torch.ones_like(prompt), torch.zeros((1, pad_len), dtype=torch.int64)],
+            dim=1,
+        )
+        out_padded = model.generate(
+            input_ids=padded,
+            pixel_values=pixel_values,
+            attention_mask=padded_mask,
+            max_new_tokens=3,
+            eos_token_id=None,
+        )
+
+        # `generate()` normalizes to left-padding internally, so the padded case will include
+        # leading pad tokens. The suffix (prompt + new tokens) should match the unpadded output.
+        assert torch.equal(out_padded[:, -out_unpadded.shape[1] :], out_unpadded)

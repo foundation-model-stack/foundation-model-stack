@@ -267,7 +267,11 @@ def build_idefics3_params(config: PretrainedConfig) -> dict:
         text_config_params["pad_id"] = int(text_cfg.pad_token_id)
     config_params["text_config"] = LLaMAConfig(**text_config_params)
 
-    # Connector + packing parameters. SmolVLM expresses connector scale as a pixel-shuffle factor.
+    # Connector + packing parameters.
+    #
+    # SmolVLM/Idefics3 exposes the connector downsample as `pixel_shuffle_factor` on the *text_config*
+    # in HF (even though it affects how vision tokens are packed). We intentionally source it from
+    # `text_cfg` to match HF behavior.
     pixel_shuffle_factor = getattr(text_cfg, "pixel_shuffle_factor", 4)
     connector_scale = (
         int(pixel_shuffle_factor) if pixel_shuffle_factor is not None else 4

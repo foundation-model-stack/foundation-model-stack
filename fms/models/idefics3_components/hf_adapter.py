@@ -3,6 +3,11 @@ HuggingFace adapter utilities for loading vision, text, and tokenizer components
 
 Provides both dummy implementations for CPU testing and real HF loaders
 for production use with actual checkpoints.
+
+Note: Most of the helpers in this module are optional utilities and are not
+required for the core FMS-native `idefics3` forward path. They exist to support
+parity investigations and convenience loading of HF/SmolVLM components without
+introducing a hard `transformers` dependency at import time.
 """
 
 import logging
@@ -229,7 +234,9 @@ def load_internal_vision_tower(
         )
 
     logger.info("Loading SmolVLM checkpoint from: %s", smolvlm_checkpoint_path)
-    checkpoint = AutoModel.from_pretrained(smolvlm_checkpoint_path)
+    checkpoint = AutoModel.from_pretrained(
+        smolvlm_checkpoint_path, trust_remote_code=True
+    )
 
     # Extract vision tower
     logger.info("Extracting internal vision tower...")
