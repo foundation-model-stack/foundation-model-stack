@@ -344,7 +344,9 @@ class ModelConsistencyTestSuite(ModelFixtureMixin, SignatureFixtureMixin):
 
         try:
             weight_keys_file = open(expectation_file_path)
-            expected_keys = [k for k in weight_keys_file.readline().split(",")]
+            expected_keys = [
+                k for k in weight_keys_file.readline().strip().split(",") if k
+            ]
             assert actual_keys == expected_keys, _FAILED_MODEL_WEIGHTS_KEYS_MSG
         except OSError:
             pytest.fail(
