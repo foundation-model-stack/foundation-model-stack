@@ -43,6 +43,7 @@ __FMS_MODEL_REGISTRY_MAP: RegistryMap = {
     "BambaForCausalLM": ("bamba", pb.build_bamba_params),
     "SiglipModel": ("siglip_vision", pb.build_siglip_vision_params),
     "LlavaNextForConditionalGeneration": ("llava_next", pb.build_llava_next_params),
+    "Idefics3ForConditionalGeneration": ("idefics3", pb.build_idefics3_params),
     "MPNetForMaskedLM": ("mpnet", pb.build_mpnet_params),
     "BertForMaskedLM": ("bert", pb.build_bert_params),
     # Classify arches have some extra keys for labels

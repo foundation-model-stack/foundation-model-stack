@@ -395,6 +395,10 @@ def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]
     new_sd = {}
     for name, param in input_sd.items():
         new_name = name
+        # HF SmolVLM checkpoints prefix vision weights with "model." (e.g., "model.vision_model.*").
+        # SiglipVision expects names starting at "vision_model.*" for mapping to base_model/head.
+        if new_name.startswith("model."):
+            new_name = new_name[len("model.") :]
         for pattern, repl in replacements:
             new_name = re.sub(pattern, repl, new_name)
         new_sd[new_name] = param
