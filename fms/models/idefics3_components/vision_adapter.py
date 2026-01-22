@@ -116,10 +116,18 @@ class FmsSiglipVisionWrapper(nn.Module):
         super().__init__()
         self.siglip_vision = siglip_vision
 
-    def forward(self, pixel_values, **kwargs):
+    def forward(
+        self,
+        pixel_values,
+        patch_attention_mask: Optional[torch.BoolTensor] = None,
+        **kwargs,
+    ):
         # SiglipVision returns (last_hidden_state, pooler_output)
         last_hidden_state, _ = self.siglip_vision(
-            pixel_values, output_hidden_states=False, **kwargs
+            pixel_values,
+            patch_attention_mask=patch_attention_mask,
+            output_hidden_states=False,
+            **kwargs,
         )
         return {"last_hidden_state": last_hidden_state}
 

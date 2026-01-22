@@ -76,6 +76,7 @@ _smolvlm_vision_config = SiglipVisionConfig(
     layer_norm_eps=1e-6,
     attention_dropout=0.0,
     fused_weights=True,
+    use_navit_position_buckets=True,
 )
 
 _smolvlm_text_config = LLaMAConfig(
@@ -190,7 +191,26 @@ class Idefics3(nn.Module):
             B, N, C, H, W = images.shape
             images = images.view(B * N, C, H, W)
 
-        vision_last_hidden, _ = self.vision_tower(images)
+        patch_size = self.config.vision_config.patch_size
+
+        # Validate that image dimensions are divisible by patch_size
+        if images.shape[2] % patch_size != 0 or images.shape[3] % patch_size != 0:
+            raise ValueError(
+                f"Image dimensions ({images.shape[2]}, {images.shape[3]}) must be divisible by patch_size ({patch_size})"
+            )
+        patch_attention_mask = torch.ones(
+            (
+                images.shape[0],
+                images.shape[2] // patch_size,
+                images.shape[3] // patch_size,
+            ),
+            device=images.device,
+            dtype=torch.bool,
+        )
+
+        vision_last_hidden, _ = self.vision_tower(
+            images, patch_attention_mask=patch_attention_mask
+        )
         # FMS SiglipVision has no CLS token; expect (B*N, 1024, hidden)
         if is_5d:
             vision_last_hidden = vision_last_hidden.view(

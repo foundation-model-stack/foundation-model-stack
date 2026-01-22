@@ -40,6 +40,7 @@ class SiglipVisionConfig(ModelConfig):
     attention_dropout: float = 0.0
     linear_config: Optional[Mapping[str, Any]] = None
     fused_weights: bool = True
+    use_navit_position_buckets: bool = False
 
 
 class SiglipVisionEmbeddings(nn.Module):
@@ -58,10 +59,14 @@ class SiglipVisionEmbeddings(nn.Module):
             padding="valid",
         )
 
-        self.num_patches = (self.image_size // self.patch_size) ** 2
+        self.num_patches_per_side = self.image_size // self.patch_size
+        self.num_patches = self.num_patches_per_side**2
         self.num_positions = self.num_patches
         self.position_embedding = nn.Embedding(self.num_positions, self.embed_dim)
-        self.position_ids = torch.arange(self.num_positions).expand((1, -1))
+        # Register position_ids as a buffer so it moves with the model
+        self.register_buffer(
+            "position_ids", torch.arange(self.num_positions).expand((1, -1))
+        )
 
     def reset_parameters(self):
         nn.init.normal_(
@@ -76,20 +81,82 @@ class SiglipVisionEmbeddings(nn.Module):
         nn.init.trunc_normal_(tensor, std=math.sqrt(variance))
 
     def post_init(self):
-        device = self.position_embedding.weight.device
-        self.position_ids = torch.arange(self.num_positions, device=device).expand(
-            (1, -1)
-        )
+        # position_ids is now registered as a buffer, so it automatically moves with the model
+        pass
 
     # NOTE: Does not support interpolation of position encodings-- not used by granite-vision
-    def forward(self, pixel_values: torch.FloatTensor) -> torch.Tensor:
+    def forward(
+        self,
+        pixel_values: torch.FloatTensor,
+        patch_attention_mask: Optional[torch.BoolTensor] = None,
+    ) -> torch.Tensor:
         _, _, height, width = pixel_values.shape
         target_dtype = self.patch_embedding.weight.dtype
         patch_embeds = self.patch_embedding(
             pixel_values.to(dtype=target_dtype)
         )  # shape = [*, width, grid, grid]
         embeddings = patch_embeds.flatten(2).transpose(1, 2)
-        embeddings = embeddings + self.position_embedding(self.position_ids)
+
+        if (
+            patch_attention_mask is None
+            and self.config.use_navit_position_buckets
+        ):
+            patch_attention_mask = torch.ones(
+                (
+                    pixel_values.shape[0],
+                    height // self.patch_size,
+                    width // self.patch_size,
+                ),
+                device=pixel_values.device,
+                dtype=torch.bool,
+            )
+        if patch_attention_mask is None:
+            embeddings = embeddings + self.position_embedding(self.position_ids)
+            return embeddings
+
+        # NaViT-style bucketed position ids (matches HF Idefics3VisionEmbeddings)
+        patch_attention_mask = patch_attention_mask.to(device=pixel_values.device)
+        batch_size, max_nb_patches_h, max_nb_patches_w = patch_attention_mask.shape
+
+        boundaries = torch.arange(
+            1 / self.num_patches_per_side,
+            1.0,
+            1 / self.num_patches_per_side,
+            device=pixel_values.device,
+        )
+        position_ids = torch.zeros(
+            (batch_size, max_nb_patches_h * max_nb_patches_w),
+            device=pixel_values.device,
+            dtype=torch.long,
+        )
+
+        for batch_idx, p_attn_mask in enumerate(patch_attention_mask):
+            nb_patches_h = p_attn_mask[:, 0].sum()
+            nb_patches_w = p_attn_mask[0].sum()
+
+            h_indices = torch.arange(
+                nb_patches_h, device=position_ids.device, dtype=position_ids.dtype
+            )
+            w_indices = torch.arange(
+                nb_patches_w, device=position_ids.device, dtype=position_ids.dtype
+            )
+
+            fractional_coords_h = h_indices / nb_patches_h * (1 - 1e-6)
+            fractional_coords_w = w_indices / nb_patches_w * (1 - 1e-6)
+
+            bucket_coords_h = torch.bucketize(
+                fractional_coords_h, boundaries, right=True
+            )
+            bucket_coords_w = torch.bucketize(
+                fractional_coords_w, boundaries, right=True
+            )
+
+            pos_ids = (
+                bucket_coords_h[:, None] * self.num_patches_per_side + bucket_coords_w
+            ).flatten()
+            position_ids[batch_idx][p_attn_mask.view(-1)] = pos_ids
+
+        embeddings = embeddings + self.position_embedding(position_ids)
         return embeddings
 
 
@@ -285,10 +352,13 @@ class SiglipVisionHeadless(nn.Module):
     def forward(
         self,
         pixel_values,
+        patch_attention_mask: Optional[torch.BoolTensor] = None,
         output_hidden_states=False,
         **attn_kwargs: Unpack[AttentionKwargs],
     ):
-        hidden_states = self.embeddings(pixel_values)
+        hidden_states = self.embeddings(
+            pixel_values, patch_attention_mask=patch_attention_mask
+        )
         last_hidden_state, hidden_states = self.encoder(
             inputs_embeds=hidden_states,
             output_hidden_states=output_hidden_states,
@@ -334,11 +404,15 @@ class SiglipVision(nn.Module):
     def forward(
         self,
         pixel_values,
+        patch_attention_mask: Optional[torch.BoolTensor] = None,
         output_hidden_states=False,
         **attn_kwargs: Unpack[AttentionKwargs],
     ):
         last_hidden_state, hidden_states = self.base_model(
-            pixel_values, output_hidden_states=output_hidden_states, **attn_kwargs
+            pixel_values,
+            patch_attention_mask=patch_attention_mask,
+            output_hidden_states=output_hidden_states,
+            **attn_kwargs,
         )
         pooler_output = self.head(last_hidden_state)
         if output_hidden_states:

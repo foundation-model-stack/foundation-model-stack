@@ -214,6 +214,16 @@ def build_siglip_vision_params(config: PretrainedConfig) -> dict:
         "layer_norm_eps": vision_cfg.layer_norm_eps,
         "attention_dropout": vision_cfg.attention_dropout,
     }
+    use_navit = getattr(vision_cfg, "use_navit_position_buckets", None)
+    if use_navit is None:
+        model_type = getattr(vision_cfg, "model_type", None)
+        # Only set to True if model_type matches, not False
+        if model_type in ("idefics3", "idefics3_vision"):
+            use_navit = True
+    if use_navit is None:
+        # Fallback heuristic for configs with max_image_size
+        use_navit = hasattr(vision_cfg, "max_image_size")
+    config_params["use_navit_position_buckets"] = bool(use_navit)
     # Don't build common opts for the vision encoder
     return config_params
 
