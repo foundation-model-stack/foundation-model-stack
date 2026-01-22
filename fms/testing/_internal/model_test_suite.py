@@ -72,10 +72,12 @@ class ModelFixtureMixin(metaclass=abc.ABCMeta):
             if opt_parameter_initialized is not None:
                 parameter.copy_(opt_parameter_initialized)
             else:
-                values = torch.randn_like(parameter)
-                values -= 0.5
-                values /= 20.0
-                parameter.copy_(values)
+                # Only randomize floating-point tensors; leave integer/bool buffers as-is.
+                if torch.is_floating_point(parameter):
+                    values = torch.randn_like(parameter)
+                    values -= 0.5
+                    values /= 20.0
+                    parameter.copy_(values)
         return uninitialized_model
 
     def _maybe_get_initialized_parameter(
