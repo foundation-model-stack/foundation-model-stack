@@ -1,15 +1,19 @@
 import collections
 import os
 import re
+import logging
 from collections import ChainMap
 from collections.abc import Iterable
 from functools import reduce
 from pathlib import Path
-from typing import Any, Callable, Mapping, MutableMapping, Optional, Set, Union
+from typing import Any, Dict, Callable, Mapping, MutableMapping, Optional, Set, Union
 
 import torch
 
 from fms.modules.tp import TPModule
+from fms.utils.config import ModelConfig
+
+logger = logging.getLogger(__name__)
 
 
 __adapters: MutableMapping[
@@ -79,6 +83,53 @@ def register_adapter(
 
     # Create a new base adapter for this source
     step_functions = [__adapter_steps[architecture][step] for step in adapter_steps]
+
+    def adapter_fn(initial_sd: Mapping[str, Any], **extra_kwargs) -> Mapping[str, Any]:
+        def reduce_fn(
+            state_dict: Mapping[str, Any],
+            step_func: Callable[[Mapping[str, Any]], Mapping[str, Any]],
+        ) -> Mapping[str, Any]:
+            return step_func(state_dict, **extra_kwargs)
+
+        return reduce(
+            reduce_fn,
+            step_functions,
+            initial_sd,
+        )
+
+    sources[source] = adapter_fn
+    __adapters[architecture] = sources
+
+
+def extend_adapter(
+    architecture: str,
+    source: str,
+    adapter_steps: list[str],
+):
+    """
+    Extends an existing state dict adapter to the (de) serialization
+    API.
+
+    Args:
+    architecture: The name of the model architecture, e.g. 'llama'
+    source: A label representing the format of the weights to be converted.
+            E.g. 'hf'
+    adapter_steps: a list of registered steps to extend the adapter for an
+            architecture and source combination. This can be augmented with extra
+            steps if needed during call to _get_adapter()
+    """
+    sources: MutableMapping[str, Callable[[Mapping[str, Any]], Mapping[str, Any]]] = {}
+    if architecture not in __adapters or source not in __adapters[architecture]:
+        raise KeyError(
+            f"Source {source} must already be registered for architecture {architecture}"
+        )
+
+    orig_adapter_fn = __adapters[architecture][source]
+
+    # Create a new extended adapter for this source
+    step_functions = [orig_adapter_fn] + [
+        __adapter_steps[architecture][step] for step in adapter_steps
+    ]
 
     def adapter_fn(initial_sd: Mapping[str, Any], **extra_kwargs) -> Mapping[str, Any]:
         def reduce_fn(
@@ -476,7 +527,7 @@ def load_state_dict_into_model(
     adapter = _get_adapter(architecture, source)
 
     # Prepare the extra_kwargs for the adapter
-    adapter_kwargs = {}
+    adapter_kwargs: dict[str, Any] = {}
     if hasattr(model, "config"):
         adapter_kwargs["model_config"] = model.config
 
@@ -488,6 +539,7 @@ def load_state_dict_into_model(
     unused_keys = set()
     sd_keys = set(state_dict.keys())
 
+    uniq_keys: Dict[str, int] = {}
     with torch.no_grad():
         for key in sd_keys:
             if key in used_keys:
@@ -524,11 +576,10 @@ def load_state_dict_into_model(
             del fms_partial_sd
 
     if unused_keys and rank == 0:
-        # TODO: start using logger?
-        print(
-            f"[WARNING] Keys from checkpoint (adapted to FMS) "
+        logger.warning(
+            f"Keys from checkpoint (adapted to FMS) "
             f"not copied into model: {unused_keys}"
-            )
+        )
 
 
 def _copy_if_present(parameter, tensor_value):
@@ -648,3 +699,82 @@ def _load_partial_state_dict(
                 unused_keys.add(key)
 
     return unused_keys
+
+
+# Expand QKV and Dense weights to match head_dim override
+def _weight_expansion_for_mismatched_head_dim(
+    input_sd: Mapping[str, Any], model_config
+) -> Mapping[str, Any]:
+    new_sd = dict(input_sd)
+
+    # For multi model this expansion will be applicable only to the language_model
+    if hasattr(model_config, "text_config") and isinstance(
+        getattr(model_config, "text_config"), ModelConfig
+    ):
+        model_config = getattr(model_config, "text_config", model_config)
+        if not all(["language_model" in layer for layer in input_sd]):
+            return new_sd
+
+    assert getattr(model_config, "head_dim", None) is not None, (
+        "for weight expansion head_dim must be defined in model config"
+    )
+
+    # dimensions of layers to be expanded if needed
+    layer_dim_div = {
+        "attn.in_proj.query": (0, model_config.nheads),
+        "attn.in_proj.key": (0, model_config.kvheads),
+        "attn.in_proj.value": (0, model_config.kvheads),
+        "attn.dense": (1, model_config.nheads),
+    }
+
+    # Computed head_dims for QKV and Dense
+    head_dims_qkvd = [
+        input_sd[layer].size(dim[0]) // dim[1]
+        for layer in input_sd
+        for tgt, dim in layer_dim_div.items()
+        if tgt in layer
+    ]
+
+    # No attention layer in this step
+    if len(set(head_dims_qkvd)) == 0:
+        return new_sd
+
+    # Computed head_dims for QKV and Dense should match
+    assert len(set(head_dims_qkvd)) == 1, (
+        "head_dims of QKV, and Dense layers do not agree"
+    )
+
+    assert model_config.head_dim % head_dims_qkvd[0] == 0, (
+        f"weight expansion factor should not have fraction: {model_config.head_dim} / {head_dims_qkvd[0]}"
+    )
+
+    expansion_factor = model_config.head_dim // head_dims_qkvd[0]
+
+    if expansion_factor > 1:
+        assert expansion_factor % 2 == 0, "expansion factor must be an even number"
+
+        expand_layer_dim = {
+            layer: layer_dim_div[tgt][0]
+            for layer in new_sd
+            for tgt in layer_dim_div
+            if tgt in layer
+        }
+
+        for layer, expand_dim in expand_layer_dim.items():
+            tensor_value = new_sd[layer]
+            original_size = list(tensor_value.size())
+            expanded_size = original_size.copy()
+            expanded_size[expand_dim] = expanded_size[expand_dim] * expansion_factor
+            logger.warning(
+                f"expanding weights of {('.'.join(layer.split('.')[1:-1])):30.30} {str(original_size):12.12} => {expanded_size}"
+            )
+            slices = [
+                slice(0, None, expansion_factor) if dim == expand_dim else slice(None)
+                for dim in range(tensor_value.ndim)
+            ]
+            # Assign the original weights tensor to the interleaved positions
+            expanded_tensor = torch.zeros(expanded_size)
+            expanded_tensor[tuple(slices)] = tensor_value
+            new_sd[layer] = expanded_tensor
+
+    return new_sd

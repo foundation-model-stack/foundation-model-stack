@@ -125,7 +125,9 @@ def __maybe_infer_model_variant(
             )
             source = "hf"
             for kwarg in kwargs:
-                if kwarg in extra_kwargs:
+                if kwarg in extra_kwargs and not kwargs.get(
+                    "override_hf_pretrained_config", False
+                ):
                     logger.warning(
                         f"ignoring {kwarg} as the pretrained model config overrides it"
                     )
@@ -420,15 +422,17 @@ def get_model(
 
     # Run post-model instantiation for layers that require their own name
     # This is usually the case for quantization strategies
-    for name, module in fms_model.named_modules():
-        if isinstance(module, UninitializedModule):
-            fqn_list = name.split(".")
-            parent_name = ".".join(fqn_list[:-1])
-            setattr(
-                fms_model.get_submodule(parent_name),
-                fqn_list[-1],
-                module.initialize(name),
-            )
+    with torch.device("meta"):
+        for name, module in fms_model.named_modules():
+            if isinstance(module, UninitializedModule):
+                fqn_list = name.split(".")
+                parent_name = ".".join(fqn_list[:-1])
+                setattr(
+                    fms_model.get_submodule(parent_name),
+                    fqn_list[-1],
+                    module.initialize(name),
+                )
+                fms_model.get_submodule(name).module_name = name
 
     # Choose when to wrap and load the model weights based on the combination
     # distribution strategy and checkpoint sharding
@@ -488,7 +492,25 @@ def get_model(
     return fms_model
 
 
-from fms.models import bamba, gpt_bigcode, granite, llama, mistral, qwen3, mixtral, roberta  # noqa: E402
+from fms.models import (  # noqa: E402
+    bamba,
+    gpt_bigcode,
+    granite,
+    llama,
+    mistral,
+    mixtral,
+    qwen3,
+    roberta,
+)
 
 
-__all__ = ["bamba", "gpt_bigcode", "granite", "llama", "mistral", "qwen3", "mixtral", "roberta"]
+__all__ = [
+    "bamba",
+    "gpt_bigcode",
+    "granite",
+    "llama",
+    "mistral",
+    "mixtral",
+    "qwen3",
+    "roberta",
+]

@@ -16,7 +16,11 @@ from fms.models import get_model, list_variants
 
 def register_fms_models():
     """Register all FMS models with huggingface AutoModels"""
-    from fms.models.hf import _causal_lm_models, _headless_models, _masked_lm_models
+    from fms.models.hf import (
+        _causal_lm_models,
+        _headless_models,
+        _masked_lm_models,
+    )
 
     for model_cls in _headless_models:
         # register config
@@ -101,49 +105,17 @@ def mask_2d_to_3d_bidirectional(
     )
     needs_correction = needs_correction_1 | needs_correction_2
     mask_decoder = torch.where(
-        needs_correction.unsqueeze(1), mask_encoder[:, 0].unsqueeze(1), mask_decoder
+        needs_correction.unsqueeze(1),
+        mask_encoder[:, 0].unsqueeze(1),
+        mask_decoder,
     )
 
     return mask_encoder.unsqueeze(1) == mask_decoder.unsqueeze(2)
 
 
-def _infer_model_configuration(
-    model_id_or_path: str | os.PathLike,
-    download_weights: bool = True,
-) -> Dict[str, Any]:
-    # if the path does not exist, download it from huggingface and get the local path
-    if not os.path.exists(model_id_or_path):
-        from huggingface_hub import snapshot_download  # type: ignore
-
-        # in the case we don't want to download the weights, but just create the model from scratch, we will only allow config.json
-        if download_weights:
-            allow_patterns = ["*config.json", "tokenizer*", "special_tokens_map.json"]
-
-            # mixtral saves safetensors expert sharded, so we will need their pt checkpoints
-            # ideally this should be fixed in the adapter in the future
-            ignore_patterns = None
-            if isinstance(model_id_or_path, str) and model_id_or_path.startswith(
-                "mistralai/Mixtral"
-            ):
-                ignore_patterns = ["*.safetensors"]
-                allow_patterns.append("*.pt")
-            else:
-                allow_patterns.append("*.safetensors*")
-        else:
-            allow_patterns = ["config.json"]
-            ignore_patterns = None
-
-        model_path = snapshot_download(
-            repo_id=str(model_id_or_path),
-            ignore_patterns=ignore_patterns,
-            allow_patterns=allow_patterns,
-        )
-    else:
-        model_path = str(model_id_or_path)
-
-    config = AutoConfig.from_pretrained(model_path)
-
-    architecture = config.architectures[0]
+def _map_model_config(architecture, config):
+    # Map HF model config to FMS model config
+    infer_common_params = True
     config_params = {}
 
     if architecture == "LlamaForCausalLM":
@@ -191,6 +163,8 @@ def _infer_model_configuration(
         config_params["p_dropout"] = config.hidden_dropout_prob
         config_params["norm_eps"] = config.layer_norm_eps
         config_params["activation_fn"] = config.hidden_act
+        config_params["type_vocab_size"] = config.type_vocab_size
+        config_params["pos_emb"] = "roberta"
     elif architecture == "RobertaForQuestionAnswering":
         inner_dim = config.intermediate_size
         architecture = "roberta_question_answering"
@@ -200,6 +174,20 @@ def _infer_model_configuration(
         config_params["p_dropout"] = config.hidden_dropout_prob
         config_params["norm_eps"] = config.layer_norm_eps
         config_params["activation_fn"] = config.hidden_act
+        config_params["type_vocab_size"] = config.type_vocab_size
+        config_params["pos_emb"] = "roberta"
+    elif architecture == "RobertaForSequenceClassification":
+        inner_dim = config.intermediate_size
+        architecture = "roberta_classification"
+        config_params["emb_dim"] = config.hidden_size
+        config_params["pad_id"] = config.pad_token_id
+        config_params["max_pos"] = config.max_position_embeddings - 2
+        config_params["p_dropout"] = config.hidden_dropout_prob
+        config_params["norm_eps"] = config.layer_norm_eps
+        config_params["activation_fn"] = config.hidden_act
+        config_params["num_classes"] = config.num_labels
+        config_params["type_vocab_size"] = config.type_vocab_size
+        config_params["pos_emb"] = "roberta"
     elif architecture == "GraniteForCausalLM":
         inner_dim = config.intermediate_size
         architecture = "granite"
@@ -216,6 +204,9 @@ def _infer_model_configuration(
         config_params["embedding_multiplier"] = config.embedding_multiplier
         config_params["rope_theta"] = config.rope_theta
         config_params["activation_fn"] = config.hidden_act
+        config_params["head_dim"] = getattr(
+            config, "head_dim", config.hidden_size // config.num_attention_heads
+        )
     elif architecture == "MistralForCausalLM":
         inner_dim = config.intermediate_size
         architecture = "mistral"
@@ -224,12 +215,16 @@ def _infer_model_configuration(
         config_params["max_expected_seq_len"] = config.max_position_embeddings
         config_params["kvheads"] = config.num_key_value_heads
         config_params["p_dropout"] = config.attention_dropout
+        config_params["head_dim"] = (
+            getattr(config, "head_dim", None)
+            or config.hidden_size // config.num_attention_heads
+        )
         config_params["norm_eps"] = config.rms_norm_eps
         config_params["rope_base"] = config.rope_theta
         config_params["sliding_window"] = config.sliding_window
     elif architecture == "Qwen3ForCausalLM":
         inner_dim = config.intermediate_size
-        architecture = "qwen3"
+        architecture = "qwen3"  # or qwen?
         config_params["activation_fn"] = config.hidden_act
         config_params["emb_dim"] = config.hidden_size
         config_params["max_expected_seq_len"] = config.max_position_embeddings
@@ -238,14 +233,6 @@ def _infer_model_configuration(
         config_params["norm_eps"] = config.rms_norm_eps
         config_params["rope_base"] = config.rope_theta
         config_params["sliding_window"] = config.sliding_window
-        config_params["src_vocab_size"] = config.vocab_size
-        config_params["nlayers"] = config.num_hidden_layers
-        config_params["nheads"] = config.num_attention_heads
-        config_params["head_dim"]= config.head_dim
-        config_params["attention_bias"] = config.attention_bias
-        config_params["use_sliding_window"] = config.use_sliding_window
-        config_params["max_window_layers"]  = config.max_window_layers
-        config_params["rope_scaling"] = config.rope_scaling
     elif architecture == "BambaForCausalLM":
         inner_dim = config.intermediate_size
         architecture = "bamba"
@@ -263,22 +250,166 @@ def _infer_model_configuration(
         config_params["mamba_n_heads"] = config.mamba_n_heads
         config_params["use_bias"] = config.mamba_proj_bias
         config_params["norm_eps"] = config.rms_norm_eps
+    elif architecture == "SiglipModel":
+        infer_common_params = False
+        config = config.vision_config
+        architecture = "siglip_vision"
+        config_params["hidden_size"] = config.hidden_size
+        config_params["intermediate_size"] = config.intermediate_size
+        config_params["nlayers"] = config.num_hidden_layers
+        config_params["nheads"] = config.num_attention_heads
+        config_params["num_channels"] = config.num_channels
+        config_params["image_size"] = config.image_size
+        config_params["patch_size"] = config.patch_size
+        config_params["hidden_act"] = config.hidden_act
+        config_params["layer_norm_eps"] = config.layer_norm_eps
+        config_params["attention_dropout"] = config.attention_dropout
+    elif architecture == "LlavaNextForConditionalGeneration":
+        from fms.models.siglip_vision import SiglipVisionConfig
+        from fms.models.granite import GraniteConfig
+
+        if config.text_config.model_type != "granite":
+            raise ValueError(
+                "FMS implementation of LlavaNext currently supports only Granite language model"
+            )
+        if config.vision_config.model_type != "siglip_vision_model":
+            raise ValueError(
+                "FMS implementation of LlavaNext currently supports only Siglip vision model"
+            )
+
+        infer_common_params = False
+        architecture = "llava_next"
+        config_params["image_token_index"] = config.image_token_index
+        config_params["image_grid_pinpoints"] = config.image_grid_pinpoints
+        config_params["vision_feature_layer"] = config.vision_feature_layer
+        config_params["vision_feature_select_strategy"] = (
+            config.vision_feature_select_strategy
+        )
+        _, vision_config_params = _map_model_config("SiglipModel", config)
+        config_params["vision_config"] = SiglipVisionConfig(**vision_config_params)
+        _, text_config_params = _map_model_config(
+            "GraniteForCausalLM", config.text_config
+        )
+        config_params["text_config"] = GraniteConfig(**text_config_params)
+    elif architecture == "MPNetForMaskedLM":
+        inner_dim = config.intermediate_size
+        architecture = "mpnet"
+        config_params["p_dropout"] = config.attention_probs_dropout_prob
+        config_params["hidden_dropout_prob"] = config.hidden_dropout_prob
+        config_params["layer_norm_eps"] = config.layer_norm_eps
+        config_params["bos_token_id"] = config.bos_token_id
+        config_params["eos_token_id"] = config.eos_token_id
+        config_params["activation_fn"] = config.hidden_act
+        config_params["emb_dim"] = config.hidden_size
+        config_params["max_expected_seq_len"] = config.max_position_embeddings
+        config_params["pad_id"] = config.pad_token_id
+        config_params["relative_attention_num_buckets"] = (
+            config.relative_attention_num_buckets
+        )
+    elif architecture == "BertForMaskedLM":
+        inner_dim = config.intermediate_size
+        architecture = "bert"
+        config_params["emb_dim"] = config.hidden_size
+        config_params["pad_id"] = config.pad_token_id
+        config_params["max_pos"] = config.max_position_embeddings
+        config_params["p_dropout"] = config.hidden_dropout_prob
+        config_params["norm_eps"] = config.layer_norm_eps
+        config_params["activation_fn"] = config.hidden_act
+        config_params["type_vocab_size"] = config.type_vocab_size
+        config_params["pos_emb"] = "bert"
+    elif architecture == "BertForSequenceClassification":
+        inner_dim = config.intermediate_size
+        architecture = "bert_classification"
+        config_params["emb_dim"] = config.hidden_size
+        config_params["pad_id"] = config.pad_token_id
+        config_params["max_pos"] = config.max_position_embeddings
+        config_params["p_dropout"] = config.hidden_dropout_prob
+        config_params["norm_eps"] = config.layer_norm_eps
+        config_params["activation_fn"] = config.hidden_act
+        config_params["type_vocab_size"] = config.type_vocab_size
+        config_params["pos_emb"] = "bert"
+        config_params["num_classes"] = config.num_labels
     else:
         raise ValueError(
-            "FMS model implementations currently only support LlamaForCausalLM, GPTBigCodeForCausalLM, MixtralForCausalLM, RobertaForMaskedLM and GraniteForCausalLM"
+            "FMS model implementations currently only support LlamaForCausalLM, GPTBigCodeForCausalLM, MixtralForCausalLM, RobertaForMaskedLM, RobertaForQuestionAnswering, RobertaForSequenceClassification, GraniteForCausalLM, MistralForCausalLM, BambaForCausalLM, SiglipModel, LlavaNextForConditionalGeneration, MPNetForMaskedLM, BertForMaskedLM, and BertForSequenceClassification"
         )
 
     # infer common params
-    config_params["src_vocab_size"] = config.vocab_size
-    config_params["nheads"] = config.num_attention_heads
-    config_params["nlayers"] = config.num_hidden_layers
-    config_params["hidden_grow_factor"] = inner_dim / config.hidden_size
-    config_params["tie_heads"] = config.tie_word_embeddings
+    if infer_common_params:
+        config_params["src_vocab_size"] = config.vocab_size
+        config_params["nheads"] = config.num_attention_heads
+        config_params["nlayers"] = config.num_hidden_layers
+        config_params["hidden_grow_factor"] = inner_dim / config.hidden_size
+        config_params["tie_heads"] = config.tie_word_embeddings
+
+    return architecture, config_params
+
+
+def _infer_model_configuration(
+    model_id_or_path: str | os.PathLike,
+    download_weights: bool = True,
+) -> Dict[str, Any]:
+    # if the path does not exist, download it from huggingface and get the local path
+    if not os.path.exists(model_id_or_path):
+        from huggingface_hub import snapshot_download  # type: ignore
+
+        # in the case we don't want to download the weights, but just create the model from scratch, we will only allow config.json
+        if download_weights:
+            allow_patterns = [
+                "*config.json",
+                "tokenizer*",
+                "special_tokens_map.json",
+            ]
+
+            # mixtral saves safetensors expert sharded, so we will need their pt checkpoints
+            # ideally this should be fixed in the adapter in the future
+            ignore_patterns = None
+            if isinstance(model_id_or_path, str) and model_id_or_path.startswith(
+                "mistralai/Mixtral"
+            ):
+                ignore_patterns = ["*.safetensors"]
+                allow_patterns.append("*.pt")
+            elif isinstance(model_id_or_path, str) and model_id_or_path.startswith(
+                "mistralai/Mistral"
+            ):
+                ignore_patterns = ["consolidated.safetensors"]
+                allow_patterns.append("*.safetensors*")
+            else:
+                allow_patterns.append("*.safetensors*")
+        else:
+            allow_patterns = ["config.json"]
+            ignore_patterns = None
+
+        model_path = snapshot_download(
+            repo_id=str(model_id_or_path),
+            ignore_patterns=ignore_patterns,
+            allow_patterns=allow_patterns,
+        )
+    else:
+        model_path = str(model_id_or_path)
+
+    config = AutoConfig.from_pretrained(model_path)
+    architecture = config.architectures[0]
+    architecture, config_params = _map_model_config(architecture, config)
 
     # infer get_model params
     config_params["architecture"] = architecture
     config_params["variant"] = list_variants(architecture)[0]
     config_params["model_path"] = model_path if download_weights else None
+
+    ## infer quantization parameters
+    quant_config = getattr(config, "quantization_config", None)
+    if quant_config is not None:
+        try:
+            from fms_mo.aiu_addons import _infer_quantization_config  # type: ignore[import-untyped,import-not-found]
+        except ImportError:
+            raise RuntimeError(
+                "You need to install fms-model-optimizer to load quantized models"
+            )
+        linear_config = _infer_quantization_config(quant_config)
+        if linear_config:
+            config_params["linear_config"] = linear_config
+
     return config_params
 
 

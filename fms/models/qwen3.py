@@ -45,8 +45,6 @@ from fms.utils.config import ModelConfig
 
 logger = logging.getLogger(__name__)
 
-SLEEP_AMT = 0.001/1000.0
-
 
 class Qwen3MultiHeadAttention(MultiHeadAttention):
     """Customized for Qwen3
@@ -183,7 +181,6 @@ class Qwen3MultiHeadAttention(MultiHeadAttention):
             returned in the form (hidden_state, cache) where hidden_state is a
             tensor and cache is of the form specified in past_key_value_state
         """
-        # GSP.sleep(self.__class__.__name__)
         # q, k, v: batch_size x seq_len x emb_dim
         # mask: batch_size x seq_len x seq_len
         batch_size, q_len, _ = q.size()
