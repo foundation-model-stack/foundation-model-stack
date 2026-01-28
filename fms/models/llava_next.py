@@ -197,7 +197,7 @@ class LlavaNext(nn.Module):
 
     def reset_parameters(self):
         nn.init.xavier_uniform_(self.image_newline.data)
-        self.langauage_model.reset_parameters()
+        self.language_model.reset_parameters()
         self.vision_tower.reset_parameters()
         self.multi_modal_projector.reset_parameters()
 
