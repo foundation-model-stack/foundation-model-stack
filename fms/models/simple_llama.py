@@ -66,8 +66,8 @@ class SimpleLlamaBlock(nn.Module):
         emb_kq = self.config.emb_dim // self.config.nheads
         emb_v = self.config.emb_dim // self.config.nheads
 
-        self.ln = nn.LayerNorm(self.config.emb_dim, eps=self.config.norm_eps)
-        self.ff_ln = nn.LayerNorm(self.config.emb_dim, eps=self.config.norm_eps)
+        self.ln = nn.RMSNorm(self.config.emb_dim, eps=self.config.norm_eps)
+        self.ff_ln = nn.RMSNorm(self.config.emb_dim, eps=self.config.norm_eps)
 
         if self.config.kvheads == 0:
             kvheads = self.config.nheads
@@ -187,7 +187,7 @@ class SimpleLlamaHeadless(nn.Module):
             layers.append(block)
         self.layers = nn.ModuleList(layers)
 
-        dec_norm = nn.LayerNorm(self.config.emb_dim, eps=self.config.norm_eps)
+        dec_norm = nn.RMSNorm(self.config.emb_dim, eps=self.config.norm_eps)
         self.dec_norm = self.distributed_strategy.distribute_module(
             dec_norm, final_layers=True
         )
@@ -217,6 +217,8 @@ class SimpleLlamaHeadless(nn.Module):
                 or isinstance(m, LayerNormParameterized)
             ):
                 m.reset_parameters()
+            elif isinstance(m, nn.RMSNorm):
+                m.weight.data.fill_(1)
 
     def validate_reset_parameters(self):
         # Verifies that the above self.reset_parameters() executed correctly.
@@ -424,5 +426,5 @@ if __name__ == "__main__":
     model = get_model("simple_llama", "test", data_type=torch.bfloat16)
     model.compile()
 
-    test_input = torch.randint(0, 32000, (1, 128))
+    test_input = torch.randint(0, 32000, (1, 128), dtype=torch.int32)
     model(test_input)
