@@ -273,6 +273,7 @@ def generate(
         if prepare_model_inputs_hook is not None:
             input_ids, kwargs = prepare_model_inputs_hook(i, input_ids, kwargs)
 
+        print(f"Input ids device: {input_ids.device}")
         output = model(input_ids, **kwargs)
         if use_cache:
             logits, past_key_value_states = output

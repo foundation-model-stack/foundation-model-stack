@@ -398,6 +398,7 @@ def get_model(
             initial_device=initial_device,
             rank=rank,
             world_size=world_size,
+            dtype=data_type_parsed,
         )
 
     if "distributed_strategy" not in extra_args:

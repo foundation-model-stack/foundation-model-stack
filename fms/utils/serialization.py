@@ -316,17 +316,18 @@ def get_adapted(
 # down here to avoid circular dependencies.
 
 
-def _get_safetensors_item(key, file: Path, device: torch.device) -> torch.Tensor:
+def _get_safetensors_item(key, file: Path, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
     from safetensors import safe_open  # type: ignore[import-untyped]
 
     with torch.no_grad():
-        with safe_open(file, framework="pt", device=str(device)) as model_weights:  # type: ignore[attr-defined]
-            return model_weights.get_tensor(key)
+        with safe_open(file, framework="pt", device="cpu") as model_weights:  # type: ignore[attr-defined]
+            correct_dtype_tensor = model_weights.get_tensor(key).to(dtype=dtype)
+        return correct_dtype_tensor
 
 
 class LazySafetensorsDict(collections.UserDict):
-    def set_lazy_tensor(self, key, file, device):
-        super().__setitem__(key, lambda: _get_safetensors_item(key, file, device))
+    def set_lazy_tensor(self, key, file, device, dtype):
+        super().__setitem__(key, lambda: _get_safetensors_item(key, file, device, dtype))
 
     def __getitem__(self, key):
         lazy_tensor = super().__getitem__(key)
@@ -345,6 +346,7 @@ def load_state_dict(
     initial_device: torch.device = torch.device("cpu"),
     rank: int = 0,
     world_size: int = 1,
+    dtype: torch.dtype = None,
 ) -> MutableMapping[str, Any]:
     """
     Validates that the file(s) found at a checkpoint path are compatible with
@@ -430,6 +432,7 @@ def load_state_dict(
                 _load_safetensors_state_dict(
                     ckp,
                     initial_device,
+                    dtype,
                 )
             )
     else:
@@ -444,15 +447,16 @@ def load_state_dict(
 def _load_safetensors_state_dict(
     checkpoint: Path,
     device: torch.device,
+    dtype: torch.dtype,
 ):
     sd = LazySafetensorsDict()
 
     from safetensors import safe_open
 
-    with safe_open(checkpoint, framework="pt", device=str(device)) as model_weights:  # type: ignore[attr-defined]
+    with safe_open(checkpoint, framework="pt", device="cpu") as model_weights:  # type: ignore[attr-defined]
         sd_keys = list(model_weights.keys())
         for key in sd_keys:
-            sd.set_lazy_tensor(key, checkpoint, device)
+            sd.set_lazy_tensor(key, checkpoint, device, dtype)
     return sd
 
 
@@ -549,15 +553,13 @@ def load_state_dict_into_model(
             for neighbor in neighbors:
                 partial_sd[neighbor] = state_dict[neighbor]
                 used_keys.add(neighbor)
-            for psd_key in partial_sd.keys():
-                if partial_sd[psd_key].device != initial_device:
-                    partial_sd[psd_key] = partial_sd[psd_key].to(device=initial_device)
             fms_partial_sd = adapter(partial_sd, **adapter_kwargs)
             unused_keys_partial = _load_partial_state_dict(
                 model=model,
                 state_dict=fms_partial_sd,
                 needs_tp_sharding=needs_tp_sharding,
                 dtype=dtype,
+                device=initial_device,
             )
             unused_keys.update(unused_keys_partial)
             # Be aggressive in removing weights to save as much memory as possible
@@ -603,6 +605,7 @@ def _load_partial_state_dict(
     state_dict: Mapping[str, Any],
     needs_tp_sharding: bool,
     dtype: Optional[torch.dtype] = None,
+    device: torch.device = None,
 ) -> set:
     unused_keys = set()
     unused_keys_tp = None
@@ -648,7 +651,7 @@ def _load_partial_state_dict(
                 if param.device == torch.device("meta"):
                     param = _move_to_real_device(
                         param=param,
-                        real_device=tensor_value.device,
+                        real_device=device,
                         dtype=tensor_value.dtype if dtype is None else dtype,
                     )
                     setattr(target_module, key_steps[-1], param)

@@ -123,10 +123,10 @@ class RopeNoScalingImpl:
         ratio = self.ratio
         dim = self.dim
 
-        freqs = 1.0 / (
+        freqs = (1.0 / (
             ratio
-            ** (torch.arange(0, dim, 2, device=device)[: (dim // 2)].float() / dim)
-        )
+            ** (torch.arange(0, dim, 2)[: (dim // 2)] / dim)
+        )).to(device=device)
         return freqs
 
 
@@ -264,8 +264,8 @@ class RotaryEmbedding(PositionEncoder):
                 # This only runs if a particular combination of alpha
                 # and max_seq_len hasn't been seen before
                 freqs = self.rope_scaling.compute_scaled_freqs(device, alpha)
-                t = torch.arange(scaled_max_seq_len, device=device, dtype=freqs.dtype)
-                freqs = torch.outer(t, freqs).float()
+                t = torch.arange(scaled_max_seq_len, device="cpu", dtype=freqs.dtype)
+                freqs = torch.outer(t, freqs.to("cpu")).float()
                 self.max_seq_len_cached[dev_idx] = scaled_max_seq_len
                 self.cached_freqs[dev_idx][alpha] = torch.stack(
                     [
@@ -275,7 +275,7 @@ class RotaryEmbedding(PositionEncoder):
                         torch.cos(freqs),
                     ],
                     dim=2,
-                ).view(*freqs.size(), 2, 2)
+                ).view(*freqs.size(), 2, 2).to(dtype=torch.float16)
 
         return alpha
 
@@ -333,15 +333,15 @@ class RotaryEmbedding(PositionEncoder):
         else:
             q_rope = q
             k_rope = k
-        q_ = q_rope.float().view(*q.size()[:-1], -1, 2)  # B L H D/2 2
-        k_ = k_rope.float().view(*k.size()[:-1], -1, 2)  # B L H D/2 2
+        q_ = q_rope.to("cpu").view(*q.size()[:-1], -1, 2)  # B L H D/2 2
+        k_ = k_rope.to("cpu").view(*k.size()[:-1], -1, 2)  # B L H D/2 2
 
         # the max start position should be based on the max first position of each sequence
         max_start_pos = torch.max(position_ids[:, 0])
         alpha = self.compute_freqs_cis(q.device, max_start_pos + seq_len)
         freqs = self.cached_freqs[q.device.index][alpha][position_ids]
 
-        freqs = freqs.float()  # 1 L D/2 2 2
+        freqs = freqs.to("cpu")  # 1 L D/2 2 2
         q_out = (
             freqs[:, -q.size(1) :, None, :, :, :]
             .mul(q_.unsqueeze(-2))
@@ -361,4 +361,4 @@ class RotaryEmbedding(PositionEncoder):
         else:
             q_out = q_out.view_as(q_rope)
             k_out = k_out.view_as(k_rope)
-        return q_out, k_out
+        return q_out.to("spyre"), k_out.to("spyre")

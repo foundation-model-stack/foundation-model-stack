@@ -69,7 +69,7 @@ class GraniteBlock(nn.Module):
             elementwise_shift=False,
             use_mean=False,
             eps=self.config.norm_eps,
-            use_high_precision_pow=True,
+            use_high_precision_pow=False,
         )
         self.ff_ln = LayerNormParameterized(
             self.config.emb_dim,
@@ -77,7 +77,7 @@ class GraniteBlock(nn.Module):
             elementwise_shift=False,
             use_mean=False,
             eps=self.config.norm_eps,
-            use_high_precision_pow=True,
+            use_high_precision_pow=False,
         )
 
         if self.config.kvheads == 0:
@@ -142,7 +142,7 @@ class GraniteBlock(nn.Module):
         if self.config.p_dropout != 0:
             x = self.dropout(x)
         # residual connection
-        x = x * self.config.residual_multiplier + residual
+        x = x * torch.tensor([self.config.residual_multiplier], dtype=torch.float16, device="spyre") + residual
 
         # then we do FF and Add&Norm
         residual = x
@@ -151,7 +151,7 @@ class GraniteBlock(nn.Module):
         if self.config.p_dropout != 0:
             x = self.dropout(x)
         # another residual
-        x = x * self.config.residual_multiplier + residual
+        x = x * torch.tensor([self.config.residual_multiplier], dtype=torch.float16, device="spyre") + residual
 
         if use_cache:
             return (x, cache)
@@ -212,7 +212,7 @@ class GraniteHeadless(nn.Module):
             elementwise_shift=False,
             use_mean=False,
             eps=self.config.norm_eps,
-            use_high_precision_pow=True,
+            use_high_precision_pow=False,
         )
         self.dec_norm = self.distributed_strategy.distribute_module(
             dec_norm, final_layers=True
@@ -288,8 +288,10 @@ class GraniteHeadless(nn.Module):
             past_key_value_states = [None for _ in range(len(self.layers))]
 
         if x_in.dim() == 2:  # input is not already embedded
+            self.embedding.weight = torch.nn.Parameter(self.embedding.weight.to("cpu"))
             x_in = self.embedding(x_in)
         x_in = x_in * self.config.embedding_multiplier
+        x_in = x_in.to("spyre")
 
         # this is the output cache for all the decoder layers
         present_key_value_states = []
@@ -388,13 +390,14 @@ class Granite(nn.Module):
         )
 
         output = gather_outputs(output, last_n_tokens, **attn_kwargs)
-        preds = self.head(output)
+        self.head.weight = torch.nn.Parameter(self.head.weight.to("cpu"))
+        preds = self.head(output.to("cpu"))
         preds = preds / self.config.logits_scaling
 
         if use_cache:
-            return preds, cache
+            return preds.to("spyre"), cache
         else:
-            return preds
+            return preds.to("spyre")
 
 
 _8b_config = GraniteConfig(

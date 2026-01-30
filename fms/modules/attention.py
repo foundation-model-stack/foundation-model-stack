@@ -215,9 +215,9 @@ def _sdpa_compute_op(
     expansion = nheads // kvheads
     # k/v: b h l d
     if expansion != 1:
-        keys_e = key_cache.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
+        keys_e = key_cache.to("cpu").unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2).to("spyre")
         values_e = (
-            value_cache.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
+            value_cache.to("cpu").unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2).to("spyre")
         )
     else:
         keys_e = key_cache
@@ -244,15 +244,16 @@ def _sdpa_compute_op(
     )
 
     # TODO: when updating to 2.7, use enable_gqa and stop using keys_e and values_e
-    attn = F.scaled_dot_product_attention(
-        queries,
-        keys_e,
-        values_e,
-        attn_mask=attn_mask,
-        dropout_p=p_dropout,
-        is_causal=is_causal,
-        scale=scale_factor,
-    )
+    with torch.nn.attention.sdpa_kernel(backends=[torch.nn.attention.SDPBackend.MATH]):
+        attn = F.scaled_dot_product_attention(
+            queries.to("cpu"),
+            keys_e.to("cpu"),
+            values_e.to("cpu"),
+            attn_mask=attn_mask.to("cpu") if isinstance(attn_mask, torch.Tensor) else None,
+            dropout_p=p_dropout,
+            is_causal=is_causal,
+            scale=scale_factor,
+        )
 
     if attn_algorithm:
         torch.backends.cuda.enable_flash_sdp(__sdpa_previous_flash)
@@ -263,7 +264,7 @@ def _sdpa_compute_op(
     # attn: b x h x qlen x ds
     # attn after permute: b x qlen x h x ds
     # b x qlen x (d)
-    attn = attn.transpose(2, 1).contiguous()
+    attn = attn.transpose(2, 1).contiguous().to("spyre")
     return attn
 
 
