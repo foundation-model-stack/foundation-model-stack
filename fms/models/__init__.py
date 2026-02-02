@@ -80,7 +80,7 @@ def __maybe_infer_model_variant(
     extra_kwargs = kwargs
 
     if architecture in ("hf_pretrained", "hf_configured"):
-        from fms.models.hf.utils import _infer_model_configuration  # type: ignore
+        from fms.models.hf.utils import infer_model_configuration  # type: ignore
 
         is_hf_pretrained = architecture == "hf_pretrained"
         is_hf_configured = architecture == "hf_configured"
@@ -112,7 +112,7 @@ def __maybe_infer_model_variant(
 
         logger.info(f"inferring model configuration from {model_path_or_variant}")
 
-        extra_kwargs = _infer_model_configuration(
+        extra_kwargs = infer_model_configuration(
             model_path_or_variant,
             download_weights=is_hf_pretrained and variant is not None,  # type: ignore[arg-type]
         )
@@ -496,6 +496,7 @@ from fms.models import (  # noqa: E402
     bamba,
     gpt_bigcode,
     granite,
+    granite_moe_hybrid,
     llama,
     llava_next,
     mistral,
@@ -505,11 +506,11 @@ from fms.models import (  # noqa: E402
     mpnet,
 )
 
-
 __all__ = [
     "bamba",
     "gpt_bigcode",
     "granite",
+    "granite_moe_hybrid",
     "llama",
     "llava_next",
     "mistral",

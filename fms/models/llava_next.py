@@ -170,10 +170,16 @@ class LlavaNext(nn.Module):
             )
 
         # Only supporting granite text decoder encoder for now
-        self.language_model = Granite(self.config.text_config)
+        self.language_model = Granite(
+            self.config.text_config,
+            distributed_strategy,
+        )
 
         # Only supporting siglip vision encoder for now
-        self.vision_tower = SiglipVision(self.config.vision_config)
+        self.vision_tower = SiglipVision(
+            self.config.vision_config,
+            distributed_strategy,
+        )
 
         self.multi_modal_projector = LlavaNextMultiModalProjector(self.config)
         embed_std = 1 / math.sqrt(self.config.text_config.emb_dim)
@@ -191,7 +197,7 @@ class LlavaNext(nn.Module):
 
     def reset_parameters(self):
         nn.init.xavier_uniform_(self.image_newline.data)
-        self.langauage_model.reset_parameters()
+        self.language_model.reset_parameters()
         self.vision_tower.reset_parameters()
         self.multi_modal_projector.reset_parameters()
 
