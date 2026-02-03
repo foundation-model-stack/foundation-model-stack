@@ -88,7 +88,7 @@ class SiglipVisionEmbeddings(nn.Module):
     def forward(
         self,
         pixel_values: torch.FloatTensor,
-        patch_attention_mask: Optional[torch.BoolTensor] = None,
+        patch_attention_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         _, _, height, width = pixel_values.shape
         target_dtype = self.patch_embedding.weight.dtype
@@ -97,10 +97,7 @@ class SiglipVisionEmbeddings(nn.Module):
         )  # shape = [*, width, grid, grid]
         embeddings = patch_embeds.flatten(2).transpose(1, 2)
 
-        if (
-            patch_attention_mask is None
-            and self.config.use_navit_position_buckets
-        ):
+        if patch_attention_mask is None and self.config.use_navit_position_buckets:
             patch_attention_mask = torch.ones(
                 (
                     pixel_values.shape[0],
@@ -110,7 +107,7 @@ class SiglipVisionEmbeddings(nn.Module):
                 device=pixel_values.device,
                 dtype=torch.bool,
             )
-        if patch_attention_mask is None:
+        if patch_attention_mask is None or not self.config.use_navit_position_buckets:
             embeddings = embeddings + self.position_embedding(self.position_ids)
             return embeddings
 
@@ -141,8 +138,12 @@ class SiglipVisionEmbeddings(nn.Module):
                 nb_patches_w, device=position_ids.device, dtype=position_ids.dtype
             )
 
-            fractional_coords_h = h_indices / nb_patches_h * (1 - 1e-6)
-            fractional_coords_w = w_indices / nb_patches_w * (1 - 1e-6)
+            # Match HF NaViT bucketing: we bucketize exact grid fractions against `boundaries` with
+            # `right=True` so values that land exactly on a boundary map to the higher bucket. `i / n` is
+            # already in [0, 1) and preserves that boundary alignment; scaling by (1 - 1e-6) perturbs it and
+            # can shift bucket indices.
+            fractional_coords_h = h_indices / nb_patches_h
+            fractional_coords_w = w_indices / nb_patches_w
 
             bucket_coords_h = torch.bucketize(
                 fractional_coords_h, boundaries, right=True
