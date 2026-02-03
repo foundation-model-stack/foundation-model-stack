@@ -70,7 +70,7 @@ def get_signature(
         """Check if two devices are equivalent, handling cuda vs cuda:0 case."""
         if dev1.type != dev2.type:
             return False
-        if dev1.type == 'cuda':
+        if dev1.type == dev2.type == "cuda":
             # For CUDA devices, if either has no index specified (meaning default cuda:0),
             # treat it as matching cuda:0
             idx1 = 0 if dev1.index is None else dev1.index
@@ -82,7 +82,9 @@ def get_signature(
     model_devices = {p.device for p in model.parameters()} | {
         b.device for b in model.buffers()
     }
-    needs_move = not model_devices or any(not devices_match(dev, target_device) for dev in model_devices)
+    needs_move = not model_devices or any(
+        not devices_match(dev, target_device) for dev in model_devices
+    )
     if needs_move:
         model = model.to(device)
         # Call post_init only after device change to update device-dependent buffers

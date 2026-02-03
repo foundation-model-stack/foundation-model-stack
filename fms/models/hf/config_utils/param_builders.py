@@ -6,7 +6,6 @@ to the model at init time.
 
 # Used in Llava Next for Granite vision
 from fms.models.siglip_vision import SiglipVisionConfig
-from fms.models.granite import GraniteConfig
 from fms.models.llama import LLaMAConfig
 
 from transformers import PretrainedConfig
@@ -214,6 +213,9 @@ def build_siglip_vision_params(config: PretrainedConfig) -> dict:
         "layer_norm_eps": vision_cfg.layer_norm_eps,
         "attention_dropout": vision_cfg.attention_dropout,
     }
+    # Older HF configs do not expose `use_navit_position_buckets`, and some SmolVLM/Idefics3
+    # configs may only signal NaViT usage via `model_type` or `max_image_size`. Keep a heuristic
+    # fallback so we preserve HF parity across versions.
     use_navit = getattr(vision_cfg, "use_navit_position_buckets", None)
     if use_navit is None:
         model_type = getattr(vision_cfg, "model_type", None)
@@ -230,6 +232,8 @@ def build_siglip_vision_params(config: PretrainedConfig) -> dict:
 
 def build_llava_next_params(config: PretrainedConfig) -> dict:
     """Param builder for mapping LlavaNextForConditionalGeneration to FMS."""
+    from fms.models.granite import GraniteConfig
+
     config_params = {
         "image_token_index": config.image_token_index,
         "image_grid_pinpoints": config.image_grid_pinpoints,
@@ -290,7 +294,7 @@ def build_idefics3_params(config: PretrainedConfig) -> dict:
 
     image_size = config_params["vision_config"].image_size
     patch_size = config_params["vision_config"].patch_size
-    patches_per_side = int(image_size) // int(patch_size)
+    patches_per_side = image_size // patch_size
     config_params["image_span_len"] = (patches_per_side // connector_scale) ** 2
 
     return config_params

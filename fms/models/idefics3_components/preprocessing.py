@@ -18,6 +18,65 @@ from typing import Any, Dict, List, Union
 import numpy as np
 import torch
 
+_PIL_IMPORT_ERROR: ImportError | None = None
+try:
+    from PIL import Image  # type: ignore[import-not-found]
+except ImportError as e:
+    Image = None  # type: ignore[assignment]
+    _PIL_IMPORT_ERROR = e
+
+
+def _require_pil():
+    if Image is None:
+        raise ImportError(
+            "SmolVLMPreprocessor image conversion requires `Pillow`. "
+            "Install with: pip install Pillow"
+        ) from _PIL_IMPORT_ERROR
+    return Image
+
+
+def _to_pil(img_like):
+    image_cls = _require_pil()
+
+    if isinstance(img_like, torch.Tensor):
+        x = img_like.detach().cpu()
+        if x.dim() != 3:
+            raise ValueError(
+                f"Unsupported tensor shape: {x.shape}. Expected 3D (C,H,W) or (H,W,C)"
+            )
+        if x.shape[0] == 3:  # (C,H,W) -> (H,W,C)
+            x = x.permute(1, 2, 0)
+        elif x.shape[2] != 3:
+            raise ValueError(
+                f"Input tensor must have 3 channels (RGB), got shape {x.shape}"
+            )
+        if x.dtype.is_floating_point:
+            x = (
+                (x.clamp(0, 1) * 255).byte()
+                if x.max() <= 1.0
+                else x.clamp(0, 255).byte()
+            )
+        return image_cls.fromarray(x.numpy().astype(np.uint8)).convert("RGB")
+    if isinstance(img_like, np.ndarray):
+        a = img_like
+        if a.ndim != 3:
+            raise ValueError(
+                f"Unsupported numpy array shape: {a.shape}. Expected 3D RGB."
+            )
+        if a.shape[2] != 3 and a.shape[0] == 3:
+            a = np.transpose(a, (1, 2, 0))
+        if a.dtype.kind == "f":
+            a = (
+                (np.clip(a, 0, 1) * 255).astype(np.uint8)
+                if a.max() <= 1.0
+                else np.clip(a, 0, 255).astype(np.uint8)
+            )
+        img = image_cls.fromarray(a.astype(np.uint8))
+        return img.convert("RGB") if img.mode != "RGB" else img
+    if isinstance(img_like, image_cls.Image):
+        return img_like.convert("RGB") if img_like.mode != "RGB" else img_like
+    raise TypeError(f"Unsupported image type: {type(img_like)}")
+
 
 class SmolVLMPreprocessor:
     """
@@ -74,60 +133,11 @@ class SmolVLMPreprocessor:
         Returns a dict with pixel_values, pixel_attention_mask, and num_patches.
         """
 
-        def to_pil(img_like):
-            try:
-                from PIL import Image  # type: ignore[import-not-found]
-            except ImportError as e:
-                raise ImportError(
-                    "SmolVLMPreprocessor image conversion requires `Pillow`. "
-                    "Install with: pip install Pillow"
-                ) from e
-
-            if isinstance(img_like, torch.Tensor):
-                x = img_like.detach().cpu()
-                if x.dim() != 3:
-                    raise ValueError(
-                        f"Unsupported tensor shape: {x.shape}. Expected 3D (C,H,W) or (H,W,C)"
-                    )
-                if x.shape[0] == 3:  # (C,H,W) -> (H,W,C)
-                    x = x.permute(1, 2, 0)
-                elif x.shape[2] != 3:
-                    raise ValueError(
-                        f"Input tensor must have 3 channels (RGB), got shape {x.shape}"
-                    )
-                if x.dtype.is_floating_point:
-                    x = (
-                        (x.clamp(0, 1) * 255).byte()
-                        if x.max() <= 1.0
-                        else x.clamp(0, 255).byte()
-                    )
-                return Image.fromarray(x.numpy().astype(np.uint8)).convert("RGB")
-            elif isinstance(img_like, np.ndarray):
-                a = img_like
-                if a.ndim != 3:
-                    raise ValueError(
-                        f"Unsupported numpy array shape: {a.shape}. Expected 3D RGB."
-                    )
-                if a.shape[2] != 3 and a.shape[0] == 3:
-                    a = np.transpose(a, (1, 2, 0))
-                if a.dtype.kind == "f":
-                    a = (
-                        (np.clip(a, 0, 1) * 255).astype(np.uint8)
-                        if a.max() <= 1.0
-                        else np.clip(a, 0, 255).astype(np.uint8)
-                    )
-                img = Image.fromarray(a.astype(np.uint8))
-                return img.convert("RGB") if img.mode != "RGB" else img
-            elif isinstance(img_like, Image.Image):
-                return img_like.convert("RGB") if img_like.mode != "RGB" else img_like
-            else:
-                raise TypeError(f"Unsupported image type: {type(img_like)}")
-
         # Normalize to a list of PIL images
         if isinstance(image, list):
-            pil_images = [to_pil(x) for x in image]
+            pil_images = [_to_pil(x) for x in image]
         else:
-            pil_images = [to_pil(image)]
+            pil_images = [_to_pil(image)]
 
         processed = self.image_processor(images=pil_images, return_tensors="pt")
 

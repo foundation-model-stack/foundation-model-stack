@@ -162,26 +162,20 @@ class Idefics3(nn.Module):
     def reset_parameters(self):
         # SiglipVisionHeadless.reset_parameters() recurses via `self.modules()`;
         # initialize the vision tower explicitly to avoid calling that helper.
-        if getattr(self.vision_tower, "head", None) is not None and hasattr(
-            self.vision_tower.head, "reset_parameters"
-        ):
-            self.vision_tower.head.reset_parameters()
-        if getattr(self.vision_tower, "base_model", None) is not None:
-            base = self.vision_tower.base_model
-            if hasattr(base, "embeddings") and hasattr(
-                base.embeddings, "reset_parameters"
-            ):
-                base.embeddings.reset_parameters()
-            if hasattr(base, "encoder") and hasattr(base.encoder, "reset_parameters"):
-                base.encoder.reset_parameters()
-            if hasattr(base, "post_layernorm") and hasattr(
-                base.post_layernorm, "reset_parameters"
-            ):
-                base.post_layernorm.reset_parameters()
-        if getattr(self.text_model, "reset_parameters", None) and callable(
-            self.text_model.reset_parameters
-        ):
-            self.text_model.reset_parameters()
+        def _reset_if_present(module):
+            reset_fn = getattr(module, "reset_parameters", None)
+            if callable(reset_fn):
+                reset_fn()
+
+        _reset_if_present(getattr(self.vision_tower, "head", None))
+
+        base = getattr(self.vision_tower, "base_model", None)
+        if base is not None:
+            _reset_if_present(getattr(base, "embeddings", None))
+            _reset_if_present(getattr(base, "encoder", None))
+            _reset_if_present(getattr(base, "post_layernorm", None))
+
+        _reset_if_present(self.text_model)
         nn.init.xavier_uniform_(self.connector.proj.weight)
 
     def _encode_images(self, images: torch.Tensor) -> torch.Tensor:

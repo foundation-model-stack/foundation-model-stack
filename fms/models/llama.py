@@ -330,7 +330,7 @@ class LLaMAHeadless(nn.Module):
 
     def forward(
         self,
-        x_in,
+        x_in: Optional[torch.Tensor],
         inputs_embeds: Optional[torch.Tensor] = None,
         position_ids=None,
         past_key_value_states=None,

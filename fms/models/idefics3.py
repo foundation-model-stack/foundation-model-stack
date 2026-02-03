@@ -1,4 +1,5 @@
 import logging
+from typing import Optional
 
 from fms.models.idefics3_components import (
     Idefics3,
@@ -100,32 +101,27 @@ def _hf_to_fms_state_dict(input_sd, **kwargs):
             new_sd[f"text_model.{k}"] = v
 
     # ---- connector
+    def _remap_connector_key(key: str) -> Optional[str]:
+        if key.startswith("model."):
+            key = key[len("model.") :]
+        if not key.startswith("connector."):
+            return None
+        key = key[len("connector.") :]
+        # HF SmolVLM uses: modality_projection.proj.weight -> FMS connector.proj.weight
+        if key.startswith("modality_projection.proj."):
+            key = key[len("modality_projection.proj.") :]
+            return f"connector.proj.{key}"
+        if key.startswith("modality_projection."):
+            key = key[len("modality_projection.") :]
+            return f"connector.proj.{key}"
+        if key == "modality_projection":
+            return "connector.proj.weight"
+        return f"connector.{key}"
+
     for k, v in input_sd.items():
-        if k.startswith("model.connector."):
-            kk = k[len("model.connector.") :]
-            # HF SmolVLM uses: modality_projection.proj.weight -> FMS connector.proj.weight
-            if kk.startswith("modality_projection.proj."):
-                kk = kk[len("modality_projection.proj.") :]
-                new_sd[f"connector.proj.{kk}"] = v
-            elif kk.startswith("modality_projection."):
-                kk = kk[len("modality_projection.") :]
-                new_sd[f"connector.proj.{kk}"] = v
-            elif kk == "modality_projection":
-                new_sd["connector.proj.weight"] = v
-            else:
-                new_sd[f"connector.{kk}"] = v
-        elif k.startswith("connector."):
-            kk = k[len("connector.") :]
-            if kk.startswith("modality_projection.proj."):
-                kk = kk[len("modality_projection.proj.") :]
-                new_sd[f"connector.proj.{kk}"] = v
-            elif kk.startswith("modality_projection."):
-                kk = kk[len("modality_projection.") :]
-                new_sd[f"connector.proj.{kk}"] = v
-            elif kk == "modality_projection":
-                new_sd["connector.proj.weight"] = v
-            else:
-                new_sd[f"connector.{kk}"] = v
+        remapped_key = _remap_connector_key(k)
+        if remapped_key is not None:
+            new_sd[remapped_key] = v
 
     return new_sd
 
