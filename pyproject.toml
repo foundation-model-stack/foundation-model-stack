@@ -49,7 +49,8 @@ dev = [
 "pyarrow-stubs==17.16",
 "types-requests==2.32.0.20241016",
 "lm_eval==0.4.7",
-"peft==0.14.0"
+"peft==0.14.0",
+"fms-model-optimizer @ git+https://github.com/foundation-model-stack/fms-model-optimizer.git"
 ]
 
 [tool.setuptools_scm]
