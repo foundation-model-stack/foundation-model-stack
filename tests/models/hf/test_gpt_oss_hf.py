@@ -1,14 +1,9 @@
-from difflib import SequenceMatcher
-from typing import List, Optional
 import pytest
-import torch
-import itertools
 
 from transformers import (
     PretrainedConfig,
     PreTrainedModel,
     PreTrainedTokenizer,
-    AutoTokenizer,
 )
 
 from fms.models.hf.gpt_oss import convert_to_hf
@@ -20,7 +15,6 @@ from fms.testing._internal.hf.model_test_suite import (
     HFConfigTestSuite,
     HFModelCompileTestSuite,
     HFModelFixtureMixin,
-    HFModelGenerationTestSuite,
 )
 from fms.testing._internal.model_test_suite import ModelFixtureMixin
 from fms.utils.config import ModelConfig
