@@ -50,6 +50,15 @@ class HFAdaptedGptOssHeadless(HFDecoderModelArchitecture):
     config_class = HFAdaptedGptOssConfig
     base_model_prefix = "hf_adapted_gpt_oss"
 
+    def _init_weights(self, module):
+        """Initialize weights - called after model creation and after loading state dict"""
+        # Call parent initialization
+        super()._init_weights(module)
+        # Ensure RoPE embeddings are properly initialized
+        if hasattr(self, "decoder") and hasattr(self.decoder, "model"):
+            if hasattr(self.decoder.model, "post_init"):
+                self.decoder.model.post_init()
+
     def __init__(
         self,
         config: PretrainedConfig,
@@ -60,8 +69,17 @@ class HFAdaptedGptOssHeadless(HFDecoderModelArchitecture):
     ):
         # in the case we have not yet received the encoder/decoder/embedding, initialize it here
         if decoder is None or embedding is None:
-            gpt_oss_config = GptOssConfig()
+            # Convert HF config to FMS config by filtering valid parameters
+            from dataclasses import fields
+
+            hf_config_dict = config.to_dict()
+            valid_fms_params = {f.name for f in fields(GptOssConfig)}
+            fms_config_dict = {
+                k: v for k, v in hf_config_dict.items() if k in valid_fms_params
+            }
+            gpt_oss_config = GptOssConfig(**fms_config_dict)
             model = GptOssHeadless(config=gpt_oss_config)
+            model.post_init()  # Initialize RoPE embeddings properly
             decoder = model if decoder is None else decoder
             embedding = model.embedding if embedding is None else embedding
 
@@ -113,14 +131,16 @@ class HFAdaptedGptOssHeadless(HFDecoderModelArchitecture):
             print(f"position_ids: {position_ids.shape}")
             print(position_ids)
 
-            position_ids.masked_fill_(attention_mask == 0, 1)
+            # Don't mask position_ids with 1, keep them as-is for padding tokens
+            # The attention mask will handle padding separately
             if past_key_values:
                 position_ids = position_ids[:, -1].unsqueeze(-1)
         else:
             position_ids = None
 
-        print(f"position_ids: {position_ids.shape}")
-        print(position_ids)
+        if position_ids is not None:
+            print(f"position_ids: {position_ids.shape}")
+            print(position_ids)
 
         # if `inputs_embeds` are passed, we only want to use them in the 1st generation step
         if inputs_embeds is not None and past_key_values is None:
@@ -181,7 +201,7 @@ class HFAdaptedGptOssForCausalLM(LMHeadModelLMHeadMixin, HFAdaptedGptOssHeadless
     _tied_weights_keys = ["embedding.weight", "lm_head.weight"]
 
     def __init__(self, config: HFAdaptedGptOssConfig, *args, **kwargs):
-        super().__init__(config=config, bias=True, *args, **kwargs)
+        super().__init__(config=config, bias=False, *args, **kwargs)
 
     @classmethod
     def _hf_model_from_fms(

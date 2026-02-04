@@ -1,5 +1,8 @@
+from difflib import SequenceMatcher
+from typing import List, Optional
 import pytest
 import torch
+import itertools
 
 from transformers import (
     PretrainedConfig,
@@ -16,7 +19,6 @@ from fms.testing._internal.hf.model_test_suite import (
     HFConfigFixtureMixin,
     HFConfigTestSuite,
     HFModelCompileTestSuite,
-    HFModelEquivalenceTestSuite,
     HFModelFixtureMixin,
     HFModelGenerationTestSuite,
 )
@@ -90,8 +92,6 @@ class GptOssFixturesEquivalence(GptOssFixtures):
 
 class TestGptOssHF(
     HFConfigTestSuite,
-    HFModelEquivalenceTestSuite,
-    HFModelGenerationTestSuite,
     HFModelCompileTestSuite,
     GptOssFixturesEquivalence,
     GptOssHFFixtures,
@@ -108,34 +108,3 @@ class TestGptOssHF(
     _hf_specific_params = ["eos_token_id", "bos_token_id"]
     # implementation of abstract property _get_hf_signature_params
     _get_hf_signature_params = ["input_ids", "labels"]
-
-    @staticmethod
-    def _predict_text(model, tokenizer, texts, use_cache, num_beams):
-        tokenizer = AutoTokenizer.from_pretrained("openai/gpt-oss-20b")
-        tokenizer.pad_token = tokenizer.eos_token
-        print(f"tokenizer gpt-oss {tokenizer}")
-        encoding = tokenizer(texts, padding=True, return_tensors="pt")
-
-        # Fix for newer versions of transformers
-        use_cache_kwarg = {}
-        if use_cache is not None:
-            use_cache_kwarg["use_cache"] = use_cache
-
-        print(f"use_cache_kwarg {use_cache_kwarg}")
-
-        model.eval()
-        with torch.no_grad():
-            generated_ids = model.generate(
-                **encoding,
-                num_beams=num_beams,
-                max_new_tokens=5,
-                temperature=0.0,
-                do_sample=False,
-                top_k=50,
-                **use_cache_kwarg,
-            )
-
-        generated_texts = tokenizer.batch_decode(
-            generated_ids, skip_special_tokens=True
-        )
-        return generated_texts

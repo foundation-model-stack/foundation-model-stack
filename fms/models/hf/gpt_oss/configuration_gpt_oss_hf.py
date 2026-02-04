@@ -75,7 +75,7 @@ class HFAdaptedGptOssConfig(PretrainedConfig):
         if self.layer_types is None:
             self.layer_types = [
                 "sliding_attention" if bool((i + 1) % 2) else "full_attention"
-                for i in range(self.num_hidden_layers)
+                for i in range(self.nlayers)
             ]
 
         # Validate the correctness of rotary position embeddings parameters

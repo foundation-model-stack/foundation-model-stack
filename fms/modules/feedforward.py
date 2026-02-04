@@ -518,13 +518,11 @@ class ConditionalFeedForward(nn.Module):
         return out_glu * (x_linear + 1)
 
     def add_expert_bias(self, out, bias, token_expert_mapping):
+        out = out.clone()
         flat = out.view(-1, out.shape[-1])
         expert_ids = token_expert_mapping.view(-1)
-
-        for e in range(bias.shape[0]):
-            mask = expert_ids == e
-            if mask.any():
-                flat[mask] += bias[e]
+        expert_biases = bias[expert_ids]
+        flat += expert_biases
 
         return out
 
