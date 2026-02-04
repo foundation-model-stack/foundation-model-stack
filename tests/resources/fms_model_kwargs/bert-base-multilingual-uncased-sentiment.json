@@ -1,0 +1,19 @@
+{
+    "activation_fn": "gelu",
+    "architecture": "bert_classification",
+    "emb_dim": 768,
+    "hidden_grow_factor": 4.0,
+    "max_pos": 512,
+    "model_path": null,
+    "nheads": 12,
+    "nlayers": 12,
+    "norm_eps": 1e-12,
+    "num_classes": 5,
+    "p_dropout": 0.1,
+    "pad_id": 0,
+    "pos_emb": "bert",
+    "src_vocab_size": 105879,
+    "tie_heads": true,
+    "type_vocab_size": 2,
+    "variant": "base"
+}

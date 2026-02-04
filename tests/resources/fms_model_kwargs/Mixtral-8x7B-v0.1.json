@@ -1,0 +1,18 @@
+{
+    "architecture": "mixtral",
+    "dim": 4096,
+    "hidden_dim": 14336,
+    "hidden_grow_factor": 3.5,
+    "kv_heads": 8,
+    "max_expected_seq_len": 32768,
+    "model_path": null,
+    "nheads": 32,
+    "nlayers": 32,
+    "norm_eps": 1e-05,
+    "num_experts": 8,
+    "rope_base": 1000000.0,
+    "src_vocab_size": 32000,
+    "tie_heads": false,
+    "top_k_experts": 2,
+    "variant": "8x7b"
+}

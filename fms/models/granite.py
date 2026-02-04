@@ -99,6 +99,7 @@ class GraniteBlock(nn.Module):
             linear_config=self.config.linear_config,
             scale_factor=self.config.attention_multiplier,
         )
+
         self.ff_sub_layer = GatedLinearUnit(
             self.config.emb_dim,
             hidden_grow_factor=self.config.hidden_grow_factor,
