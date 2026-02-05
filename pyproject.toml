@@ -56,9 +56,6 @@ dev = [
 [tool.setuptools_scm]
 version_file = "fms/_version.py"
 
-[tool.pytest.ini_options]
-asyncio_mode = "auto"
-
 [tool.setuptools.packages.find]
 where = [""]
 include = ["fms", "fms*", "tests/models*"]
