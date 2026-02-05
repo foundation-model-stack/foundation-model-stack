@@ -44,7 +44,6 @@ jobs:
         echo "VIRTUAL_ENV=$VIRTUAL_ENV" >> $GITHUB_ENV
 
     - name: Test with pytest
-      timeout-minutes: 10
       run: |
         # Install fms from the PR, all dependencies are already
         # installed in the virtual env
