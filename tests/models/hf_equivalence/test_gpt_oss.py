@@ -12,11 +12,9 @@ gpt_oss = get_model("hf_pretrained", "openai/gpt-oss-20b", device_type="cpu")
 tokenizer = AutoTokenizer.from_pretrained("openai/gpt-oss-20b")
 
 gpt_oss.eval()  # put the model in evaluation mode
-print(gpt_oss)
-print(gpt_oss.config)
+
 gpt_oss_hf = to_hf_api(gpt_oss)
 
-print(gpt_oss_hf)
 text_options = [
     ["hello how are you?"],
     ["hello how are you?", "a: this is a test. b: this is another test. a:"],
