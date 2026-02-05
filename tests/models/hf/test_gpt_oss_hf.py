@@ -22,23 +22,27 @@ from fms.utils.config import ModelConfig
 from ..test_gpt_oss import GptOssFixtures
 
 
+# Shared test configuration parameters
+TEST_GPT_OSS_CONFIG_PARAMS = {
+    "head_dim": 16,
+    "norm_eps": 1e-05,
+    "nheads": 16,
+    "kvheads": 8,
+    "nlayers": 4,
+    "num_experts": 8,
+    "src_vocab_size": 384,
+    "emb_dim": 1024,
+    "rope_base": 150000.0,
+    "rope_scaling_factor": 32.0,
+    "rope_ntk_alpha": 1.0,
+    "rope_ntk_beta": 32.0,
+}
+
+
 class GptOssHFFixtures(ModelFixtureMixin, HFConfigFixtureMixin, HFModelFixtureMixin):
     @pytest.fixture(scope="class", autouse=True)
     def fms_hf_model(self, model: GptOss, fms_hf_config: PretrainedConfig, **kwargs):
-        fms_hf_config = PretrainedConfig(
-            head_dim=16,
-            norm_eps=1e-05,
-            nheads=16,
-            kvheads=8,
-            nlayers=4,
-            num_experts=8,
-            src_vocab_size=384,
-            emb_dim=1024,
-            rope_base=150000.0,
-            rope_scaling_factor=32.0,
-            rope_ntk_alpha=1.0,
-            rope_ntk_beta=32.0,
-        )
+        fms_hf_config = PretrainedConfig(**TEST_GPT_OSS_CONFIG_PARAMS)
         return HFAdaptedGptOssForCausalLM.from_fms_model(
             model, **fms_hf_config.to_dict()
         )
@@ -71,21 +75,7 @@ class GptOssFixturesEquivalence(GptOssFixtures):
 
     @pytest.fixture(scope="class", autouse=True)
     def config(self) -> ModelConfig:
-        gpt_oss_config = GptOssConfig(
-            head_dim=16,
-            norm_eps=1e-05,
-            nheads=16,
-            kvheads=8,
-            nlayers=4,
-            num_experts=8,
-            src_vocab_size=384,
-            emb_dim=1024,
-            rope_base=150000.0,
-            rope_scaling_factor=32.0,
-            rope_ntk_alpha=1.0,
-            rope_ntk_beta=32.0,
-        )
-        return gpt_oss_config
+        return GptOssConfig(**TEST_GPT_OSS_CONFIG_PARAMS)
 
 
 class TestGptOssHF(

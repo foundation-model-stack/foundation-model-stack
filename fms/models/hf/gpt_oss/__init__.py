@@ -7,6 +7,26 @@ from fms.models.hf.gpt_oss.modeling_gpt_oss_hf import (
 )
 
 
+# Default configuration parameters for GptOss model conversion
+DEFAULT_GPT_OSS_CONFIG = {
+    "head_dim": 16,
+    "norm_eps": 1e-05,
+    "num_attention_heads": 16,
+    "num_key_value_heads": 8,
+    "num_hidden_layers": 4,
+    "vocab_size": 384,
+    "hidden_size": 1024,
+    "intermediate_size": 1024,
+    "num_experts": 8,
+    "num_experts_per_tok": 4,
+    "num_local_experts": 8,
+    "rope_base": 150000.0,
+    "rope_scaling_factor": 32.0,
+    "rope_ntk_alpha": 1.0,
+    "rope_ntk_beta": 32.0,
+}
+
+
 def convert_to_hf(
     fms_hf_model: HFAdaptedGptOssForCausalLM,
 ) -> GptOssForCausalLM:
@@ -23,25 +43,7 @@ def convert_to_hf(
     GptOssForCausalLM,
         an HF equivalent model
     """
-    oss_hf_model = GptOssForCausalLM(
-        GptOssConfig(
-            head_dim=16,
-            norm_eps=1e-05,
-            num_attention_heads=16,
-            num_key_value_heads=8,
-            num_hidden_layers=4,
-            vocab_size=384,
-            hidden_size=1024,
-            intermediate_size=1024,
-            num_experts=8,
-            num_experts_per_tok=4,
-            num_local_experts=8,
-            rope_base=150000.0,
-            rope_scaling_factor=32.0,
-            rope_ntk_alpha=1.0,
-            rope_ntk_beta=32.0,
-        ),
-    )
+    oss_hf_model = GptOssForCausalLM(GptOssConfig(**DEFAULT_GPT_OSS_CONFIG))
 
     with torch.no_grad():
         print(f"{oss_hf_model=}")
