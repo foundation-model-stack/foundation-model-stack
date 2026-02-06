@@ -64,3 +64,8 @@ include = ["fms", "fms*", "tests/models*"]
 Homepage = "https://github.com/foundation-model-stack/foundation-model-stack"
 Repository = "https://github.com/foundation-model-stack/foundation-model-stack"
 Issues = "https://github.com/foundation-model-stack/foundation-model-stack/issues"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
