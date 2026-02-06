@@ -48,7 +48,7 @@ jobs:
         # Install fms from the PR, all dependencies are already
         # installed in the virtual env
         pip install .
-        pytest -vv -rP tests/ no:anyio
+        pytest no:anyio -vv -rP tests/ 
 
     - name: Save Virtualenv
       id: cache-venv-save
