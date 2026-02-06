@@ -1,5 +1,3 @@
-import torch
-
 from transformers import GptOssConfig, GptOssForCausalLM
 
 from fms.models.hf.gpt_oss.modeling_gpt_oss_hf import (
@@ -43,6 +41,8 @@ def convert_to_hf(
     GptOssForCausalLM,
         an HF equivalent model
     """
+    import torch
+
     oss_hf_model = GptOssForCausalLM(GptOssConfig(**DEFAULT_GPT_OSS_CONFIG))
 
     with torch.no_grad():
