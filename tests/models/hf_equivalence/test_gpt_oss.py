@@ -33,7 +33,6 @@ def _predict_text(model, tokenizer, texts, use_cache, num_beams):
 
 @pytest.mark.slow
 def test_gpt_oss_20b_equivalence():
-
     from transformers import AutoTokenizer, AutoModelForCausalLM
     from difflib import SequenceMatcher
 
