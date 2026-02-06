@@ -48,7 +48,10 @@ jobs:
         # Install fms from the PR, all dependencies are already
         # installed in the virtual env
         pip install .
-        pytest -p no:anyio -vv -rP tests/ 
+        export OMP_NUM_THREADS=1
+        export MKL_NUM_THREADS=1
+        export OPENBLAS_NUM_THREADS=1
+        pytest -vv -rP tests/ 
 
     - name: Save Virtualenv
       id: cache-venv-save
