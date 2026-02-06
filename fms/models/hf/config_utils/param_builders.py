@@ -289,6 +289,28 @@ def build_bert_params(config: PretrainedConfig, is_classify: bool = False) -> di
     )
 
 
+def build_gpt_oss_params(config: PretrainedConfig) -> dict:
+    """Param builder for mapping GptOssForCausalLM to FMS."""
+    config_params = {
+        "head_dim": getattr(config, "head_dim", 64),
+        "norm_eps": getattr(config, "rms_norm_eps", 1e-05),
+        "kvheads": config.num_key_value_heads,
+        "num_experts": config.num_local_experts,
+        "rope_base": getattr(config, "rope_base", 150000.0),
+        "rope_scaling_factor": getattr(config, "rope_scaling_factor", 32.0),
+        "rope_ntk_alpha": getattr(config, "rope_ntk_alpha", 1.0),
+        "rope_ntk_beta": getattr(config, "rope_ntk_beta", 32.0),
+        "sliding_window": getattr(config, "sliding_window", 128),
+        "top_k_experts": config.num_experts_per_tok,
+        "emb_dim": config.hidden_size,
+        "max_expected_seq_len": config.max_position_embeddings,
+        "activation_fn": config.hidden_act,
+    }
+    return model_params_with_common_opts(
+        config, config_params, inner_dim=config.intermediate_size
+    )
+
+
 def model_params_with_common_opts(
     config: PretrainedConfig, config_params: dict, inner_dim: int
 ) -> dict:
