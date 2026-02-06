@@ -1,4 +1,5 @@
 import pytest
+import torch
 
 from fms.models.gpt_oss import GptOss, GptOssConfig
 from fms.testing._internal.model_test_suite import (
@@ -21,6 +22,8 @@ class GptOssFixtures(ConfigFixtureMixin, ModelFixtureMixin):
     @pytest.fixture(scope="class", autouse=True)
     def uninitialized_model(self, config: GptOssConfig):
         model = GptOss(config)
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        model.to(device)
         model.base_model.post_init()
         return model
 
