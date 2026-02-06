@@ -21,6 +21,7 @@ class GptOssFixtures(ConfigFixtureMixin, ModelFixtureMixin):
     @pytest.fixture(scope="class", autouse=True)
     def uninitialized_model(self, config: GptOssConfig):
         import torch
+
         model = GptOss(config)
         device = "cuda" if torch.cuda.is_available() else "cpu"
         model.to(device)
