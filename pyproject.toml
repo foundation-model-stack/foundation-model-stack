@@ -69,3 +69,4 @@ Issues = "https://github.com/foundation-model-stack/foundation-model-stack/issue
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_functions = ["test_*"]
+addopts = ["--import-mode=importlib"]
