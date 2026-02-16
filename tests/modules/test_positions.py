@@ -1,9 +1,10 @@
 import math
 import unittest
 
+import pytest
 import torch
 
-from fms.modules.positions import RotaryEmbedding
+from fms.modules.positions import RotaryEmbedding, PixtralRotaryEmbedding
 
 
 class RotaryEmbeddingTests(unittest.TestCase):
@@ -234,3 +235,197 @@ class RotaryEmbeddingTests(unittest.TestCase):
         # being double the length is equivalent to being (approximately) half the base
         torch.testing.assert_close(adj_q, ntk_q)
         torch.testing.assert_close(adj_k, ntk_k)
+
+
+class PixtralRotaryEmbeddingTest(unittest.TestCase):
+    def test_shapes(self):
+        # Configuration
+        dim = 16
+        ratio = 10_000.0
+        image_size = 16
+        patch_size = 4
+        batch_size = 2
+        num_heads = 2
+
+        rope = PixtralRotaryEmbedding(dim, ratio, image_size, patch_size)
+
+        self.assertEqual(rope.dim, dim)
+        self.assertEqual(rope.max_patches_per_side, image_size // patch_size)
+
+        # Create dummy query and key tensors
+        q = torch.randn(batch_size, patch_size, num_heads, dim)
+        k = torch.randn(batch_size, patch_size, num_heads, dim)
+
+        # Test with explicit position_ids
+        height = patch_size
+        width = patch_size
+        # Create a sample grid; this is similar to get_positions_in_meshgrid for pixtral
+        mesh = torch.meshgrid(torch.arange(height), torch.arange(width), indexing="ij")
+        patch_pod_ids = torch.stack(mesh, dim=-1).reshape(-1, 2)
+        # Expand the batch dim
+        position_ids = patch_pod_ids.unsqueeze(0).repeat(batch_size, 1, 1)
+
+        q_rot, k_rot = rope.adjusted_qk(q, k, position_ids=position_ids)
+
+        assert q_rot.shape == q.shape
+        assert k_rot.shape == k.shape
+
+    def test_requires_positions(self):
+        """ensure that pixtral rope requires position IDs for 2D encoding."""
+        # Configuration
+        dim = 16
+        ratio = 10_000.0
+        image_size = 16
+        patch_size = 4
+        batch_size = 2
+        num_heads = 2
+
+        rope = PixtralRotaryEmbedding(dim, ratio, image_size, patch_size)
+
+        self.assertEqual(rope.dim, dim)
+        self.assertEqual(rope.max_patches_per_side, image_size // patch_size)
+
+        # Create dummy query and key tensors
+        q = torch.randn(batch_size, patch_size, num_heads, dim)
+        k = torch.randn(batch_size, patch_size, num_heads, dim)
+
+        # Test with explicit position_ids; this is allowed by the
+        # position encoder superclass, but not for pixtral since
+        # we need to know the grid layout (i.e., n x m and m x n
+        # will have different positional encodings when n and m are
+        # different).
+        with pytest.raises(ValueError):
+            rope.adjusted_qk(q, k, position_ids=None)
+
+    def test_rope_at_position_0(self):
+        """position (0,0) should have no rotation"""
+        # Configuration
+        dim = 16
+        ratio = 10_000.0
+        image_size = 16
+        patch_size = 4
+        batch_size = 1
+        num_heads = 2
+
+        rope = PixtralRotaryEmbedding(dim, ratio, image_size, patch_size)
+
+        # Create dummy query and key tensors
+        q = torch.randn(batch_size, patch_size, num_heads, dim)
+        k = torch.randn(batch_size, patch_size, num_heads, dim)
+
+        # Create 2D position_ids with batch dimension: [batch_size, seq_len, 2]
+        # Position (0,0) means both height and width coordinates are 0
+        position_ids = torch.zeros(batch_size, patch_size, 2, dtype=torch.long)
+
+        # Apply pixtral rotary embeddings
+        q_rot, _ = rope.adjusted_qk(q, k, position_ids=position_ids)
+
+        torch.testing.assert_close(
+            q_rot[0, 0, 0, :],
+            q[0, 0, 0, :],
+            atol=1e-6,
+            rtol=1e-6,
+            msg="Position (0,0) should have no rotation",
+        )
+
+    def test_hf_fms_equivalence(self):
+        """Test that FMS Pixtral RoPE matches HF Transformers implementation"""
+        try:
+            from transformers.models.pixtral.configuration_pixtral import (
+                PixtralVisionConfig,
+            )
+            from transformers.models.pixtral.modeling_pixtral import (
+                PixtralRotaryEmbedding as TransformersPixtralEmb,
+                apply_rotary_pos_emb,
+                position_ids_in_meshgrid as hf_position_ids_in_meshgrid,
+            )
+        except ImportError:
+            self.skipTest("Unable to import Transformer's Pixtral Model / Config")
+
+        from fms.models.pixtral_vision import (
+            get_positions_in_meshgrid as fms_get_positions_in_meshgrid,
+        )
+
+        # Configuration
+        dim = 64
+        ratio = 10_000.0
+        image_size = 1024
+        patch_size = 16
+        batch_size = 1
+        num_heads = 16
+        patch_h, patch_w = 2, 3
+        num_patches = patch_h * patch_w
+
+        # Create sample inputs
+        query_proj = torch.ones(
+            batch_size, num_heads, num_patches, dim, dtype=torch.float32
+        )
+        key_proj = torch.ones(
+            batch_size, num_heads, num_patches, dim, dtype=torch.float32
+        )
+
+        # HF position_ids (1D flattened)
+        position_ids_hf = hf_position_ids_in_meshgrid(
+            patch_embeds_list=[torch.rand((1024, patch_h, patch_w))],
+            max_width=image_size // patch_size,
+        )
+
+        # FMS position_ids (2D with batch dimension)
+        position_ids_fms = fms_get_positions_in_meshgrid(
+            patch_embeds_list=[torch.rand((1024, patch_h, patch_w))],
+        )
+
+        ############ Get HF results
+        hf_config = PixtralVisionConfig(
+            **{
+                "hidden_size": 1024,
+                "head_dim": dim,
+                "rope_theta": ratio,
+                "image_size": image_size,
+                "patch_size": patch_size,
+            }
+        )
+        transformers_emb = TransformersPixtralEmb(hf_config)
+        cos, sin = transformers_emb(query_proj, position_ids_hf)
+        query_hf, key_hf = apply_rotary_pos_emb(
+            query_proj, key_proj, cos, sin, unsqueeze_dim=0
+        )
+
+        ############ Get FMS results
+        fms_emb = PixtralRotaryEmbedding(dim, ratio, image_size, patch_size)
+
+        # In FMS, the query and key are viewed as [1, 1064, 16, 64], i.e,.
+        # [bsz, num_patches, num_heads, head_dim] prior to invoking the rotational
+        # embeddings, so we need to permute the inputs.
+        query_fms_format = query_proj.transpose(1, 2)
+        key_fms_format = key_proj.transpose(1, 2)
+
+        query_fms, key_fms = fms_emb.adjusted_qk(
+            query_fms_format, key_fms_format, position_ids_fms
+        )
+
+        # Convert FMS format back to HF format
+        def permute_fms_to_hf(tensor):
+            """
+            Permute tensor from FMS RoPE format to HF RoPE format.
+            FMS: [x0, y0, x1, y1, x2, y2, ..., x15, y15] (interleaved pairs)
+            HF: [x0, x1, x2, ..., x15, y0, y1, y2, ..., y15] (split halves)
+            """
+            # [B, L, H, D/2]
+            *batch_dims, head_dim = tensor.shape
+            half_dim = head_dim // 2
+            # Reshape to separate interleaved pairs
+            paired = tensor.reshape(*batch_dims, half_dim, 2)
+            # Split into first and second elements of each pair
+            first_half = paired[..., 0]  # x0, x1, x2, ..., x15
+            second_half = paired[..., 1]  # y0, y1, y2, ..., y15
+
+            # Concatenate: first all x's, then all y's
+            return torch.cat([first_half, second_half], dim=-1)
+
+        adjusted_query_fms = permute_fms_to_hf(query_fms.transpose(1, 2))
+        adjusted_key_fms = permute_fms_to_hf(key_fms.transpose(1, 2))
+
+        # Compare results
+        torch.testing.assert_close(adjusted_query_fms, query_hf, rtol=1e-4, atol=1e-5)
+        torch.testing.assert_close(adjusted_key_fms, key_hf, rtol=1e-4, atol=1e-5)
