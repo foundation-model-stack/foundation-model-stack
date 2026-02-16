@@ -259,6 +259,10 @@ class Mistral3(nn.Module):
             pixel_values=pixel_values,
             image_sizes=image_sizes,
             output_hidden_states=True,
+            # To make sure we use bidirectional attention operation which sets
+            # is_causal_mask=False, which is needed for pixtral being used as
+            # image features
+            attn_name="sdpa_bidirectional",
         )
 
         # Handle multiple vision feature layers
