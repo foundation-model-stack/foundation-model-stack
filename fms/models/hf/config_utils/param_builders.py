@@ -312,6 +312,8 @@ def build_gpt_oss_params(config: PretrainedConfig) -> dict:
     return model_params_with_common_opts(
         config, config_params, inner_dim=config.intermediate_size
     )
+
+
 def build_pixtral_params(config: PretrainedConfig) -> dict:
     """Param builder for mapping Pixtral to FMS."""
     # NOTE: Layer norm eps is hardcoded in the Transformers class
