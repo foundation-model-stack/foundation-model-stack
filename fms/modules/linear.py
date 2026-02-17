@@ -89,17 +89,17 @@ def get_linear_type(
                 "the callable set up in linear_config['linear_type']. Function failed "
                 f"receiving module_name={module_name}. Check linear_type function."
             )
-    if isinstance(linear_type, str):
+    elif isinstance(linear_type, str):
         linear_type_str = linear_type.lower()
         if linear_type_str not in __type_factory_map:
             raise ValueError(
                 f"Unsupported linear_type `{linear_type_str}` in linear_config."
             )
-    if linear_type_str:
-        return linear_type_str
-    raise ValueError(
-        "linear_type must be either a supported string or a module-selection function."
-    )
+    else:
+        raise ValueError(
+            "linear_type must be either a supported string or a module-selection function."
+        )
+    return linear_type_str
 
 
 class UninitializedLinear(UninitializedModule):
@@ -142,11 +142,16 @@ def get_linear(
 
     linear_type = get_linear_type(linear_config, module_name)
 
+    extended_linear_config: dict = {}
+    if linear_config is not None:
+        extended_linear_config.update(**linear_config)
+    extended_linear_config["module_name"] = module_name
+
     if linear_type in __type_factory_map:
         if linear_type == "torch_linear":
             return __type_factory_map[linear_type](in_features, out_features, bias)
         return __type_factory_map[linear_type](
-            in_features, out_features, bias, linear_config
+            in_features, out_features, bias, extended_linear_config
         )
     raise KeyError(f"Unsupported linear type `{linear_type}`")
 

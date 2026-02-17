@@ -382,8 +382,12 @@ class SSM(nn.Module):
             ).float()
             B = B.reshape(batch_size, seq_len, -1, self.ssm_state_size).float()
             C = C.reshape(batch_size, seq_len, -1, self.ssm_state_size).float()
-            B = B.repeat(1, 1, self.nheads // self.n_groups, 1)
-            C = C.repeat(1, 1, self.nheads // self.n_groups, 1)
+            B = B.repeat_interleave(
+                self.nheads // self.n_groups, dim=2, output_size=self.nheads
+            )
+            C = C.repeat_interleave(
+                self.nheads // self.n_groups, dim=2, output_size=self.nheads
+            )
             pad_size = (self.chunk_size - seq_len % self.chunk_size) % self.chunk_size
 
             D_residual = self.D[..., None] * pad_tensor_by_size(hidden_states, pad_size)

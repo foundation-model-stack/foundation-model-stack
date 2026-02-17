@@ -24,7 +24,7 @@ jobs:
       id: cache-venv-restore
       with:
         path: ./.venv/
-        key: ${{ runner.os }}-${{ steps.setup_python.outputs.python-version }}-venv-${{ hashFiles('*requirements.txt') }}
+        key: ${{ runner.os }}-${{ steps.setup_python.outputs.python-version }}-venv-${{ hashFiles('pyproject.toml') }}
         restore-keys: |
           ${{ runner.os }}-${{ steps.setup_python.outputs.python-version }}-venv-
     - name: Install dependencies
@@ -37,7 +37,7 @@ jobs:
         # In case of a cache hit on the primary key, this will be a no-op
         # In case of a cache miss, but hit on a secondary key, this will update what's changed
         python -m pip install --upgrade pip
-        pip install -r test-requirements.txt
+        pip install .[dev]
         
         # Enables the virtual env for following steps
         echo "$VIRTUAL_ENV/bin" >> $GITHUB_PATH

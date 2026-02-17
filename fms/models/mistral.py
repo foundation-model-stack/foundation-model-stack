@@ -2,7 +2,8 @@ import logging
 import math
 import re
 from dataclasses import dataclass, field
-from typing import Any, Mapping, Optional, Tuple, Unpack
+from typing import Any, Mapping, Optional, Tuple
+from typing_extensions import Unpack
 
 import torch
 import torch.nn as nn
@@ -24,6 +25,7 @@ from fms.modules.positions import RotaryEmbedding
 from fms.utils import serialization
 from fms.utils.activation import str_to_activation
 from fms.utils.config import ModelConfig
+from fms.utils.headless import gather_outputs
 
 
 logger = logging.getLogger(__name__)
@@ -61,7 +63,7 @@ logger = logging.getLogger(__name__)
   "num_key_value_heads": 8,
   "rms_norm_eps": 1e-05,
   "rope_theta": 1000000.0,
-  "sliding_window": null,     X 
+  "sliding_window": null,     X
   "tie_word_embeddings": false,
   "torch_dtype": "bfloat16",
   "transformers_version": "4.42.0.dev0",
@@ -81,6 +83,7 @@ class MistralConfig(ModelConfig):
     p_dropout: float = 0.0
     activation_fn: str = "swish"
     emb_dim: int = 4096
+    head_dim: int = 128  # getattr(config, "head_dim", None) or config.hidden_size // config.num_attention_heads
     max_expected_seq_len: int = 32768
     kvheads: int = 8
     norm_eps: float = 1e-5
@@ -99,8 +102,9 @@ class MistralBlock(nn.Module):
     def __init__(self, config: MistralConfig, rotary_emb: RotaryEmbedding):
         super(MistralBlock, self).__init__()
         self.config = config
-        emb_kq = self.config.emb_dim // self.config.nheads
-        emb_v = self.config.emb_dim // self.config.nheads
+
+        emb_kq = config.head_dim
+        emb_v = config.head_dim
 
         self.ln = LayerNormParameterized(
             self.config.emb_dim,
@@ -213,11 +217,12 @@ class MistralHeadless(nn.Module):
         )
 
         self.rot_emb = RotaryEmbedding(
-            dim=self.config.emb_dim // self.config.nheads,
+            dim=self.config.head_dim,
             scaling=self.config.rope_scaling,
             max_seq_len=self.config.max_expected_seq_len,
             ratio=self.config.rope_base,
         )
+
         # RoPE init
         for device in set(
             [param.device for param in self.parameters()]
@@ -393,7 +398,7 @@ class Mistral(nn.Module):
         position_ids: Optional[torch.LongTensor] = None,
         past_key_value_states: Optional[Tuple[torch.FloatTensor,]] = None,
         use_cache: bool = False,
-        only_last_token: bool = False,
+        last_n_tokens: int = 0,
         **attn_kwargs: Unpack[AttentionKwargs],
     ):
         get_attention_type(**attn_kwargs)["validate_attn_kwargs"](
@@ -406,8 +411,7 @@ class Mistral(nn.Module):
             x, position_ids, past_key_value_states, use_cache, **attn_kwargs
         )
 
-        if only_last_token:
-            output = output[:, -1, :]
+        output = gather_outputs(output, last_n_tokens, **attn_kwargs)
         preds = self.head(output)
 
         if use_cache:
@@ -525,7 +529,7 @@ def _hf_to_fms_rope(
     new_sd = {}
 
     if model_config:
-        head_size = model_config.emb_dim // model_config.nheads
+        head_size = model_config.head_dim
         linear_type = "torch_linear"
         if model_config.linear_config:
             linear_type = model_config.linear_config["linear_type"]
@@ -550,7 +554,7 @@ def _hf_to_fms_rope(
         # Therefore, to make FMS produce the correct order of outputs when
         # loading from an HF checkpoint, we need to undo the transformation
         # that HF does from the original Meta weights:
-        if bool(trans_required_pattern.match(name)):
+        if bool(trans_required_pattern.search(name)):
             temp = param
             if "gptq" in linear_type and temp.dim() == 2:
                 # GPTQ qweights are [in_feat, out_feat] (unlike usual [out_feat, in_feat])

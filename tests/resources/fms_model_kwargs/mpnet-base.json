@@ -1,0 +1,20 @@
+{
+    "activation_fn": "gelu",
+    "architecture": "mpnet",
+    "bos_token_id": 0,
+    "emb_dim": 768,
+    "eos_token_id": 2,
+    "hidden_dropout_prob": 0.1,
+    "hidden_grow_factor": 4.0,
+    "layer_norm_eps": 1e-05,
+    "max_expected_seq_len": 514,
+    "model_path": null,
+    "nheads": 12,
+    "nlayers": 12,
+    "p_dropout": 0.1,
+    "pad_id": 1,
+    "relative_attention_num_buckets": 32,
+    "src_vocab_size": 30527,
+    "tie_heads": true,
+    "variant": "v2"
+}

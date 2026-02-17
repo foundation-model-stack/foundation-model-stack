@@ -1,6 +1,7 @@
 import functools
 from dataclasses import dataclass
-from typing import Any, List, Mapping, Optional, Tuple, Unpack
+from typing import Any, List, Mapping, Optional, Tuple
+from typing_extensions import Unpack
 
 import torch
 import torch.nn as nn
@@ -16,6 +17,7 @@ from fms.modules.feedforward import FeedForwardBlock
 from fms.utils import serialization
 from fms.utils.activation import str_to_activation
 from fms.utils.config import ModelConfig
+from fms.utils.headless import gather_outputs
 
 
 @dataclass
@@ -38,6 +40,7 @@ class GPTBigCodeConfig(ModelConfig):
         None  # pass as {"linear_type": str, <other kwargs>}
     )
     fused_weights: bool = True
+    tie_heads: bool = True
 
 
 class GPTBigCodeBlock(nn.Module):
@@ -261,9 +264,6 @@ class GPTBigCode(nn.Module):
             self.config.emb_dim, self.config.src_vocab_size, bias=False
         )
 
-        # this model ties weights, so we tie here
-        self.head.weight = self.base_model.embedding.weight
-
     @classmethod
     def from_config(cls, config: GPTBigCodeConfig) -> "GPTBigCode":
         return cls(config)
@@ -290,12 +290,13 @@ class GPTBigCode(nn.Module):
     def post_init(self):
         # This function is called in `get_model` after the model is fully initalized in the correct device
 
-        # this model ties weights, so we tie here
-        # make sure you assign the non-meta weights to the meta parameters
-        if self.head.weight.device == torch.device("meta"):
-            self.head.weight = self.base_model.embedding.weight
-        else:
-            self.base_model.embedding.weight = self.head.weight
+        # if this model ties weights, they are tied here
+        if self.config.tie_heads:
+            # handle assignment of non-meta weights to meta parameters
+            if self.head.weight.device == torch.device("meta"):
+                self.head.weight = self.base_model.embedding.weight
+            else:
+                self.base_model.embedding.weight = self.head.weight
 
     def forward(
         self,
@@ -303,7 +304,7 @@ class GPTBigCode(nn.Module):
         position_ids: Optional[torch.LongTensor] = None,
         past_key_value_states: Optional[Tuple[torch.FloatTensor,]] = None,
         use_cache: bool = False,
-        only_last_token: bool = False,
+        last_n_tokens: int = 0,
         **attn_kwargs: Unpack[AttentionKwargs],
     ):
         get_attention_type(**attn_kwargs)["validate_attn_kwargs"](
@@ -321,8 +322,7 @@ class GPTBigCode(nn.Module):
             **attn_kwargs,
         )
 
-        if only_last_token:
-            output = output[:, -1, :]
+        output = gather_outputs(output, last_n_tokens, **attn_kwargs)
         preds = self.head(output)
 
         if use_cache:

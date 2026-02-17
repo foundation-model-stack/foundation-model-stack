@@ -1,0 +1,65 @@
+[build-system]
+build-backend = "setuptools.build_meta"
+requires = [
+    "setuptools>=60",
+    "setuptools-scm>=8.0"
+    ]
+
+[project]
+name = "ibm-fms"
+dynamic = ["version"]
+description = "Foundation Model Stack is a collection of components for development, inference, training, and tuning of foundation models leveraging PyTorch native components."
+authors = [
+  {name = "Antoni Viros i Martin", email= "aviros@ibm.com"},
+  {name = "Davis Wertheimer", email= "Davis.Wertheimer@ibm.com"},
+  {name = "Joshua Rosenkranz", email = "jmrosenk@us.ibm.com"},
+  {name = "Raghu Kiran Ganti", email= "rganti@us.ibm.com"},
+]
+license = {text = "Apache-2.0"}
+readme = "README.md"
+requires-python = ">=3.11,<3.13"
+keywords = ['ibm-fms']
+classifiers=[
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Testing",
+    "Topic :: Software Development :: Testing :: Unit",
+    "Topic :: Software Development :: Libraries :: Python Modules"
+]
+dependencies = [
+  "torch >= 2.5.1",
+]
+
+[project.optional-dependencies]
+hf = ["transformers==4.48.3"]
+dev = [
+"mypy==1.15.0",
+"mypy-extensions==1.0.0",
+"pytest==8.3.4",
+"sentencepiece==0.2.0",
+"transformers==4.55.4",
+"pyarrow-stubs==17.16",
+"types-requests==2.32.0.20241016",
+"lm_eval==0.4.7",
+"peft==0.14.0"
+]
+
+[tool.setuptools_scm]
+version_file = "fms/_version.py"
+
+[tool.setuptools.packages.find]
+where = [""]
+include = ["fms", "fms*", "tests/models*"]
+
+[project.urls]
+Homepage = "https://github.com/foundation-model-stack/foundation-model-stack"
+Repository = "https://github.com/foundation-model-stack/foundation-model-stack"
+Issues = "https://github.com/foundation-model-stack/foundation-model-stack/issues"

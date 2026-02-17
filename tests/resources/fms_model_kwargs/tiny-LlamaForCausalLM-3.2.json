@@ -1,0 +1,18 @@
+{
+    "architecture": "llama",
+    "attn_bias": false,
+    "emb_dim": 8,
+    "hidden_grow_factor": 4.0,
+    "kvheads": 2,
+    "max_expected_seq_len": 2048,
+    "mlp_bias": false,
+    "model_path": null,
+    "multiple_of": 1,
+    "nheads": 4,
+    "nlayers": 2,
+    "norm_eps": 1e-06,
+    "rope_theta": 10000.0,
+    "src_vocab_size": 128256,
+    "tie_heads": false,
+    "variant": "micro"
+}

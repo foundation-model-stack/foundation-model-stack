@@ -8,5 +8,5 @@ class UninitializedModule(nn.Module):
     def forward(self, *args, **kwargs):
         raise RuntimeError("I haven't been initialized yet!")
 
-    def initialize(self, name):
+    def initialize(self, name) -> nn.Module:
         raise RuntimeError("I have to be replaced by a child class!")

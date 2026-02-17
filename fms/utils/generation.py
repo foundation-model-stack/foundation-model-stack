@@ -1,6 +1,7 @@
 import logging
 import time
-from typing import Any, Callable, Iterable, List, MutableMapping, Optional, Tuple, Union
+from typing import Any, Callable, List, Optional, Tuple, Union
+from collections.abc import Iterable, MutableMapping
 
 from fms.modules.attention import get_attention_type
 import torch
@@ -16,6 +17,8 @@ def pad_input_ids(
     input_ids_list: List[torch.Tensor],
     min_pad_length: int = 0,
     is_causal_mask=True,
+    padding_side="left",
+    position_ids_offset=0,
 ) -> Tuple[torch.Tensor, MutableMapping[str, Any]]:
     """
     Convert a list of Tensors to a rectangular tensor. Return extra padding kwargs for the position_ids and mask, since
@@ -28,6 +31,9 @@ def pad_input_ids(
     min_pad_length: int
         pad to a min length provided. If the min_pad_length is less than the largest input_ids in the input_ids_list,
         padding will be determined based on the largest length input_ids.
+    position_ids_offset: int
+        some models are trained with position_ids that do not start at 0 but at pad_id + 1. The default parameter
+        here will work for most models, but for example MPNet requires passing a real pad_id.
 
     Returns
     -------
@@ -50,16 +56,21 @@ def pad_input_ids(
 
         # Setting this to 0, however if 0 is the eos, we will end up truncating the output if using truncate_after_eos
         # once this workflow works for nested tensor, this can probably be removed
-        padded_input_ids_list.append(torch.cat((pads, input_ids_i)))
-
-        # computing this as it's lightweight but could potentially be skipped
-        mask_list.append(torch.cat((pads.bool(), non_pads)))
 
         pos_ids_pads = pads
         pos_ids_seq = torch.arange(
             0, seq_len, dtype=torch.long, device=input_ids_i.device
         )
-        position_ids_list.append(torch.cat((pos_ids_pads, pos_ids_seq)))
+        if padding_side == "left":
+            padded_input_ids_list.append(torch.cat((pads, input_ids_i)))
+            mask_list.append(torch.cat((pads.bool(), non_pads)))
+            position_ids_list.append(torch.cat((pos_ids_pads, pos_ids_seq)))
+        elif padding_side == "right":
+            padded_input_ids_list.append(torch.cat((input_ids_i, pads)))
+            mask_list.append(torch.cat((non_pads, pads.bool())))
+            position_ids_list.append(torch.cat((pos_ids_seq, pos_ids_pads)))
+        else:
+            raise NotImplementedError("padding_side must be 'right' or left'")
 
     input_ids = torch.stack(padded_input_ids_list)
     padding_kwargs = {}
@@ -74,6 +85,7 @@ def pad_input_ids(
     # FIXME: this method should be per attn type (for now default it)
 
     position_ids = torch.stack(position_ids_list)
+    position_ids += position_ids_offset
     padding_kwargs["position_ids"] = position_ids
 
     return input_ids, padding_kwargs
@@ -237,6 +249,10 @@ def generate(
     next_input = input_ids
     kwargs["past_key_value_states"] = None
     kwargs["use_cache"] = use_cache
+    # if we didn't specify last_n_tokens and only_last_token is set to True, set last_n_tokens to 1, otherwise use default
+    # we do this since the output shape of only_last_token is different and therefore would change the logic in generate
+    if "last_n_tokens" not in kwargs and kwargs.get("only_last_token", False):
+        kwargs["last_n_tokens"] = 1
 
     prompt_length = input_ids.shape[1]
 
@@ -274,8 +290,8 @@ def generate(
         else:
             logits = output
 
-        if "only_last_token" not in kwargs:
-            logits = logits[:, -1, :]
+        # always get last now since we still have this dim
+        logits = logits[:, -1, :]
 
         if do_sample:
             # get logits from last value in sequence nad scale

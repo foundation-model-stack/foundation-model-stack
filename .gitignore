@@ -11,3 +11,4 @@ fms.egg-info
 .ruff_cache
 .mypy_cache
 ibm_fms.egg-info
+fms/_version.py

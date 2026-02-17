@@ -1,4 +1,3 @@
-from importlib.metadata import version
+import importlib.metadata
 
-
-__version__ = version("ibm-fms")
+__version__ = importlib.metadata.version("ibm-fms")

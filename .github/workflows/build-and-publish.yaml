@@ -1,0 +1,74 @@
+name: Publish Python 🐍 distribution 📦 to PyPI
+on:
+  release:
+    types: [published]
+  workflow_dispatch:  # Manual trigger
+
+jobs:
+  build:
+    name: Build distribution 📦
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+          fetch-depth: 0 # Fetch tags for setuptools_scm
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install build tools
+        run: python3 -m pip install build setuptools_scm twine
+      - name: Build a binary wheel
+        run: python3 -m build -w
+      - name: Check the bianry wheel
+        run: twine check dist/*
+      - name: Store the distribution packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-package-distributions
+          path: dist/
+
+  publish-to-pypi:
+    name: Publish Python 🐍 distribution 📦 to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    environment: # 1. A new pypi environment need to be created in gh
+      name: pypi
+      url: https://pypi.org/project/ibm-fms
+    permissions:
+      id-token: write  # Required for Trusted Publishing
+    if: github.event_name == 'release'
+    steps:
+      - name: Download all the dists
+        uses: actions/download-artifact@v5
+        with:
+          name: python-package-distributions
+          path: dist/
+      # 2. Need to set github as trusted publisher in PyPi project to publish without credentials from env
+      - name: Publish distribution 📦 to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          verbose: true
+
+  publish-to-testpypi:
+    name: Test Publish Python 🐍 distribution 📦 to TestPyPI
+    needs: build
+    runs-on: ubuntu-latest
+    environment: 
+      name: pypi
+      url: https://test.pypi.org/project/ibm-fms/
+    permissions:
+      id-token: write  # Required for Trusted Publishing
+    if: github.event_name == 'workflow_dispatch' # triggered by manually run workflow
+    steps:
+      - name: Download all the dists
+        uses: actions/download-artifact@v4
+        with:
+          name: python-package-distributions
+          path: dist/
+      - name: Publish distribution 📦 to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          verbose: true

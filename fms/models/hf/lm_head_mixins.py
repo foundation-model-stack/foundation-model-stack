@@ -321,7 +321,8 @@ class SequenceClassificationLMHeadMixin(LMHeadMixin):
             self.config.num_labels,
             str_to_activation(classifier_activation_fn),
             dropout=classifier_dropout,
-            apply_pooling_fn=True,
+            do_pooling=True,
+            apply_pooling_fn=False,
         )
 
     def _compute_loss(self, prediction: torch.Tensor, labels: torch.Tensor) -> _Loss:

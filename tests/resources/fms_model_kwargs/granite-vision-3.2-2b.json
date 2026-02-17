@@ -1,0 +1,163 @@
+{
+    "architecture": "llava_next",
+    "image_grid_pinpoints": [
+        [
+            384,
+            384
+        ],
+        [
+            384,
+            768
+        ],
+        [
+            384,
+            1152
+        ],
+        [
+            384,
+            1536
+        ],
+        [
+            384,
+            1920
+        ],
+        [
+            384,
+            2304
+        ],
+        [
+            384,
+            2688
+        ],
+        [
+            384,
+            3072
+        ],
+        [
+            384,
+            3456
+        ],
+        [
+            384,
+            3840
+        ],
+        [
+            768,
+            384
+        ],
+        [
+            768,
+            768
+        ],
+        [
+            768,
+            1152
+        ],
+        [
+            768,
+            1536
+        ],
+        [
+            768,
+            1920
+        ],
+        [
+            1152,
+            384
+        ],
+        [
+            1152,
+            768
+        ],
+        [
+            1152,
+            1152
+        ],
+        [
+            1536,
+            384
+        ],
+        [
+            1536,
+            768
+        ],
+        [
+            1920,
+            384
+        ],
+        [
+            1920,
+            768
+        ],
+        [
+            2304,
+            384
+        ],
+        [
+            2688,
+            384
+        ],
+        [
+            3072,
+            384
+        ],
+        [
+            3456,
+            384
+        ],
+        [
+            3840,
+            384
+        ]
+    ],
+    "image_token_index": 49155,
+    "model_path": null,
+    "text_config": {
+        "activation_fn": "silu",
+        "attention_multiplier": 0.015625,
+        "attn_bias": false,
+        "emb_dim": 2048,
+        "embedding_multiplier": 12.0,
+        "fused_weights": true,
+        "head_dim": 64,
+        "hidden_grow_factor": 4.0,
+        "kvheads": 8,
+        "linear_config": null,
+        "logits_scaling": 8.0,
+        "max_expected_seq_len": 131072,
+        "mlp_bias": false,
+        "multiple_of": 1,
+        "nheads": 32,
+        "nlayers": 40,
+        "norm_eps": 1e-05,
+        "ntk_scaling": false,
+        "p_dropout": 0.0,
+        "pad_id": -1,
+        "residual_multiplier": 0.22,
+        "rope_theta": 300000,
+        "src_vocab_size": 49156,
+        "tie_heads": true
+    },
+    "variant": "granite_vision_3_2_2b",
+    "vision_config": {
+        "attention_dropout": 0.0,
+        "fused_weights": true,
+        "hidden_act": "gelu_pytorch_tanh",
+        "hidden_size": 1152,
+        "image_size": 384,
+        "intermediate_size": 4304,
+        "layer_norm_eps": 1e-06,
+        "linear_config": null,
+        "nheads": 16,
+        "nlayers": 27,
+        "num_channels": 3,
+        "patch_size": 14
+    },
+    "vision_feature_layer": [
+        -24,
+        -20,
+        -12,
+        -1
+    ],
+    "vision_feature_select_strategy": "full"
+}

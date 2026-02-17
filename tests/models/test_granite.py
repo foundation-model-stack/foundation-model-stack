@@ -30,6 +30,7 @@ class GraniteFixtures(ConfigFixtureMixin, ModelFixtureMixin):
             emb_dim=16,
             norm_eps=1e-05,
             nheads=8,
+            head_dim=16 // 8,  # emb_dim // nheads
             kvheads=8,
             nlayers=2,
             pad_id=0,
@@ -76,6 +77,7 @@ class GraniteGPTQFixtures(ModelFixtureMixin):
             emb_dim=64,
             norm_eps=1e-05,
             nheads=32,
+            head_dim=64 // 32,  # emb_dim // nheads
             kvheads=16,
             nlayers=2,
             pad_id=0,

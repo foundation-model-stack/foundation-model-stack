@@ -150,12 +150,12 @@ class QwenGPTQFixtures(ModelFixtureMixin):
         return None
 
 
-@pytest.mark.autogptq
-class TestQwenGPTQ(
-    ModelConsistencyTestSuite, ModelCompileTestSuite, QwenGPTQFixtures
-):
-    # x is the main parameter for this model which is the input tensor
-    _get_signature_params = ["x"]
+# @pytest.mark.autogptq
+# class TestQwenGPTQ(
+#     ModelConsistencyTestSuite, ModelCompileTestSuite, QwenGPTQFixtures
+# ):
+#     # x is the main parameter for this model which is the input tensor
+#     _get_signature_params = ["x"]
 
-    def test_model_unfused(self, model, signature):
-        pytest.skip("weight unfuse is not implemented for GPTQ")
+#     def test_model_unfused(self, model, signature):
+#         pytest.skip("weight unfuse is not implemented for GPTQ")

@@ -80,7 +80,7 @@ def __maybe_infer_model_variant(
     extra_kwargs = kwargs
 
     if architecture in ("hf_pretrained", "hf_configured"):
-        from fms.models.hf.utils import _infer_model_configuration  # type: ignore
+        from fms.models.hf.utils import infer_model_configuration  # type: ignore
 
         is_hf_pretrained = architecture == "hf_pretrained"
         is_hf_configured = architecture == "hf_configured"
@@ -112,7 +112,7 @@ def __maybe_infer_model_variant(
 
         logger.info(f"inferring model configuration from {model_path_or_variant}")
 
-        extra_kwargs = _infer_model_configuration(
+        extra_kwargs = infer_model_configuration(
             model_path_or_variant,
             download_weights=is_hf_pretrained and variant is not None,  # type: ignore[arg-type]
         )
@@ -126,6 +126,8 @@ def __maybe_infer_model_variant(
             source = "hf"
             for kwarg in kwargs:
                 if kwarg in extra_kwargs and not kwargs.get(
+                    "override_hf_pretrained_config", False
+                ) and not kwargs.get(
                     "override_hf_pretrained_config", False
                 ):
                     logger.warning(
@@ -501,6 +503,8 @@ from fms.models import (  # noqa: E402
     mixtral,
     qwen3,
     roberta,
+    siglip_vision,
+    mpnet
 )
 
 
@@ -513,4 +517,7 @@ __all__ = [
     "mixtral",
     "qwen3",
     "roberta",
+    "siglip_vision",
+    "mpnet"
 ]
+

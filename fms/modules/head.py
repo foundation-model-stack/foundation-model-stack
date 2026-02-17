@@ -29,7 +29,7 @@ class MLPClassificationHead(nn.Module):
         dense_bias: bool = True,
         head_bias: bool = True,
         dropout: float = 0.0,
-        apply_pooling_fn: bool = False,
+        do_pooling: bool = False,
     ):
         """
         Initialize a MLPClassificationHead
@@ -50,7 +50,7 @@ class MLPClassificationHead(nn.Module):
             the bias param in the head layer (default is True)
         dropout: float
             the dropout to use directly after activation (default is 0.0)
-        apply_pooling_fn: bool
+        do_pooling: bool
             if True, will take the first token for each sequence in the batch as input to the dense layer. Otherwise,
             use the entire sequence as input to the dense layer
         """
@@ -60,7 +60,7 @@ class MLPClassificationHead(nn.Module):
         self.dropout = nn.Dropout(dropout)
         self.ln = layer_norm
         self.head = nn.Linear(emb_dim, num_classes, bias=head_bias)
-        self.apply_pooling_fn = apply_pooling_fn
+        self.do_pooling = do_pooling
 
     def forward(self, x: torch.Tensor):
         """Run the forward method of a classification head
@@ -75,7 +75,7 @@ class MLPClassificationHead(nn.Module):
         torch.Tensor
             a tensor projected to a space given by num_classes
         """
-        if self.apply_pooling_fn:
+        if self.do_pooling:
             x = x[:, 0]
         x = self.dense(x)
         x = self.act(x)
@@ -88,8 +88,8 @@ class MLPClassificationHead(nn.Module):
 
 class LinearClassificationHead(nn.Linear):
     # To differentiate for TP
-    def forward(self, x):
-        return super().forward(x)
+    def forward(self, input):
+        return super().forward(input)
 
     def to_tp(self, group: ProcessGroup) -> "TPLinearClassificationHead":
         return TPLinearClassificationHead.import_module(self, group)

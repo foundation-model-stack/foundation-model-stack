@@ -198,6 +198,86 @@ def test_pad_input_ids():
     torch.testing.assert_close(padding_kwargs["mask"], expected_mask)
 
 
+def test_padding_right_1d():
+    input_ids = [torch.arange(1, 4, dtype=torch.long)]
+    min_pad_length = 10
+
+    left_padded_input_ids, left_padding_kwargs = pad_input_ids(
+        input_ids, min_pad_length
+    )
+    right_padded_input_ids, right_padding_kwargs = pad_input_ids(
+        input_ids, min_pad_length, padding_side="right"
+    )
+    assert left_padded_input_ids.shape[1] == min_pad_length
+    assert right_padded_input_ids.shape[1] == min_pad_length
+    assert torch.equal(
+        left_padded_input_ids[:, min_pad_length - len(input_ids[0]) :],
+        right_padded_input_ids[:, : len(input_ids[0])],
+    )
+    assert torch.equal(
+        left_padding_kwargs["position_ids"][:, min_pad_length - len(input_ids[0]) :],
+        right_padding_kwargs["position_ids"][:, : len(input_ids[0])],
+    )
+    assert torch.equal(
+        left_padded_input_ids[:, min_pad_length - len(input_ids[0]) :] - 1,
+        left_padding_kwargs["position_ids"][:, min_pad_length - len(input_ids[0]) :],
+    )
+    assert torch.equal(
+        right_padded_input_ids[:, : len(input_ids[0])] - 1,
+        right_padding_kwargs["position_ids"][:, : len(input_ids[0])],
+    )
+
+
+def test_padding_right_2d():
+    input_ids = [
+        torch.arange(1, 4, dtype=torch.long),
+        torch.arange(1, 10, dtype=torch.long),
+        torch.arange(1, 5, dtype=torch.long),
+        torch.arange(1, 2, dtype=torch.long),
+    ]
+    min_pad_length = 12
+
+    left_padded_input_ids, left_padding_kwargs = pad_input_ids(
+        input_ids, min_pad_length
+    )
+    right_padded_input_ids, right_padding_kwargs = pad_input_ids(
+        input_ids, min_pad_length, padding_side="right"
+    )
+    assert left_padded_input_ids.shape[1] == min_pad_length
+    assert right_padded_input_ids.shape[1] == min_pad_length
+    assert torch.sum(left_padded_input_ids == 0).int().item() == min_pad_length * len(
+        input_ids
+    ) - sum([len(_) for _ in input_ids])
+
+    for batch in range(len(input_ids)):
+        assert torch.sum(
+            right_padded_input_ids[batch] == 0
+        ).int().item() == min_pad_length - len(input_ids[batch])
+
+
+def test_forward_pad_right():
+    _model_mock = get_model("llama", "micro")
+    tokenizer = get_tokenizer("char_tokenizer")
+    prompt = "Hello"
+    min_pad_length = 12
+    ids = tokenizer.convert_tokens_to_ids(tokenizer.tokenize(prompt))
+    ids = torch.tensor(ids)
+    prompt_id_length = ids.shape[0]
+    input_ids_left_padded, left_padded_kwargs = pad_input_ids([ids], min_pad_length=12)
+    input_ids_right_padded, right_padded_kwargs = pad_input_ids(
+        [ids], min_pad_length=min_pad_length, padding_side="right"
+    )
+    left_padded_output = _model_mock(input_ids_left_padded, **left_padded_kwargs)
+    right_padded_output = _model_mock(input_ids_right_padded, **right_padded_kwargs)
+    for seq in range(min_pad_length):
+        torch.testing.assert_close(
+            right_padded_output[:, seq, :],
+            left_padded_output[
+                :, (min_pad_length - prompt_id_length + seq) % min_pad_length, :
+            ],
+        )
+
+
 def test_trimming():
     sentence = torch.cat((torch.zeros((10,)), torch.ones((20,))), dim=0)
     result = trim_prefix(sentence)
