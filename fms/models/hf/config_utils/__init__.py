@@ -40,11 +40,13 @@ __FMS_MODEL_REGISTRY_MAP: RegistryMap = {
     "GraniteForCausalLM": ("granite", pb.build_granite_params),
     "GraniteMoeHybridForCausalLM": ("granite_moe_hybrid", pb.build_granite_moe_hybrid_params),
     "MistralForCausalLM": ("mistral", pb.build_mistral_params),
+    "Qwen3ForCausalLM": ("qwen3", pb.build_qwen3_params),
     "BambaForCausalLM": ("bamba", pb.build_bamba_params),
     "SiglipModel": ("siglip_vision", pb.build_siglip_vision_params),
     "LlavaNextForConditionalGeneration": ("llava_next", pb.build_llava_next_params),
     "MPNetForMaskedLM": ("mpnet", pb.build_mpnet_params),
     "BertForMaskedLM": ("bert", pb.build_bert_params),
+    ""
     # Classify arches have some extra keys for labels
     "RobertaForSequenceClassification": ("roberta_classification", partial(pb.build_roberta_params, is_classify=True)),
     "BertForSequenceClassification": ("bert_classification", partial(pb.build_bert_params, is_classify=True)),

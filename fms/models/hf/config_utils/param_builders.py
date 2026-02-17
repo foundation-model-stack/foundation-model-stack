@@ -65,6 +65,23 @@ def build_mixtral_params(config: PretrainedConfig) -> dict:
     }
     return model_params_with_common_opts(config, config_params, inner_dim=inner_dim)
 
+def build_qwen3_params(config: PretrainedConfig) -> dict:
+    """Param builder for mapping Qwen3ForCausalLM  to FMS."""
+    inner_dim = config.intermediate_size    # VERIFY
+    config_params = {
+        # VERIFY:
+        "dim": config.hidden_size,
+        "hidden_dim": inner_dim,
+        "norm_eps": config.rms_norm_eps,
+        "kv_heads": config.num_key_value_heads,
+        # "num_experts": config.num_local_experts,
+        # "top_k_experts": config.num_experts_per_tok,
+        "rope_base": config.rope_theta,
+        "max_expected_seq_len": config.max_position_embeddings,
+    }
+    # VERIFY:
+    return model_params_with_common_opts(config, config_params, inner_dim=inner_dim)
+
 
 def build_roberta_params(config: PretrainedConfig, is_classify: bool = False) -> dict:
     """Param builder for mapping
