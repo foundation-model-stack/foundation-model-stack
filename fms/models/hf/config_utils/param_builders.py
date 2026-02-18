@@ -65,23 +65,6 @@ def build_mixtral_params(config: PretrainedConfig) -> dict:
     }
     return model_params_with_common_opts(config, config_params, inner_dim=inner_dim)
 
-def build_qwen3_params(config: PretrainedConfig) -> dict:
-    """Param builder for mapping Qwen3ForCausalLM  to FMS."""
-    inner_dim = config.intermediate_size    # VERIFY
-    config_params = {
-        # VERIFY:
-        "dim": config.hidden_size,
-        "hidden_dim": inner_dim,
-        "norm_eps": config.rms_norm_eps,
-        "kv_heads": config.num_key_value_heads,
-        # "num_experts": config.num_local_experts,
-        # "top_k_experts": config.num_experts_per_tok,
-        "rope_base": config.rope_theta,
-        "max_expected_seq_len": config.max_position_embeddings,
-    }
-    # VERIFY:
-    return model_params_with_common_opts(config, config_params, inner_dim=inner_dim)
-
 
 def build_roberta_params(config: PretrainedConfig, is_classify: bool = False) -> dict:
     """Param builder for mapping
@@ -181,6 +164,28 @@ def build_mistral_params(config: PretrainedConfig) -> dict:
     return model_params_with_common_opts(
         config, config_params, inner_dim=config.intermediate_size
     )
+
+
+def build_qwen3_params(config: PretrainedConfig) -> dict:
+    """Param builder for mapping Qwen3ForCausalLM  to FMS."""
+    config_params = {
+        # VERIFY:
+        "activation_fn": config.hidden_act,
+        "emb_dim": config.hidden_size,
+        "max_expected_seq_len": config.max_position_embeddings,
+        "kvheads": config.num_key_value_heads,
+        "p_dropout": config.attention_dropout,
+        "head_dim": (
+            getattr(config, "head_dim", None)
+            or config.hidden_size // config.num_attention_heads
+        ),
+        "norm_eps": config.rms_norm_eps,
+        "rope_base": config.rope_theta,
+        "sliding_window": config.sliding_window,
+    }
+    # VERIFY:
+    return model_params_with_common_opts(
+        config, config_params, inner_dim=onfig.intermediate_size)
 
 
 def build_bamba_params(config: PretrainedConfig) -> dict:
