@@ -185,7 +185,7 @@ def build_qwen3_params(config: PretrainedConfig) -> dict:
     }
     # VERIFY:
     return model_params_with_common_opts(
-        config, config_params, inner_dim=onfig.intermediate_size)
+        config, config_params, inner_dim=config.intermediate_size)
 
 
 def build_bamba_params(config: PretrainedConfig) -> dict:
