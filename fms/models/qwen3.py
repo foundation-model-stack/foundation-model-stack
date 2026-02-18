@@ -269,7 +269,7 @@ class Qwen3Config(ModelConfig):
     activation_fn: str = "silu"  # hf_config.hidden_act:str = "silu"
     attention_bias: bool = False
     bos_token_id: int = 151643
-    emb_dim: int = 4096  # hf_config.hidden_size:int = 4096
+    emb_dim: int = 2048  # hf_config.hidden_size:int = 2048
     eos_token_id: int = 151645
     fused_weights: bool = True  # FMS Specific -- For CPU/GPU =T   AIU = F
     # linear_config: Optional[Mapping[s_token_id"str, Any]] = None
