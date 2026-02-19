@@ -39,13 +39,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-hf = ["transformers==4.48.3"]
+hf = ["transformers==4.57.6"]
 dev = [
 "mypy==1.15.0",
 "mypy-extensions==1.0.0",
 "pytest==8.3.4",
 "sentencepiece==0.2.0",
-"transformers==4.55.4",
+"transformers==4.57.6",
 "pyarrow-stubs==17.16",
 "types-requests==2.32.0.20241016",
 "lm_eval==0.4.7",
