@@ -405,7 +405,7 @@ class UnfusedQKV(QKV):
 
         self.head_dim = head_dim or emb_kq_per_head
         self.norm_eps = norm_eps or 1e-5
-        
+
         self.query = get_linear(
             self.emb_dim,
             self.nheads * self.emb_kq_per_head,
@@ -436,13 +436,13 @@ class UnfusedQKV(QKV):
                 use_high_precision_pow=True,
             )
             self.k_norm = LayerNormParameterized(
-                    head_dim,
-                    elementwise_scale=True,
-                    elementwise_shift=False,
-                    use_mean=False,
-                    eps=norm_eps,
-                    use_high_precision_pow=True,
-                )
+                head_dim,
+                elementwise_scale=True,
+                elementwise_shift=False,
+                use_mean=False,
+                eps=norm_eps,
+                use_high_precision_pow=True,
+            )
         else:
             self.norm = False
 
@@ -469,27 +469,27 @@ class UnfusedQKV(QKV):
 
         # Project queries, keys, values
         queries = self.query(q)  # b x qlen x (nheads * head_dim)
-        keys = self.key(k)       # b x klen x (kvheads * head_dim)
-        values = self.value(v)   # b x vlen x (kvheads * head_dim)
-        
+        keys = self.key(k)  # b x klen x (kvheads * head_dim)
+        values = self.value(v)  # b x vlen x (kvheads * head_dim)
+
         # Apply normalization if enabled
         # Normalization should be applied per-head, so we need to reshape first
         if self.norm:
             batch_size, q_len, _ = queries.shape
             k_len = keys.shape[1]
-            
+
             # Reshape to separate heads: b x len x heads x head_dim
             queries = queries.view(batch_size, q_len, self.nheads, self.head_dim)
             keys = keys.view(batch_size, k_len, self.kvheads, self.head_dim)
-            
+
             # Apply normalization per head
             queries = self.q_norm(queries)
             keys = self.k_norm(keys)
-            
+
             # Reshape back: b x len x (heads * head_dim)
             queries = queries.view(batch_size, q_len, -1)
             keys = keys.view(batch_size, k_len, -1)
-        
+
         return queries, keys, values
 
 

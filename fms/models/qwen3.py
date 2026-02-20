@@ -515,7 +515,9 @@ def _qwen3_factory_factory(config):
 
 
 # HuggingFace checkpoint adapter
-def _hf_to_fms_names(hf_sd: Mapping[str, Any], model_config: Optional[Qwen3Config] = None) -> Mapping[str, Any]:
+def _hf_to_fms_names(
+    hf_sd: Mapping[str, Any], model_config: Optional[Qwen3Config] = None
+) -> Mapping[str, Any]:
     """
     Convert HuggingFace Qwen3 state dict to FMS format
     """
@@ -544,6 +546,7 @@ def _hf_to_fms_names(hf_sd: Mapping[str, Any], model_config: Optional[Qwen3Confi
         new_sd[new_name] = param
 
     return new_sd
+
 
 def _hf_to_fms_rope(
     input_sd: Mapping[str, Any], model_config: Optional[Qwen3Config] = None, **kwargs
@@ -610,9 +613,8 @@ def _hf_to_fms_rope(
     return new_sd
 
 
-models.register_model(
-    _architecture_name, "0.6b", _qwen3_factory_factory(_0_6b_config)
-)
+models.register_model(_architecture_name, "0.6b", _qwen3_factory_factory(_0_6b_config))
+
 
 def _get_rope_params(linear_type: str) -> list[str]:
     if "gptq" in linear_type:
@@ -624,6 +626,7 @@ def _get_rope_params(linear_type: str) -> list[str]:
         return ["weight", "weight_scale", "input_scale", "bias"]
     else:  # torch.nn.Linear
         return ["weight", "bias"]
+
 
 serialization.register_adapter_step(
     _architecture_name, "hf_to_fms_rope", _hf_to_fms_rope
