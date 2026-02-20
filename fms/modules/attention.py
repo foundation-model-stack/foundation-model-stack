@@ -1,5 +1,6 @@
 import abc
 import functools
+from token import OP
 from typing import (
     Any,
     Callable,
@@ -12,6 +13,7 @@ from typing import (
 )
 from typing_extensions import NotRequired, Unpack
 
+from fms.modules.layernorm import LayerNormParameterized
 import torch
 import torch.distributed
 from torch import Tensor, nn
@@ -384,6 +386,8 @@ class UnfusedQKV(QKV):
         emb_v_per_head: int,
         use_bias: bool,
         linear_config: Optional[Mapping[str, Any]] = None,
+        norm_eps: Optional[float] = None,
+        head_dim: Optional[int] = None,
         *args,
         **kwargs,
     ):
@@ -399,6 +403,9 @@ class UnfusedQKV(QKV):
             **kwargs,
         )
 
+        self.head_dim = head_dim or emb_kq_per_head
+        self.norm_eps = norm_eps or 1e-5
+        
         self.query = get_linear(
             self.emb_dim,
             self.nheads * self.emb_kq_per_head,
@@ -417,6 +424,27 @@ class UnfusedQKV(QKV):
             bias=use_bias,
             linear_config=linear_config,
         )
+
+        if norm_eps:
+            self.norm = True
+            self.q_norm = LayerNormParameterized(
+                head_dim,
+                elementwise_scale=True,
+                elementwise_shift=False,
+                use_mean=False,
+                eps=norm_eps,
+                use_high_precision_pow=True,
+            )
+            self.k_norm = LayerNormParameterized(
+                    head_dim,
+                    elementwise_scale=True,
+                    elementwise_shift=False,
+                    use_mean=False,
+                    eps=norm_eps,
+                    use_high_precision_pow=True,
+                )
+        else:
+            self.norm = False
 
     def reset_parameters(self):
         for m in self.modules():
@@ -439,10 +467,29 @@ class UnfusedQKV(QKV):
                 "both k and v must either be given as tensors or both None"
             )
 
-        # b x h x qlen x ds
-        queries = self.query(q)
-        keys = self.key(k)
-        values = self.value(v)
+        # Project queries, keys, values
+        queries = self.query(q)  # b x qlen x (nheads * head_dim)
+        keys = self.key(k)       # b x klen x (kvheads * head_dim)
+        values = self.value(v)   # b x vlen x (kvheads * head_dim)
+        
+        # Apply normalization if enabled
+        # Normalization should be applied per-head, so we need to reshape first
+        if self.norm:
+            batch_size, q_len, _ = queries.shape
+            k_len = keys.shape[1]
+            
+            # Reshape to separate heads: b x len x heads x head_dim
+            queries = queries.view(batch_size, q_len, self.nheads, self.head_dim)
+            keys = keys.view(batch_size, k_len, self.kvheads, self.head_dim)
+            
+            # Apply normalization per head
+            queries = self.q_norm(queries)
+            keys = self.k_norm(keys)
+            
+            # Reshape back: b x len x (heads * head_dim)
+            queries = queries.view(batch_size, q_len, -1)
+            keys = keys.view(batch_size, k_len, -1)
+        
         return queries, keys, values
 
 
@@ -576,6 +623,8 @@ class MultiHeadAttention(nn.Module):
         fused: bool = True,
         linear_config: Optional[Mapping[str, Any]] = None,
         scale_factor: Optional[float] = None,
+        norm_eps: Optional[float] = None,
+        head_dim: Optional[int] = None,
     ):
         super(MultiHeadAttention, self).__init__()
         self.nheads = nheads
@@ -588,6 +637,8 @@ class MultiHeadAttention(nn.Module):
         self.fused = fused
         self.linear_config = linear_config
         self.scale_factor = scale_factor
+        self.norm_eps = norm_eps
+        self.head_dim = head_dim
 
         self.in_proj: QKV = (FusedQKV if self.fused else UnfusedQKV)(
             self.emb_dim,
@@ -597,6 +648,8 @@ class MultiHeadAttention(nn.Module):
             self.emb_v_per_head,
             self.use_bias,
             linear_config=linear_config,
+            norm_eps=self.norm_eps,
+            head_dim=self.head_dim,
         )
 
         self.dense = get_linear(
