@@ -1,6 +1,5 @@
 import abc
 import functools
-from token import OP
 from typing import (
     Any,
     Callable,
@@ -507,6 +506,8 @@ class FusedQKV(QKV):
         emb_v_per_head: int,
         use_bias: bool,
         linear_config: Optional[Mapping[str, Any]] = None,
+        norm_eps: Optional[float] = None,
+        head_dim: Optional[int] = None,
         *args,
         **kwargs,
     ):

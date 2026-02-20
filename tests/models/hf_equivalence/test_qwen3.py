@@ -25,7 +25,6 @@ def _get_hf_model_output(model_path, inputs):
     from transformers import AutoModel, AutoTokenizer
 
     model = AutoModel.from_pretrained(model_path, torch_dtype=torch.float32).to(device)
-    tokenizer = AutoTokenizer.from_pretrained(model_path)
 
     model.eval()
     with torch.no_grad():
