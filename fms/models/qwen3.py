@@ -491,7 +491,7 @@ class Qwen3(nn.Module):
 
 # Qwen3-Embedding-0.6B configuration
 _0_6b_config = Qwen3Config(
-    src_vocab_size=151_669,
+    src_vocab_size=151669,
     emb_dim=1024,
     norm_eps=1e-6,
     nheads=16,
@@ -499,7 +499,21 @@ _0_6b_config = Qwen3Config(
     nlayers=28,
     hidden_grow_factor=3072 / 1024,
     max_expected_seq_len=32768,
-    rope_theta=1_000_000.0,
+    rope_theta=1000000.0,
+    head_dim=128,
+    tie_heads=True,
+)
+
+_4b_config = Qwen3Config(
+    src_vocab_size=151665,
+    emb_dim=2560,
+    norm_eps=1e-6,
+    nheads=32,
+    kvheads=8,
+    nlayers=36,
+    hidden_grow_factor=9728 / 2560,
+    max_expected_seq_len=40960,
+    rope_theta=1000000.0,
     head_dim=128,
     tie_heads=True,
 )
@@ -512,6 +526,10 @@ def _qwen3_factory_factory(config):
         return Qwen3(config, **kwargs)
 
     return factory
+
+
+models.register_model(_architecture_name, "0.6b", _qwen3_factory_factory(_0_6b_config))
+models.register_model(_architecture_name, "4b", _qwen3_factory_factory(_4b_config))
 
 
 # HuggingFace checkpoint adapter
@@ -611,9 +629,6 @@ def _hf_to_fms_rope(
             new_sd[name] = param
 
     return new_sd
-
-
-models.register_model(_architecture_name, "0.6b", _qwen3_factory_factory(_0_6b_config))
 
 
 def _get_rope_params(linear_type: str) -> list[str]:

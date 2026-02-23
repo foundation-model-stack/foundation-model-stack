@@ -84,12 +84,61 @@ def test_qwen3_embedding_0_6b_equivalence():
 
     This test:
     1. Loads both HF and FMS versions of the model
-    2. Compares logits for the same input
-    3. Compares generated sequences
+    2. Compares scores for the same input
+    3. Compares scores against the original Qwen3-Embedding-0.6B scores
 
     Note: This test requires downloading the model from HuggingFace Hub.
     """
     model_path = "Qwen/Qwen3-Embedding-0.6B"
+
+    # Skip if model is not available locally
+    try:
+        from transformers import AutoTokenizer
+
+        tokenizer = AutoTokenizer.from_pretrained(model_path)
+    except Exception as e:
+        pytest.skip(f"Model not available: {e}")
+
+    # Prepare input
+    query = "Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery: What is the capital of China?"
+    documents = ["The capital of China is Beijing.", "That is a very fast car."]
+    input_texts = [query] + documents
+
+    # 3. Tokenize
+    inputs = tokenizer(
+        input_texts, padding=True, truncation=True, return_tensors="pt", max_length=8192
+    )
+
+    # Get outputs from both models
+    hf_query_embedding, hf_doc_embeddings = _get_hf_model_output(model_path, inputs)
+    fms_query_embedding, fms_doc_embeddings = _get_fms_model_output(model_path, inputs)
+
+    hf_scores = hf_query_embedding @ hf_doc_embeddings.T
+    fms_scores = fms_query_embedding @ fms_doc_embeddings.T
+
+    # First sentence contains the awnser to the query.
+    # It's score should be always the highest.
+    assert hf_scores[0] > hf_scores[1]
+    assert fms_scores[0] > fms_scores[1]
+    assert fms_scores[0] > 0.7
+    assert hf_scores[0] > 0.7
+    assert hf_scores[0] > fms_scores[1]
+    assert fms_scores[0] > hf_scores[1]
+
+
+@pytest.mark.slow
+def test_qwen3_embedding_4b_equivalence():
+    """
+    Test equivalence between FMS and HuggingFace implementations of Qwen3-Embedding-4B.
+
+    This test:
+    1. Loads both HF and FMS versions of the model
+    2. Compares scores for the same input
+    3. Compares scores against the original Qwen3-Embedding-4B scores
+
+    Note: This test requires downloading the model from HuggingFace Hub.
+    """
+    model_path = "Qwen/Qwen3-Embedding-4B"
 
     # Skip if model is not available locally
     try:
