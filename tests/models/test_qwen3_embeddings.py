@@ -1,7 +1,7 @@
 import pytest
 import torch
 
-from fms.models.qwen3 import Qwen3, Qwen3Config, Qwen3Headless
+from fms.models.qwen3 import Qwen3, Qwen3Config
 from fms.testing._internal.model_test_suite import (
     ConfigFixtureMixin,
     ModelCompileTestSuite,
