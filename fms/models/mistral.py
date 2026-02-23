@@ -318,7 +318,8 @@ class MistralHeadless(nn.Module):
         if past_key_value_states is None or len(past_key_value_states) == 0:
             past_key_value_states = [None for _ in range(len(self.layers))]
 
-        x_in = self.embedding(x_in)
+        if x_in.dim() == 2:  # input is not already embedded
+            x_in = self.embedding(x_in)
 
         # this is the output cache for all the decoder layers
         present_key_value_states = []
