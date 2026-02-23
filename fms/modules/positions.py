@@ -22,7 +22,9 @@ class PositionEncoder:
     ) -> Optional[torch.Tensor]:
         return mask
 
-    # Override to adjust q/k's e.g. for rotary embeddings
+    # Override to adjust q/k's e.g. for rotary embeddings. Note that some
+    # implementations may not use cache related kwargs, e.g., pixtral's 2D
+    # rope for images, which will not have a past kv states.
     def adjusted_qk(
         self,
         q: torch.Tensor,
@@ -298,6 +300,7 @@ class RotaryEmbedding(PositionEncoder):
         use_cache=False,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
+        This function applies 1D rotary embeddings to the queries and keys.
         Args
         ----
         q : torch.Tensor
@@ -361,4 +364,137 @@ class RotaryEmbedding(PositionEncoder):
         else:
             q_out = q_out.view_as(q_rope)
             k_out = k_out.view_as(k_rope)
+        return q_out, k_out
+
+
+class PixtralRotaryEmbedding(PositionEncoder):
+    def __init__(
+        self,
+        dim: int,
+        theta: float,
+        image_size: int,
+        patch_size: int,
+    ):
+        """
+        This implements PixtralRotaryEmbedding, which handles frequency
+        for each pixel positions The key difference from standard RoPe is
+        that the frequencies are pre-computed for a 2D grid of maximal
+        height x width patches.
+        """
+
+        super().__init__()
+        self.max_patches_per_side = image_size // patch_size
+        self.dim = dim
+        self.theta = theta
+        # NOTE: pixtral does not do rope scaling, i.e., alpha is always 1.
+        # For simplicity and to keep the implementation readable, we just
+        # map the device index to the freqs directly.
+        self.cached_freqs: dict[int, torch.Tensor] = {}
+
+    def compute_freqs_cis(self, device: torch.device) -> torch.Tensor:
+        """
+        Computes the rotational transforms for Pixtral, which encodes
+        image patches using 2D positional IDs. If the rotation matrices
+        have already been computed for this device index, the cached
+        results are returned.
+
+        NOTE: This implementation is similar in implementation to that in
+        mistral inference (see link below) without complex numbers. This is
+        easier to compare to for numeric correctness than the HF implementation
+        because it uses the same weight permutation for interleave RoPE rather
+        than permuting the weights to use rotate half.
+
+        https://github.com/mistralai/mistral-inference/blob/v1.6.0/src/mistral_inference/rope.py
+
+        Args:
+            device: device to compute frequencies on
+        """
+        if device == torch.device("meta"):
+            raise AssertionError("Attempted to init pixtral freqs on meta device")
+
+        freqs = 1.0 / (
+            self.theta
+            ** (torch.arange(0, self.dim, 2, device=device).float() / self.dim)
+        )
+
+        # Create position indices for height and width
+        h = torch.arange(self.max_patches_per_side, device=device)
+        w = torch.arange(self.max_patches_per_side, device=device)
+
+        # Compute product: position * frequency for each dimension; use the
+        # even indices for the height, and the odd indices for the width.
+        freqs_h = torch.outer(h, freqs[::2]).float()
+        freqs_w = torch.outer(w, freqs[1::2]).float()
+
+        # Frequencies are 2 dimensional
+        freqs_2d = torch.cat(
+            [
+                freqs_h[:, None, :].repeat(1, self.max_patches_per_side, 1),
+                freqs_w[None, :, :].repeat(self.max_patches_per_side, 1, 1),
+            ],
+            dim=-1,
+        )
+
+        # [max_size, max_size, dim, 4]
+        rot_matrices = torch.stack(
+            [
+                torch.cos(freqs_2d),
+                -torch.sin(freqs_2d),
+                torch.sin(freqs_2d),
+                torch.cos(freqs_2d),
+            ],
+            dim=-1,
+        )
+        # Create the 2x2 rotation matrices -> [max_size, max_size, dim, 2, 2]
+        rot_matrices = rot_matrices.view(*freqs_2d.size(), 2, 2)
+        self.cached_freqs[device.index] = rot_matrices
+        return rot_matrices
+
+    def adjusted_qk(
+        self,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        position_ids: Optional[torch.LongTensor],
+        *args,
+        **kwargs,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        This function applies 2D rotary embeddings to the queries and keys.
+        NOTE: as this is only used by Pixtral (vision encoder), we do not
+        need to consider caching related args/kwargs, because it will only
+        be used at prefill time.
+
+        Args
+        ----
+        q : torch.Tensor
+            Embedded query tensor, expected size is B x S x H x Eh
+        k : torch.Tensor
+            Embedded query tensor, expected size is B x S x H x Eh
+        position_ids : torch.LongTensor
+            2D positional IDs (patch coordinates).
+        """
+        if position_ids is None or position_ids.ndim < 2 or position_ids.shape[-1] != 2:
+            raise ValueError("Position IDs for Pixtral must be 2D (H, W) coordinates.")
+
+        q_ = q.float().view(*q.size()[:-1], -1, 2)  # [B, L, H, D/2, 2]
+        k_ = k.float().view(*k.size()[:-1], -1, 2)  # [B, L, H, D/2, 2]
+
+        # Positionally encode the 2D positional IDs.
+        # position_ids has shape [B, L, 2] with batch dimension included
+        self.compute_freqs_cis(q.device)
+        freqs = self.cached_freqs[q.device.index][
+            position_ids[:, :, 0], position_ids[:, :, 1]
+        ]
+
+        freqs = freqs.float()  # [B, L, D/2, 2, 2]
+
+        # [B, L, 1, D/2, 2, 2] x [B, L, N, D/2, 1, 2]
+        # Which broadcasts to [B, L, N, D/2, 2, 2]
+        mulq = freqs[:, -q.size(1) :, None, :, :, :].mul(q_.unsqueeze(-2))
+        mulk = freqs[:, -k.size(1) :, None, :, :, :].mul(k_.unsqueeze(-2))
+
+        # Sum the last dimension out, creating a [B, L, N, D/2, 2], then flatten
+        # the (new) 3rd dimension to create the [B, L, N, D] output.
+        q_out = mulq.sum(5).flatten(3).type_as(q)
+        k_out = mulk.sum(5).flatten(3).type_as(k)
         return q_out, k_out

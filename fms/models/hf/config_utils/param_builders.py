@@ -8,6 +8,9 @@ to the model at init time.
 from fms.models.siglip_vision import SiglipVisionConfig
 from fms.models.granite import GraniteConfig
 
+# Used for mistral3
+from fms.models.pixtral_vision import PixtralVisionConfig
+from fms.models.mistral import MistralConfig
 from transformers import PretrainedConfig
 
 
@@ -287,6 +290,60 @@ def build_bert_params(config: PretrainedConfig, is_classify: bool = False) -> di
     return model_params_with_common_opts(
         config, config_params, inner_dim=config.intermediate_size
     )
+
+
+def build_pixtral_params(config: PretrainedConfig) -> dict:
+    """Param builder for mapping Pixtral to FMS."""
+    # NOTE: Layer norm eps is hardcoded in the Transformers class
+    # and not passable through the config at the time of porting;
+    # we use the same default in Pixtral's encoder, which is 1e-5,
+    # but should be aware in case this is changed and added to the
+    # config in future releases.
+    config_params = {
+        "hidden_size": config.hidden_size,
+        "intermediate_size": config.intermediate_size,
+        "nlayers": config.num_hidden_layers,
+        "nheads": config.num_attention_heads,
+        "nchannels": config.num_channels,
+        "image_size": config.image_size,
+        "patch_size": config.patch_size,
+        "hidden_act": config.hidden_act,
+        "rope_theta": config.rope_theta,
+        "attention_dropout": config.attention_dropout,
+        "initializer_range": config.initializer_range,
+    }
+
+    # Don't build common opts for the vision encoder
+    return config_params
+
+
+def build_mistral3_params(config: PretrainedConfig) -> dict:
+    """Param builder for mapping Mistral3ForConditionalGeneration to FMS."""
+
+    # Sanity checks – we currently support only Mistral text + Pixtral vision
+    if getattr(config.text_config, "model_type", None) != "mistral":
+        raise ValueError(
+            "FMS implementation of Mistral3 currently supports only 'mistral' language model"
+        )
+
+    if getattr(config.vision_config, "model_type", None) != "pixtral":
+        raise ValueError(
+            "FMS implementation of Mistral3 currently supports only 'pixtral' vision tower"
+        )
+    config_params = {
+        "projector_hidden_act": config.projector_hidden_act,
+        "multimodal_projector_bias": config.multimodal_projector_bias,
+        "spatial_merge_size": config.spatial_merge_size,
+        "image_token_index": config.image_token_index,
+        "vision_feature_layer": config.vision_feature_layer,
+    }
+    # Handle text / vision subconfigs, respectively
+    text_config_params = build_mistral_params(config.text_config)
+    config_params["text_config"] = MistralConfig(**text_config_params)
+
+    vision_config_params = build_pixtral_params(config.vision_config)
+    config_params["vision_config"] = PixtralVisionConfig(**vision_config_params)
+    return config_params
 
 
 def model_params_with_common_opts(

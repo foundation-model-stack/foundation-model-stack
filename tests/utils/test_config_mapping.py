@@ -29,6 +29,7 @@ MODEL_CONFIG_MAP = {
     "RobertaForSequenceClassification": "cardiffnlp/twitter-roberta-base-sentiment-latest",
     "GraniteForCausalLM": "ibm-granite/granite-3.3-2b-instruct",
     "MistralForCausalLM": "mistralai/Mistral-Small-24B-Base-2501",
+    "Mistral3ForConditionalGeneration": "mistralai/Mistral-Small-3.2-24B-Instruct-2506",
     "BambaForCausalLM": "ibm-ai-platform/Bamba-9B-v2",
     "SiglipModel": "google/siglip-so400m-patch14-384",
     "LlavaNextForConditionalGeneration": "ibm-granite/granite-vision-3.2-2b",
