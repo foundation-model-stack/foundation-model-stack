@@ -213,20 +213,53 @@ def build_siglip_vision_params(config: PretrainedConfig) -> dict:
         "layer_norm_eps": vision_cfg.layer_norm_eps,
         "attention_dropout": vision_cfg.attention_dropout,
     }
-    # Older HF configs do not expose `use_navit_position_buckets`, and some SmolVLM/Idefics3
-    # configs may only signal NaViT usage via `model_type` or `max_image_size`. Keep a heuristic
-    # fallback so we preserve HF parity across versions.
-    use_navit = getattr(vision_cfg, "use_navit_position_buckets", None)
-    if use_navit is None:
-        model_type = getattr(vision_cfg, "model_type", None)
-        # Only set to True if model_type matches, not False
+    # Most HF SigLIP configs do not use NaViT position bucketing. If HF exposes an explicit
+    # attribute, honor it, otherwise default to False.
+    config_params["use_navit_position_buckets"] = bool(
+        getattr(vision_cfg, "use_navit_position_buckets", False)
+    )
+    # Don't build common opts for the vision encoder
+    return config_params
+
+
+def build_siglip_idefics3_vision_params(config: PretrainedConfig) -> dict:
+    """
+    Param builder for SigLIP when used as the vision tower for Idefics3/SmolVLM.
+
+    HF Idefics3VisionConfig (transformers) does not currently expose an explicit
+    `use_navit_position_buckets` boolean, so we infer it using a small heuristic.
+    If HF adds an explicit flag in the future, we will prefer that.
+    """
+    vision_cfg = config.vision_config
+    config_params = build_siglip_vision_params(config)
+
+    explicit_use_navit = getattr(vision_cfg, "use_navit_position_buckets", None)
+    if explicit_use_navit is not None:
+        config_params["use_navit_position_buckets"] = bool(explicit_use_navit)
+        return config_params
+
+    model_type = getattr(vision_cfg, "model_type", None)
+    parent_model_type = getattr(config, "model_type", None)
+    enable_idefics3_heuristics = model_type in (
+        "idefics3",
+        "idefics3_vision",
+    ) or parent_model_type in (
+        "idefics3",
+        "smolvlm",  # SmolVLM is Idefics3-derived in HF; treat it as idefics3-like here.
+    )
+
+    use_navit = False
+    if enable_idefics3_heuristics:
+        # Some Idefics3/SmolVLM configs encode the NaViT usage in the model_type.
         if model_type in ("idefics3", "idefics3_vision"):
             use_navit = True
-    if use_navit is None:
-        # Fallback heuristic for configs with max_image_size
-        use_navit = hasattr(vision_cfg, "max_image_size")
-    config_params["use_navit_position_buckets"] = bool(use_navit)
-    # Don't build common opts for the vision encoder
+        # Some Idefics3VisionConfig variants expose `max_image_size` as a distinguishing
+        # attribute for NaViT bucketing support. Keep this heuristic scoped to idefics3-like
+        # configs to avoid accidentally enabling NaViT for unrelated SigLIP variants.
+        elif getattr(vision_cfg, "max_image_size", None) is not None:
+            use_navit = True
+
+    config_params["use_navit_position_buckets"] = use_navit
     return config_params
 
 
@@ -268,7 +301,7 @@ def build_idefics3_params(config: PretrainedConfig) -> dict:
         config_params["image_token_id"] = int(image_token_id)
 
     # Vision config (SigLIP)
-    vision_config_params = build_siglip_vision_params(config)
+    vision_config_params = build_siglip_idefics3_vision_params(config)
     config_params["vision_config"] = SiglipVisionConfig(**vision_config_params)
 
     # Text config (LLaMA-like)
