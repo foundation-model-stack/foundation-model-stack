@@ -1,5 +1,12 @@
+"""
+Public entrypoint for the `idefics3` architecture.
+
+The implementation lives under `fms.models.idefics3_components` and is considered internal.
+"""
+
 import logging
-from typing import Optional
+import re
+import warnings
 
 from fms.models.idefics3_components import (
     Idefics3,
@@ -10,6 +17,7 @@ from fms.models.idefics3_components import (
     extract_vision_tower_from_checkpoint,
     pack_image_embeddings,
 )
+from fms.models.idefics3_components.preprocessing import load_smolvlm_processor
 from fms.utils import serialization
 
 logger = logging.getLogger(__name__)
@@ -23,6 +31,7 @@ __all__ = [
     "extract_vision_tower_from_checkpoint",
     "pack_image_embeddings",
     "load_smolvlm_preprocessor",
+    "load_smolvlm_processor",
 ]
 
 _architecture_name = "idefics3"
@@ -30,13 +39,101 @@ _architecture_name = "idefics3"
 
 def load_smolvlm_preprocessor(*args, **kwargs):
     """
-    Lazily import and construct the HF-backed SmolVLM preprocessor.
+    Deprecated: use `load_smolvlm_processor` (returns HF AutoProcessor) instead.
 
-    This keeps `import fms.models` free of a hard dependency on `transformers`.
+    Backwards-compatibility note:
+    Historically this returned an FMS wrapper with a `.preprocess()` method. To avoid
+    breaking older call sites, we still return the HF processor, but attach a minimal
+    `.preprocess()` helper that returns a normalized dict of tensors.
     """
-    from fms.models.idefics3_components.preprocessing import SmolVLMPreprocessor
+    warnings.warn(
+        "load_smolvlm_preprocessor is deprecated; use load_smolvlm_processor instead",
+        FutureWarning,
+        stacklevel=2,
+    )
+    processor = load_smolvlm_processor(*args, **kwargs)
 
-    return SmolVLMPreprocessor(*args, **kwargs)
+    # Preserve legacy `.preprocess()` call sites by attaching a method to the processor.
+    # This avoids re-introducing a public wrapper class while still being compatible.
+    if not hasattr(processor, "preprocess"):
+        import torch
+
+        def _preprocess(image=None, images=None, **call_kwargs):
+            if images is None:
+                images = image
+            if images is None:
+                raise ValueError(
+                    "Missing required image input. Provide `image=...` or `images=...`."
+                )
+
+            call_kwargs.setdefault("return_tensors", "pt")
+            processed = processor(images=images, **call_kwargs)
+            pixel_values = processed["pixel_values"]
+            if not isinstance(pixel_values, torch.Tensor):
+                raise TypeError(
+                    f"Expected processor(..., return_tensors='pt') to return torch pixel_values, got {type(pixel_values)!r}"
+                )
+
+            if "pixel_attention_mask" in processed:
+                pixel_attention_mask = processed["pixel_attention_mask"]
+            else:
+                H, W = pixel_values.shape[-2:]
+                pixel_attention_mask = torch.ones(
+                    pixel_values.shape[:-3] + (H, W),
+                    dtype=torch.long,
+                    device=pixel_values.device,
+                )
+
+            # Normalize shapes to (B, N, C, H, W)
+            if pixel_values.dim() == 5:
+                if (
+                    isinstance(pixel_attention_mask, torch.Tensor)
+                    and pixel_attention_mask.dim() == 3
+                ):
+                    # (B, H, W) -> (B, 1, H, W)
+                    pixel_attention_mask = pixel_attention_mask.unsqueeze(1)
+                if (
+                    isinstance(pixel_attention_mask, torch.Tensor)
+                    and pixel_attention_mask.dim() == 4
+                    and pixel_attention_mask.shape[1] == 1
+                    and pixel_values.shape[1] > 1
+                ):
+                    # (B, 1, H, W) -> (B, N, H, W)
+                    pixel_attention_mask = pixel_attention_mask.expand(
+                        pixel_values.shape[0],
+                        pixel_values.shape[1],
+                        pixel_attention_mask.shape[2],
+                        pixel_attention_mask.shape[3],
+                    ).contiguous()
+            elif pixel_values.dim() == 4:
+                # (B, C, H, W) -> (B, 1, C, H, W)
+                pixel_values = pixel_values.unsqueeze(1)
+                if (
+                    isinstance(pixel_attention_mask, torch.Tensor)
+                    and pixel_attention_mask.dim() == 3
+                ):
+                    # (B, H, W) -> (B, 1, H, W)
+                    pixel_attention_mask = pixel_attention_mask.unsqueeze(1)
+            elif pixel_values.dim() == 3:
+                pixel_values = pixel_values.unsqueeze(0).unsqueeze(0)
+                if (
+                    isinstance(pixel_attention_mask, torch.Tensor)
+                    and pixel_attention_mask.dim() == 2
+                ):
+                    pixel_attention_mask = pixel_attention_mask.unsqueeze(0).unsqueeze(
+                        0
+                    )
+
+            num_patches = pixel_values.shape[1]
+            return {
+                "pixel_values": pixel_values,
+                "pixel_attention_mask": pixel_attention_mask,
+                "num_patches": num_patches,
+            }
+
+        processor.preprocess = _preprocess
+
+    return processor
 
 
 def _components_factory(**kwargs):
@@ -101,27 +198,25 @@ def _hf_to_fms_state_dict(input_sd, **kwargs):
             new_sd[f"text_model.{k}"] = v
 
     # ---- connector
-    def _remap_connector_key(key: str) -> Optional[str]:
-        if key.startswith("model."):
-            key = key[len("model.") :]
-        if not key.startswith("connector."):
-            return None
-        key = key[len("connector.") :]
-        # HF SmolVLM uses: modality_projection.proj.weight -> FMS connector.proj.weight
-        if key.startswith("modality_projection.proj."):
-            key = key[len("modality_projection.proj.") :]
-            return f"connector.proj.{key}"
-        if key.startswith("modality_projection."):
-            key = key[len("modality_projection.") :]
-            return f"connector.proj.{key}"
-        if key == "modality_projection":
-            return "connector.proj.weight"
-        return f"connector.{key}"
+    connector_replacements = [
+        # Allow both "model.connector.*" and "connector.*"
+        (r"^model\.", ""),
+        # HF SmolVLM/Idefics3 uses: connector.modality_projection[.proj].* -> FMS connector.proj.*
+        (r"^connector\.modality_projection\.proj\.", "connector.proj."),
+        (r"^connector\.modality_projection\.", "connector.proj."),
+        (r"^connector\.modality_projection$", "connector.proj.weight"),
+    ]
 
-    for k, v in input_sd.items():
-        remapped_key = _remap_connector_key(k)
-        if remapped_key is not None:
-            new_sd[remapped_key] = v
+    for name, param in input_sd.items():
+        if not (name.startswith("connector.") or name.startswith("model.connector.")):
+            continue
+
+        new_name = name
+        for pattern, repl in connector_replacements:
+            new_name = re.sub(pattern, repl, new_name)
+
+        if new_name.startswith("connector."):
+            new_sd[new_name] = param
 
     return new_sd
 
