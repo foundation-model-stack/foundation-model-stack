@@ -72,7 +72,7 @@ class TestIdefics3(
 ):
     @staticmethod
     def get_logits(f_out) -> torch.Tensor:
-        return f_out["logits"]
+        return f_out
 
     _get_signature_params = ["input_ids"]
 
@@ -136,3 +136,15 @@ class TestIdefics3(
         # `generate()` normalizes to left-padding internally, so the padded case will include
         # leading pad tokens. The suffix (prompt + new tokens) should match the unpadded output.
         assert torch.equal(out_padded[:, -out_unpadded.shape[1] :], out_unpadded)
+
+    def test_encode_images_handles_multi_image_singleton_mask(self, model):
+        # Regression test for the (B, N, C, H, W) + (B, 1, H, W) mask shape.
+        # The singleton mask dim should broadcast across N images without view() errors.
+        images = torch.zeros(1, 2, 3, 32, 32)
+        pixel_attention_mask = torch.ones(1, 1, 32, 32, dtype=torch.long)
+
+        encoded = model._encode_images(
+            images=images, pixel_attention_mask=pixel_attention_mask
+        )
+
+        assert encoded.shape == (1, 2, 4, 32)

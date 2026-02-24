@@ -4,11 +4,11 @@ from typing import Any, Optional
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 from fms.models.llama import LLaMA, LLaMAConfig
 from fms.models.siglip_vision import SiglipVision, SiglipVisionConfig
 from fms.utils.config import ModelConfig
+from fms.utils.generation import generate as fms_generate
 
 from .connector import Idefics3Connector
 from .pack import pack_image_embeddings
@@ -50,12 +50,33 @@ def _attention_mask_2d_to_3d(attention_mask: torch.Tensor) -> torch.Tensor:
     FMS passes boolean masks through to `torch.nn.functional.scaled_dot_product_attention`,
     where boolean `attn_mask` is interpreted as an "allowed" mask (True = can attend).
 
-    We use a block-diagonal padding mask (token↔token allowed; pad↔pad allowed; cross blocked).
-    Allowing pad↔pad avoids all-False rows for padded query positions, which can otherwise
+    We use a block-diagonal padding mask (token<->token allowed; pad<->pad allowed; cross blocked).
+    Allowing pad<->pad avoids all-False rows for padded query positions, which can otherwise
     produce NaNs in SDPA. Causality is handled separately via `is_causal_mask=True`.
     """
     is_pad = attention_mask == 0
     return is_pad.unsqueeze(-1) == is_pad.unsqueeze(-2)
+
+
+def _attention_mask_2d_to_sdpa_mask(attention_mask: torch.Tensor) -> torch.Tensor:
+    """
+    Convert an HF-style attention mask (1=token, 0=pad) into a 3D additive SDPA mask.
+
+    - Allowed positions are 0.0
+    - Disallowed positions are -inf
+
+    We intentionally allow pad<->pad attention (i.e., padded query positions can attend to padded
+    key positions). This avoids all-disallowed rows for padded queries, which can produce NaNs
+    in SDPA. Causality is handled by applying a lower-triangular mask.
+
+    The mask is made causal (lower triangular), matching the behavior of
+    `fms.utils.generation.pad_input_ids` and ensuring compatibility with SDPA's
+    `update_attn_kwargs` decoding updates.
+    """
+    is_pad = attention_mask == 0
+    mask = is_pad.unsqueeze(-1) == is_pad.unsqueeze(-2)
+    mask = mask.tril()
+    return torch.where(mask, 0.0, -torch.inf)
 
 
 def _make_position_ids(attention_mask: torch.Tensor) -> torch.Tensor:
@@ -178,12 +199,53 @@ class Idefics3(nn.Module):
         _reset_if_present(self.text_model)
         nn.init.xavier_uniform_(self.connector.proj.weight)
 
-    def _encode_images(self, images: torch.Tensor) -> torch.Tensor:
+    def _encode_images(
+        self,
+        images: torch.Tensor,
+        pixel_attention_mask: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
         # images: (B, 3, H, W) or (B, N, 3, H, W)
         is_5d = images.dim() == 5
         if is_5d:
             B, N, C, H, W = images.shape
             images = images.view(B * N, C, H, W)
+            if pixel_attention_mask is not None:
+                if pixel_attention_mask.dim() == 4:
+                    hm, wm = pixel_attention_mask.shape[2:]
+                    if pixel_attention_mask.shape[1] == N:
+                        # (B, N, Hm, Wm) -> (B*N, Hm, Wm)
+                        pixel_attention_mask = pixel_attention_mask.contiguous().view(
+                            B * N, hm, wm
+                        )
+                    elif pixel_attention_mask.shape[1] == 1:
+                        # (B, 1, Hm, Wm) -> broadcast to (B, N, Hm, Wm) then flatten.
+                        pixel_attention_mask = (
+                            pixel_attention_mask.expand(B, N, hm, wm)
+                            .contiguous()
+                            .view(B * N, hm, wm)
+                        )
+                    else:
+                        raise ValueError(
+                            "For 5D images (B, N, C, H, W), 4D pixel_attention_mask must be "
+                            f"(B, N, Hm, Wm) or (B, 1, Hm, Wm); got {tuple(pixel_attention_mask.shape)}"
+                        )
+                elif pixel_attention_mask.dim() == 3:
+                    if pixel_attention_mask.shape[0] == B:
+                        # (B, Hm, Wm) -> apply to all N images
+                        pixel_attention_mask = (
+                            pixel_attention_mask.unsqueeze(1)
+                            .expand(B, N, *pixel_attention_mask.shape[1:])
+                            .contiguous()
+                            .view(B * N, *pixel_attention_mask.shape[1:])
+                        )
+                    elif pixel_attention_mask.shape[0] == B * N:
+                        # Already flattened to match (B*N, C, H, W) images.
+                        pixel_attention_mask = pixel_attention_mask.contiguous()
+                    else:
+                        raise ValueError(
+                            "For 5D images (B, N, C, H, W), 3D pixel_attention_mask first dim must be "
+                            f"B or B*N; got shape {tuple(pixel_attention_mask.shape)} with B={B}, N={N}"
+                        )
 
         patch_size = self.config.vision_config.patch_size
 
@@ -192,15 +254,34 @@ class Idefics3(nn.Module):
             raise ValueError(
                 f"Image dimensions ({images.shape[2]}, {images.shape[3]}) must be divisible by patch_size ({patch_size})"
             )
-        patch_attention_mask = torch.ones(
-            (
-                images.shape[0],
-                images.shape[2] // patch_size,
-                images.shape[3] // patch_size,
-            ),
-            device=images.device,
-            dtype=torch.bool,
-        )
+        patch_attention_mask: Optional[torch.Tensor] = None
+        if pixel_attention_mask is not None:
+            pam = pixel_attention_mask
+            if pam.dim() == 4 and pam.shape[1] == 1:
+                pam = pam.squeeze(1)
+            if pam.dim() != 3:
+                raise ValueError(
+                    "pixel_attention_mask must be (B, Hm, Wm) or (B, 1, Hm, Wm); "
+                    f"got {tuple(pixel_attention_mask.shape)}"
+                )
+
+            pam = pam.to(device=images.device).to(dtype=torch.bool)
+            hm, wm = pam.shape[-2:]
+            ph, pw = images.shape[2] // patch_size, images.shape[3] // patch_size
+            if (hm, wm) == (ph, pw):
+                patch_attention_mask = pam
+            elif (hm, wm) == (images.shape[2], images.shape[3]):
+                # Pixel-level mask -> patch-level by pooling within each patch.
+                patch_attention_mask = (
+                    pam.view(pam.shape[0], ph, patch_size, pw, patch_size)
+                    .any(dim=-1)
+                    .any(dim=-2)
+                )
+            else:
+                raise ValueError(
+                    "pixel_attention_mask shape does not match image or patch grid: "
+                    f"mask.shape={tuple(pam.shape)}, images.shape={tuple(images.shape)}, patch_size={patch_size}"
+                )
 
         vision_last_hidden, _ = self.vision_tower(
             images, patch_attention_mask=patch_attention_mask
@@ -229,28 +310,44 @@ class Idefics3(nn.Module):
     def forward(
         self,
         input_ids: torch.Tensor,
+        position_ids: Optional[torch.Tensor] = None,
+        past_key_value_states: Optional[list] = None,
+        use_cache: bool = False,
         pixel_values: Optional[torch.Tensor] = None,
+        pixel_attention_mask: Optional[torch.Tensor] = None,
         images: Optional[torch.Tensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
-        labels: Optional[torch.Tensor] = None,
-        use_cache: bool = False,
-        past_key_value_states: Optional[list] = None,
-        **unused,
-    ) -> dict[str, torch.Tensor]:
+        inputs: Optional[torch.Tensor] = None,
+        **attn_kwargs,
+    ):
         if images is None:
             images = pixel_values
-        if attention_mask is None:
-            attention_mask = torch.ones_like(input_ids)
 
-        # Text embeddings
-        text_embeds = self.text_model.base_model.embedding(input_ids)
+        token_ids: Optional[torch.Tensor]
+        if inputs is not None:
+            token_ids = input_ids if input_ids.dim() == 2 else None
+            text_embeds = inputs
+        elif input_ids.dim() == 2:
+            token_ids = input_ids
+            text_embeds = self.text_model.base_model.embedding(input_ids)
+        elif input_ids.dim() == 3:
+            token_ids = None
+            text_embeds = input_ids
+        else:
+            raise ValueError(
+                f"Idefics3.forward expects input_ids to be token ids (B,T) or embeddings (B,T,D); got {tuple(input_ids.shape)}"
+            )
 
-        if images is not None:
-            patch_feats = self._encode_images(images)
+        if token_ids is not None and images is not None:
+            patch_feats = self._encode_images(
+                images, pixel_attention_mask=pixel_attention_mask
+            )
             img_tokens = self._connector_tokens(patch_feats)
-            img_tokens = img_tokens.to(dtype=text_embeds.dtype)
+            img_tokens = img_tokens.to(
+                device=text_embeds.device, dtype=text_embeds.dtype
+            )
             packed = pack_image_embeddings(
-                input_ids=input_ids,
+                input_ids=token_ids,
                 inputs_embeds=text_embeds,
                 image_features=img_tokens,
                 image_token_id=self.config.image_token_id,
@@ -259,8 +356,23 @@ class Idefics3(nn.Module):
         else:
             packed = text_embeds
 
-        mask_3d = _attention_mask_2d_to_3d(attention_mask)
-        position_ids = _make_position_ids(attention_mask)
+        if attention_mask is None:
+            if token_ids is not None:
+                attention_mask = torch.ones_like(token_ids)
+            else:
+                # If we're running from precomputed embeddings, assume no padding unless provided.
+                attention_mask = torch.ones(
+                    packed.shape[0],
+                    packed.shape[1],
+                    device=packed.device,
+                    dtype=torch.long,
+                )
+
+        if position_ids is None:
+            position_ids = _make_position_ids(attention_mask)
+
+        if "mask" not in attn_kwargs:
+            attn_kwargs["mask"] = _attention_mask_2d_to_sdpa_mask(attention_mask)
 
         hidden, present = self.text_model.base_model(
             None,
@@ -268,41 +380,72 @@ class Idefics3(nn.Module):
             position_ids=position_ids,
             past_key_value_states=past_key_value_states,
             use_cache=use_cache,
-            mask=mask_3d,
-            is_causal_mask=True,
+            **attn_kwargs,
         )
 
         logits = self.text_model.head(hidden)
-
-        loss = None
-        if labels is not None:
-            labels = labels.clone()
-            # Mask out image span positions and padding positions
-            labels = labels.masked_fill(input_ids == self.config.image_token_id, -100)
-            labels = labels.masked_fill(attention_mask == 0, -100)
-
-            # HF-style causal LM loss: predict token t+1 from logits at t
-            shift_logits = logits[:, :-1, :].contiguous()
-            shift_labels = labels[:, 1:].contiguous()
-            loss = F.cross_entropy(
-                shift_logits.view(-1, shift_logits.size(-1)),
-                shift_labels.view(-1),
-                ignore_index=-100,
-            )
-
-        out: dict[str, torch.Tensor] = {"logits": logits}
-        if loss is not None:
-            out["loss"] = loss
         if use_cache:
-            # keep naming consistent with llama internals
-            out["past_key_value_states"] = present  # type: ignore[assignment]
-        return out
+            return logits, present
+        return logits
+
+    def prepare_inputs_for_generation(self, iteration: int, input_ids, kwargs):
+        """
+        Hook for `fms.utils.generation.generate` to build multimodal embeddings.
+
+        This follows the LlavaNext pattern:
+        - Prefill (iteration == 0): encode images once and pack into the text embeddings.
+        - Decode (iteration > 0 with use_cache=True): embed only new tokens; do not re-encode images.
+        """
+        if kwargs.get("use_cache") and iteration > 0:
+            # Cached decoding stage: no image work; embed only the new token(s).
+            embeds = self.text_model.base_model.embedding(input_ids)
+            kwargs.pop("pixel_values", None)
+            kwargs.pop("pixel_attention_mask", None)
+            kwargs.pop("images", None)
+            return embeds, kwargs
+
+        images = kwargs.get("images")
+        if images is None:
+            images = kwargs.get("pixel_values")
+        pixel_attention_mask = kwargs.get("pixel_attention_mask")
+
+        # No image data to pack.
+        if images is None or images.numel() == 0:
+            inputs = kwargs.get("inputs")
+            if inputs is not None:
+                return inputs, kwargs
+            return input_ids, kwargs
+
+        inputs = kwargs.get("inputs")
+        if inputs is None:
+            inputs = self.text_model.base_model.embedding(input_ids)
+
+        patch_feats = self._encode_images(
+            images, pixel_attention_mask=pixel_attention_mask
+        )
+        img_tokens = self._connector_tokens(patch_feats)
+        img_tokens = img_tokens.to(device=inputs.device, dtype=inputs.dtype)
+
+        packed = pack_image_embeddings(
+            input_ids=input_ids,
+            inputs_embeds=inputs,
+            image_features=img_tokens,
+            image_token_id=self.config.image_token_id,
+            expected_L=self.config.image_span_len,
+        )
+
+        # Drop image tensors so we don't carry them through cached decoding.
+        kwargs.pop("pixel_values", None)
+        kwargs.pop("pixel_attention_mask", None)
+        kwargs.pop("images", None)
+        return packed, kwargs
 
     @torch.no_grad()
     def generate(
         self,
         input_ids: torch.Tensor,
         pixel_values: Optional[torch.Tensor] = None,
+        pixel_attention_mask: Optional[torch.Tensor] = None,
         images: Optional[torch.Tensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
         max_new_tokens: int = 20,
@@ -320,71 +463,23 @@ class Idefics3(nn.Module):
             input_ids, attention_mask, pad_id=self.config.text_config.pad_id
         )
 
-        # Prefill (packed embeds)
-        text_embeds = self.text_model.base_model.embedding(input_ids)
+        extra_kwargs: dict[str, Any] = {
+            "mask": _attention_mask_2d_to_sdpa_mask(attention_mask),
+            "position_ids": _make_position_ids(attention_mask),
+        }
         if images is not None:
-            patch_feats = self._encode_images(images)
-            img_tokens = self._connector_tokens(patch_feats).to(dtype=text_embeds.dtype)
-            packed = pack_image_embeddings(
-                input_ids=input_ids,
-                inputs_embeds=text_embeds,
-                image_features=img_tokens,
-                image_token_id=self.config.image_token_id,
-                expected_L=self.config.image_span_len,
-            )
-        else:
-            packed = text_embeds
+            extra_kwargs["pixel_values"] = images
+            if pixel_attention_mask is not None:
+                extra_kwargs["pixel_attention_mask"] = pixel_attention_mask
 
-        mask_3d = _attention_mask_2d_to_3d(attention_mask)
-        position_ids = _make_position_ids(attention_mask)
-
-        hidden, past = self.text_model.base_model(
-            None,
-            inputs_embeds=packed,
-            position_ids=position_ids,
-            past_key_value_states=None,
+        return fms_generate(
+            model=self,
+            input_ids=input_ids,
+            max_seq_len=self.config.text_config.max_expected_seq_len,
+            max_new_tokens=max_new_tokens,
+            do_sample=False,
             use_cache=True,
-            mask=mask_3d,
-            is_causal_mask=True,
+            eos_token_id=eos_token_id,
+            prepare_model_inputs_hook=self.prepare_inputs_for_generation,
+            extra_kwargs=extra_kwargs,
         )
-
-        generated = input_ids
-        last_logits = self.text_model.head(hidden[:, -1:, :]).squeeze(1)
-        next_token = torch.argmax(last_logits, dim=-1, keepdim=True)
-
-        for _ in range(max_new_tokens):
-            generated = torch.cat([generated, next_token], dim=1)
-            if eos_token_id is not None:
-                if torch.all(next_token.squeeze(1) == eos_token_id):
-                    break
-
-            # Extend attention mask and position ids for the new token.
-            attention_mask = torch.cat(
-                [
-                    attention_mask,
-                    torch.ones_like(next_token, dtype=attention_mask.dtype),
-                ],
-                dim=1,
-            )
-
-            # decode step: embed only the new token
-            next_embeds = self.text_model.base_model.embedding(next_token)
-            pos_next = position_ids[:, -1:] + 1
-
-            # Recompute 3D mask so cached decoding remains padding-aware.
-            mask_3d = _attention_mask_2d_to_3d(attention_mask)
-
-            hidden, past = self.text_model.base_model(
-                None,
-                inputs_embeds=next_embeds,
-                position_ids=pos_next,
-                past_key_value_states=past,
-                use_cache=True,
-                mask=mask_3d[:, -1:, :],
-            )
-
-            last_logits = self.text_model.head(hidden[:, -1:, :]).squeeze(1)
-            next_token = torch.argmax(last_logits, dim=-1, keepdim=True)
-            position_ids = torch.cat([position_ids, pos_next], dim=1)
-
-        return generated
