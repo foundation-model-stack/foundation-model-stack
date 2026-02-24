@@ -85,45 +85,27 @@ class SiglipVisionEmbeddings(nn.Module):
         pass
 
     # NOTE: Does not support interpolation of position encodings-- not used by granite-vision
-    def forward(
-        self,
-        pixel_values: torch.FloatTensor,
-        patch_attention_mask: Optional[torch.Tensor] = None,
+    def _navit_position_ids(
+        self, patch_attention_mask: torch.Tensor, device: torch.device
     ) -> torch.Tensor:
-        _, _, height, width = pixel_values.shape
-        target_dtype = self.patch_embedding.weight.dtype
-        patch_embeds = self.patch_embedding(
-            pixel_values.to(dtype=target_dtype)
-        )  # shape = [*, width, grid, grid]
-        embeddings = patch_embeds.flatten(2).transpose(1, 2)
+        """
+        Compute NaViT-style bucketed position ids.
 
-        if patch_attention_mask is None and self.config.use_navit_position_buckets:
-            patch_attention_mask = torch.ones(
-                (
-                    pixel_values.shape[0],
-                    height // self.patch_size,
-                    width // self.patch_size,
-                ),
-                device=pixel_values.device,
-                dtype=torch.bool,
-            )
-        if patch_attention_mask is None or not self.config.use_navit_position_buckets:
-            embeddings = embeddings + self.position_embedding(self.position_ids)
-            return embeddings
-
-        # NaViT-style bucketed position ids (matches HF Idefics3VisionEmbeddings)
-        patch_attention_mask = patch_attention_mask.to(device=pixel_values.device)
+        This matches HF Idefics3VisionEmbeddings semantics, where the patch grid can vary per
+        example and positions are bucketed against fixed `boundaries`.
+        """
+        patch_attention_mask = patch_attention_mask.to(device=device)
         batch_size, max_nb_patches_h, max_nb_patches_w = patch_attention_mask.shape
 
         boundaries = torch.arange(
             1 / self.num_patches_per_side,
             1.0,
             1 / self.num_patches_per_side,
-            device=pixel_values.device,
+            device=device,
         )
         position_ids = torch.zeros(
             (batch_size, max_nb_patches_h * max_nb_patches_w),
-            device=pixel_values.device,
+            device=device,
             dtype=torch.long,
         )
 
@@ -156,6 +138,38 @@ class SiglipVisionEmbeddings(nn.Module):
                 bucket_coords_h[:, None] * self.num_patches_per_side + bucket_coords_w
             ).flatten()
             position_ids[batch_idx][p_attn_mask.view(-1)] = pos_ids
+
+        return position_ids
+
+    def forward(
+        self,
+        pixel_values: torch.FloatTensor,
+        patch_attention_mask: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        _, _, height, width = pixel_values.shape
+        target_dtype = self.patch_embedding.weight.dtype
+        patch_embeds = self.patch_embedding(
+            pixel_values.to(dtype=target_dtype)
+        )  # shape = [*, width, grid, grid]
+        embeddings = patch_embeds.flatten(2).transpose(1, 2)
+
+        if patch_attention_mask is None and self.config.use_navit_position_buckets:
+            patch_attention_mask = torch.ones(
+                (
+                    pixel_values.shape[0],
+                    height // self.patch_size,
+                    width // self.patch_size,
+                ),
+                device=pixel_values.device,
+                dtype=torch.bool,
+            )
+        if patch_attention_mask is None or not self.config.use_navit_position_buckets:
+            embeddings = embeddings + self.position_embedding(self.position_ids)
+            return embeddings
+
+        position_ids = self._navit_position_ids(
+            patch_attention_mask, device=pixel_values.device
+        )
 
         embeddings = embeddings + self.position_embedding(position_ids)
         return embeddings

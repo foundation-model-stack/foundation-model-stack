@@ -11,8 +11,8 @@ def pack_image_embeddings(
     """
     masked replace (no length change) + HARD span asserts:
     Precedence of errors:
-      - If there is exactly 1 span → prefer per-span length error
-      - If there are multiple spans → prefer total count error (message contains 'expected')
+      - If there is exactly 1 span -> prefer per-span length error
+      - If there are multiple spans -> prefer total count error (message contains 'expected')
     Supports image_features of shape (B,L,D) or (B,N,L,D).
     """
     B, T, D = inputs_embeds.shape
@@ -67,7 +67,7 @@ def pack_image_embeddings(
                 f"[PackError] batch={b}: found {len(runs)} image spans but only {N} image(s) provided"
             )
 
-        # ----- precedence: single span → per-span first; multiple spans → total first
+        # ----- precedence: single span -> per-span first; multiple spans -> total first
         if len(runs) == 1:
             # single span: prefer span length error first
             a, z = runs[0]

@@ -440,15 +440,24 @@ def load_smolvlm_checkpoint(
     full_sd = full_model.state_dict()
 
     # 1. Extract Vision Encoder
-    # Usually full_model.model.vision_model
+    # HF layout varies a bit across versions/wrappers. Prefer the canonical
+    # `full_model.model.vision_model`, but fall back to a top-level `vision_model`
+    # if present.
     vision_model = None
     if hasattr(full_model, "model") and hasattr(full_model.model, "vision_model"):
         vision_model = full_model.model.vision_model
     elif hasattr(full_model, "vision_model"):
+        logger.info(
+            "HF layout fallback: using full_model.vision_model (type=%s) because "
+            "full_model.model.vision_model is missing",
+            type(full_model).__name__,
+        )
         vision_model = full_model.vision_model
 
     if vision_model is None:
-        raise ValueError("Could not find vision_model in checkpoint")
+        raise ValueError(
+            f"Could not find vision_model in checkpoint (full_model type={type(full_model).__name__})"
+        )
 
     # Wrap in adapter
     from .vision_adapter import (
@@ -493,16 +502,17 @@ def load_smolvlm_checkpoint(
             new_name = name.replace("modality_projection.", "")
             projector_weights[new_name] = param.data.clone()
     else:
-        # Fallback search
-        for name, param in full_model.named_parameters():
-            if (
-                "connector" in name
-                or "mlp" in name
-                and "vision" not in name
-                and "text" not in name
-            ):
-                # This is risky, better to rely on structure
-                pass
+        # Fallback cases exist in the wild (e.g., different wrappers), but scanning named
+        # parameters is risky and can silently pick the wrong tensors. Prefer to fail loudly
+        # and let the caller use a known-good layout / loader path.
+        logger.warning(
+            "HF layout fallback: could not find full_model.model.connector (type=%s)",
+            type(full_model).__name__,
+        )
+        raise ValueError(
+            "Could not find connector module in HF checkpoint; cannot extract projector weights. "
+            "Expected `full_model.model.connector` for Idefics3/SmolVLM."
+        )
 
     # 3. Reconstruct Text Backbone (LlamaForCausalLM)
     # We need a functional CausalLM, but we only have the Idefics3 text submodule.

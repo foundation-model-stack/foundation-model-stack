@@ -5,9 +5,12 @@ Wraps the vision tower bundled inside SmolVLM checkpoint and provides
 a consistent interface that returns (B, 1024, 768) patch embeddings.
 """
 
+import logging
 import torch
 import torch.nn as nn
 from typing import Optional, Callable
+
+logger = logging.getLogger(__name__)
 
 
 class VisionTowerAdapter(nn.Module):
@@ -164,10 +167,14 @@ def create_normalize_fn(mean: list, std: list, device: str = "cpu") -> Callable:
 
 def extract_vision_tower_from_checkpoint(checkpoint):
     """
-    Extract vision tower from SmolVLM checkpoint by scanning for common attribute names.
+    Extract vision tower from a SmolVLM/Idefics3-style checkpoint.
+
+    HF layouts vary slightly across wrappers/versions. For Idefics3, the most common path is
+    `checkpoint.model.vision_model`. This helper will fall back to a small set of other known
+    attribute paths, and will log when a non-default path is used.
 
     Args:
-        checkpoint: Loaded SmolVLM model object or state dict
+        checkpoint: Loaded SmolVLM model object, or a dict-like wrapper that contains submodules
 
     Returns:
         Vision tower module
@@ -175,44 +182,61 @@ def extract_vision_tower_from_checkpoint(checkpoint):
     Raises:
         ValueError: If vision tower cannot be found
 
-    Common attribute paths in SmolVLM-style models:
-        - checkpoint.vision_tower
-        - checkpoint.vision
+    Known attribute paths:
+        - checkpoint.model.vision_model (default)
         - checkpoint.model.vision_tower
         - checkpoint.vision_model
-        - checkpoint.visual
+        - checkpoint.vision_tower
     """
-    candidate_attrs = [
-        "vision_tower",
-        "vision",
-        "vision_model",
-        "visual",
-        "vision_encoder",
-    ]
 
-    # Try direct attributes first
-    for attr in candidate_attrs:
-        if hasattr(checkpoint, attr):
-            tower = getattr(checkpoint, attr)
-            if tower is not None:
-                return tower
+    def _get_attr(obj, attr: str):
+        if hasattr(obj, attr):
+            value = getattr(obj, attr)
+            if value is not None:
+                return value
+        return None
 
-    # Try nested under .model
+    # Default path: checkpoint.model.vision_model (no log; this is the expected layout).
     if hasattr(checkpoint, "model"):
-        for attr in candidate_attrs:
-            if hasattr(checkpoint.model, attr):
-                tower = getattr(checkpoint.model, attr)
-                if tower is not None:
-                    return tower
+        tower = _get_attr(checkpoint.model, "vision_model")
+        if tower is not None:
+            return tower
 
-    # Try dictionary keys (for state dict style)
+        # Fallback: checkpoint.model.vision_tower
+        tower = _get_attr(checkpoint.model, "vision_tower")
+        if tower is not None:
+            logger.info(
+                "Vision tower layout fallback: using checkpoint.model.vision_tower (type=%s)",
+                type(checkpoint).__name__,
+            )
+            return tower
+
+    # Fallback: top-level attributes
+    for attr in ("vision_model", "vision_tower", "vision"):
+        tower = _get_attr(checkpoint, attr)
+        if tower is not None:
+            logger.info(
+                "Vision tower layout fallback: using checkpoint.%s (type=%s)",
+                attr,
+                type(checkpoint).__name__,
+            )
+            return tower
+
+    # Try dictionary keys (dict-like wrapper containing submodules; not a raw state_dict)
     if isinstance(checkpoint, dict):
-        for attr in candidate_attrs:
-            if attr in checkpoint:
-                return checkpoint[attr]
+        for key in ("vision_model", "vision_tower", "vision"):
+            if key in checkpoint:
+                tower = checkpoint[key]
+                if isinstance(tower, nn.Module):
+                    logger.info(
+                        "Vision tower layout fallback: using checkpoint[%r] (dict)", key
+                    )
+                    return tower
 
     # Not found
     raise ValueError(
-        f"Could not find vision tower in checkpoint. Tried attributes: {candidate_attrs}. "
-        f"Available attributes: {dir(checkpoint) if hasattr(checkpoint, '__dir__') else checkpoint.keys()}"
+        "Could not find vision tower in checkpoint. Tried: "
+        "checkpoint.model.vision_model, checkpoint.model.vision_tower, checkpoint.vision_model, "
+        "checkpoint.vision_tower, checkpoint.vision. "
+        f"(checkpoint type={type(checkpoint).__name__})"
     )
