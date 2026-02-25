@@ -41,13 +41,20 @@ __FMS_MODEL_REGISTRY_MAP: RegistryMap = {
     "GraniteMoeHybridForCausalLM": ("granite_moe_hybrid", pb.build_granite_moe_hybrid_params),
     "MistralForCausalLM": ("mistral", pb.build_mistral_params),
     "BambaForCausalLM": ("bamba", pb.build_bamba_params),
-    "SiglipModel": ("siglip_vision", pb.build_siglip_vision_params),
     "LlavaNextForConditionalGeneration": ("llava_next", pb.build_llava_next_params),
     "MPNetForMaskedLM": ("mpnet", pb.build_mpnet_params),
     "BertForMaskedLM": ("bert", pb.build_bert_params),
+    "Mistral3ForConditionalGeneration": ("mistral3", pb.build_mistral3_params),
     # Classify arches have some extra keys for labels
     "RobertaForSequenceClassification": ("roberta_classification", partial(pb.build_roberta_params, is_classify=True)),
     "BertForSequenceClassification": ("bert_classification", partial(pb.build_bert_params, is_classify=True)),
+    # Vision encoders
+    "SiglipModel": ("siglip_vision", pb.build_siglip_vision_params),
+    # NOTE: We only run the model from the composite mistral3 arch, so this
+    # should not be called directly through the registry for now. However,
+    # we register it anyway, as the infrastructure should be abstracted to
+    # allow more generic recursive param building in the future.
+    "PixtralVisionModel": ("pixtral_vision", pb.build_pixtral_params),
 }
 # fmt: on
 
