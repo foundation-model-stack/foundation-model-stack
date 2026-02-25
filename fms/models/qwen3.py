@@ -17,7 +17,6 @@ from fms.distributed.strategy import (
 from fms.modules.attention import (
     AttentionKwargs,
     MultiHeadAttention,
-    get_attention_type,
 )
 from fms.modules.feedforward import GatedLinearUnit
 from fms.modules.head import LinearClassificationHead
@@ -27,7 +26,6 @@ from fms.modules.positions import RotaryEmbedding
 from fms.utils import serialization
 from fms.utils.activation import str_to_activation
 from fms.utils.config import ModelConfig
-from fms.utils.headless import gather_outputs
 
 
 logger = logging.getLogger(__name__)
@@ -148,16 +146,13 @@ class Qwen3Block(nn.Module):
         use_cache=False,
         **attn_kwargs: Unpack[AttentionKwargs],
     ):
-        # if the cache is not empty, we need to get the kv cache for self attention
-        self_attn_past_key_value = past_key_value_state
-
         # first we do MHA and Add&Norm
         residual = x
         x = self.ln(x)
         x = self.attn(
             q=x,
             position_ids=position_ids,
-            past_key_value_state=self_attn_past_key_value,
+            past_key_value_state=past_key_value_state,
             use_cache=use_cache,
             **attn_kwargs,
         )
@@ -457,7 +452,10 @@ class Qwen3(nn.Module):
             if self.head.weight.device == torch.device("meta"):
                 self.head.weight = self.base_model.embedding.weight
             else:
-                self.base_model.embedding.weight = self.head.weight
+                # For torch.compile compatibility, copy weights instead of tying them
+                # This avoids graph tracing issues with shared tensors in certain backends
+                with torch.no_grad():
+                    self.base_model.embedding.weight.copy_(self.head.weight)
 
     def forward(
         self,
@@ -468,23 +466,16 @@ class Qwen3(nn.Module):
         last_n_tokens: int = 0,
         **attn_kwargs: Unpack[AttentionKwargs],
     ):
-        get_attention_type(**attn_kwargs)["validate_attn_kwargs"](
-            input_ids=x,
-            position_ids=position_ids,
-            past_key_value_states=past_key_value_states,
-            **attn_kwargs,
-        )
         output, cache = self.base_model(
             x, position_ids, past_key_value_states, use_cache, **attn_kwargs
         )
 
-        output = gather_outputs(output, last_n_tokens, **attn_kwargs)
-        preds = self.head(output)
+        output = self.head(output)
 
         if use_cache:
-            return preds, cache
+            return output, cache
         else:
-            return preds
+            return output
 
 
 # Register Qwen3 variants with the model registration API
@@ -540,6 +531,7 @@ def _hf_to_fms_names(
     Convert HuggingFace Qwen3 state dict to FMS format
     """
     replacements = [
+        (r"^lm_head.weight", "head.weight"),
         (r"^norm.weight", "base_model.dec_norm.weight"),
         (r"^embed_tokens.weight", "base_model.embedding.weight"),
         (r"layers", "base_model.layers"),

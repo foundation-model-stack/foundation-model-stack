@@ -61,7 +61,7 @@ def _get_fms_model_output(model_path, inputs):
 
     with torch.no_grad():
         # Get embeddings from base model (before LM head)
-        embeddings, _ = model.base_model(
+        embeddings = model(
             input_ids_padded,
             mask=padding_kwargs["mask"].to(device),
             position_ids=padding_kwargs["position_ids"].to(device),
