@@ -291,7 +291,7 @@ class GatedLinearUnit(nn.Module):
             wg, w1 = torch.split(out_fused, [self.hidden_dim, self.hidden_dim], dim=2)
             out = self.a(wg) * w1
         else:
-            out = self.a(self.wg(x).to("cpu")).to("spyre") * self.w1(x)
+            out = self.a(self.wg(x)) * self.w1(x)
         if self.p_dropout:
             out = self.d(out)
         return self.w2(out)
