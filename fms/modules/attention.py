@@ -441,6 +441,7 @@ class UnfusedQKV(QKV):
             )
 
         # b x h x qlen x ds
+        print(f"QUERY STL: {q.device_tensor_layout()}")
         queries = self.query(q)
         keys = self.key(k)
         values = self.value(v)

@@ -63,21 +63,17 @@ class GraniteBlock(nn.Module):
         emb_kq = self.config.head_dim
         emb_v = self.config.head_dim
 
-        self.ln = LayerNormParameterized(
+        self.ln = torch.nn.RMSNorm(
             self.config.emb_dim,
-            elementwise_scale=True,
-            elementwise_shift=False,
-            use_mean=False,
             eps=self.config.norm_eps,
-            use_high_precision_pow=False,
+            dtype=torch.float16,
+            device="cpu"
         )
-        self.ff_ln = LayerNormParameterized(
+        self.ff_ln = torch.nn.RMSNorm(
             self.config.emb_dim,
-            elementwise_scale=True,
-            elementwise_shift=False,
-            use_mean=False,
             eps=self.config.norm_eps,
-            use_high_precision_pow=False,
+            dtype=torch.float16,
+            device="cpu"
         )
 
         if self.config.kvheads == 0:
@@ -128,7 +124,7 @@ class GraniteBlock(nn.Module):
 
         # first we do MHA and Add&Norm
         residual = x
-        x = self.ln(x)
+        x = self.ln(x.to("cpu")).to("spyre")
         x = self.attn(
             q=x,
             position_ids=position_ids,
@@ -146,7 +142,7 @@ class GraniteBlock(nn.Module):
 
         # then we do FF and Add&Norm
         residual = x
-        x = self.ff_ln(x)
+        x = self.ff_ln(x.to("cpu")).to("spyre")
         x = self.ff_sub_layer(x)
         if self.config.p_dropout != 0:
             x = self.dropout(x)
@@ -206,13 +202,11 @@ class GraniteHeadless(nn.Module):
             layers.append(block)
         self.layers = nn.ModuleList(layers)
 
-        dec_norm = LayerNormParameterized(
+        dec_norm = torch.nn.RMSNorm(
             self.config.emb_dim,
-            elementwise_scale=True,
-            elementwise_shift=False,
-            use_mean=False,
             eps=self.config.norm_eps,
-            use_high_precision_pow=False,
+            dtype=torch.float16,
+            device="cpu"
         )
         self.dec_norm = self.distributed_strategy.distribute_module(
             dec_norm, final_layers=True
@@ -313,7 +307,7 @@ class GraniteHeadless(nn.Module):
                 x_in = output
 
         dec_out = x_in
-        dec_out = self.dec_norm(dec_out)
+        dec_out = self.dec_norm(dec_out.to("cpu")).to("cpu")
         if self.config.p_dropout:
             dec_out = self.dropout(dec_out)
 

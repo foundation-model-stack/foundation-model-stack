@@ -484,11 +484,12 @@ def get_model(
     # Make sure any uninitialized tensors are at least moved to device
     # TODO: should we raise a warning? are uninitialized tensors ever acceptable?
     if initial_device != torch.device("meta"):
-        fms_model._apply(
-            lambda t: torch.empty_like(t, device=initial_device)
-            if t.device == torch.device("meta")
-            else t
-        )
+        def ensure_no_meta(t: torch.Tensor):
+            if t.device == torch.device("meta"):
+                print(t)
+                return torch.empty(t.shape, dtype=t.dtype, device=initial_device)
+            return t
+        fms_model._apply(ensure_no_meta)
 
     return fms_model
 

@@ -6,6 +6,7 @@ from collections import ChainMap
 from collections.abc import Iterable
 from functools import reduce
 from pathlib import Path
+import traceback
 from typing import Any, Callable, Mapping, MutableMapping, Optional, Set, Union
 
 import torch
@@ -590,8 +591,8 @@ def _move_to_real_device(
 ) -> torch.Tensor:
     if param.device == torch.device("meta"):
         is_parameter = isinstance(param, torch.nn.Parameter)
-        param = torch.empty_like(
-            param,
+        param = torch.empty(
+            param.shape,
             device=real_device,
             dtype=dtype,
         )
@@ -691,6 +692,7 @@ def _load_partial_state_dict(
                     "mean that the quantization setup used to train the checkpoint does "
                     "not match the one used to instantiate the model."
                 ) from e
+            print(traceback.format_exc())
             if unused_keys_tp:
                 unused_keys.update(unused_keys_tp)
             else:
