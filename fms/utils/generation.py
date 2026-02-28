@@ -168,6 +168,7 @@ def generate(
     max_new_tokens: int = 256,
     temperature: float = 1.0,
     top_k: int = 10,
+    top_p: float = 0.9,
     do_sample: bool = True,
     num_beams: int = 1,
     use_cache: bool = False,
@@ -296,12 +297,22 @@ def generate(
         if do_sample:
             # get logits from last value in sequence nad scale
             logits = logits / temperature
-            if top_k:
+            if top_k > 0:
                 v, _ = torch.topk(logits, top_k)
                 logits[logits < v[:, [-1]]] = -float("inf")
+            if top_p < 1.0:
+                sorted_logits, sorted_indices = torch.sort(logits, descending=True)
+                cumulative_probs = torch.cumsum(F.softmax(sorted_logits, dim=-1), dim=-1)
+                indices_to_remove = cumulative_probs > top_p
+                indices_to_remove[:, 1:] = indices_to_remove[:, :-1].clone()
+                indices_to_remove[:, 0] = 0
+                indices_to_remove = torch.logical_not(indices_to_remove)
+                logits[indices_to_remove] = float('-inf')
 
-            probs = F.softmax(logits, dim=-1)
-            next_val = torch.multinomial(probs, num_samples=1)
+
+            else:
+                probs = F.softmax(logits, dim=-1)
+                next_val = torch.multinomial(probs, num_samples=1)
         else:
             next_val = torch.argmax(logits, dim=-1).unsqueeze(0).t()
 
