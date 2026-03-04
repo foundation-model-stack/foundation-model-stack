@@ -184,6 +184,7 @@ def generate(
     use_cache: bool = False,
     contiguous_cache: bool = False,
     eos_token_id: Optional[int] = None,
+    pad_token_id: Optional[int] = None,
     timing: str = "",
     prepare_model_inputs_hook: Optional[
         Callable[
@@ -220,6 +221,7 @@ def generate(
             past_key_value_states args in forward method.
         contiguous_cache: ensures the cache is contiguous in device memory
         eos_token_id: the optional token id representing the end of sequence
+        pad_token_id: the optional token id representing the pad token
         timing: whether to measure timings: "per-token" for each token generation time,
             "e2e" for full generation loop. Both options make `generate` return a tuple
             with the following information:
