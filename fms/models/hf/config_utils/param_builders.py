@@ -169,6 +169,28 @@ def build_mistral_params(config: PretrainedConfig) -> dict:
     )
 
 
+def build_qwen3_params(config: PretrainedConfig) -> dict:
+    """Param builder for mapping Qwen3ForCausalLM  to FMS."""
+    config_params = {
+        # VERIFY:
+        "activation_fn": config.hidden_act,
+        "emb_dim": config.hidden_size,
+        "max_expected_seq_len": config.max_position_embeddings,
+        "kvheads": config.num_key_value_heads,
+        "p_dropout": config.attention_dropout,
+        "head_dim": (
+            getattr(config, "head_dim", None)
+            or config.hidden_size // config.num_attention_heads
+        ),
+        "norm_eps": config.rms_norm_eps,
+        "rope_base": config.rope_theta,
+        "sliding_window": config.sliding_window,
+    }
+    # VERIFY:
+    return model_params_with_common_opts(
+        config, config_params, inner_dim=config.intermediate_size)
+
+
 def build_bamba_params(config: PretrainedConfig) -> dict:
     """Param builder for mapping BambaForCausalLM to FMS."""
     config_params = {

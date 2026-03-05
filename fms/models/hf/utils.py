@@ -22,6 +22,11 @@ def register_fms_models():
         _headless_models,
         _masked_lm_models,
     )
+    from fms.models.hf import (
+        _causal_lm_models,
+        _headless_models,
+        _masked_lm_models,
+    )
 
     for model_cls in _headless_models:
         # register config

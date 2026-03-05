@@ -127,6 +127,8 @@ def __maybe_infer_model_variant(
             for kwarg in kwargs:
                 if kwarg in extra_kwargs and not kwargs.get(
                     "override_hf_pretrained_config", False
+                ) and not kwargs.get(
+                    "override_hf_pretrained_config", False
                 ):
                     logger.warning(
                         f"ignoring {kwarg} as the pretrained model config overrides it"
@@ -497,29 +499,29 @@ from fms.models import (  # noqa: E402
     gpt_bigcode,
     gpt_oss,
     granite,
-    granite_moe_hybrid,
     llama,
-    llava_next,
     mistral,
     mistral3,
     mixtral,
+    qwen3,
     roberta,
     siglip_vision,
-    mpnet,
+    mpnet
 )
+
 
 __all__ = [
     "bamba",
     "gpt_bigcode",
     "gpt_oss",
     "granite",
-    "granite_moe_hybrid",
     "llama",
-    "llava_next",
     "mistral",
     "mistral3",
     "mixtral",
+    "qwen3",
     "roberta",
     "siglip_vision",
-    "mpnet",
+    "mpnet"
 ]
+

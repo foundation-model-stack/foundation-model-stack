@@ -19,6 +19,7 @@ import torch
 import torch.distributed
 from torch import Tensor, nn
 from torch.distributed.distributed_c10d import ProcessGroup
+from fms.modules.layernorm import LayerNormParameterized
 from torch.nn import functional as F
 
 from fms import distributed
@@ -436,11 +437,13 @@ class QKV(nn.Module, metaclass=abc.ABCMeta):
         emb_kq_per_head: int,
         emb_v_per_head: int,
         use_bias: bool,
+        use_norm: bool = False,
         linear_config: Optional[Mapping[str, Any]] = None,
         *args,
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
+        self.use_norm = use_norm
         self.emb_dim = emb_dim
         self.nheads = nheads
         self.kvheads = kvheads
@@ -496,6 +499,8 @@ class UnfusedQKV(QKV):
         emb_kq_per_head: int,
         emb_v_per_head: int,
         use_bias: bool,
+        use_norm: bool = False,
+        norm_eps: float = 1e-6,
         linear_config: Optional[Mapping[str, Any]] = None,
         *args,
         **kwargs,
@@ -507,6 +512,7 @@ class UnfusedQKV(QKV):
             emb_kq_per_head,
             emb_v_per_head,
             use_bias,
+            use_norm,
             linear_config,
             *args,
             **kwargs,
@@ -530,6 +536,23 @@ class UnfusedQKV(QKV):
             bias=use_bias,
             linear_config=linear_config,
         )
+        if self.use_norm:
+            self.q_norm = LayerNormParameterized(
+                self.emb_kq_per_head,
+                elementwise_scale=True,
+                elementwise_shift=False,
+                use_mean=False,
+                eps=norm_eps,
+                use_high_precision_pow=True,
+            )
+            self.k_norm = LayerNormParameterized(
+                self.emb_kq_per_head,
+                elementwise_scale=True,
+                elementwise_shift=False,
+                use_mean=False,
+                eps=norm_eps,
+                use_high_precision_pow=True,
+            )
 
     def reset_parameters(self):
         for m in self.modules():
@@ -554,7 +577,12 @@ class UnfusedQKV(QKV):
 
         # b x h x qlen x ds
         queries = self.query(q)
+        input_shape = queries.shape
+        if self.use_norm:
+            queries = self.q_norm(queries.view(*input_shape[:-1], -1, self.emb_kq_per_head))
         keys = self.key(k)
+        if self.use_norm:
+            keys = self.k_norm(keys.view(*input_shape[:-1], -1, self.emb_kq_per_head))
         values = self.value(v)
         return queries, keys, values
 
@@ -572,6 +600,7 @@ class FusedQKV(QKV):
         emb_kq_per_head: int,
         emb_v_per_head: int,
         use_bias: bool,
+        use_norm: bool = False,
         linear_config: Optional[Mapping[str, Any]] = None,
         *args,
         **kwargs,
@@ -583,6 +612,7 @@ class FusedQKV(QKV):
             emb_kq_per_head,
             emb_v_per_head,
             use_bias,
+            use_norm,
             linear_config,
             *args,
             **kwargs,
@@ -599,6 +629,21 @@ class FusedQKV(QKV):
             bias=self.use_bias,
             linear_config=linear_config,
         )
+        if self.use_norm:
+            self.q_norm = LayerNormParameterized(
+                self.emb_kq_per_head,
+                elementwise_scale=True,
+                elementwise_shift=False,
+                use_mean=False,
+                use_high_precision_pow=True,
+            )
+            self.k_norm = LayerNormParameterized(
+                self.emb_kq_per_head,
+                elementwise_scale=True,
+                elementwise_shift=False,
+                use_mean=False,
+                use_high_precision_pow=True,
+            )
 
     def unfuse_weights(self):
         with torch.device("meta"):
@@ -638,7 +683,20 @@ class FusedQKV(QKV):
             qkv = q
         else:
             raise ValueError("q, k, and v must be the same or k and v must be None")
-        return self.qkv_fused(qkv).split(self.splits, dim=-1)
+        # queries, keys, values = self.qkv_fused(qkv).split(self.splits, dim=-1)
+        # if self.use_norm:
+        #     queries = self.q_norm(queries)
+        #     keys = self.k_norm(keys)
+        # return queries, keys, values
+        queries = self.query(q)
+        input_shape = queries.shape
+        if self.use_norm:
+            queries = self.q_norm(queries.view(*input_shape[:-1], -1, self.emb_kq_per_head))
+        keys = self.key(k)
+        if self.use_norm:
+            keys = self.k_norm(keys.view(*input_shape[:-1], -1, self.emb_kq_per_head))
+        values = self.value(v)
+        return queries.view(*input_shape[:-1], -1), keys.view(*input_shape[:-1], -1), values
 
 
 class MultiHeadAttention(nn.Module):
@@ -691,6 +749,8 @@ class MultiHeadAttention(nn.Module):
         kvheads,
         p_dropout=None,
         use_bias=False,
+        use_norm: bool = False,
+        norm_eps: float = 1e-6,
         position_encoder: Optional[PositionEncoder] = None,
         fused: bool = True,
         linear_config: Optional[Mapping[str, Any]] = None,
@@ -705,6 +765,7 @@ class MultiHeadAttention(nn.Module):
         self.emb_v_per_head = emb_v
         self.p_dropout = p_dropout if p_dropout is not None else 0.0
         self.use_bias = use_bias
+        self.use_norm = use_norm
         self.fused = fused
         self.linear_config = linear_config
         self.scale_factor = scale_factor
@@ -717,6 +778,7 @@ class MultiHeadAttention(nn.Module):
             self.emb_kq_per_head,
             self.emb_v_per_head,
             self.use_bias,
+            self.use_norm,
             linear_config=linear_config,
         )
         if self.has_sinks:
@@ -753,6 +815,7 @@ class MultiHeadAttention(nn.Module):
         q: torch.Tensor,
         k: Optional[torch.Tensor] = None,
         v: Optional[torch.Tensor] = None,
+        mask: Optional[Tensor] = None,
         position_ids=None,
         past_key_value_state: Optional[Tuple[Tensor | None, Tensor | None]] = None,
         use_cache=False,

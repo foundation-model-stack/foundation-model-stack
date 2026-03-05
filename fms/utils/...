@@ -1,0 +1,24 @@
+otal 20
+dr-xr-xr-x.   1 root root  162 Dec 19 11:44 ./
+dr-xr-xr-x.   1 root root  162 Dec 19 11:44 ../
+dr-xr-xr-x.   1 root root    0 Jul 29  2025 afs/
+-rw-r--r--    1 root root    0 May 23  2023 .autorelabel
+lrwxrwxrwx    1 root root    7 Jul 29  2025 bin -> usr/bin/
+dr-xr-xr-x.   6 root root 4096 Dec 19 12:23 boot/
+drwxr-xr-x   19 root root 4380 Dec 19 16:16 dev/
+drwxr-xr-x.   1 root root 6152 Jan 31 13:21 etc/
+drwxr-xr-x.   1 root root   38 Jul 29  2025 home/
+lrwxrwxrwx    1 root root    7 Jul 29  2025 lib -> usr/lib/
+lrwxrwxrwx    1 root root    9 Jul 29  2025 lib64 -> usr/lib64/
+drwxr-xr-x.   1 root root    0 Jul 29  2025 media/
+drwxr-xr-x.   1 root root    0 Jul 29  2025 mnt/
+drwxr-xr-x.   1 root root  126 Dec 19 15:16 opt/
+dr-xr-xr-x  613 root root    0 Dec 19 15:58 proc/
+drwx------.   1 root root  820 Jan 19 14:40 root/
+drwxr-xr-x   74 root root 1980 Feb  5 16:41 run/
+lrwxrwxrwx    1 root root    8 Jul 29  2025 sbin -> usr/sbin/
+drwxr-xr-x.   1 root root    0 Jul 29  2025 srv/
+dr-xr-xr-x   13 root root    0 Dec 19 15:58 sys/
+drwxrwxrwt   23 root root  680 Feb  6 16:12 tmp/
+drwxr-xr-x.   1 root root  174 Dec 19 11:44 usr/
+drwxr-xr-x.   1 root root  200 Dec 19 13:07 var/

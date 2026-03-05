@@ -6,7 +6,7 @@ from collections import ChainMap
 from collections.abc import Iterable
 from functools import reduce
 from pathlib import Path
-from typing import Any, Callable, Mapping, MutableMapping, Optional, Set, Union
+from typing import Any, Dict, Callable, Mapping, MutableMapping, Optional, Set, Union
 
 import torch
 
@@ -433,11 +433,15 @@ def load_state_dict(
                 )
             )
     else:
+        n = 0
         with torch.no_grad():
             checkpoint_sds = [
                 torch.load(str(ckpt_path), mmap=True, map_location=initial_device)
                 for ckpt_path in checkpoints
             ]
+            n += 1
+            type_name = type(checkpoint_sds)
+            print(f"load_state_dict(): n={n} {type_name}", flush=True)
     return ChainMap(*checkpoint_sds)
 
 
@@ -535,13 +539,14 @@ def load_state_dict_into_model(
     unused_keys = set()
     sd_keys = set(state_dict.keys())
 
+    uniq_keys: Dict[str, int] = {}
     with torch.no_grad():
         for key in sd_keys:
             if key in used_keys:
                 continue
             used_keys.add(key)
-
             partial_sd = {key: state_dict[key]}
+  
             # Find neighbors to the key. If the adapter requires a neighbor and
             # this function doesn't find it, it will crash.
             remaining_keys = sd_keys.difference(used_keys)
