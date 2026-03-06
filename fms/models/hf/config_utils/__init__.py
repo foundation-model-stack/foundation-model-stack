@@ -34,6 +34,7 @@ from fms.models.hf.config_utils.config_utils_types import RegistryMap
 __FMS_MODEL_REGISTRY_MAP: RegistryMap = {
     "LlamaForCausalLM": ("llama", pb.build_llama_params),
     "GPTBigCodeForCausalLM": ("gpt_bigcode", pb.build_gpt_bigcode_params),
+    "GptOssForCausalLM": ("gpt_oss", pb.build_gpt_oss_params),
     "MixtralForCausalLM": ("mixtral", pb.build_mixtral_params),
     "RobertaForMaskedLM": ("roberta", pb.build_roberta_params),
     "RobertaForQuestionAnswering": ("roberta_question_answering", pb.build_roberta_params),
