@@ -15,6 +15,20 @@ from fms.models.ministral3 import Ministral3TextConfig
 from transformers import PretrainedConfig
 
 
+def reverse_rope_param_lookup(config: PretrainedConfig):
+    """This function allows fetching the rope_theta from the config
+    allowing compatibility with transformers 5.0 changes
+    """
+    if hasattr(config, "rope_parameters"):
+        rope_theta = config.rope_parameters["rope_theta"]
+        rope_scaling = getattr(config.rope_parameters, "rope_scaling", None)
+    else:
+        rope_theta = config.rope_theta
+        rope_scaling = getattr(config, "rope_scaling", None)
+
+    return rope_theta, rope_scaling
+
+
 def build_llama_params(config: PretrainedConfig) -> dict:
     """Param builder for mapping LlamaForCausalLM to FMS."""
     config_params = {
@@ -27,11 +41,9 @@ def build_llama_params(config: PretrainedConfig) -> dict:
         "max_expected_seq_len": config.max_position_embeddings,
     }
     # New in Llama 3
-    rope_theta = getattr(config, "rope_theta", None)
+    rope_theta, rope_scaling = reverse_rope_param_lookup(config)
     if rope_theta is not None:
         config_params["rope_theta"] = rope_theta
-    # New in Llama 3.1
-    rope_scaling = getattr(config, "rope_scaling", None)
     if rope_scaling is not None:
         config_params["rope_scaling"] = rope_scaling
 
@@ -57,6 +69,7 @@ def build_gpt_bigcode_params(config: PretrainedConfig) -> dict:
 def build_mixtral_params(config: PretrainedConfig) -> dict:
     """Param builder for mapping MixtralForCausalLM to FMS."""
     inner_dim = config.intermediate_size
+    rope_theta, _ = reverse_rope_param_lookup(config)
     config_params = {
         "dim": config.hidden_size,
         "hidden_dim": inner_dim,
@@ -64,7 +77,7 @@ def build_mixtral_params(config: PretrainedConfig) -> dict:
         "kv_heads": config.num_key_value_heads,
         "num_experts": config.num_local_experts,
         "top_k_experts": config.num_experts_per_tok,
-        "rope_base": config.rope_theta,
+        "rope_base": rope_theta,
         "max_expected_seq_len": config.max_position_embeddings,
     }
     return model_params_with_common_opts(config, config_params, inner_dim=inner_dim)
@@ -98,6 +111,7 @@ def build_roberta_params(config: PretrainedConfig, is_classify: bool = False) ->
 
 def build_granite_params(config: PretrainedConfig) -> dict:
     """Param builder for mapping GraniteForCausalLM to FMS."""
+    rope_theta, _ = reverse_rope_param_lookup(config)
     config_params = {
         "attn_bias": getattr(config, "attention_bias", False),
         "mlp_bias": getattr(config, "mlp_bias", False),
@@ -110,7 +124,7 @@ def build_granite_params(config: PretrainedConfig) -> dict:
         "attention_multiplier": config.attention_multiplier,
         "logits_scaling": config.logits_scaling,
         "embedding_multiplier": config.embedding_multiplier,
-        "rope_theta": config.rope_theta,
+        "rope_theta": rope_theta,
         "activation_fn": config.hidden_act,
         "head_dim": getattr(
             config, "head_dim", config.hidden_size // config.num_attention_heads
@@ -127,6 +141,8 @@ def build_granite_moe_hybrid_params(config: PretrainedConfig) -> dict:
     # granite-v4 dense version. In future, based on the configuration
     # we may route to different architectures or classes.
 
+    rope_theta, _ = reverse_rope_param_lookup(config)
+
     config_params = {
         "attn_bias": getattr(config, "attention_bias", False),
         "kvheads": config.num_key_value_heads,
@@ -138,7 +154,7 @@ def build_granite_moe_hybrid_params(config: PretrainedConfig) -> dict:
         "attention_multiplier": config.attention_multiplier,
         "logits_scaling": config.logits_scaling,
         "embedding_multiplier": config.embedding_multiplier,
-        "rope_theta": config.rope_theta,
+        "rope_theta": rope_theta,
         "activation_fn": config.hidden_act,
         "head_dim": getattr(
             config, "head_dim", config.hidden_size // config.num_attention_heads
@@ -151,6 +167,7 @@ def build_granite_moe_hybrid_params(config: PretrainedConfig) -> dict:
 
 def build_mistral_params(config: PretrainedConfig) -> dict:
     """Param builder for mapping MistralForCausalLM to FMS."""
+    rope_theta, _ = reverse_rope_param_lookup(config)
     config_params = {
         "activation_fn": config.hidden_act,
         "emb_dim": config.hidden_size,
@@ -162,7 +179,7 @@ def build_mistral_params(config: PretrainedConfig) -> dict:
             or config.hidden_size // config.num_attention_heads
         ),
         "norm_eps": config.rms_norm_eps,
-        "rope_base": config.rope_theta,
+        "rope_base": rope_theta,
         "sliding_window": config.sliding_window,
     }
     return model_params_with_common_opts(
@@ -302,10 +319,7 @@ def build_pixtral_params(config: PretrainedConfig) -> dict:
     # config in future releases.
 
     # To handle cases such as ministral3
-    if hasattr(config, "rope_parameters"):
-        rope_theta = config.rope_parameters["rope_theta"]
-    else:
-        rope_theta = config.rope_theta
+    rope_theta, _ = reverse_rope_param_lookup(config)
 
     config_params = {
         "hidden_size": config.hidden_size,
@@ -390,8 +404,9 @@ def build_ministral3_params(config: PretrainedConfig) -> dict:
     config_params["vision_config"] = PixtralVisionConfig(**vision_config_params)
     return config_params
 
-def build_ministral3_text_params(config: PretrainedConfig) -> dict:#
-    """Param builder for mapping MistralForCausalLM to FMS."""
+
+def build_ministral3_text_params(config: PretrainedConfig) -> dict:  #
+    """Param builder for mapping ministral3 with MistralForCausalLM to FMS."""
     config_params = {
         "activation_fn": config.hidden_act,
         "src_vocab_size": config.vocab_size,
