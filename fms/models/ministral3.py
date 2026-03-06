@@ -1,3 +1,4 @@
+import math
 import logging
 import re
 from dataclasses import dataclass, field
@@ -13,21 +14,25 @@ from fms.distributed.strategy import (
     NoOpStrategy,
 )
 
-from fms.modules.attention import AttentionKwargs
-
-from fms.utils import serialization
-from fms.utils.activation import str_to_activation
 from fms.utils.config import ModelConfig
-
+from fms.utils import serialization
+from fms.utils.headless import gather_outputs
+from fms.modules.attention import (
+    AttentionKwargs,
+    MultiHeadAttention,
+    get_attention_type,
+)
+from fms.modules.feedforward import GatedLinearUnit
 from fms.modules.layernorm import LayerNormParameterized
-from fms.models.mistral import Mistral
-from fms.models.mistral3 import Mistral3
+from fms.models.mistral import MistralBlock
+from fms.models.mistral3 import Mistral3, Mistral3MultiModalProjector
 from fms.models.pixtral_vision import PixtralVisionConfig, PixtralVisionModel
 
 logger = logging.getLogger(__name__)
 
 
 _architecture_name = "ministral3"
+
 
 @dataclass
 class Ministral3TextConfig(ModelConfig):
@@ -44,12 +49,11 @@ class Ministral3TextConfig(ModelConfig):
     max_expected_seq_len: int = 262144
     kvheads: int = 8
     norm_eps: float = 1e-5
-    sliding_window: int = 4000 # null for ministral3 in the model itself
+    sliding_window: int = 4000  # null for ministral3 in the model itself
     rope_parameters: Dict = field(default_factory=dict)
     fused_weights: bool = True  # FMS Specific -- For CPU/GPU = T, AIU = F
     pad_id: int = -1  # borrowed from granite, we do need it
     linear_config: Optional[Mapping[str, Any]] = None  # To support quantization
-
 
 
 @dataclass
@@ -72,33 +76,301 @@ class Ministral3Config(ModelConfig):
     ### FMS Specific
     fused_weights: bool = True  # True For CPU/GPU = T, False for AIU
 
+
 _14b_config = Ministral3Config()
 
 
 # =============== Modeling ======================
 
-class Ministral3(Mistral3):
-    pass
 
+class Ministral3Headless(nn.Module):
+    def __init__(
+        self,
+        config: Ministral3TextConfig,
+        distributed_strategy: DistributedStrategy = NoOpStrategy,
+    ):
+        super(Ministral3Headless, self).__init__()
+        self.config = config
+        self.distributed_strategy = distributed_strategy
+
+        self.embedding = nn.Embedding(
+            self.config.src_vocab_size,
+            self.config.emb_dim,
+            padding_idx=self.config.pad_id,
+        )
+
+        # TODO:
+        self.rot_emb = None
+        # self.rot_emb = RotaryEmbedding(
+        #     dim=self.config.head_dim,
+        #     scaling=self.config.rope_scaling,
+        #     max_seq_len=self.config.max_expected_seq_len,
+        #     ratio=self.config.rope_base,
+        # )
+
+        # RoPE init
+        # for device in set(
+        #     [param.device for param in self.parameters()]
+        #     + [buffer.device for buffer in self.buffers()]
+        # ):
+        #     self.rot_emb.compute_freqs_cis(device, self.config.max_expected_seq_len)
+
+        layers = []
+        for i in range(self.config.nlayers):
+            block: nn.Module = MistralBlock(self.config, self.rot_emb)
+            block = self.distributed_strategy.distribute_layer(block, i)
+            layers.append(block)
+        self.layers = nn.ModuleList(layers)
+
+        dec_norm = LayerNormParameterized(
+            self.config.emb_dim,
+            elementwise_scale=True,
+            elementwise_shift=False,
+            use_mean=False,
+            eps=self.config.norm_eps,
+            use_high_precision_pow=True,
+        )
+        self.dec_norm = self.distributed_strategy.distribute_module(
+            dec_norm, final_layers=True
+        )
+
+        if self.config.p_dropout:
+            self.dropout = nn.Dropout(self.config.p_dropout)
+
+    def reset_parameters(self):
+        nn.init.trunc_normal_(
+            self.embedding.weight, mean=0.0, std=self.config.emb_dim**-0.5
+        )
+
+        # RoPE init
+        # TODO:
+        # for device in set(
+        #     [param.device for param in self.parameters()]
+        #     + [buffer.device for buffer in self.buffers()]
+        # ):
+        #     self.rot_emb.compute_freqs_cis(device, self.config.max_expected_seq_len)
+
+        # Call reset_parameters for relevant sub-layers
+        for m in self.modules():
+            if (
+                isinstance(m, MultiHeadAttention)
+                or isinstance(m, GatedLinearUnit)
+                or isinstance(m, LayerNormParameterized)
+            ):
+                m.reset_parameters()
+
+    def _clean_up_rot_emb_cache(
+        self,
+        cached_freqs: dict[Optional[torch.device], dict[int, torch.Tensor]],
+        max_seq_len_cached: dict[Optional[torch.device], int],
+    ):
+        # remove meta tensors from cached_freqs
+        for dev in list(cached_freqs.keys()):
+            for alp in list(cached_freqs[dev].keys()):
+                if cached_freqs[dev][alp].device == torch.device("meta"):
+                    del cached_freqs[dev][alp]
+                    if len(cached_freqs[dev]) == 0:
+                        del cached_freqs[dev]
+                        del max_seq_len_cached[dev]
+
+    def post_init(self):
+        pass
+
+    # def post_init(self):
+    # This function is called in `get_model` after the model is
+    # fully initalized on the correct device
+
+    # TODO:
+    # self._clean_up_rot_emb_cache(
+    #     self.rot_emb.cached_freqs,
+    #     self.rot_emb.max_seq_len_cached,
+    # )
+
+    # init RoPE on the right device(s)
+    # TODO:
+    # for device in set(
+    #     [param.device for param in self.parameters()]
+    #     + [buffer.device for buffer in self.buffers()]
+    # ):
+    #     self.rot_emb.compute_freqs_cis(device, self.config.max_expected_seq_len)
+
+    def forward(
+        self,
+        x_in,
+        position_ids=None,
+        past_key_value_states=None,
+        use_cache=False,
+        **attn_kwargs: Unpack[AttentionKwargs],
+    ):
+        # Embed the given vocabulary indices using the given attention mask, with pre-/post-norm and dropout as specified
+        # x_in: batch_size x seq_len
+        # mask: batch_size x seq_len x seq_len
+        # bias: nheads x seq_len x seq_len
+        if past_key_value_states is None or len(past_key_value_states) == 0:
+            past_key_value_states = [None for _ in range(len(self.layers))]
+
+        if x_in.dim() == 2:  # input is not already embedded
+            x_in = self.embedding(x_in)
+
+        # this is the output cache for all the decoder layers
+        present_key_value_states = []
+
+        for i, layer in enumerate(self.layers):
+            output = layer(
+                x=x_in,
+                position_ids=position_ids,
+                past_key_value_state=past_key_value_states[i],
+                use_cache=use_cache,
+                **attn_kwargs,
+            )
+
+            if use_cache:
+                x_in, present_key_value_state = output
+                present_key_value_states.append(present_key_value_state)
+
+            else:
+                x_in = output
+
+        dec_out = x_in
+        dec_out = self.dec_norm(dec_out)
+        if self.config.p_dropout:
+            dec_out = self.dropout(dec_out)
+
+        return dec_out, present_key_value_states
+
+
+class Ministral3Text(nn.Module):
+    def __init__(
+        self,
+        config: Optional[Ministral3TextConfig] = None,
+        distributed_strategy: DistributedStrategy = NoOpStrategy,
+        **kwargs,
+    ):
+        super(Ministral3Text, self).__init__()
+        if config is not None:
+            self.config = config
+        else:
+            self.config = Ministral3TextConfig()
+        self.config = self.config.updated(**kwargs)
+        self.distributed_strategy = distributed_strategy
+
+        self.base_model = Ministral3Headless(self.config, self.distributed_strategy)
+        self.head = nn.Linear(
+            self.config.emb_dim, self.config.src_vocab_size, bias=False
+        )
+
+    @classmethod
+    def from_config(cls, config: Ministral3TextConfig) -> "Ministral3":
+        return cls(config)
+
+    def get_config(self) -> Ministral3TextConfig:
+        return self.config
+
+    def reset_parameters(self):
+        self.head.weight.data.normal_(
+            0,
+            1 / math.sqrt(math.sqrt(self.config.emb_dim * self.config.src_vocab_size)),
+        )
+        self.base_model.reset_parameters()
+
+    def post_init(self):
+        # if this model ties weights, they are tied here
+        if self.config.tie_heads:
+            # handle assignment of non-meta weights to meta parameters
+            if self.head.weight.device == torch.device("meta"):
+                self.head.weight = self.base_model.embedding.weight
+            else:
+                self.base_model.embedding.weight = self.head.weight
+
+        self.base_model.post_init()
+
+    def forward(
+        self,
+        x: torch.LongTensor,
+        position_ids: Optional[torch.LongTensor] = None,
+        past_key_value_states: Optional[Tuple[torch.FloatTensor,]] = None,
+        use_cache: bool = False,
+        last_n_tokens: int = 0,
+        **attn_kwargs: Unpack[AttentionKwargs],
+    ):
+        get_attention_type(**attn_kwargs)["validate_attn_kwargs"](
+            input_ids=x,
+            position_ids=position_ids,
+            past_key_value_states=past_key_value_states,
+            **attn_kwargs,
+        )
+        output, cache = self.base_model(
+            x, position_ids, past_key_value_states, use_cache, **attn_kwargs
+        )
+
+        output = gather_outputs(output, last_n_tokens, **attn_kwargs)
+        preds = self.head(output)
+
+        if use_cache:
+            return preds, cache
+        else:
+            return preds
+
+
+class Ministral3(Mistral3):
+    def __init__(
+        self,
+        config: Optional[Ministral3Config] = None,
+        distributed_strategy: DistributedStrategy = NoOpStrategy,
+        **kwargs,
+    ):
+        super().__init__()
+
+        if config is not None:
+            self.config = config
+        else:
+            self.config = Ministral3Config()
+
+        self.config = self.config.updated(**kwargs)
+
+        # Ensure weight fusion correctly propogates;
+        # NOTE: since pixtral is only run as a standalone model
+        if not self.config.fused_weights:
+            self.config.text_config.fused_weights = False
+            self.config.vision_config.fused_weights = False
+
+        self.distributed_strategy = distributed_strategy
+
+        # Currently, we always use mistral for the LLM
+        self.language_model = Ministral3Text(
+            self.config.text_config, self.distributed_strategy
+        )
+        # Vision encoder and projector for multimodal features
+        self.vision_tower = PixtralVisionModel(
+            self.config.vision_config, self.distributed_strategy
+        )
+        self.multi_modal_projector = Mistral3MultiModalProjector(
+            self.config,
+        )
 
 
 # =============== Registration ==================
 
+
 def _ministral3_factory_factory(config):
     def factory(**kwargs):
-        return Mistral3(config, **kwargs)
+        return Ministral3(config, **kwargs)
 
     return factory
 
 
-models.register_model(_architecture_name, "14b", _ministral3_factory_factory(_14b_config))
+models.register_model(
+    _architecture_name, "14b", _ministral3_factory_factory(_14b_config)
+)
 
 
 # =============== Serialization ==================
 
 
 def _weight_fusion(
-    input_sd: Mapping[str, Any], model_config: Optional[Ministral3Config] = None, **kwargs
+    input_sd: Mapping[str, Any],
+    model_config: Optional[Ministral3Config] = None,
+    **kwargs,
 ) -> Mapping[str, Any]:
     has_fused_weights = True
     if model_config:
@@ -159,7 +431,9 @@ serialization.register_adapter_step(
 
 
 def _hf_to_fms_rope(
-    input_sd: Mapping[str, Any], model_config: Optional[Ministral3Config] = None, **kwargs
+    input_sd: Mapping[str, Any],
+    model_config: Optional[Ministral3Config] = None,
+    **kwargs,
 ) -> Mapping[str, Any]:
     new_sd = {}
 

@@ -17,6 +17,7 @@ from fms.models.hf.config_utils import _FMS_MODEL_CONFIG_REGISTRY
 
 logger = logging.getLogger(__name__)
 
+
 def register_fms_models():
     """Register all FMS models with huggingface AutoModels"""
     from fms.models.hf import (
@@ -141,6 +142,11 @@ def infer_model_configuration(
                 ignore_patterns = ["*.safetensors"]
                 allow_patterns.append("*.pt")
             elif isinstance(model_id_or_path, str) and model_id_or_path.startswith(
+                "mistralai/Ministral"
+            ):
+                ignore_patterns = ["consolidated.safetensors"]
+                allow_patterns.append("*.safetensors*")
+            elif isinstance(model_id_or_path, str) and model_id_or_path.startswith(
                 "mistralai/Mistral"
             ):
                 ignore_patterns = ["consolidated.safetensors"]
@@ -163,16 +169,17 @@ def infer_model_configuration(
 
     ## HACK to map Mistral3ForConditionalGeneration to Ministral3 class successfully
 
-    if config.architectures[0] == "Mistral3ForConditionalGeneration" and \
-        config.text_config.model_type == "ministral3":
+    if (
+        config.architectures[0] == "Mistral3ForConditionalGeneration"
+        and config.text_config.model_type == "ministral3"
+    ):
         config.architectures = ["FMSMinistral3ForConditionalGeneration"]
         logger.warning(
-                "%s architecture detected with ministral3 text_config.model_type."
-                "This will get remapped to FMSMinistral3ForConditionalGeneration for"
-                "building params and configuring class accordingly!"
-                % config.architectures[0]
-            )
-
+            "%s architecture detected with ministral3 text_config.model_type. "
+            "This will get remapped to FMSMinistral3ForConditionalGeneration for"
+            "building params and configuring class accordingly!"
+            % config.architectures[0]
+        )
 
     config_params = _FMS_MODEL_CONFIG_REGISTRY.hf_config_to_fms_config_params(
         config,
