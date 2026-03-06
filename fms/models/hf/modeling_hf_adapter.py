@@ -6,7 +6,7 @@ from typing import Callable, Dict, Optional, Tuple, Union
 import torch
 from torch import nn
 from torch.nn.modules.loss import _Loss
-from transformers import PretrainedConfig, PreTrainedModel, GenerationMixin
+from transformers import PretrainedConfig, PreTrainedModel, GenerationMixin, DynamicCache
 from transformers.modeling_utils import no_init_weights
 from transformers.modeling_outputs import (
     BaseModelOutput,
@@ -536,6 +536,8 @@ class HFDecoder(_HFBase):
         is_cache_used_and_filled = use_cache and (
             past_key_values is not None and len(past_key_values) != 0
         )
+        if isinstance(past_key_values, DynamicCache):
+            past_key_values = None
         return HFDecoderModelArchitecture._produce_decoder_attention_mask_from_hf(
             attention_mask, is_cache_used_and_filled
         )
