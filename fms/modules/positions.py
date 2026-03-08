@@ -597,14 +597,13 @@ class PixtralRotaryEmbedding(PositionEncoder):
         return q_out, k_out
 
 
-
 class CachedYarnRotaryEmbedding(PositionEncoder):
     def __init__(
         self,
-        dim: int, # Rotary dimension
+        dim: int,  # Rotary dimension
         max_position_embeddings: int,
-        base: float, # Rope theta
-        scaling_factor: float, # factor
+        base: float,  # Rope theta
+        scaling_factor: float,  # factor
         *,
         extrapolation_factor: float = 1.0,
         attn_factor: Optional[float] = None,
@@ -623,21 +622,21 @@ class CachedYarnRotaryEmbedding(PositionEncoder):
 
         super().__init__()
         self.dim = dim
-        self.max_position_embeddings = max_position_embeddings # original_max_position_embeddings
+        self.max_position_embeddings = (
+            max_position_embeddings  # original_max_position_embeddings
+        )
         self.base = base
         self.scaling_factor = scaling_factor
         self.extrapolation_factor = extrapolation_factor
-        self.beta_fast = beta_fast # low
-        self.beta_slow = beta_slow # high
+        self.beta_fast = beta_fast  # low
+        self.beta_slow = beta_slow  # high
 
         self.cached_freqs: dict[int, torch.Tensor] = {}
 
         # magnitude scaling factor
-        self.mscale = float(
-            self._yarn_get_mscale(mscale))
+        self.mscale = float(self._yarn_get_mscale(mscale))
 
-        self.mscale_all_dim = float(
-            self._yarn_get_mscale(mscale_all_dim))
+        self.mscale_all_dim = float(self._yarn_get_mscale(mscale_all_dim))
 
         # NOTE: We are not computing attn_factor based on mscale here, since its not requried for ministral3
         if attn_factor is None:
@@ -647,14 +646,14 @@ class CachedYarnRotaryEmbedding(PositionEncoder):
 
         # TODO: Currently llama_4_scaling is not applied
 
-
     def _yarn_get_mscale(self, mscale: float = 1) -> float:
         if self.scaling_factor <= 1:
             return 1.0
         return 0.1 * mscale * math.log(self.scaling_factor) + 1.0
 
-
-    def _compute_cos_sin_cache(self, inv_freq: torch.Tensor, device: torch.device) -> torch.Tensor:
+    def _compute_cos_sin_cache(
+        self, inv_freq: torch.Tensor, device: torch.device
+    ) -> torch.Tensor:
         """
         Compute the rotation matrix cache for the rotary embedding to avoid computing
         while doing the forward pass.
@@ -666,19 +665,17 @@ class CachedYarnRotaryEmbedding(PositionEncoder):
         t = torch.arange(
             int(self.max_position_embeddings * self.scaling_factor),
             device=device,
-            dtype=torch.float32
+            dtype=torch.float32,
         )
         freqs = torch.outer(t, inv_freq).float()
 
         # Apply mscale and compute cos/sin
-        cos = (freqs.cos() * self.attn_factor)
-        sin = (freqs.sin() * self.attn_factor)
+        cos = freqs.cos() * self.attn_factor
+        sin = freqs.sin() * self.attn_factor
 
         # Construct rotation matrices: [max_pos, dim/2, 2, 2]
         # Matrix form: [[cos, -sin], [sin, cos]]
-        freqs_cis = torch.stack(
-            [cos, -sin, sin, cos], dim=-1
-        ).view(*cos.shape, 2, 2)
+        freqs_cis = torch.stack([cos, -sin, sin, cos], dim=-1).view(*cos.shape, 2, 2)
 
         return freqs_cis
 
@@ -696,24 +693,22 @@ class CachedYarnRotaryEmbedding(PositionEncoder):
         if device.index in self.cached_freqs:
             return self.cached_freqs[device.index]
 
-        freqs =(
-            self.base
-            **(torch.arange(0, self.dim, 2, device=device).float() / self.dim))
+        freqs = self.base ** (
+            torch.arange(0, self.dim, 2, device=device).float() / self.dim
+        )
 
         inv_freq_extrapolation = 1.0 / freqs
         inv_freq_interpolation = 1.0 / (self.scaling_factor * freqs)
 
         # NOTE: math.floor and math.ceil being used here are referred to as "truncate" option
         low = math.floor(
-            self.dim * math.log(self.max_position_embeddings /
-                           (self.beta_fast * 2 * math.pi))) / (2 *
-                                                              math.log(self.base)
-        )
+            self.dim
+            * math.log(self.max_position_embeddings / (self.beta_fast * 2 * math.pi))
+        ) / (2 * math.log(self.base))
         high = math.ceil(
-            self.dim * math.log(self.max_position_embeddings /
-                           (self.beta_slow * 2 * math.pi))) / (2 *
-                                                              math.log(self.base)
-        )
+            self.dim
+            * math.log(self.max_position_embeddings / (self.beta_slow * 2 * math.pi))
+        ) / (2 * math.log(self.base))
 
         # Make sure values are not going outside range
         low = max(low, 0)
@@ -724,8 +719,8 @@ class CachedYarnRotaryEmbedding(PositionEncoder):
 
         # Get n-dimensional rotational scaling corrected for extrapolation
         linear_func = (
-            torch.arange(self.dim // 2, dtype=torch.float32, device=device
-        ) - low) / (high - low)
+            torch.arange(self.dim // 2, dtype=torch.float32, device=device) - low
+        ) / (high - low)
 
         # Compute ramp function (clamped linear interpolation)
         ramp_func = torch.clamp(linear_func, 0, 1)
@@ -738,10 +733,11 @@ class CachedYarnRotaryEmbedding(PositionEncoder):
         # Blend between interpolation and extrapolation
         # Note: extrapolation_factor is applied to the extrapolation frequencies
         inv_freq = (
-            inv_freq_interpolation * (1 - inv_freq_extrapolation_factor) +
-            inv_freq_extrapolation * inv_freq_extrapolation_factor * self.extrapolation_factor
+            inv_freq_interpolation * (1 - inv_freq_extrapolation_factor)
+            + inv_freq_extrapolation
+            * inv_freq_extrapolation_factor
+            * self.extrapolation_factor
         )
-
 
         # Cache the computed rotation matrices for this device
         freqs_cis = self._compute_cos_sin_cache(inv_freq, device)
@@ -816,16 +812,10 @@ class CachedYarnRotaryEmbedding(PositionEncoder):
         # Add head dimension: [B, L, 1, rotary_dim/2, 2, 2]
         # q_, k_: [B, L, H, rotary_dim/2, 2]
         q_out = (
-            freqs[:, :, None, :, :, :]
-            .mul(q_.unsqueeze(-2))
-            .sum(-1)
-            .flatten(-2)
+            freqs[:, :, None, :, :, :].mul(q_.unsqueeze(-2)).sum(-1).flatten(-2)
         ).type_as(q)
         k_out = (
-            freqs[:, :, None, :, :, :]
-            .mul(k_.unsqueeze(-2))
-            .sum(-1)
-            .flatten(-2)
+            freqs[:, :, None, :, :, :].mul(k_.unsqueeze(-2)).sum(-1).flatten(-2)
         ).type_as(k)
 
         # Concatenate with the non-rotated portion if rotary_dim < head_dim
