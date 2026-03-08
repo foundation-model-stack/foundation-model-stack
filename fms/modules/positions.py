@@ -601,7 +601,7 @@ class CachedYarnRotaryEmbedding(PositionEncoder):
     def __init__(
         self,
         dim: int,  # Rotary dimension
-        max_position_embeddings: int,
+        original_max_position_embeddings: int,
         base: float,  # Rope theta
         scaling_factor: float,  # factor
         *,
@@ -611,6 +611,7 @@ class CachedYarnRotaryEmbedding(PositionEncoder):
         beta_slow: float = 1.0,
         mscale: float = 1.0,
         mscale_all_dim: float = 1.0,
+        llama_4_scaling_beta: Optional[float] = None,
     ):
         """
         This implements Yarn scaling rotary embedding.
@@ -622,14 +623,15 @@ class CachedYarnRotaryEmbedding(PositionEncoder):
 
         super().__init__()
         self.dim = dim
-        self.max_position_embeddings = (
-            max_position_embeddings  # original_max_position_embeddings
+        self.original_max_position_embeddings = (
+            original_max_position_embeddings
         )
         self.base = base
         self.scaling_factor = scaling_factor
         self.extrapolation_factor = extrapolation_factor
         self.beta_fast = beta_fast  # low
         self.beta_slow = beta_slow  # high
+        self.llama_4_scaling_beta = llama_4_scaling_beta
 
         self.cached_freqs: dict[int, torch.Tensor] = {}
 
@@ -643,8 +645,6 @@ class CachedYarnRotaryEmbedding(PositionEncoder):
             attn_factor = float(self.mscale / self.mscale_all_dim)
 
         self.attn_factor = attn_factor
-
-        # TODO: Currently llama_4_scaling is not applied
 
     def _yarn_get_mscale(self, mscale: float = 1) -> float:
         if self.scaling_factor <= 1:
@@ -663,7 +663,7 @@ class CachedYarnRotaryEmbedding(PositionEncoder):
             Rotation matrices with shape [max_pos, dim/2, 2, 2]
         """
         t = torch.arange(
-            int(self.max_position_embeddings * self.scaling_factor),
+            int(self.original_max_position_embeddings * self.scaling_factor),
             device=device,
             dtype=torch.float32,
         )
@@ -678,6 +678,10 @@ class CachedYarnRotaryEmbedding(PositionEncoder):
         freqs_cis = torch.stack([cos, -sin, sin, cos], dim=-1).view(*cos.shape, 2, 2)
 
         return freqs_cis
+
+    def _get_llama_4_attn_scale(self, positions_ids: torch.Tensor, beta: float, max_position_embeddings: int) -> torch.Tensor:
+        scaling = 1 + beta * torch.log(1 + torch.floor(positions_ids / max_position_embeddings))
+        return scaling.unsqueeze(-1)
 
     def compute_freqs_cis(self, device: torch.device) -> torch.Tensor:
         """
@@ -703,11 +707,11 @@ class CachedYarnRotaryEmbedding(PositionEncoder):
         # NOTE: math.floor and math.ceil being used here are referred to as "truncate" option
         low = math.floor(
             self.dim
-            * math.log(self.max_position_embeddings / (self.beta_fast * 2 * math.pi))
+            * math.log(self.original_max_position_embeddings / (self.beta_fast * 2 * math.pi))
         ) / (2 * math.log(self.base))
         high = math.ceil(
             self.dim
-            * math.log(self.max_position_embeddings / (self.beta_slow * 2 * math.pi))
+            * math.log(self.original_max_position_embeddings / (self.beta_slow * 2 * math.pi))
         ) / (2 * math.log(self.base))
 
         # Make sure values are not going outside range
@@ -822,5 +826,8 @@ class CachedYarnRotaryEmbedding(PositionEncoder):
         if self.dim < q.size(-1):
             q_out = torch.cat([q_out, q[..., self.dim :]], dim=-1)
             k_out = torch.cat([k_out, k[..., self.dim :]], dim=-1)
+
+        # TODO: Apply llama_4_scaling
+        # if self.llama_4_scaling_beta:
 
         return q_out, k_out

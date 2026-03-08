@@ -442,7 +442,7 @@ class CachedYarnRotaryEmbeddingTests(unittest.TestCase):
         k = 2 * torch.ones(2, 4, 1, 16, dtype=torch.float)  # b s h e
         yarn_rope = CachedYarnRotaryEmbedding(
             dim=16,
-            max_position_embeddings=32,
+            original_max_position_embeddings=32,
             base=10000,
             scaling_factor=1.0,
         )
@@ -468,13 +468,35 @@ class CachedYarnRotaryEmbeddingTests(unittest.TestCase):
         """Test that attempting to compute on meta device raises an error"""
         yarn_rope = CachedYarnRotaryEmbedding(
             dim=16,
-            max_position_embeddings=32,
+            original_max_position_embeddings=32,
             base=10000,
             scaling_factor=1.0,
         )
 
         with self.assertRaises(AssertionError):
             yarn_rope.compute_freqs_cis(torch.device("meta"))
+
+    def test_output_shapes(self):
+        """Test that output shapes match input shapes"""
+        batch_size = 2
+        seq_len = 8
+        num_heads = 4
+        head_dim = 32
+
+        q = torch.randn(batch_size, seq_len, num_heads, head_dim)
+        k = torch.randn(batch_size, seq_len, num_heads, head_dim)
+
+        yarn_rope = CachedYarnRotaryEmbedding(
+            dim=head_dim,
+            original_max_position_embeddings=128,
+            base=10000,
+            scaling_factor=1.0,
+        )
+
+        qr, kr = yarn_rope.adjusted_qk(q, k)
+
+        self.assertEqual(qr.shape, q.shape)
+        self.assertEqual(kr.shape, k.shape)
 
     def test_hf_fms_equivalence(self):
         """Test that FMS CachedYarn RoPE matches HF Transformers implementation"""
@@ -534,7 +556,7 @@ class CachedYarnRotaryEmbeddingTests(unittest.TestCase):
         ############ Get FMS results
         fms_emb = CachedYarnRotaryEmbedding(
             dim,
-            max_position_embeddings=original_max_position_embeddings,
+            original_max_position_embeddings=original_max_position_embeddings,
             base=rope_theta,
             scaling_factor=scaling_factor,
             beta_fast=beta_fast,
