@@ -630,7 +630,7 @@ class CachedYarnRotaryEmbedding(PositionEncoder):
         self.beta_fast = beta_fast # low
         self.beta_slow = beta_slow # high
 
-        self.cached_freqs: dict[int, Tuple[torch.Tensor, torch.Tensor]] = {}
+        self.cached_freqs: dict[int, torch.Tensor] = {}
 
         # magnitude scaling factor
         self.mscale = float(
@@ -654,14 +654,14 @@ class CachedYarnRotaryEmbedding(PositionEncoder):
         return 0.1 * mscale * math.log(self.scaling_factor) + 1.0
 
 
-    def _compute_cos_sin_cache(self, inv_freq: torch.Tensor, device: torch.device) -> Tuple[torch.Tensor, torch.Tensor]:
+    def _compute_cos_sin_cache(self, inv_freq: torch.Tensor, device: torch.device) -> torch.Tensor:
         """
-        Compute the cos and sin cache for the rotary embedding to avoid computing
+        Compute the rotation matrix cache for the rotary embedding to avoid computing
         while doing the forward pass.
         Args:
             inv_freq: The precomputed inverse frequency tensor
         Returns:
-            Tuple of (cos_cache, sin_cache) each with shape [max_pos, dim/2]
+            Rotation matrices with shape [max_pos, dim/2, 2, 2]
         """
         t = torch.arange(
             int(self.max_position_embeddings * self.scaling_factor),
@@ -674,20 +674,13 @@ class CachedYarnRotaryEmbedding(PositionEncoder):
         cos = (freqs.cos() * self.attn_factor)
         sin = (freqs.sin() * self.attn_factor)
 
-        return cos, sin
+        # Construct rotation matrices: [max_pos, dim/2, 2, 2]
+        # Matrix form: [[cos, -sin], [sin, cos]]
+        freqs_cis = torch.stack(
+            [cos, -sin, sin, cos], dim=-1
+        ).view(*cos.shape, 2, 2)
 
-    # def _rotate(self, x: torch.Tensor) -> torch.Tensor:
-    #     """
-    #     Rotate the input tensor
-    #     Args:
-    #         x: The input tensor
-    #     Returns:
-    #         The rotated tensor
-    #     """
-    #     x1 = x[..., ::2]
-    #     x2 = x[..., 1::2]
-    #     x = torch.stack((-x2, x1), dim=-1)
-    #     return x.flatten(-2)
+        return freqs_cis
 
     def compute_freqs_cis(self, device: torch.device) -> torch.Tensor:
         """
@@ -750,9 +743,9 @@ class CachedYarnRotaryEmbedding(PositionEncoder):
         )
 
 
-        # Cache the computed frequencies for this device
-        cos_cache, sin_cache = self._compute_cos_sin_cache(inv_freq, device)
-        self.cached_freqs[device.index] = (cos_cache, sin_cache)
+        # Cache the computed rotation matrices for this device
+        freqs_cis = self._compute_cos_sin_cache(inv_freq, device)
+        self.cached_freqs[device.index] = freqs_cis
 
         return self.cached_freqs[device.index]
 
@@ -802,16 +795,11 @@ class CachedYarnRotaryEmbedding(PositionEncoder):
             ):
                 position_ids += past_kv_state[0].size(2)
 
-        # Fetch the cos and sin values for the given position_ids from cache
-        cos_cache, sin_cache = self.compute_freqs_cis(q.device)
+        # Fetch the rotation matrices from cache
+        freqs_cis = self.compute_freqs_cis(q.device)
 
-        # Index by position_ids: [B, L] -> [B, L, rotary_dim/2]
-        cos = cos_cache[position_ids]
-        sin = sin_cache[position_ids]
-
-        # Unsqueeze to add head dimension: [B, L, rotary_dim/2] -> [B, L, 1, rotary_dim/2]
-        cos = cos.unsqueeze(2)
-        sin = sin.unsqueeze(2)
+        # Index by position_ids: [B, L] -> [B, L, rotary_dim/2, 2, 2]
+        freqs = freqs_cis[position_ids]
 
         # Only apply rotation to the first self.dim dimensions
         # Extract the rotary portion
@@ -823,23 +811,22 @@ class CachedYarnRotaryEmbedding(PositionEncoder):
         q_ = q_rope.float().view(*q_rope.size()[:-1], -1, 2)  # B L H rotary_dim/2 2
         k_ = k_rope.float().view(*k_rope.size()[:-1], -1, 2)  # B L H rotary_dim/2 2
 
-        # Apply interleaved rotation: [x, y] -> [x*cos - y*sin, y*cos + x*sin]
-        # cos and sin have shape [B, L, 1, rotary_dim/2], broadcast to [B, L, H, rotary_dim/2]
-        q_out = torch.stack(
-            [
-                q_[..., 0] * cos - q_[..., 1] * sin,  # x*cos - y*sin
-                q_[..., 1] * cos + q_[..., 0] * sin,  # y*cos + x*sin
-            ],
-            dim=-1,
-        ).flatten(-2).type_as(q)
-
-        k_out = torch.stack(
-            [
-                k_[..., 0] * cos - k_[..., 1] * sin,
-                k_[..., 1] * cos + k_[..., 0] * sin,
-            ],
-            dim=-1,
-        ).flatten(-2).type_as(k)
+        # Apply rotation using matrix multiplication
+        # freqs: [B, L, rotary_dim/2, 2, 2]
+        # Add head dimension: [B, L, 1, rotary_dim/2, 2, 2]
+        # q_, k_: [B, L, H, rotary_dim/2, 2]
+        q_out = (
+            freqs[:, :, None, :, :, :]
+            .mul(q_.unsqueeze(-2))
+            .sum(-1)
+            .flatten(-2)
+        ).type_as(q)
+        k_out = (
+            freqs[:, :, None, :, :, :]
+            .mul(k_.unsqueeze(-2))
+            .sum(-1)
+            .flatten(-2)
+        ).type_as(k)
 
         # Concatenate with the non-rotated portion if rotary_dim < head_dim
         if self.dim < q.size(-1):
