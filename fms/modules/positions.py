@@ -1,6 +1,7 @@
 from collections import defaultdict
 import copy
 import math
+from statistics import quantiles
 from typing import MutableMapping, Optional, Tuple
 
 import torch
@@ -593,4 +594,256 @@ class PixtralRotaryEmbedding(PositionEncoder):
         # the (new) 3rd dimension to create the [B, L, N, D] output.
         q_out = mulq.sum(5).flatten(3).type_as(q)
         k_out = mulk.sum(5).flatten(3).type_as(k)
+        return q_out, k_out
+
+
+
+class CachedYarnRotaryEmbedding(PositionEncoder):
+    def __init__(
+        self,
+        dim: int, # Rotary dimension
+        max_position_embeddings: int,
+        base: float, # Rope theta
+        scaling_factor: float, # factor
+        *,
+        extrapolation_factor: float = 1.0,
+        attn_factor: Optional[float] = None,
+        beta_fast: float = 32.0,
+        beta_slow: float = 1.0,
+        mscale: float = 1.0,
+        mscale_all_dim: float = 1.0,
+    ):
+        """
+        This implements Yarn scaling rotary embedding.
+
+        Credits to Peng et al. github.com/jquesnelle/yarn
+        Ref: https://github.com/huggingface/transformers/blob/main/src/transformers/modeling_rope_utils.py
+        Ref: https://github.com/mistralai/vllm-release/blob/3e21dacb79471ebf946e72e67a5ca14ebcc598c1/vllm/model_executor/layers/rotary_embedding.py#L268
+        """
+
+        super().__init__()
+        self.dim = dim
+        self.max_position_embeddings = max_position_embeddings # original_max_position_embeddings
+        self.base = base
+        self.scaling_factor = scaling_factor
+        self.extrapolation_factor = extrapolation_factor
+        self.beta_fast = beta_fast # low
+        self.beta_slow = beta_slow # high
+
+        self.cached_freqs: dict[int, Tuple[torch.Tensor, torch.Tensor]] = {}
+
+        # magnitude scaling factor
+        self.mscale = float(
+            self._yarn_get_mscale(mscale))
+
+        self.mscale_all_dim = float(
+            self._yarn_get_mscale(mscale_all_dim))
+
+        # NOTE: We are not computing attn_factor based on mscale here, since its not requried for ministral3
+        if attn_factor is None:
+            attn_factor = float(self.mscale / self.mscale_all_dim)
+
+        self.attn_factor = attn_factor
+
+        # TODO: Currently llama_4_scaling is not applied
+
+
+    def _yarn_get_mscale(self, mscale: float = 1) -> float:
+        if self.scaling_factor <= 1:
+            return 1.0
+        return 0.1 * mscale * math.log(self.scaling_factor) + 1.0
+
+
+    def _compute_cos_sin_cache(self, inv_freq: torch.Tensor, device: torch.device) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Compute the cos and sin cache for the rotary embedding to avoid computing
+        while doing the forward pass.
+        Args:
+            inv_freq: The precomputed inverse frequency tensor
+        Returns:
+            Tuple of (cos_cache, sin_cache) each with shape [max_pos, dim/2]
+        """
+        t = torch.arange(
+            int(self.max_position_embeddings * self.scaling_factor),
+            device=device,
+            dtype=torch.float32
+        )
+        freqs = torch.outer(t, inv_freq).float()
+
+        # Apply mscale and compute cos/sin
+        cos = (freqs.cos() * self.attn_factor)
+        sin = (freqs.sin() * self.attn_factor)
+
+        return cos, sin
+
+    # def _rotate(self, x: torch.Tensor) -> torch.Tensor:
+    #     """
+    #     Rotate the input tensor
+    #     Args:
+    #         x: The input tensor
+    #     Returns:
+    #         The rotated tensor
+    #     """
+    #     x1 = x[..., ::2]
+    #     x2 = x[..., 1::2]
+    #     x = torch.stack((-x2, x1), dim=-1)
+    #     return x.flatten(-2)
+
+    def compute_freqs_cis(self, device: torch.device) -> torch.Tensor:
+        """
+        Compute the frequencies for the rotary embedding.
+        Args:
+            device: device to compute frequencies on
+        """
+
+        if device == torch.device("meta"):
+            # Protect from initializing on spyre device
+            raise AssertionError("Attempted to init yarn freqs on meta device")
+
+        if device.index in self.cached_freqs:
+            return self.cached_freqs[device.index]
+
+        freqs =(
+            self.base
+            **(torch.arange(0, self.dim, 2, device=device).float() / self.dim))
+
+        inv_freq_extrapolation = 1.0 / freqs
+        inv_freq_interpolation = 1.0 / (self.scaling_factor * freqs)
+
+        # NOTE: math.floor and math.ceil being used here are referred to as "truncate" option
+        low = math.floor(
+            self.dim * math.log(self.max_position_embeddings /
+                           (self.beta_fast * 2 * math.pi))) / (2 *
+                                                              math.log(self.base)
+        )
+        high = math.ceil(
+            self.dim * math.log(self.max_position_embeddings /
+                           (self.beta_slow * 2 * math.pi))) / (2 *
+                                                              math.log(self.base)
+        )
+
+        # Make sure values are not going outside range
+        low = max(low, 0)
+        high = min(high, self.dim - 1)
+
+        if low == high:
+            high += 0.001  # Prevent singularity
+
+        # Get n-dimensional rotational scaling corrected for extrapolation
+        linear_func = (
+            torch.arange(self.dim // 2, dtype=torch.float32, device=device
+        ) - low) / (high - low)
+
+        # Compute ramp function (clamped linear interpolation)
+        ramp_func = torch.clamp(linear_func, 0, 1)
+
+        # inv_freq_extrapolation_factor is the weight for extrapolation
+        # (1 - ramp_func) means: use extrapolation for low frequencies (< low)
+        # ramp_func means: use interpolation for high frequencies (> high)
+        inv_freq_extrapolation_factor = 1 - ramp_func
+
+        # Blend between interpolation and extrapolation
+        # Note: extrapolation_factor is applied to the extrapolation frequencies
+        inv_freq = (
+            inv_freq_interpolation * (1 - inv_freq_extrapolation_factor) +
+            inv_freq_extrapolation * inv_freq_extrapolation_factor * self.extrapolation_factor
+        )
+
+
+        # Cache the computed frequencies for this device
+        cos_cache, sin_cache = self._compute_cos_sin_cache(inv_freq, device)
+        self.cached_freqs[device.index] = (cos_cache, sin_cache)
+
+        return self.cached_freqs[device.index]
+
+    def adjusted_qk(
+        self,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        position_ids: Optional[torch.Tensor] = None,
+        past_kv_state: Optional[Tuple[torch.Tensor | None, torch.Tensor | None]] = None,
+        use_cache=False,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        This function applies 1D rotary embeddings to the queries and keys using interleaved rotation.
+        Args
+        ----
+        q : torch.Tensor
+            Embedded query tensor, expected size is B x S x H x D
+            where B=batch, S=sequence length, H=num heads, D=head dimension
+        k : torch.Tensor
+            Embedded key tensor, expected size is B x S x H x D
+            where B=batch, S=sequence length, H=num heads, D=head dimension
+        position_ids : Optional[torch.LongTensor]
+            The position of each of the tokens encoded in q and k. This is important in
+            kv-caching and left-padding situations, for which the rotation to be applied might
+            not always be the pre-cached position 0...S. For kv-caching without dynamic batching
+            or variable per-row left padding position_ids is shared for all the batch.
+        past_kv_state : Optional[Tuple[torch.Tensor | None, torch.Tensor | None]]
+            Past key-value states for caching
+        use_cache : bool
+            Whether to use KV caching
+        """
+
+        assert len(q.size()) == 4
+        assert len(k.size()) == 4
+
+        seq_len = max(k.size(1), q.size(1))
+        if position_ids is None:
+            # Compute position_ids based on cache config
+            position_ids = torch.arange(
+                0, seq_len, dtype=torch.long, device=q.device
+            ).repeat(k.size(0), 1)
+            if (
+                use_cache
+                and past_kv_state is not None
+                and past_kv_state[0] is not None
+                and past_kv_state[0].numel() > 0
+            ):
+                position_ids += past_kv_state[0].size(2)
+
+        # Fetch the cos and sin values for the given position_ids from cache
+        cos_cache, sin_cache = self.compute_freqs_cis(q.device)
+
+        # Index by position_ids: [B, L] -> [B, L, rotary_dim/2]
+        cos = cos_cache[position_ids]
+        sin = sin_cache[position_ids]
+
+        # Unsqueeze to add head dimension: [B, L, rotary_dim/2] -> [B, L, 1, rotary_dim/2]
+        cos = cos.unsqueeze(2)
+        sin = sin.unsqueeze(2)
+
+        # Only apply rotation to the first self.dim dimensions
+        # Extract the rotary portion
+        q_rope = q[..., : self.dim]  # [B, L, H, rotary_dim]
+        k_rope = k[..., : self.dim]  # [B, L, H, rotary_dim]
+
+        # Reshape for interleaved rotation
+        # From [B, L, H, rotary_dim] to [B, L, H, rotary_dim/2, 2] for interleaved pairs
+        q_ = q_rope.float().view(*q_rope.size()[:-1], -1, 2)  # B L H rotary_dim/2 2
+        k_ = k_rope.float().view(*k_rope.size()[:-1], -1, 2)  # B L H rotary_dim/2 2
+
+        # Apply interleaved rotation: [x, y] -> [x*cos - y*sin, y*cos + x*sin]
+        # cos and sin have shape [B, L, 1, rotary_dim/2], broadcast to [B, L, H, rotary_dim/2]
+        q_out = torch.stack(
+            [
+                q_[..., 0] * cos - q_[..., 1] * sin,  # x*cos - y*sin
+                q_[..., 1] * cos + q_[..., 0] * sin,  # y*cos + x*sin
+            ],
+            dim=-1,
+        ).flatten(-2).type_as(q)
+
+        k_out = torch.stack(
+            [
+                k_[..., 0] * cos - k_[..., 1] * sin,
+                k_[..., 1] * cos + k_[..., 0] * sin,
+            ],
+            dim=-1,
+        ).flatten(-2).type_as(k)
+
+        # Concatenate with the non-rotated portion if rotary_dim < head_dim
+        if self.dim < q.size(-1):
+            q_out = torch.cat([q_out, q[..., self.dim :]], dim=-1)
+            k_out = torch.cat([k_out, k[..., self.dim :]], dim=-1)
+
         return q_out, k_out

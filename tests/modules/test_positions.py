@@ -4,7 +4,7 @@ import unittest
 import pytest
 import torch
 
-from fms.modules.positions import RotaryEmbedding, PixtralRotaryEmbedding
+from fms.modules.positions import RotaryEmbedding, PixtralRotaryEmbedding, CachedYarnRotaryEmbedding
 
 
 class RotaryEmbeddingTests(unittest.TestCase):
@@ -429,3 +429,149 @@ class PixtralRotaryEmbeddingTest(unittest.TestCase):
         # Compare results
         torch.testing.assert_close(adjusted_query_fms, query_hf, rtol=1e-4, atol=1e-5)
         torch.testing.assert_close(adjusted_key_fms, key_hf, rtol=1e-4, atol=1e-5)
+
+
+
+class CachedYarnRotaryEmbeddingTests(unittest.TestCase):
+    def test_args(self):
+        """Test that CachedYarnRotaryEmbedding validates input shapes correctly"""
+        q = torch.ones(2, 4, 1, 16, dtype=torch.float)  # b s h e
+        k = 2 * torch.ones(2, 4, 1, 16, dtype=torch.float)  # b s h e
+        yarn_rope = CachedYarnRotaryEmbedding(
+            dim=16,
+            max_position_embeddings=32,
+            base=10000,
+            scaling_factor=1.0,
+        )
+
+        with self.assertRaises(AssertionError):
+            qr, kr = yarn_rope.adjusted_qk(q.squeeze(), k)
+
+        with self.assertRaises(AssertionError):
+            qr, kr = yarn_rope.adjusted_qk(q, k.squeeze())
+
+        # This should not throw, as position_ids is optional
+        qr, kr = yarn_rope.adjusted_qk(q, k)
+
+        # This should not throw
+        qr, kr = yarn_rope.adjusted_qk(
+            q,
+            k,
+            torch.arange(0, q.size(1), device=q.device, dtype=torch.long).unsqueeze(0),
+            None,
+        )
+
+
+    def test_meta_device_error(self):
+        """Test that attempting to compute on meta device raises an error"""
+        yarn_rope = CachedYarnRotaryEmbedding(
+            dim=16,
+            max_position_embeddings=32,
+            base=10000,
+            scaling_factor=1.0,
+        )
+
+        with self.assertRaises(AssertionError):
+            yarn_rope.compute_freqs_cis(torch.device("meta"))
+
+
+    def test_hf_fms_equivalence(self):
+        """Test that FMS CachedYarn RoPE matches HF Transformers implementation"""
+        try:
+            from transformers.models.ministral3.modeling_ministral3 import (
+                Ministral3Config,
+                Ministral3RotaryEmbedding,
+                apply_rotary_pos_emb,
+            )
+        except ImportError:
+            self.skipTest("Unable to import Transformer's Ministral3 Model / Config")
+
+
+        # Configuration
+        dim = 32
+        num_heads = 4
+        rope_theta = 1000000000.0
+        beta_fast = 32.0
+        beta_slow = 1.0
+        scaling_factor = 16.0
+        original_max_position_embeddings = 16384 # Dummy Value
+        llama_4_scaling_beta = 0.1
+        mscale = 1.0
+        mscale_all_dim = 1.0
+
+
+        # Create sample inputs
+        seq_len = 8
+        q = torch.ones(2, seq_len, num_heads, dim, dtype=torch.float)  # B x S x H x D
+        k = 2 * torch.ones(2, seq_len, num_heads, dim, dtype=torch.float)  # B x S x H x D
+
+        position_ids = torch.arange(seq_len, dtype=torch.long).unsqueeze(0).repeat(2, 1)
+
+
+        ############ Get HF results
+        hf_config = Ministral3Config(
+            **{
+                "hidden_size": 1024,
+                "head_dim": dim,
+                "rope_parameters": {
+                    "rope_type": "yarn",
+                    "rope_theta": rope_theta,
+                    "beta_fast": beta_fast,
+                    "beta_slow": beta_slow,
+                    "factor": scaling_factor,
+                    "original_max_position_embeddings": original_max_position_embeddings,
+                    "llama_4_scaling_beta": llama_4_scaling_beta,
+                    "mscale": mscale,
+                    "mscale_all_dim": mscale_all_dim
+                }
+            }
+        )
+
+        transformers_emb = Ministral3RotaryEmbedding(hf_config)
+        cos, sin = transformers_emb(q, position_ids)
+        query_hf, key_hf = apply_rotary_pos_emb(
+            q, k, cos, sin, unsqueeze_dim=2
+        )
+
+        ############ Get FMS results
+        fms_emb = CachedYarnRotaryEmbedding(
+            dim,
+            max_position_embeddings=original_max_position_embeddings,
+            base=rope_theta,
+            scaling_factor=scaling_factor,
+            beta_fast=beta_fast,
+            beta_slow=beta_slow,
+            mscale=mscale,
+        )
+
+        # FMS adjusted_qk expects [B, S, H, D] format
+        # Both HF and FMS receive the same input tensors
+        query_fms, key_fms = fms_emb.adjusted_qk(
+            q, k, position_ids
+        )
+
+        # Convert FMS output back to HF format for comparison
+        def permute_fms_to_hf(tensor):
+            """
+            Permute tensor from FMS RoPE format to HF RoPE format.
+            FMS: [x0, y0, x1, y1, x2, y2, ..., x15, y15] (interleaved pairs)
+            HF: [x0, x1, x2, ..., x15, y0, y1, y2, ..., y15] (split halves)
+            """
+            *batch_dims, head_dim = tensor.shape
+            half_dim = head_dim // 2
+            # Reshape to separate interleaved pairs
+            paired = tensor.reshape(*batch_dims, half_dim, 2)
+            # Split into first and second elements of each pair
+            first_half = paired[..., 0]  # x0, x1, x2, ..., x15
+            second_half = paired[..., 1]  # y0, y1, y2, ..., y15
+            # Concatenate: first all x's, then all y's
+            return torch.cat([first_half, second_half], dim=-1)
+
+        adjusted_query_fms = permute_fms_to_hf(query_fms)
+        adjusted_key_fms = permute_fms_to_hf(key_fms)
+
+        # Compare results
+        torch.testing.assert_close(adjusted_query_fms, query_hf, rtol=1e-3, atol=1e-4)
+        torch.testing.assert_close(adjusted_key_fms, key_hf, rtol=1e-3, atol=1e-4)
+
+
