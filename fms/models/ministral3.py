@@ -100,19 +100,19 @@ class Ministral3Headless(nn.Module):
             padding_idx=self.config.pad_id,
         )
 
+        # Prepare rope parameters, ensuring original_max_position_embeddings matches max_expected_seq_len
+        rope_params = dict(self.config.rope_parameters)
+        rope_params['original_max_position_embeddings'] = self.config.max_expected_seq_len
+
         self.rot_emb = CachedYarnRotaryEmbedding(
             dim=self.config.head_dim,
             base=self.config.rope_parameters.get("rope_theta"),
             scaling_factor=config.rope_parameters.get("factor"),
-            **self.config.rope_parameters,
+            **rope_params,
         )
-
-        # RoPE init
-        for device in set(
-            [param.device for param in self.parameters()]
-            + [buffer.device for buffer in self.buffers()]
-        ):
-            self.rot_emb.compute_freqs_cis(device)
+        # Note: RoPE rotation matrices are now pre-computed on CPU during
+        # CachedYarnRotaryEmbedding.__init__() to avoid cos/sin on Spyre device.
+        # The matrices are computed for max_expected_seq_len positions.
 
         layers = []
         for i in range(self.config.nlayers):
@@ -141,12 +141,8 @@ class Ministral3Headless(nn.Module):
             self.embedding.weight, mean=0.0, std=self.config.emb_dim**-0.5
         )
 
-        # RoPE init
-        for device in set(
-            [param.device for param in self.parameters()]
-            + [buffer.device for buffer in self.buffers()]
-        ):
-            self.rot_emb.compute_freqs_cis(device)
+        # Note: RoPE rotation matrices are pre-computed during __init__,
+        # no need to recompute them here
 
         # Call reset_parameters for relevant sub-layers
         for m in self.modules():
@@ -160,13 +156,14 @@ class Ministral3Headless(nn.Module):
     def _clean_up_rot_emb_cache(
         self,
         cached_freqs: dict[Optional[torch.device], dict[int, torch.Tensor]],
-        # max_seq_len_cached: dict[Optional[torch.device], int],
+        max_seq_len_cached: dict[Optional[torch.device], int],
     ):
         # remove meta tensors from cached_freqs
         for dev in list(cached_freqs.keys()):
             if cached_freqs[dev].device == torch.device("meta"):
-                del cached_freqs[dev]
-                        # del max_seq_len_cached[dev]
+                if len(cached_freqs[dev]) == 0:
+                    del cached_freqs[dev]
+                    del max_seq_len_cached[dev]
 
     def post_init(self):
         # This function is called in `get_model` after the model is
@@ -174,15 +171,17 @@ class Ministral3Headless(nn.Module):
         # TODO: Currently we are not adding max_seq_len_cached to the cache, so we are not cleaning it up.
         self._clean_up_rot_emb_cache(
             self.rot_emb.cached_freqs,
-            # self.rot_emb.max_seq_len_cached,
+            self.rot_emb.max_seq_len_cached,
         )
 
-        # init RoPE on the right device(s)
+        # Transfer pre-computed RoPE rotation matrices to the target device(s)
+        # The matrices are already computed on CPU, we just need to move them
         for device in set(
             [param.device for param in self.parameters()]
             + [buffer.device for buffer in self.buffers()]
         ):
-            self.rot_emb.compute_freqs_cis(device)
+            if device != torch.device("meta"):
+                self.rot_emb.compute_freqs_cis(device, self.config.max_expected_seq_len)
 
     def forward(
         self,
