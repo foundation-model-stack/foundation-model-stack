@@ -612,6 +612,7 @@ class CachedYarnRotaryEmbedding(PositionEncoder):
         mscale: float = 1.0,
         mscale_all_dim: float = 1.0,
         llama_4_scaling_beta: Optional[float] = None,
+        **kwargs
     ):
         """
         This implements Yarn scaling rotary embedding.
@@ -690,9 +691,9 @@ class CachedYarnRotaryEmbedding(PositionEncoder):
             device: device to compute frequencies on
         """
 
-        if device == torch.device("meta"):
-            # Protect from initializing on spyre device
-            raise AssertionError("Attempted to init yarn freqs on meta device")
+        # if device == torch.device("meta"):
+            # # Protect from initializing on spyre device
+            # raise AssertionError("Attempted to init yarn freqs on meta device")
 
         if device.index in self.cached_freqs:
             return self.cached_freqs[device.index]

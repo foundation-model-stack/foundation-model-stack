@@ -436,6 +436,7 @@ class PixtralRotaryEmbeddingTest(unittest.TestCase):
 
 
 class CachedYarnRotaryEmbeddingTests(unittest.TestCase):
+
     def test_args(self):
         """Test that CachedYarnRotaryEmbedding validates input shapes correctly"""
         q = torch.ones(2, 4, 1, 16, dtype=torch.float)  # b s h e

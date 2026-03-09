@@ -24,6 +24,7 @@ from fms.modules.attention import (
 )
 from fms.modules.feedforward import GatedLinearUnit
 from fms.modules.layernorm import LayerNormParameterized
+from fms.modules.positions import CachedYarnRotaryEmbedding
 from fms.models.mistral import MistralBlock
 from fms.models.mistral3 import Mistral3, Mistral3MultiModalProjector
 from fms.models.pixtral_vision import PixtralVisionConfig, PixtralVisionModel
@@ -99,21 +100,19 @@ class Ministral3Headless(nn.Module):
             padding_idx=self.config.pad_id,
         )
 
-        # TODO:
-        self.rot_emb = None
-        # self.rot_emb = RotaryEmbedding(
-        #     dim=self.config.head_dim,
-        #     scaling=self.config.rope_scaling,
-        #     max_seq_len=self.config.max_expected_seq_len,
-        #     ratio=self.config.rope_base,
-        # )
+        self.rot_emb = CachedYarnRotaryEmbedding(
+            dim=self.config.head_dim,
+            base=self.config.rope_parameters.get("rope_theta"),
+            scaling_factor=config.rope_parameters.get("factor"),
+            **self.config.rope_parameters,
+        )
 
         # RoPE init
-        # for device in set(
-        #     [param.device for param in self.parameters()]
-        #     + [buffer.device for buffer in self.buffers()]
-        # ):
-        #     self.rot_emb.compute_freqs_cis(device, self.config.max_expected_seq_len)
+        for device in set(
+            [param.device for param in self.parameters()]
+            + [buffer.device for buffer in self.buffers()]
+        ):
+            self.rot_emb.compute_freqs_cis(device)
 
         layers = []
         for i in range(self.config.nlayers):
@@ -143,12 +142,11 @@ class Ministral3Headless(nn.Module):
         )
 
         # RoPE init
-        # TODO:
-        # for device in set(
-        #     [param.device for param in self.parameters()]
-        #     + [buffer.device for buffer in self.buffers()]
-        # ):
-        #     self.rot_emb.compute_freqs_cis(device, self.config.max_expected_seq_len)
+        for device in set(
+            [param.device for param in self.parameters()]
+            + [buffer.device for buffer in self.buffers()]
+        ):
+            self.rot_emb.compute_freqs_cis(device)
 
         # Call reset_parameters for relevant sub-layers
         for m in self.modules():
@@ -162,37 +160,29 @@ class Ministral3Headless(nn.Module):
     def _clean_up_rot_emb_cache(
         self,
         cached_freqs: dict[Optional[torch.device], dict[int, torch.Tensor]],
-        max_seq_len_cached: dict[Optional[torch.device], int],
+        # max_seq_len_cached: dict[Optional[torch.device], int],
     ):
         # remove meta tensors from cached_freqs
         for dev in list(cached_freqs.keys()):
-            for alp in list(cached_freqs[dev].keys()):
-                if cached_freqs[dev][alp].device == torch.device("meta"):
-                    del cached_freqs[dev][alp]
-                    if len(cached_freqs[dev]) == 0:
-                        del cached_freqs[dev]
-                        del max_seq_len_cached[dev]
+            if cached_freqs[dev].device == torch.device("meta"):
+                del cached_freqs[dev]
+                        # del max_seq_len_cached[dev]
 
     def post_init(self):
-        pass
+        # This function is called in `get_model` after the model is
+        # fully initalized on the correct device
+        # TODO: Currently we are not adding max_seq_len_cached to the cache, so we are not cleaning it up.
+        self._clean_up_rot_emb_cache(
+            self.rot_emb.cached_freqs,
+            # self.rot_emb.max_seq_len_cached,
+        )
 
-    # def post_init(self):
-    # This function is called in `get_model` after the model is
-    # fully initalized on the correct device
-
-    # TODO:
-    # self._clean_up_rot_emb_cache(
-    #     self.rot_emb.cached_freqs,
-    #     self.rot_emb.max_seq_len_cached,
-    # )
-
-    # init RoPE on the right device(s)
-    # TODO:
-    # for device in set(
-    #     [param.device for param in self.parameters()]
-    #     + [buffer.device for buffer in self.buffers()]
-    # ):
-    #     self.rot_emb.compute_freqs_cis(device, self.config.max_expected_seq_len)
+        # init RoPE on the right device(s)
+        for device in set(
+            [param.device for param in self.parameters()]
+            + [buffer.device for buffer in self.buffers()]
+        ):
+            self.rot_emb.compute_freqs_cis(device)
 
     def forward(
         self,
