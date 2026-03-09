@@ -261,6 +261,19 @@ def _sdpa_compute_op(
         torch.backends.cuda.enable_math_sdp(use_math)
 
     attn_mask = mask
+
+    # In transformers 4.57+, when cache_position is passed during generation,
+    # the attention mask from HF may not match our cache structure
+    # We need to slice the mask to match the actual key cache length
+    cache_position = attn_kwargs.get("cache_position", None)
+    if cache_position is not None and attn_mask is not None:
+        # The mask's last dimension should match the key cache length
+        kv_len = keys_e.shape[2]  # keys_e shape: [batch, heads, kv_len, head_dim]
+        if attn_mask.shape[-1] > kv_len:
+            # Slice the mask to match the key cache length
+            # Take the last kv_len positions from the mask
+            attn_mask = attn_mask[:, :, :, -kv_len:]
+
     if attn_mask is not None and attn_mask.dtype != torch.bool:
         attn_mask = attn_mask.to(dtype=queries.dtype)
 
@@ -268,6 +281,10 @@ def _sdpa_compute_op(
         "is_causal_mask",
         mask is None and not (key_cache.shape[2] != 1 and queries.shape[2] == 1),
     )
+
+    # When cache_position is present and we have an explicit mask, don't also use is_causal
+    if cache_position is not None and attn_mask is not None:
+        is_causal = False
 
     # TODO: when updating to 2.7, use enable_gqa and stop using keys_e and values_e
     attn = F.scaled_dot_product_attention(

@@ -538,6 +538,14 @@ class HFDecoder(_HFBase):
         )
         if isinstance(past_key_values, DynamicCache):
             past_key_values = None
+
+        # In transformers 4.57+, cache_position is passed during generation
+        # When cache_position is present, we're in decoding mode and should treat cache as filled
+        cache_position = kwargs.get("cache_position", None)
+        if cache_position is not None and use_cache:
+            # cache_position being present indicates generation/decoding mode
+            is_cache_used_and_filled = True
+
         return HFDecoderModelArchitecture._produce_decoder_attention_mask_from_hf(
             attention_mask, is_cache_used_and_filled
         )
