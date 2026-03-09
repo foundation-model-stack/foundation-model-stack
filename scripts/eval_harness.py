@@ -2,7 +2,6 @@ import argparse
 import os
 
 import lm_eval
-import logging
 import torch
 import torch._inductor.config
 from lm_eval.utils import make_table
@@ -163,7 +162,6 @@ results = lm_eval.simple_evaluate(
     tasks=args.tasks.split(","),
     limit=args.num_samples,
     num_fewshot=args.num_fewshot,
-    verbosity=logging.DEBUG,
     confirm_run_unsafe_code=args.confirm_run_unsafe_code,
 )
 print(make_table(results))
