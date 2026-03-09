@@ -1,5 +1,6 @@
-from typing import List, Tuple, MutableMapping, Any, Optional
 import logging
+import os
+from typing import Any, List, MutableMapping, Optional, Tuple
 
 import torch
 import torch.nn.functional as F
@@ -9,15 +10,14 @@ from lm_eval.api.model import LM  # type: ignore
 from lm_eval.api.registry import register_model  # type: ignore
 from torch import nn
 
-# silence HF warning
-import os
-os.environ["TOKENIZERS_PARALLELISM"] = "false"
-
-logger = logging.getLogger(__name__)
-
 from fms.utils import tokenizers
 from fms.utils.generation import _make_cache_contiguous, _make_cache_dynamic
 from fms.utils.generation import __update_padding_kwargs as _update_padding_kwargs
+
+# silence HF warning
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
+logger = logging.getLogger(__name__)
 
 
 @register_model("fms")
@@ -99,10 +99,10 @@ class FMSEvalHarnessLM(LM):
         # KV caching settings
         kwargs["use_cache"] = self.use_cache
         if kwargs["use_cache"]:
-            logger.info('KV caching enabled')
+            logger.info("KV caching enabled")
             kwargs["contiguous_cache"] = True
         else:
-            logger.info('KV caching disabled')
+            logger.info("KV caching disabled")
 
         eos_id = getattr(self.tokenizer, "eos_token_id", None)
 
@@ -118,12 +118,12 @@ class FMSEvalHarnessLM(LM):
 
             max_gen_toks_value = gen_kwargs.get("max_gen_toks")
             if max_gen_toks_value is None:
-                if idx == 0: # only emit the warning once
+                if idx == 0:  # only emit the warning once
                     logger.warning("max_gen_toks not provided, using default 256")
                 max_gen_toks = 256
             else:
                 max_gen_toks = int(max_gen_toks_value)
-            
+
             if kwargs["use_cache"]:
                 # reset KV cache
                 kwargs["past_key_value_states"] = None
@@ -136,14 +136,14 @@ class FMSEvalHarnessLM(LM):
 
             # Build input_ids tensor
             input_ids = torch.tensor(context_ids, dtype=torch.long, device=self.device)
-            
+
             # model requires batch dimension
             if not len(input_ids.shape) > 1:
                 input_ids = input_ids.unsqueeze(0)
 
             # (maybe) TODO: respect the max model length
             # max_gen_toks = min(max_gen_toks, max_model_len - input_ids.shape[-1])
-            
+
             generated_ids: List[int] = []
             stop_text: Optional[str] = None
 
@@ -152,7 +152,7 @@ class FMSEvalHarnessLM(LM):
                 # iteration 0 is the prefill step (cache has not been filled yet), so no need to extend the mask/position_ids
                 if i > 0:
                     kwargs = _update_padding_kwargs(kwargs["use_cache"], kwargs)
-                
+
                 # Forward pass; models may return (logits,) or logits directly
                 out = self.wrapped_model(input_ids, **kwargs)
 
@@ -175,25 +175,27 @@ class FMSEvalHarnessLM(LM):
                 # Handle both 3D and 2D logits
                 if logits.dim() == 3:
                     # (batch, seq, vocab) -> take last position for batch 0
-                    next_token_logits = logits[:, -1, :] # (1, vocab)
+                    next_token_logits = logits[:, -1, :]  # (1, vocab)
                     next_id = int(torch.argmax(next_token_logits, dim=-1).item())
                 elif logits.dim() == 2:
                     # (seq, vocab) -> take last position
-                    next_token_logits = logits[-1, :] # (vocab,)
+                    next_token_logits = logits[-1, :]  # (vocab,)
                     next_id = int(torch.argmax(next_token_logits).item())
                 else:
                     raise RuntimeError(
                         f"Unexpected logits shape {tuple(logits.shape)}; "
                         "expected (batch, seq, vocab) or (seq, vocab)."
                     )
-                
+
                 # EOS check
                 if eos_id is not None and next_id == eos_id:
                     break
 
                 # Append and continue
                 generated_ids.append(next_id)
-                next_id_tensor = torch.tensor([[next_id]], dtype=torch.long, device=self.device)
+                next_id_tensor = torch.tensor(
+                    [[next_id]], dtype=torch.long, device=self.device
+                )
 
                 if kwargs["use_cache"]:
                     input_ids = next_id_tensor
@@ -225,7 +227,7 @@ class FMSEvalHarnessLM(LM):
                     torch.tensor(generated_ids, dtype=torch.long)
                 )
                 stop_text = self.tokenizer.convert_tokens_to_string(gen_tokens)
-            
+
             result.append(stop_text)
-        
+
         return result
