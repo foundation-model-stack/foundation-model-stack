@@ -205,7 +205,7 @@ class FMSEvalHarnessLM(LM):
                 # Stop-string check (string-level)
                 if until:
                     gen_tokens = self.tokenizer.convert_ids_to_tokens(
-                        torch.tensor(generated_ids, dtype=torch.long)  # CPU ok
+                        torch.tensor(generated_ids, dtype=torch.long).cpu()  # type: ignore[arg-type]
                     )
                     gen_text = self.tokenizer.convert_tokens_to_string(gen_tokens)
 
@@ -224,7 +224,7 @@ class FMSEvalHarnessLM(LM):
             # Final decode if we didn't break on 'until'
             if stop_text is None:
                 gen_tokens = self.tokenizer.convert_ids_to_tokens(
-                    torch.tensor(generated_ids, dtype=torch.long)
+                    torch.tensor(generated_ids, dtype=torch.long).cpu()  # type: ignore[arg-type]
                 )
                 stop_text = self.tokenizer.convert_tokens_to_string(gen_tokens)
 
