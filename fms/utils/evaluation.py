@@ -1,7 +1,9 @@
-from typing import List, Tuple, MutableMapping, Any
+from typing import List, Tuple, MutableMapping, Any, Optional
+import logging
 
 import torch
 import torch.nn.functional as F
+import tqdm
 from lm_eval.api.instance import Instance  # type: ignore
 from lm_eval.api.model import LM  # type: ignore
 from lm_eval.api.registry import register_model  # type: ignore
@@ -10,6 +12,8 @@ from torch import nn
 # silence HF warning
 import os
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
+logger = logging.getLogger(__name__)
 
 from fms.utils import tokenizers
 from fms.utils.generation import _make_cache_contiguous, _make_cache_dynamic
@@ -93,12 +97,12 @@ class FMSEvalHarnessLM(LM):
         kwargs: MutableMapping[str, Any] = dict()
 
         # KV caching settings
-        kwargs["use_cache"] = 'Mamba' not in self.wrapped_model.__class__.__name__ and self.use_cache
+        kwargs["use_cache"] = self.use_cache
         if kwargs["use_cache"]:
-            print('KV caching enabled')
+            logger.info('KV caching enabled')
             kwargs["contiguous_cache"] = True
         else:
-            print('KV caching disabled')
+            logger.info('KV caching disabled')
 
         eos_id = getattr(self.tokenizer, "eos_token_id", None)
 
@@ -115,7 +119,7 @@ class FMSEvalHarnessLM(LM):
             max_gen_toks_value = gen_kwargs.get("max_gen_toks")
             if max_gen_toks_value is None:
                 if idx == 0: # only emit the warning once
-                    print("Warning: max_gen_toks not provided, using default 256")
+                    logger.warning("max_gen_toks not provided, using default 256")
                 max_gen_toks = 256
             else:
                 max_gen_toks = int(max_gen_toks_value)
@@ -137,11 +141,11 @@ class FMSEvalHarnessLM(LM):
             if not len(input_ids.shape) > 1:
                 input_ids = input_ids.unsqueeze(0)
 
-            # # respect the max model length
+            # (maybe) TODO: respect the max model length
             # max_gen_toks = min(max_gen_toks, max_model_len - input_ids.shape[-1])
             
             generated_ids: List[int] = []
-            stop_text: str | None = None
+            stop_text: Optional[str] = None
 
             for i in range(max_gen_toks):
                 # prepare any padding keyword arguments
@@ -168,7 +172,7 @@ class FMSEvalHarnessLM(LM):
                 else:
                     logits = out
 
-                # # Handle both 3D and 2D logits
+                # Handle both 3D and 2D logits
                 if logits.dim() == 3:
                     # (batch, seq, vocab) -> take last position for batch 0
                     next_token_logits = logits[:, -1, :] # (1, vocab)

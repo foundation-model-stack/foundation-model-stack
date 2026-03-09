@@ -2,6 +2,7 @@ import argparse
 import os
 
 import lm_eval
+import logging
 import torch
 import torch._inductor.config
 from lm_eval.utils import make_table
