@@ -331,6 +331,13 @@ class HFModelGenerationTestSuite(HFConfigFixtureMixin, HFModelFixtureMixin):
         ["hello how are you?"],
         ["hello how are you?", "a: this is a test. b: this is another test. a:"],
     ]
+
+    # The newer versions (4.57+) of transformers have a parameter called cache_position
+    # that would require implementation like was done in transformers to have
+    # full compatibility with the generation done in FMS.
+    # The way to disable this is by passing use_cache=False in
+    # our tests that compare the output to transformers.
+    # https://huggingface.co/docs/transformers/cache_explanation#cache-position
     use_cache_options = [False]
     num_beams_options = [1, 3]
     generate_equivalence_args = list(
