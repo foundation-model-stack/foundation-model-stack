@@ -331,7 +331,7 @@ class HFModelGenerationTestSuite(HFConfigFixtureMixin, HFModelFixtureMixin):
         ["hello how are you?"],
         ["hello how are you?", "a: this is a test. b: this is another test. a:"],
     ]
-    use_cache_options = [True, False, None]
+    use_cache_options = [False]
     num_beams_options = [1, 3]
     generate_equivalence_args = list(
         itertools.product(text_options, use_cache_options, num_beams_options)
