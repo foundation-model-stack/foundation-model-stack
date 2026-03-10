@@ -88,7 +88,10 @@ class HFAdaptedLLaMAHeadless(HFDecoderModelArchitecture):
         position_ids = model_kwargs.pop("position_ids", None)
 
         if position_ids is None and attention_mask is not None:
-            position_ids = attention_mask.long().cumsum(-1)
+            position_ids = attention_mask.long().cumsum(-1) - 1
+            position_ids.masked_fill_(attention_mask == 0, 1)
+            if past_key_values:
+                position_ids = position_ids[:, -1].unsqueeze(-1)
 
         # Add more cached rope freqs if over cached number
         max_expected_len = input_ids.shape[1] + torch.max(position_ids)
