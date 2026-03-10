@@ -6,7 +6,12 @@ from typing import Callable, Dict, Optional, Tuple, Union
 import torch
 from torch import nn
 from torch.nn.modules.loss import _Loss
-from transformers import PretrainedConfig, PreTrainedModel, GenerationMixin, DynamicCache
+from transformers import (
+    PretrainedConfig,
+    PreTrainedModel,
+    GenerationMixin,
+    DynamicCache,
+)
 from transformers.modeling_utils import no_init_weights
 from transformers.modeling_outputs import (
     BaseModelOutput,

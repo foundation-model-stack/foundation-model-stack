@@ -315,7 +315,7 @@ class HFModelGenerationTestSuite(HFConfigFixtureMixin, HFModelFixtureMixin):
         # Ensure model is in consistent state
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
-        
+
         with torch.no_grad():
             generated_ids = model.generate(
                 **encoding,
@@ -368,7 +368,7 @@ class HFModelGenerationTestSuite(HFConfigFixtureMixin, HFModelFixtureMixin):
         output_hf = self._predict_text(
             oss_hf_model, tokenizer, texts, use_cache, num_beams
         )
-    
+
         for i in range(len(output_fms)):
             ratio = SequenceMatcher(None, output_fms[i], output_hf[i]).ratio()
             assert ratio > 0.85, f"{ratio} - {output_fms[i]}\n{output_hf[i]}"
