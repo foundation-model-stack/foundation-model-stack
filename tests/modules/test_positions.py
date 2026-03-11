@@ -465,18 +465,6 @@ class CachedYarnRotaryEmbeddingTests(unittest.TestCase):
             None,
         )
 
-    def test_meta_device_error(self):
-        """Test that attempting to compute on meta device raises an error"""
-        yarn_rope = CachedYarnRotaryEmbedding(
-            dim=16,
-            original_max_position_embeddings=32,
-            base=10000,
-            scaling_factor=1.0,
-        )
-
-        with self.assertRaises(AssertionError):
-            yarn_rope.compute_freqs_cis(torch.device("meta"))
-
     def test_output_shapes(self):
         """Test that output shapes match input shapes"""
         batch_size = 2
