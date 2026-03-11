@@ -119,6 +119,28 @@ _3b_config = MistralConfig(
     max_expected_seq_len=262144,
 )
 
+_8b_config = MistralConfig(
+    src_vocab_size=131072,
+    emb_dim=4096,
+    nheads=32,
+    kvheads=8,
+    nlayers=34,
+    head_dim=128,
+    hidden_grow_factor=14336 / 4096,
+    multiple_of=1,
+    tie_heads=False,
+    activation_fn="swish",
+    sliding_window=None,
+    rope_base=1000000.0,
+    rope_scaling={
+        "rope_type": "yarn",
+        "scaling_factor": 16.0,
+        "ntk_alpha": 1.0,
+        "ntk_beta": 32.0,
+    },
+    max_expected_seq_len=262144,
+)
+
 
 class MistralBlock(nn.Module):
     def __init__(self, config: MistralConfig, rotary_emb: RotaryEmbedding):
@@ -460,6 +482,7 @@ def _mistral_factory_factory(config):
 
 models.register_model(_architecture_name, "7b", _mistral_factory_factory(_7b_config))
 models.register_model(_architecture_name, "3b", _mistral_factory_factory(_3b_config))
+models.register_model(_architecture_name, "8b", _mistral_factory_factory(_8b_config))
 
 
 # =============== Serialization ==================

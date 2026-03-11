@@ -1,21 +1,24 @@
 """
-Ministral 3B text generation example using FMS.
+Ministral text generation example using FMS.
 
 Usage (CPU, random weights — no download):
-    python scripts/run_ministral_3b.py
+    python scripts/run_ministral.py --variant 3b
+    python scripts/run_ministral.py --variant 8b
 
 Usage (CPU, from HF-format checkpoint):
-    python scripts/run_ministral_3b.py --model_path /path/to/Ministral-3-3B-Instruct-2512-BF16
+    python scripts/run_ministral.py --variant 3b --model_path /path/to/Ministral-3-3B-Instruct-2512-BF16
+    python scripts/run_ministral.py --variant 8b --model_path /path/to/Ministral-3-8B-Instruct-2512-BF16
 
 Usage (CUDA):
-    python scripts/run_ministral_3b.py --model_path /path/to/Ministral-3-3B-Instruct-2512-BF16 --device cuda
+    python scripts/run_ministral.py --variant 3b --model_path /path/to/checkpoint --device cuda
 
-To download a checkpoint (requires `huggingface-cli` and access):
-    huggingface-cli download mistralai/Ministral-3-3B-Instruct-2512-BF16 --local-dir /path/to/Ministral-3-3B-Instruct-2512-BF16
+To download checkpoints (requires `huggingface-cli` and access):
+    huggingface-cli download mistralai/Ministral-3-3B-Instruct-2512-BF16 --local-dir /path/to/3b
+    huggingface-cli download mistralai/Ministral-3-8B-Instruct-2512-BF16 --local-dir /path/to/8b
 
-All HF-hosted Ministral 3B variants are multimodal (Mistral3ForConditionalGeneration).
+All HF-hosted Ministral variants are multimodal (Mistral3ForConditionalGeneration).
 FMS extracts only the text-tower weights, discarding vision/projector layers.
-The BF16 variant is recommended as it contains unquantized weights.
+The BF16 variants are recommended as they contain unquantized weights.
 
 NOTE: transformers 4.57.6 does not recognise the 'ministral3' model_type, so we
 load directly through FMS's own model registry with source="hf".
@@ -31,12 +34,19 @@ from fms.utils.generation import generate
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Ministral 3B generation example")
+    parser = argparse.ArgumentParser(description="Ministral generation example")
+    parser.add_argument(
+        "--variant",
+        type=str,
+        default="3b",
+        choices=["3b", "8b"],
+        help="Model variant: 3b (3.4B params) or 8b (8.5B params)",
+    )
     parser.add_argument(
         "--model_path",
         type=str,
         default=None,
-        help="Path to HF-format Ministral-3-3B checkpoint directory. "
+        help="Path to HF-format Ministral checkpoint directory. "
         "If omitted, a randomly initialised model is used (useful for smoke-testing).",
     )
     parser.add_argument(
@@ -57,7 +67,7 @@ def main():
 
     dtype = getattr(torch, args.dtype)
 
-    print(f"Loading Ministral 3B on {args.device} ({args.dtype}) ...")
+    print(f"Loading Ministral {args.variant.upper()} on {args.device} ({args.dtype}) ...")
     if args.model_path is not None:
         # Use a glob pattern to load only the HF-sharded safetensors files.
         # The checkpoint directory also contains consolidated.safetensors
@@ -65,7 +75,7 @@ def main():
         model_path = os.path.join(args.model_path, "*model*.safetensors")
         model = get_model(
             "mistral",
-            "3b",
+            args.variant,
             model_path=model_path,
             source="hf",
             device_type=args.device,
@@ -75,7 +85,7 @@ def main():
         print("(no --model_path given, using random weights)")
         model = get_model(
             "mistral",
-            "3b",
+            args.variant,
             device_type=args.device,
             data_type=dtype,
         )
@@ -84,7 +94,7 @@ def main():
     print(f"Model loaded — {sum(p.numel() for p in model.parameters()):,} parameters")
 
     # --- tokenize ---
-    # The Ministral 3B uses a SentencePiece / tekken tokenizer shipped with the
+    # Ministral models use a SentencePiece / tekken tokenizer shipped with the
     # checkpoint.  When no real checkpoint is available we fall back to a simple
     # byte-level encoding so the script can still run end-to-end.
     ids = None
@@ -129,9 +139,7 @@ def main():
         prompt_ids = result[0][:n_prompt].tolist()
         gen_ids = result[0][n_prompt:].tolist()
         prompt_text = "".join(chr(t) if t < 128 else "?" for t in prompt_ids)
-        output_text = (
-            f"{prompt_text} [generated token ids: {gen_ids}]"
-        )
+        output_text = f"{prompt_text} [generated token ids: {gen_ids}]"
 
     print(output_text)
 
