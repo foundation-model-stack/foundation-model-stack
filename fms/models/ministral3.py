@@ -24,7 +24,7 @@ from fms.modules.attention import (
 )
 from fms.modules.feedforward import GatedLinearUnit
 from fms.modules.layernorm import LayerNormParameterized
-from fms.modules.positions import CachedYarnRotaryEmbedding
+from fms.modules.positions import CachedYarnRotaryEmbedding, RotaryEmbedding
 from fms.models.mistral import MistralBlock
 from fms.models.mistral3 import Mistral3, Mistral3MultiModalProjector
 from fms.models.pixtral_vision import PixtralVisionConfig, PixtralVisionModel
@@ -110,6 +110,11 @@ class Ministral3Headless(nn.Module):
             scaling_factor=config.rope_parameters.get("factor"),
             **rope_params,
         )
+        for device in set(
+            [param.device for param in self.parameters()]
+            + [buffer.device for buffer in self.buffers()]
+        ):
+            self.rot_emb.compute_freqs_cis(device, self.config.max_expected_seq_len)
         # Note: RoPE rotation matrices are now pre-computed on CPU during
         # CachedYarnRotaryEmbedding.__init__() to avoid cos/sin on Spyre device.
         # The matrices are computed for max_expected_seq_len positions.
@@ -174,14 +179,13 @@ class Ministral3Headless(nn.Module):
             self.rot_emb.max_seq_len_cached,
         )
 
-        # Transfer pre-computed RoPE rotation matrices to the target device(s)
-        # The matrices are already computed on CPU, we just need to move them
+        # init RoPE on the right device(s)
         for device in set(
             [param.device for param in self.parameters()]
             + [buffer.device for buffer in self.buffers()]
         ):
-            if device != torch.device("meta"):
-                self.rot_emb.compute_freqs_cis(device, self.config.max_expected_seq_len)
+            self.rot_emb.compute_freqs_cis(device, self.config.max_expected_seq_len)
+
 
     def forward(
         self,

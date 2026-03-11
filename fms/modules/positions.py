@@ -649,7 +649,6 @@ class CachedYarnRotaryEmbedding(PositionEncoder):
         self.attn_factor = attn_factor
 
         # Pre-compute rotation matrices on CPU to avoid cos/sin on Spyre device
-        # This is critical for Spyre compatibility as cos/sin are not supported operations
         self._precompute_rotation_matrices_on_cpu()
 
     def _yarn_get_mscale(self, mscale: float = 1) -> float:
@@ -727,6 +726,7 @@ class CachedYarnRotaryEmbedding(PositionEncoder):
         cos = freqs.cos() * self.attn_factor
         sin = freqs.sin() * self.attn_factor
 
+        # return cos, sin, freqs
         # Construct rotation matrices: [max_pos, dim/2, 2, 2]
         # Matrix form: [[cos, -sin], [sin, cos]]
         freqs_cis = torch.stack([cos, -sin, sin, cos], dim=-1).view(*cos.shape, 2, 2)
@@ -753,15 +753,12 @@ class CachedYarnRotaryEmbedding(PositionEncoder):
         """
 
         if device == torch.device("meta"):
-            # Protect from initializing on meta device
-            # Return None to signal that cache computation should be skipped
             return None
 
-        dev_idx = device.index if device.type != "cpu" else -1
+        if device.index in self.cached_freqs:
+            return None
 
-        # If already cached on this device, return it
-        if dev_idx in self.cached_freqs:
-            return self.cached_freqs[dev_idx]
+        dev_idx = device.index
 
         # Check if we have the CPU cache (should always be true after __init__)
         if -1 not in self.cached_freqs:
@@ -841,14 +838,16 @@ class CachedYarnRotaryEmbedding(PositionEncoder):
         # Get device index for cache lookup
         # Use -1 for CPU, otherwise use the device index
         dev_idx = q.device.index if q.device.index is not None else -1
+        # dev_idx = q.device.index
 
         # Index by position_ids: [B, L] -> [B, L, rotary_dim/2, 2, 2]
-        freqs = self.cached_freqs[dev_idx][position_ids].float()
+        freqs = self.cached_freqs[dev_idx][position_ids]
+        freqs = freqs.float()
 
         # Only apply rotation to the first self.dim dimensions
         # Extract the rotary portion
-        q_rope = q[..., : self.dim]  # [B, L, H, rotary_dim]
-        k_rope = k[..., : self.dim]  # [B, L, H, rotary_dim]
+        q_rope = q
+        k_rope = k
 
         # Reshape for interleaved rotation
         # From [B, L, H, rotary_dim] to [B, L, H, rotary_dim/2, 2] for interleaved pairs
@@ -873,9 +872,8 @@ class CachedYarnRotaryEmbedding(PositionEncoder):
         ).type_as(k)
 
         # Concatenate with the non-rotated portion if rotary_dim < head_dim
-        if self.dim < q.size(-1):
-            q_out = torch.cat([q_out, q[..., self.dim :]], dim=-1)
-            k_out = torch.cat([k_out, k[..., self.dim :]], dim=-1)
+        q_out = q_out.view_as(q_rope)
+        k_out = k_out.view_as(k_rope)
 
         # TODO: Apply llama_4_scaling
         # if self.llama_4_scaling_beta:
