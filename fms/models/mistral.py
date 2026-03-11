@@ -87,7 +87,7 @@ class MistralConfig(ModelConfig):
     max_expected_seq_len: int = 32768
     kvheads: int = 8
     norm_eps: float = 1e-5
-    sliding_window: int = 4000
+    sliding_window: Optional[int] = 4000
     rope_base: float = 100_0000.0  # Same as rope_theta
     rope_scaling: dict = field(default_factory=lambda: {})
     fused_weights: bool = True  # FMS Specific -- For CPU/GPU = T, AIU = F
@@ -96,6 +96,28 @@ class MistralConfig(ModelConfig):
 
 
 _7b_config = MistralConfig()
+
+_3b_config = MistralConfig(
+    src_vocab_size=131072,
+    emb_dim=3072,
+    nheads=32,
+    kvheads=8,
+    nlayers=26,
+    head_dim=128,
+    hidden_grow_factor=9216 / 3072,
+    multiple_of=1,
+    tie_heads=True,
+    activation_fn="swish",
+    sliding_window=None,
+    rope_base=1000000.0,
+    rope_scaling={
+        "rope_type": "yarn",
+        "scaling_factor": 16.0,
+        "ntk_alpha": 1.0,
+        "ntk_beta": 32.0,
+    },
+    max_expected_seq_len=262144,
+)
 
 
 class MistralBlock(nn.Module):
@@ -281,7 +303,12 @@ class MistralHeadless(nn.Module):
         # remove meta tensors from cached_freqs
         for dev in list(cached_freqs.keys()):
             for alp in list(cached_freqs[dev].keys()):
-                if cached_freqs[dev][alp].device == torch.device("meta"):
+                entry = cached_freqs[dev][alp]
+                # YaRN stores (cos, sin) tuples; regular RoPE stores tensors
+                entry_device = (
+                    entry[0].device if isinstance(entry, tuple) else entry.device
+                )
+                if entry_device == torch.device("meta"):
                     del cached_freqs[dev][alp]
                     if len(cached_freqs[dev]) == 0:
                         del cached_freqs[dev]
@@ -432,6 +459,7 @@ def _mistral_factory_factory(config):
 
 
 models.register_model(_architecture_name, "7b", _mistral_factory_factory(_7b_config))
+models.register_model(_architecture_name, "3b", _mistral_factory_factory(_3b_config))
 
 
 # =============== Serialization ==================
@@ -489,6 +517,9 @@ serialization.register_adapter_step(
 
 def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]:
     replacements = [
+        # Mistral3 multimodal checkpoints nest the text tower under
+        # "language_model." — strip it so the rest of the mappings work.
+        (r"^language_model\.", ""),
         (r"^lm_head.weight", "head.weight"),
         (r"^model.embed_tokens.weight", "base_model.embedding.weight"),
         (r"^model.norm", "base_model.dec_norm"),
@@ -505,6 +536,9 @@ def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]
     ]
     new_sd = {}
     for name, param in input_sd.items():
+        # Skip vision tower and multimodal projector weights
+        if name.startswith(("vision_tower.", "multi_modal_projector.")):
+            continue
         new_name = name
         for pattern, repl in replacements:
             new_name = re.sub(pattern, repl, new_name)
@@ -538,6 +572,12 @@ def _hf_to_fms_rope(
         logger.warning("Missing model_config, assuming defaults for head_size")
         head_size = 128  # Good default for most models
         linear_type = "torch_linear"
+
+    # YaRN RoPE uses rotate-half (same convention as HF), so the
+    # interleave-to-pair permutation is not needed.  Applying it would
+    # corrupt the Q/K weights.
+    if model_config and model_config.rope_scaling.get("rope_type") == "yarn":
+        return input_sd
 
     rope_params = _get_rope_params(linear_type)
     trans_required_pattern = re.compile(

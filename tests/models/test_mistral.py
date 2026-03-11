@@ -70,6 +70,65 @@ class TestMistral(
         return model.base_model
 
 
+class Ministral3bFixtures(ConfigFixtureMixin, ModelFixtureMixin):
+    """
+    Fixtures for Ministral 3B variant (YaRN RoPE, no sliding window, tied heads)
+    """
+
+    @pytest.fixture(scope="class", autouse=True)
+    def uninitialized_model(self, config: MistralConfig):
+        return Mistral(config)
+
+    @pytest.fixture(scope="class", autouse=True)
+    def config(self) -> ModelConfig:
+        return MistralConfig(
+            src_vocab_size=384,
+            emb_dim=16,
+            norm_eps=1e-05,
+            nheads=8,
+            kvheads=2,
+            nlayers=2,
+            pad_id=0,
+            hidden_grow_factor=3.0,
+            multiple_of=1,
+            tie_heads=True,
+            activation_fn="swish",
+            sliding_window=None,
+            rope_base=1000000.0,
+            rope_scaling={
+                "rope_type": "yarn",
+                "scaling_factor": 16.0,
+                "ntk_alpha": 1.0,
+                "ntk_beta": 32.0,
+            },
+            p_dropout=0.0,
+            max_expected_seq_len=4096,
+            linear_config={"linear_type": "torch_linear"},
+            fused_weights=True,
+        )
+
+
+class TestMinistral3b(
+    ModelConfigTestSuite,
+    ModelConsistencyTestSuite,
+    ModelCompileTestSuite,
+    Ministral3bFixtures,
+):
+    _get_signature_params = ["x"]
+
+    def test_config_passed_to_model_and_updated(self, model, config):
+        """test model constructor appropriately merges any passed kwargs into the config without mutating the original config"""
+        model = type(model)(config=config, pad_id=config.pad_id + 1)
+        assert model.get_config() is not config
+
+        config.pad_id = config.pad_id + 1
+        assert model.get_config().as_dict() == config.as_dict()
+
+    @pytest.fixture
+    def headless_model(self, model: Mistral) -> MistralHeadless:
+        return model.base_model
+
+
 class MistralGPTQFixtures(ModelFixtureMixin):
     @pytest.fixture(scope="class", autouse=True)
     def uninitialized_model(self):
