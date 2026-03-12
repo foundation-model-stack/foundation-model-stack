@@ -46,6 +46,8 @@ __FMS_MODEL_REGISTRY_MAP: RegistryMap = {
     "MPNetForMaskedLM": ("mpnet", pb.build_mpnet_params),
     "BertForMaskedLM": ("bert", pb.build_bert_params),
     "Mistral3ForConditionalGeneration": ("mistral3", pb.build_mistral3_params),
+    # NOTE: Special case for Ministral3
+    "FMSMinistral3ForConditionalGeneration": ("ministral3", pb.build_ministral3_params),
     # Classify arches have some extra keys for labels
     "RobertaForSequenceClassification": ("roberta_classification", partial(pb.build_roberta_params, is_classify=True)),
     "BertForSequenceClassification": ("bert_classification", partial(pb.build_bert_params, is_classify=True)),
