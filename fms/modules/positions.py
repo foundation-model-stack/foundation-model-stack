@@ -1,7 +1,6 @@
 from collections import defaultdict
 import copy
 import math
-from statistics import quantiles
 from typing import MutableMapping, Optional, Tuple
 
 import torch
@@ -648,28 +647,64 @@ class CachedYarnRotaryEmbedding(PositionEncoder):
 
         self.attn_factor = attn_factor
 
-        # Pre-compute rotation matrices on CPU to avoid cos/sin on Spyre device
-        self._precompute_rotation_matrices_on_cpu()
-
     def _yarn_get_mscale(self, mscale: float = 1) -> float:
         if self.scaling_factor <= 1:
             return 1.0
         return 0.1 * mscale * math.log(self.scaling_factor) + 1.0
 
-    def _precompute_rotation_matrices_on_cpu(self) -> None:
+    def _compute_cos_sin_cache(
+        self, inv_freq: torch.Tensor, device: torch.device
+    ) -> torch.Tensor:
         """
-        Pre-compute rotation matrices on CPU during initialization.
-        This ensures cos/sin operations are never called on Spyre device.
-
-        The rotation matrices are computed for original_max_position_embeddings
-        and cached. They will be transferred to target devices as needed without
-        recomputation.
+        Compute the rotation matrix cache for the rotary embedding to avoid computing
+        while doing the forward pass.
+        Args:
+            inv_freq: The precomputed inverse frequency tensor
+        Returns:
+            Rotation matrices with shape [max_pos, dim/2, 2, 2]
         """
-        # Use CPU device for all trigonometric operations
-        device = torch.device("cpu")
-        max_seq_len = self.original_max_position_embeddings
+        t = torch.arange(
+            int(self.original_max_position_embeddings * self.scaling_factor),
+            device=device,
+            dtype=torch.float32,
+        )
+        freqs = torch.outer(t, inv_freq).float()
 
-        # Compute inverse frequencies
+        # Apply mscale and compute cos/sin
+        cos = freqs.cos() * self.attn_factor
+        sin = freqs.sin() * self.attn_factor
+
+        # Construct rotation matrices: [max_pos, dim/2, 2, 2]
+        # Matrix form: [[cos, -sin], [sin, cos]]
+        freqs_cis = torch.stack([cos, -sin, sin, cos], dim=-1).view(*cos.shape, 2, 2)
+
+        return freqs_cis
+
+
+    def _get_llama_4_attn_scale(self, positions_ids: torch.Tensor, beta: float, max_position_embeddings: int) -> torch.Tensor:
+        scaling = 1 + beta * torch.log(1 + torch.floor(positions_ids / max_position_embeddings))
+        return scaling.unsqueeze(-1)
+
+    def compute_freqs_cis(self, device: torch.device, max_seq_len: int) -> None:
+        """
+        Transfer pre-computed rotation matrices to the target device.
+
+        This method no longer computes cos/sin - those are pre-computed on CPU
+        during __init__. This method only handles device transfers.
+
+        Args:
+            device: target device to transfer rotation matrices to
+            max_seq_len: maximum sequence length (must not exceed original_max_position_embeddings)
+        """
+
+        if device == torch.device("meta"):
+            return
+
+        if device.index in self.cached_freqs:
+            return
+
+        dev_idx = device.index
+
         freqs = self.base ** (
             torch.arange(0, self.dim, 2, device=device).float() / self.dim
         )
@@ -703,9 +738,12 @@ class CachedYarnRotaryEmbedding(PositionEncoder):
         ramp_func = torch.clamp(linear_func, 0, 1)
 
         # inv_freq_extrapolation_factor is the weight for extrapolation
+        # (1 - ramp_func) means: use extrapolation for low frequencies (< low)
+        # ramp_func means: use interpolation for high frequencies (> high)
         inv_freq_extrapolation_factor = 1 - ramp_func
 
         # Blend between interpolation and extrapolation
+        # Note: extrapolation_factor is applied to the extrapolation frequencies
         inv_freq = (
             inv_freq_interpolation * (1 - inv_freq_extrapolation_factor)
             + inv_freq_extrapolation
@@ -713,75 +751,10 @@ class CachedYarnRotaryEmbedding(PositionEncoder):
             * self.extrapolation_factor
         )
 
-        # Compute position encodings
-        t = torch.arange(
-            max_seq_len,
-            device=device,
-            dtype=torch.float32,
-        )
-        freqs = torch.outer(t, inv_freq).float()
+        # Cache the computed rotation matrices for this device
+        freqs_cis = self._compute_cos_sin_cache(inv_freq, device)
+        self.cached_freqs[dev_idx] = freqs_cis
 
-        # Apply mscale and compute cos/sin ON CPU
-        # This is the critical part - cos/sin are computed here once and never again
-        cos = freqs.cos() * self.attn_factor
-        sin = freqs.sin() * self.attn_factor
-
-        # return cos, sin, freqs
-        # Construct rotation matrices: [max_pos, dim/2, 2, 2]
-        # Matrix form: [[cos, -sin], [sin, cos]]
-        freqs_cis = torch.stack([cos, -sin, sin, cos], dim=-1).view(*cos.shape, 2, 2)
-
-        # Cache on CPU (device index -1 for CPU or use 'cpu' as key)
-        # We'll use -1 as a special key for CPU
-        self.cached_freqs[-1] = freqs_cis
-        self.max_seq_len_cached[-1] = max_seq_len
-
-    def _get_llama_4_attn_scale(self, positions_ids: torch.Tensor, beta: float, max_position_embeddings: int) -> torch.Tensor:
-        scaling = 1 + beta * torch.log(1 + torch.floor(positions_ids / max_position_embeddings))
-        return scaling.unsqueeze(-1)
-
-    def compute_freqs_cis(self, device: torch.device, max_seq_len: int) -> torch.Tensor:
-        """
-        Transfer pre-computed rotation matrices to the target device.
-
-        This method no longer computes cos/sin - those are pre-computed on CPU
-        during __init__. This method only handles device transfers.
-
-        Args:
-            device: target device to transfer rotation matrices to
-            max_seq_len: maximum sequence length (must not exceed original_max_position_embeddings)
-        """
-
-        if device == torch.device("meta"):
-            return None
-
-        if device.index in self.cached_freqs:
-            return None
-
-        dev_idx = device.index
-
-        # Check if we have the CPU cache (should always be true after __init__)
-        if -1 not in self.cached_freqs:
-            raise RuntimeError(
-                "CPU rotation matrices not found. This should have been computed in __init__."
-            )
-
-        # Verify sequence length doesn't exceed what we pre-computed
-        if max_seq_len > self.original_max_position_embeddings:
-            raise ValueError(
-                f"Requested max_seq_len ({max_seq_len}) exceeds "
-                f"original_max_position_embeddings ({self.original_max_position_embeddings}). "
-                f"CachedYarnRotaryEmbedding pre-computes rotation matrices during initialization "
-                f"and cannot dynamically extend beyond the configured maximum."
-            )
-
-        # Transfer pre-computed rotation matrices from CPU to target device
-        # This is a simple tensor copy - no cos/sin computation on target device
-        cpu_freqs = self.cached_freqs[-1]
-        self.cached_freqs[dev_idx] = cpu_freqs.to(device)
-        self.max_seq_len_cached[dev_idx] = self.max_seq_len_cached[-1]
-
-        return self.cached_freqs[dev_idx]
 
     def adjusted_qk(
         self,
@@ -837,7 +810,7 @@ class CachedYarnRotaryEmbedding(PositionEncoder):
 
         # Get device index for cache lookup
         # Use -1 for CPU, otherwise use the device index
-        dev_idx = q.device.index if q.device.index is not None else -1
+        dev_idx = q.device.index # if q.device.index is not None else -1
         # dev_idx = q.device.index
 
         # Index by position_ids: [B, L] -> [B, L, rotary_dim/2, 2, 2]
