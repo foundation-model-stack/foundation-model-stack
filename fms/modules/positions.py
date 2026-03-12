@@ -611,7 +611,7 @@ class CachedYarnRotaryEmbedding(PositionEncoder):
         mscale: float = 1.0,
         mscale_all_dim: float = 1.0,
         llama_4_scaling_beta: Optional[float] = None,
-        **kwargs
+        **kwargs,
     ):
         """
         This implements Yarn scaling rotary embedding.
@@ -623,9 +623,7 @@ class CachedYarnRotaryEmbedding(PositionEncoder):
 
         super().__init__()
         self.dim = dim
-        self.original_max_position_embeddings = (
-            original_max_position_embeddings
-        )
+        self.original_max_position_embeddings = original_max_position_embeddings
         self.base = base
         self.scaling_factor = scaling_factor
         self.extrapolation_factor = extrapolation_factor
@@ -680,9 +678,10 @@ class CachedYarnRotaryEmbedding(PositionEncoder):
 
         return freqs_cis
 
-
-    def _get_llama_4_attn_scale(self, positions_ids: torch.Tensor, beta: float, max_position_embeddings: int) -> torch.Tensor:
-        scaling = 1 + beta * torch.log(1 + torch.floor(positions_ids / max_position_embeddings))
+    def _get_llama_4_attn_scale(self, positions_ids: torch.Tensor) -> torch.Tensor:
+        scaling = 1 + self.llama_4_scaling_beta * torch.log(
+            1 + torch.floor(positions_ids / self.original_max_position_embeddings)
+        )
         return scaling.unsqueeze(-1)
 
     def compute_freqs_cis(self, device: torch.device, max_seq_len: int) -> None:
@@ -715,11 +714,15 @@ class CachedYarnRotaryEmbedding(PositionEncoder):
         # NOTE: math.floor and math.ceil being used here are referred to as "truncate" option
         low = math.floor(
             self.dim
-            * math.log(self.original_max_position_embeddings / (self.beta_fast * 2 * math.pi))
+            * math.log(
+                self.original_max_position_embeddings / (self.beta_fast * 2 * math.pi)
+            )
         ) / (2 * math.log(self.base))
         high = math.ceil(
             self.dim
-            * math.log(self.original_max_position_embeddings / (self.beta_slow * 2 * math.pi))
+            * math.log(
+                self.original_max_position_embeddings / (self.beta_slow * 2 * math.pi)
+            )
         ) / (2 * math.log(self.base))
 
         # Make sure values are not going outside range
@@ -754,7 +757,6 @@ class CachedYarnRotaryEmbedding(PositionEncoder):
         # Cache the computed rotation matrices for this device
         freqs_cis = self._compute_cos_sin_cache(inv_freq, device)
         self.cached_freqs[dev_idx] = freqs_cis
-
 
     def adjusted_qk(
         self,
@@ -808,10 +810,8 @@ class CachedYarnRotaryEmbedding(PositionEncoder):
         # Fetch the rotation matrices from cache
         self.compute_freqs_cis(q.device, max_start_pos + seq_len)
 
-        # Get device index for cache lookup
-        # Use -1 for CPU, otherwise use the device index
-        dev_idx = q.device.index # if q.device.index is not None else -1
-        # dev_idx = q.device.index
+        # Get device index for cache lookup, None if on CPU
+        dev_idx = q.device.index
 
         # Index by position_ids: [B, L] -> [B, L, rotary_dim/2, 2, 2]
         freqs = self.cached_freqs[dev_idx][position_ids]
@@ -829,7 +829,6 @@ class CachedYarnRotaryEmbedding(PositionEncoder):
 
         # Apply rotation using matrix multiplication
         # freqs: [B, L, rotary_dim/2, 2, 2]
-        # Add head dimension: [B, L, 1, rotary_dim/2, 2, 2]
         # q_, k_: [B, L, H, rotary_dim/2, 2]
         q_out = (
             freqs[:, -q.size(1) :, None, :, :, :]
@@ -844,11 +843,14 @@ class CachedYarnRotaryEmbedding(PositionEncoder):
             .flatten(3)
         ).type_as(k)
 
-        # Concatenate with the non-rotated portion if rotary_dim < head_dim
+        # Apply llama_4_scaling
+        if self.llama_4_scaling_beta:
+            cache_position = torch.arange(
+                q_out.shape[2], device=q_out.device, dtype=q_out.dtype
+            )
+            q_out = q_out * self._get_llama_4_attn_scale(cache_position)
+
         q_out = q_out.view_as(q_rope)
         k_out = k_out.view_as(k_rope)
-
-        # TODO: Apply llama_4_scaling
-        # if self.llama_4_scaling_beta:
 
         return q_out, k_out

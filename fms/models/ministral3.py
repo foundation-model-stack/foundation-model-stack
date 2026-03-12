@@ -100,9 +100,8 @@ class Ministral3Headless(nn.Module):
             padding_idx=self.config.pad_id,
         )
 
-        # Prepare rope parameters, ensuring original_max_position_embeddings matches max_expected_seq_len
+        # Prepare rope parameters
         rope_params = dict(self.config.rope_parameters)
-        rope_params['original_max_position_embeddings'] = self.config.max_expected_seq_len
 
         self.rot_emb = CachedYarnRotaryEmbedding(
             dim=self.config.head_dim,
@@ -185,7 +184,6 @@ class Ministral3Headless(nn.Module):
             + [buffer.device for buffer in self.buffers()]
         ):
             self.rot_emb.compute_freqs_cis(device, self.config.max_expected_seq_len)
-
 
     def forward(
         self,

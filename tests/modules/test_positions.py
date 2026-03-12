@@ -436,7 +436,6 @@ class PixtralRotaryEmbeddingTest(unittest.TestCase):
 
 
 class CachedYarnRotaryEmbeddingTests(unittest.TestCase):
-
     def test_args(self):
         """Test that CachedYarnRotaryEmbedding validates input shapes correctly"""
         q = torch.ones(2, 4, 1, 16, dtype=torch.float)  # b s h e
@@ -506,7 +505,7 @@ class CachedYarnRotaryEmbeddingTests(unittest.TestCase):
         beta_slow = 1.0
         scaling_factor = 16.0
         original_max_position_embeddings = 16384  # Dummy Value
-        llama_4_scaling_beta = 0.1
+        llama_4_scaling_beta = None  # Not testing llama_4_scaling_beta here
         mscale = 1.0
         mscale_all_dim = 1.0
 
