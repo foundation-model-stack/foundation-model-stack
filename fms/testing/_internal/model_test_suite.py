@@ -72,10 +72,12 @@ class ModelFixtureMixin(metaclass=abc.ABCMeta):
             if opt_parameter_initialized is not None:
                 parameter.copy_(opt_parameter_initialized)
             else:
-                values = torch.randn_like(parameter)
-                values -= 0.5
-                values /= 20.0
-                parameter.copy_(values)
+                # Only randomize floating-point tensors; leave integer/bool buffers as-is.
+                if torch.is_floating_point(parameter):
+                    values = torch.randn_like(parameter)
+                    values -= 0.5
+                    values /= 20.0
+                    parameter.copy_(values)
         return uninitialized_model
 
     def _maybe_get_initialized_parameter(
@@ -344,7 +346,9 @@ class ModelConsistencyTestSuite(ModelFixtureMixin, SignatureFixtureMixin):
 
         try:
             weight_keys_file = open(expectation_file_path)
-            expected_keys = [k for k in weight_keys_file.readline().split(",")]
+            expected_keys = [
+                k for k in weight_keys_file.readline().strip().split(",") if k
+            ]
             assert actual_keys == expected_keys, _FAILED_MODEL_WEIGHTS_KEYS_MSG
         except OSError:
             pytest.fail(

@@ -43,6 +43,7 @@ __FMS_MODEL_REGISTRY_MAP: RegistryMap = {
     "MistralForCausalLM": ("mistral", pb.build_mistral_params),
     "BambaForCausalLM": ("bamba", pb.build_bamba_params),
     "LlavaNextForConditionalGeneration": ("llava_next", pb.build_llava_next_params),
+    "Idefics3ForConditionalGeneration": ("idefics3", pb.build_idefics3_params),
     "MPNetForMaskedLM": ("mpnet", pb.build_mpnet_params),
     "BertForMaskedLM": ("bert", pb.build_bert_params),
     "Mistral3ForConditionalGeneration": ("mistral3", pb.build_mistral3_params),
