@@ -120,7 +120,10 @@ class HFAdaptedRoBERTaHeadless(HFEncoderModelArchitecture):
     config_class = HFAdaptedRoBERTaConfig
     base_model_prefix = "hf_adapted_roberta"
 
-    _tied_weights_keys = ["encoder.model.embedding.weight", "embedding.weight"]
+    _tied_weights_keys = {
+        "encoder.model.embedding.weight": "roberta.embeddings.word_embeddings.weight",
+        "embedding.weight": "embedding.weight",
+    }
     _keys_to_ignore_on_save = ["embedding.weight"]
 
     def __init__(

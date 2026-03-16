@@ -274,10 +274,14 @@ class SequenceClassificationLMHeadMixin(LMHeadMixin):
     set at run-time based on config.num_labels and the label dtype.
     """
 
-    _tied_weights_keys = [
-        "lm_head.head.weight",
-        "lm_head.head.bias",
-    ]
+    # _tied_weights_keys = [
+    #     "lm_head.head.weight",
+    #     "lm_head.head.bias",
+    # ]
+    _tied_weights_keys = {
+        "lm_head.head.weight": "lm_head.head.weight",
+        "lm_head.head.bias": "lm_head.head.bias"
+    }
 
     def __init__(
         self,
@@ -374,10 +378,15 @@ class SequenceClassificationLMHeadMixin(LMHeadMixin):
 class MaskedLMHeadMixin(LMHeadMixin):
     """Provides a model architecture with a masked lm head"""
 
-    _tied_weights_keys = [
-        "lm_head.head.weight",
-        "lm_head.head.bias",
-    ]
+    # _tied_weights_keys = [
+    #     "lm_head.head.weight",
+    #     "lm_head.head.bias",
+    # ]
+
+    _tied_weights_keys = {
+        "lm_head.head.weight": "lm_head.head.weight",
+        "lm_head.head.bias": "lm_head.head.bias"
+    }
 
     def __init__(
         self,
