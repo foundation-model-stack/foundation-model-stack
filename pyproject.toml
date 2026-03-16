@@ -36,11 +36,11 @@ classifiers=[
 ]
 dependencies = [
   "torch >= 2.5.1",
-  "transformers==4.57.6",
+  "transformers==5.0.0",
 ]
 
 [project.optional-dependencies]
-hf = ["transformers==4.57.6"]
+hf = ["transformers==5.0.0"]
 dev = [
 "mypy==1.15.0",
 "mypy-extensions==1.0.0",
