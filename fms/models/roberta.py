@@ -653,6 +653,9 @@ def _hf_to_fms_names(hf_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]:
             "classification_head.head",
         ),  # only relevant to SentenceClassification task
         (r"^qa_outputs", "qa_head"),  # only relevant to QuestionAnswering task
+        # Convert HF LayerNorm parameter names (gamma/beta) to PyTorch standard (weight/bias)
+        (r"gamma", "weight"),
+        (r"beta", "bias"),
     ]
     new_sd = {}
     for name, param in hf_sd.items():

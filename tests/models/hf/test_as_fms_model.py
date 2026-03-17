@@ -61,10 +61,9 @@ def test_as_fms_model_equivalency_for_decoder(model_id_or_path):
 def test_as_fms_model_equivalency_for_encoder(model_id_or_path):
     hf_model = AutoModelForMaskedLM.from_pretrained(model_id_or_path)
     with tempfile.TemporaryDirectory() as workdir:
-        # robertas bin file is not working properly, and we are getting different results for safetensors, this should
-        # be addressed in another PR
+        # Use safetensors format for compatibility with transformers 5.0.0
         hf_model.save_pretrained(
-            f"{workdir}/roberta-base-masked_lm", safe_serialization=False
+            f"{workdir}/roberta-base-masked_lm", safe_serialization=True
         )
 
         # loading from local rather than snapshot download
@@ -74,7 +73,7 @@ def test_as_fms_model_equivalency_for_encoder(model_id_or_path):
             bos_token_id=hf_model.config.bos_token_id,
             pad_token_id=hf_model.config.pad_token_id,
             eos_token_id=hf_model.config.eos_token_id,
-            task_specific_params=hf_model.config.task_specific_params,
+           # task_specific_params=hf_model.config.task_specific_params,
         )
     fms_model = fms_model.eval()
     hf_model = hf_model.eval()

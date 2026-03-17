@@ -47,7 +47,8 @@ def test_roberta_base_for_masked_lm_equivalency(model_id):
     assert model_param_count == hf_model_param_count
 
     hf_model_fms = to_hf_api(
-        model, task_specific_params=hf_model.config.task_specific_params
+        model, 
+        #task_specific_params=hf_model.config.task_specific_params
     )
 
     # test the param count is the same between hf model and hf fms model
@@ -108,7 +109,9 @@ def test_roberta_base_for_masked_lm_equivalency(model_id):
     inputs = torch.arange(0, 15).unsqueeze(0)
     labels = torch.arange(0, 15).unsqueeze(0)
 
-    attention_mask = (inputs == 1).unsqueeze(-1) == (inputs == 1).unsqueeze(-2)
+    # Create 2D attention mask for transformers 5.0.0 compatibility
+    # For bidirectional models like RoBERTa/BERT, use all-ones mask (all tokens attend to all)
+    attention_mask = torch.ones_like(inputs)
     hf_model_loss = hf_model(
         input_ids=inputs, labels=labels, attention_mask=attention_mask, return_dict=True
     ).loss
@@ -195,7 +198,9 @@ def test_roberta_base_for_sequence_classification(model_id, task, problem_type):
         labels = torch.randint(high=hf_model.config.num_labels, size=(1,))
     else:
         labels = torch.randn(hf_model.config.num_labels).unsqueeze(0)
-    attention_mask = (inputs == 1).unsqueeze(-1) == (inputs == 1).unsqueeze(-2)
+    # Create 2D attention mask for transformers 5.0.0 compatibility
+    # For bidirectional models like RoBERTa/BERT, use all-ones mask (all tokens attend to all)
+    attention_mask = torch.ones_like(inputs)
     hf_model_loss = hf_model(
         input_ids=inputs, labels=labels, attention_mask=attention_mask, return_dict=True
     ).loss
