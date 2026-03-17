@@ -591,8 +591,8 @@ class UnfusedQKV(QKV):
             k_len = keys.shape[1]
 
             # Reshape to separate heads: b x len x heads x head_dim
-            queries = queries.view(batch_size, q_len, self.nheads, self.head_dim)
-            keys = keys.view(batch_size, k_len, self.kvheads, self.head_dim)
+            queries = queries.view(batch_size, self.nheads, q_len, self.head_dim)
+            keys = keys.view(batch_size, self.kvheads, k_len, self.head_dim)
 
             # Apply normalization per head
             queries = self.q_norm(queries)
