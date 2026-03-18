@@ -12,7 +12,6 @@ from fms import models
 from fms.distributed.strategy import (
     DistributedStrategy,
     NoOpStrategy,
-    TensorParallelStrategy,
 )
 from fms.modules.attention import (
     AttentionKwargs,
