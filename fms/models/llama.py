@@ -12,7 +12,6 @@ from fms import models
 from fms.distributed.strategy import (
     DistributedStrategy,
     NoOpStrategy,
-    TensorParallelStrategy,
 )
 from fms.modules.attention import (
     AttentionKwargs,
@@ -183,21 +182,9 @@ class LLaMAHeadless(nn.Module):
         self.config = self.config.updated(**kwargs)
         self.distributed_strategy = distributed_strategy
 
-        embedding = nn.Embedding(
+        self.embedding = nn.Embedding(
             self.config.src_vocab_size, self.config.emb_dim, self.config.pad_id
         )
-        # TP does not work with tied weights
-        if (
-            not isinstance(self.distributed_strategy, TensorParallelStrategy)
-            or not self.config.tie_heads
-        ):
-            self.embedding = self.distributed_strategy.distribute_module(embedding)
-        else:
-            logger.warning(
-                "You're using TP on a model with tied weights between head and embedding. "
-                "The tied weights won't be sharded, which can result in unexpected OOMs."
-            )
-            self.embedding = embedding
 
         self.rot_emb = RotaryEmbedding(
             dim=self.config.emb_dim // self.config.nheads,
@@ -386,17 +373,9 @@ class LLaMA(nn.Module):
         self.distributed_strategy = distributed_strategy
 
         self.base_model = LLaMAHeadless(self.config, self.distributed_strategy)
-        head = LinearClassificationHead(
+        self.head = LinearClassificationHead(
             self.config.emb_dim, self.config.src_vocab_size, bias=False
         )
-        # TP does not work with tied weights
-        if (
-            not isinstance(self.distributed_strategy, TensorParallelStrategy)
-            or not self.config.tie_heads
-        ):
-            self.head = self.distributed_strategy.distribute_module(head)
-        else:
-            self.head = head
 
     def get_config(self) -> LLaMAConfig:
         return self.config
