@@ -831,6 +831,7 @@ class MultiHeadAttention(nn.Module):
         # q, k, v: batch_size x seq_len x emb_dim
         # mask: batch_size x seq_len x seq_len
         batch_size, q_len, _ = q.size()
+        kv_len = k.shape[1]
 
         # if this is self attention, we always recompute
         # cross attention only gets computed when a cache does not exist
@@ -844,8 +845,8 @@ class MultiHeadAttention(nn.Module):
 
         # note: transposes will be moved in a later PR to fix dis-contiguous tensor issues
         queries = q_out.view(batch_size, q_len, self.nheads, self.emb_kq_per_head)
-        keys = k_out.view(batch_size, q_len, self.kvheads, self.emb_kq_per_head)
-        values = v_out.view(batch_size, q_len, self.kvheads, self.emb_v_per_head)
+        keys = k_out.view(batch_size, kv_len, self.kvheads, self.emb_kq_per_head)
+        values = v_out.view(batch_size, kv_len, self.kvheads, self.emb_v_per_head)
 
         # You want to apply rotary embeddings pre-cache
         if self.position_encoder is not None:
