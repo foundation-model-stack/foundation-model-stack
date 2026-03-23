@@ -33,7 +33,9 @@ def test_eval():
     tokenizer = get_tokenizer("char_tokenizer")
     model = ModelMock([ord("a"), ord("d")])
 
-    lm_eval = evaluation.FMSEvalHarnessLM(model=model, tokenizer=tokenizer, device="cpu")
+    lm_eval = evaluation.FMSEvalHarnessLM(
+        model=model, tokenizer=tokenizer, device="cpu"
+    )
     instance = Instance(
         request_type="loglikelihood", doc={}, arguments=("hello", "world"), idx=0
     )
