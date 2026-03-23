@@ -279,25 +279,27 @@ def generate(
         kwargs["selected_freqs"] = model.base_model.rot_emb.cached_freqs[0][alpha][kwargs["position_ids"]].contiguous().to("spyre")
         print(f"{kwargs['mask']=}")
         kwargs["mask"] = kwargs["mask"].to(dtype=torch.float16).to("spyre")
+        kwargs["last_n_tokens"] = 0
         output = model(input_ids.to(device="spyre"), **kwargs)
+        print("DEBUG! Forward pass over")
         if use_cache:
             logits, past_key_value_states = output
             # TODO: this should go away when reduce-overhead issues are fixed, or
             # maybe could be moved into model code to be more portable.
             kwargs["past_key_value_states"] = past_key_value_states
-            if contiguous_cache:
-                kwargs["past_key_value_states"] = _make_cache_contiguous(
-                    kwargs["past_key_value_states"]
-                )
-            if torch._dynamo.config.dynamic_shapes:
-                kwargs["past_key_value_states"] = _make_cache_dynamic(
-                    kwargs["past_key_value_states"]
-                )
+            # if contiguous_cache:
+            #     kwargs["past_key_value_states"] = _make_cache_contiguous(
+            #         kwargs["past_key_value_states"]
+            #     )
+            # if torch._dynamo.config.dynamic_shapes:
+            #     kwargs["past_key_value_states"] = _make_cache_dynamic(
+            #         kwargs["past_key_value_states"]
+            #     )
         else:
             logits = output
 
         # always get last now since we still have this dim
-        logits = logits[:, -1, :]
+        logits = logits.to("cpu")[:, -1, :]
 
         if do_sample:
             # get logits from last value in sequence nad scale
