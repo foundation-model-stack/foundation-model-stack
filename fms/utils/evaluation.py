@@ -21,7 +21,6 @@ class FMSEvalHarnessLM(LM):
         self,
         model: nn.Module,
         tokenizer: tokenizers.BaseTokenizer,
-        use_cache: bool = False,
         batch_size: int = 1,
         device="cpu",
         rank=0,
@@ -29,7 +28,6 @@ class FMSEvalHarnessLM(LM):
     ):
         self.wrapped_model = model
         self.tokenizer = tokenizer
-        self.use_cache = use_cache
         self.batch_size = batch_size
         self._rank = rank
         self._world_size = world_size
