@@ -66,14 +66,10 @@ class GraniteBlock(nn.Module):
         self.ln = torch.nn.RMSNorm(
             self.config.emb_dim,
             eps=self.config.norm_eps,
-            dtype=torch.float16,
-            device="cpu"
         )
         self.ff_ln = torch.nn.RMSNorm(
             self.config.emb_dim,
             eps=self.config.norm_eps,
-            dtype=torch.float16,
-            device="cpu"
         )
 
         if self.config.kvheads == 0:
@@ -124,7 +120,7 @@ class GraniteBlock(nn.Module):
 
         # first we do MHA and Add&Norm
         residual = x
-        x = self.ln(x.to("cpu")).to("spyre")
+        x = self.ln(x)
         x = self.attn(
             q=x,
             position_ids=position_ids,
@@ -138,16 +134,16 @@ class GraniteBlock(nn.Module):
         if self.config.p_dropout != 0:
             x = self.dropout(x)
         # residual connection
-        x = x * torch.tensor([self.config.residual_multiplier], dtype=torch.float16, device="spyre") + residual
+        x = x * self.config.residual_multiplier + residual
 
         # then we do FF and Add&Norm
         residual = x
-        x = self.ff_ln(x.to("cpu")).to("spyre")
+        x = self.ff_ln(x)
         x = self.ff_sub_layer(x)
         if self.config.p_dropout != 0:
             x = self.dropout(x)
         # another residual
-        x = x * torch.tensor([self.config.residual_multiplier], dtype=torch.float16, device="spyre") + residual
+        x = x * self.config.residual_multiplier + residual
 
         if use_cache:
             return (x, cache)
@@ -205,8 +201,6 @@ class GraniteHeadless(nn.Module):
         dec_norm = torch.nn.RMSNorm(
             self.config.emb_dim,
             eps=self.config.norm_eps,
-            dtype=torch.float16,
-            device="cpu"
         )
         self.dec_norm = self.distributed_strategy.distribute_module(
             dec_norm, final_layers=True
@@ -282,7 +276,6 @@ class GraniteHeadless(nn.Module):
             past_key_value_states = [None for _ in range(len(self.layers))]
 
         if x_in.dim() == 2:  # input is not already embedded
-            self.embedding.weight = torch.nn.Parameter(self.embedding.weight.to("cpu"))
             x_in = self.embedding(x_in)
         x_in = x_in * self.config.embedding_multiplier
         x_in = x_in.to("spyre")
@@ -307,7 +300,7 @@ class GraniteHeadless(nn.Module):
                 x_in = output
 
         dec_out = x_in
-        dec_out = self.dec_norm(dec_out.to("cpu")).to("cpu")
+        dec_out = self.dec_norm(dec_out)
         if self.config.p_dropout:
             dec_out = self.dropout(dec_out)
 
@@ -384,14 +377,14 @@ class Granite(nn.Module):
         )
 
         output = gather_outputs(output, last_n_tokens, **attn_kwargs)
-        self.head.weight = torch.nn.Parameter(self.head.weight.to("cpu"))
-        preds = self.head(output.to("cpu"))
+        # self.head.weight = torch.nn.Parameter(self.head.weight.to("cpu"))
+        preds = self.head(output)
         preds = preds / self.config.logits_scaling
 
         if use_cache:
-            return preds.to("spyre"), cache
+            return preds, cache
         else:
-            return preds.to("spyre")
+            return preds
 
 
 _8b_config = GraniteConfig(

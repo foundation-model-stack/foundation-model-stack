@@ -277,7 +277,7 @@ class RotaryEmbedding(PositionEncoder):
                         torch.cos(freqs),
                     ],
                     dim=2,
-                ).view(*freqs.size(), 2, 2).to(dtype=torch.float16)
+                ).view(*freqs.size()[:-1], 2, 2).permute([0, 2, 3, 1]).to(dtype=torch.float16) # S, 64, 2, 2 -> S, 2, 2, 64
 
         return alpha
 
@@ -346,8 +346,8 @@ class RotaryEmbedding(PositionEncoder):
 
         freqs = freqs.to("cpu")  # 1 L D/2 2 2
         q_out = (
-            freqs[:, -q.size(1) :, None, :, :, :]
-            .mul(q_.unsqueeze(-2))
+            freqs[:, -q.size(1) :, None, :, :, :] # 1 L 1 D/2 2 2 -> 1 L 1 2 2 D/2
+            .mul(q_.unsqueeze(-2)) # B L H D/2 1 2 -> B L H 1 2 D/2
             .sum(5)
             .flatten(3)
         ).type_as(q)

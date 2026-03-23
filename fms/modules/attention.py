@@ -244,16 +244,15 @@ def _sdpa_compute_op(
     )
 
     # TODO: when updating to 2.7, use enable_gqa and stop using keys_e and values_e
-    with torch.nn.attention.sdpa_kernel(backends=[torch.nn.attention.SDPBackend.MATH]):
-        attn = F.scaled_dot_product_attention(
-            queries,
-            keys_e,
-            values_e,
-            attn_mask=attn_mask if isinstance(attn_mask, torch.Tensor) else None,
-            dropout_p=p_dropout,
-            is_causal=is_causal,
-            scale=scale_factor,
-        )
+    attn = F.scaled_dot_product_attention(
+        queries,
+        keys_e,
+        values_e,
+        attn_mask=attn_mask if isinstance(attn_mask, torch.Tensor) else None,
+        dropout_p=p_dropout,
+        is_causal=is_causal,
+        scale=scale_factor,
+    )
 
     if attn_algorithm:
         torch.backends.cuda.enable_flash_sdp(__sdpa_previous_flash)
@@ -264,7 +263,7 @@ def _sdpa_compute_op(
     # attn: b x h x qlen x ds
     # attn after permute: b x qlen x h x ds
     # b x qlen x (d)
-    attn = attn.transpose(2, 1).contiguous()
+    attn = attn.transpose(2, 1).clone(memory_format=torch.contiguous_format)
     return attn
 
 
@@ -714,7 +713,7 @@ class MultiHeadAttention(nn.Module):
                 **attn_kwargs,
             )
 
-        attn = attn.view(batch_size, q_len, self.nheads * self.emb_v_per_head)
+        attn = attn.view(batch_size, q_len, self.nheads * self.emb_v_per_head).clone(memory_format=torch.contiguous_format)
         out = self.dense(attn)
 
         # if use_cache=True, we return the hidden_state as well as the kv cache
