@@ -42,10 +42,18 @@ def test_as_fms_model_equivalency_for_decoder(model_id_or_path):
     hf_gen = pipeline(task="text-generation", model=hf_model, tokenizer=tokenizer)
     prompt = "q: hello how are you? a: I am good. q: What sports do you like? a: I like baseball. q: What is the weather like today? a:"
 
-    output_fms = fms_gen(prompt, do_sample=False, max_new_tokens=100)[0][
+    # The newer versions (4.57+) of transformers have a parameter called cache_position
+    # that would require implementation like was done in transformers to have
+    # full compatibility with the generation done in FMS.
+    # The way to disable this is by passing use_cache=False in
+    # our tests that compare the output to transformers.
+    # https://huggingface.co/docs/transformers/cache_explanation#cache-position
+    output_fms = fms_gen(prompt, do_sample=False, max_new_tokens=100, use_cache=False)[
+        0
+    ]["generated_text"]
+    output_hf = hf_gen(prompt, do_sample=False, max_new_tokens=100, use_cache=False)[0][
         "generated_text"
     ]
-    output_hf = hf_gen(prompt, do_sample=False, max_new_tokens=100)[0]["generated_text"]
     assert output_fms == output_hf
 
 
