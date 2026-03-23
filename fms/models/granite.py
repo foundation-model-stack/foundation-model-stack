@@ -278,7 +278,7 @@ class GraniteHeadless(nn.Module):
         if x_in.dim() == 2:  # input is not already embedded
             x_in = self.embedding(x_in)
         x_in = x_in * self.config.embedding_multiplier
-        x_in = x_in.to("spyre")
+        # x_in = x_in.to("spyre")
 
         # this is the output cache for all the decoder layers
         present_key_value_states = []
