@@ -563,12 +563,6 @@ def _hf_to_fms_rope(
 ) -> Mapping[str, Any]:
     new_sd = {}
 
-    if model_config:
-        head_size = model_config.emb_dim // model_config.nheads
-    else:
-        logger.warning("Missing model_config, assuming defaults for head_size")
-        head_size = 128  # Good default for most models
-
     for name, param in input_sd.items():
         # Some checkpoints have weights in different precisions, which can have
         # auxiliary tensors (see _get_rope_params e.g. gptq, fp8).
@@ -581,7 +575,7 @@ def _hf_to_fms_rope(
             )
         rope_params = _get_rope_params(linear_type_str)
         trans_required_pattern = re.compile(
-            f"base_model.layers.[0-9]+.attn.in_proj.(query|key).({'|'.join(rope_params)})$"
+            f"base_model.layers.[0-9]+.attn.in_proj.(query|key|q_norm|k_norm).({'|'.join(rope_params)})$"
         )
 
         # hf -> fms requires a transpose operation for the query and key
@@ -605,6 +599,8 @@ def _hf_to_fms_rope(
                 temp = temp.transpose(0, 1)
             # num_heads is used in the transformation required for hf->fms
             # can't be precomputed because q and k might have different num_heads
+            assert model_config is not None and model_config.head_dim is not None
+            head_size = model_config.head_dim
             num_heads = temp.size(0) // head_size
 
             if temp.dim() == 2:  # weight
@@ -615,7 +611,6 @@ def _hf_to_fms_rope(
 
             if is_gptq_2d_qparam:
                 temp = temp.transpose(0, 1)
-
             new_sd[name] = temp
         else:
             new_sd[name] = param
@@ -646,5 +641,5 @@ serialization.register_adapter_step(
 serialization.register_adapter(
     _architecture_name,
     "hf",
-    ["hf_to_fms_names"],
+    ["hf_to_fms_names", "hf_to_fms_rope"],
 )
