@@ -563,8 +563,6 @@ def _hf_to_fms_rope(
 ) -> Mapping[str, Any]:
     new_sd = {}
 
-    head_size = model_config.head_dim
-
     for name, param in input_sd.items():
         # Some checkpoints have weights in different precisions, which can have
         # auxiliary tensors (see _get_rope_params e.g. gptq, fp8).
@@ -601,6 +599,8 @@ def _hf_to_fms_rope(
                 temp = temp.transpose(0, 1)
             # num_heads is used in the transformation required for hf->fms
             # can't be precomputed because q and k might have different num_heads
+            assert model_config is not None and model_config.head_dim is not None
+            head_size = model_config.head_dim
             num_heads = temp.size(0) // head_size
 
             if temp.dim() == 2:  # weight
