@@ -29,8 +29,9 @@ class PositionEncoder:
         self,
         q: torch.Tensor,
         k: torch.Tensor,
-        position_ids: Optional[torch.LongTensor],
-        past_kv_state: Optional[Tuple[torch.Tensor | None, torch.Tensor | None]],
+        position_ids: Optional[torch.LongTensor] = None,
+        past_kv_state: Optional[Tuple[torch.Tensor | None, torch.Tensor | None]] = None,
+        selected_freqs: torch.Tensor | None = None,
         use_cache=False,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         return q, k
@@ -125,10 +126,10 @@ class RopeNoScalingImpl:
         ratio = self.ratio
         dim = self.dim
 
-        freqs = (1.0 / (
+        freqs = 1.0 / (
             ratio
-            ** (torch.arange(0, dim, 2)[: (dim // 2)] / dim)
-        )).to(device=device)
+            ** (torch.arange(0, dim, 2)[: (dim // 2)].float() / dim)
+        )
         return freqs
 
 
@@ -267,7 +268,7 @@ class RotaryEmbedding(PositionEncoder):
                 # and max_seq_len hasn't been seen before
                 freqs = self.rope_scaling.compute_scaled_freqs(device, alpha)
                 t = torch.arange(scaled_max_seq_len, device="cpu", dtype=freqs.dtype)
-                freqs = torch.outer(t, freqs.to("cpu")).float()
+                freqs = torch.outer(t, freqs).float()
                 self.max_seq_len_cached[dev_idx] = scaled_max_seq_len
                 self.cached_freqs[dev_idx][alpha] = torch.stack(
                     [
@@ -277,7 +278,7 @@ class RotaryEmbedding(PositionEncoder):
                         torch.cos(freqs),
                     ],
                     dim=2,
-                ).view(*freqs.size()[:-1], 2, 2).permute([0, 2, 3, 1]).to(dtype=torch.float16) # S, 64, 2, 2 -> S, 2, 2, 64
+                ).view(*freqs.size(), 2, 2).permute([0, 2, 3, 1]).contiguous().to(dtype=torch.float16) # S, D/2, 2, 2 -> S, 2, 2, D/2
 
         return alpha
 
@@ -297,6 +298,7 @@ class RotaryEmbedding(PositionEncoder):
         k: torch.Tensor,
         position_ids: Optional[torch.Tensor] = None,
         past_kv_state: Optional[Tuple[torch.Tensor | None, torch.Tensor | None]] = None,
+        selected_freqs: torch.Tensor | None = None,
         use_cache=False,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
@@ -336,27 +338,27 @@ class RotaryEmbedding(PositionEncoder):
         else:
             q_rope = q
             k_rope = k
-        q_ = q_rope.to("cpu").view(*q.size()[:-1], -1, 2)  # B L H D/2 2
-        k_ = k_rope.to("cpu").view(*k.size()[:-1], -1, 2)  # B L H D/2 2
+        q_ = q_rope.view(*q.size()[:-1], 2, -1)  # B L H 2 D/2
+        k_ = k_rope.view(*k.size()[:-1], 2, -1)  # B L H 2 D/2
 
         # the max start position should be based on the max first position of each sequence
-        max_start_pos = torch.max(position_ids[:, 0])
-        alpha = self.compute_freqs_cis(q.device, max_start_pos + seq_len)
-        freqs = self.cached_freqs[q.device.index][alpha][position_ids]
+        if selected_freqs is None:
+            max_start_pos = torch.max(position_ids[:, 0])
+            alpha = self.compute_freqs_cis(q.device, max_start_pos + seq_len)
+            selected_freqs = self.cached_freqs[q.device.index][alpha][position_ids]
 
-        freqs = freqs.to("cpu")  # 1 L D/2 2 2
         q_out = (
-            freqs[:, -q.size(1) :, None, :, :, :] # 1 L 1 D/2 2 2 -> 1 L 1 2 2 D/2
-            .mul(q_.unsqueeze(-2)) # B L H D/2 1 2 -> B L H 1 2 D/2
-            .sum(5)
+            selected_freqs[:, :, None, :, :, :] # 1 L 1 2 2 D/2
+            .mul(q_.unsqueeze(-3)) # B L H 1 2 D/2
+            .sum(4, keepdim=True)
             .flatten(3)
-        ).type_as(q)
+        )
         k_out = (
-            freqs[:, -k.size(1) :, None, :, :, :]
-            .mul(k_.unsqueeze(-2))
-            .sum(5)
+            selected_freqs[:, :, None, :, :, :]
+            .mul(k_.unsqueeze(-3))
+            .sum(4, keepdim=True)
             .flatten(3)
-        ).type_as(k)
+        )
 
         if self.partial_rope != 1.0:
             q_out = torch.cat([q_out.view_as(q_rope), q[..., self.dim :]], dim=-1)
@@ -364,7 +366,7 @@ class RotaryEmbedding(PositionEncoder):
         else:
             q_out = q_out.view_as(q_rope)
             k_out = k_out.view_as(k_rope)
-        return q_out.to("spyre"), k_out.to("spyre")
+        return q_out, k_out
 
 
 class PixtralRotaryEmbedding(PositionEncoder):

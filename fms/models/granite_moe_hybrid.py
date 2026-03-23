@@ -9,7 +9,6 @@ from fms.models.granite import (
     Granite,
     GraniteConfig,
     _hf_gptq_granite_check,
-    _hf_to_fms_rope,
     _weight_fusion,
 )
 
@@ -123,16 +122,11 @@ serialization.register_adapter_step(
     _architecture_name, "hf_gptq_fusion_check", _hf_gptq_granite_check
 )
 
-serialization.register_adapter_step(
-    _architecture_name, "hf_to_fms_rope", _hf_to_fms_rope
-)
-
 serialization.register_adapter(
     _architecture_name,
     "hf",
     [
         "hf_to_fms_names",
-        "hf_to_fms_rope",
         "hf_gptq_fusion_check",
         "weight_fusion",
     ],

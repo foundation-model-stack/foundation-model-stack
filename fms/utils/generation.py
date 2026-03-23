@@ -274,7 +274,12 @@ def generate(
             input_ids, kwargs = prepare_model_inputs_hook(i, input_ids, kwargs)
 
         print(f"Input ids device: {input_ids.device}")
-        output = model(input_ids, **kwargs)
+        # with PrintingMode():
+        alpha = model.base_model.rot_emb.compute_freqs_cis(torch.device("spyre"), max_seq_len)
+        kwargs["selected_freqs"] = model.base_model.rot_emb.cached_freqs[0][alpha][kwargs["position_ids"]].contiguous().to("spyre")
+        print(f"{kwargs['mask']=}")
+        kwargs["mask"] = kwargs["mask"].to(dtype=torch.float16).to("spyre")
+        output = model(input_ids.to(device="spyre"), **kwargs)
         if use_cache:
             logits, past_key_value_states = output
             # TODO: this should go away when reduce-overhead issues are fixed, or

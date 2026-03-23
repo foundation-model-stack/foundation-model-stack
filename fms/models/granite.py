@@ -67,10 +67,12 @@ class GraniteBlock(nn.Module):
             self.config.emb_dim,
             eps=self.config.norm_eps,
         )
+        self.ln.compile()
         self.ff_ln = torch.nn.RMSNorm(
             self.config.emb_dim,
             eps=self.config.norm_eps,
         )
+        self.ff_ln.compile()
 
         if self.config.kvheads == 0:
             kvheads = self.config.nheads
@@ -102,6 +104,7 @@ class GraniteBlock(nn.Module):
             fused=self.config.fused_weights,
             linear_config=self.config.linear_config,
         )
+        self.ff_sub_layer.compile()
 
         if self.config.p_dropout != 0:
             self.dropout = nn.Dropout(self.config.p_dropout)
@@ -509,71 +512,6 @@ def _get_rope_params(linear_type: str) -> list[str]:
         return ["weight", "bias"]
 
 
-def _hf_to_fms_rope(
-    input_sd: Mapping[str, Any], model_config: Optional[GraniteConfig] = None, **kwargs
-) -> Mapping[str, Any]:
-    new_sd = {}
-
-    if model_config:
-        head_size = model_config.emb_dim // model_config.nheads
-    else:
-        logger.warning("Missing model_config, assuming defaults for head_size")
-        head_size = 128  # Good default for most models
-
-    for name, param in input_sd.items():
-        # Some checkpoints have weights in different precisions, which can have
-        # auxiliary tensors (see _get_rope_params e.g. gptq, fp8).
-        # Thus, we need to get rope_params per parameter.
-        linear_type_str = "torch_linear"
-        if model_config and model_config.linear_config:
-            linear_type_str = get_linear_type(
-                model_config.linear_config,
-                module_name=name,
-            )
-        rope_params = _get_rope_params(linear_type_str)
-        trans_required_pattern = re.compile(
-            f"base_model.layers.[0-9]+.attn.in_proj.(query|key).({'|'.join(rope_params)})$"
-        )
-
-        # hf -> fms requires a transpose operation for the query and key
-        # weight and bias parameters for Llama models
-        # This transpose is due to the different implementation of RoPE in
-        # HF and FMS. While FMS follows the original RoPE paper
-        # (https://arxiv.org/abs/2104.09864), HF has its own implementation
-        # that doesn't respect the order of outputs. This is OK as long as you
-        # rearrange the weights of the query and key projections, as the
-        # combination projection + RoPE ends up producing the same outputs.
-        # Therefore, to make FMS produce the correct order of outputs when
-        # loading from an HF checkpoint, we need to undo the transformation
-        # that HF does from the original Meta weights
-        is_gptq_2d_qparam = "gptq" in linear_type_str and param.dim() == 2
-        if bool(trans_required_pattern.match(name)) and param.numel() > 1:
-            temp = param
-            if is_gptq_2d_qparam:
-                # GPTQ qweights are [in_feat, out_feat] (unlike usual [out_feat, in_feat])
-                # and are fully transposed before & after process.
-                # GPTQ scales and qzeros are also transposed accordingly
-                temp = temp.transpose(0, 1)
-            # num_heads is used in the transformation required for hf->fms
-            # can't be precomputed because q and k might have different num_heads
-            num_heads = temp.size(0) // head_size
-
-            if temp.dim() == 2:  # weight
-                temp_view = temp.view(num_heads, 2, -1, temp.size(1))
-            else:  # 1-dim parameters
-                temp_view = temp.view(num_heads, 2, -1)
-            temp = temp_view.transpose(1, 2).reshape(*temp.size())
-
-            if is_gptq_2d_qparam:
-                temp = temp.transpose(0, 1)
-
-            new_sd[name] = temp
-        else:
-            new_sd[name] = param
-
-    return new_sd
-
-
 def _hf_gptq_granite_check(
     input_sd: Mapping[str, Any], model_config: Optional[GraniteConfig] = None, **kwargs
 ) -> Mapping[str, Any]:
@@ -597,16 +535,11 @@ serialization.register_adapter_step(
     "granite", "hf_gptq_fusion_check", _hf_gptq_granite_check
 )
 
-serialization.register_adapter_step(
-    _architecture_name, "hf_to_fms_rope", _hf_to_fms_rope
-)
-
 serialization.register_adapter(
     _architecture_name,
     "hf",
     [
         "hf_to_fms_names",
-        "hf_to_fms_rope",
         "hf_gptq_fusion_check",
         "weight_fusion",
     ],

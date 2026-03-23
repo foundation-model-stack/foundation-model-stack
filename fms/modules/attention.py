@@ -215,9 +215,9 @@ def _sdpa_compute_op(
     expansion = nheads // kvheads
     # k/v: b h l d
     if expansion != 1:
-        keys_e = key_cache.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
+        keys_e = key_cache.to("cpu").unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2).to("spyre")
         values_e = (
-            value_cache.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
+            value_cache.to("cpu").unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2).to("spyre")
         )
     else:
         keys_e = key_cache
@@ -609,6 +609,8 @@ class MultiHeadAttention(nn.Module):
         if self.p_dropout:
             self.attn_dropout = nn.Dropout(self.p_dropout)
         self.position_encoder = position_encoder
+        if self.position_encoder is not None:
+            self.position_encoder.adjusted_qk = torch.compile(self.position_encoder.adjusted_qk)
 
     def reset_parameters(self):
         for m in self.modules():
@@ -669,7 +671,7 @@ class MultiHeadAttention(nn.Module):
         # You want to apply rotary embeddings pre-cache
         if self.position_encoder is not None:
             queries, keys = self.position_encoder.adjusted_qk(
-                queries, keys, position_ids, past_key_value_state, use_cache
+                queries, keys, past_kv_state=past_key_value_state, selected_freqs=attn_kwargs["selected_freqs"], use_cache=use_cache
             )
 
         attn_compute_dict = get_attention_type(**attn_kwargs)
