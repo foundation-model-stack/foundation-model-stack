@@ -108,16 +108,25 @@ class HFAdaptedLLaMAHeadless(HFDecoderModelArchitecture):
 
 
 class HFAdaptedLLaMAForCausalLM(LMHeadModelLMHeadMixin, HFAdaptedLLaMAHeadless):
-    _keys_to_ignore_on_load_missing = [r"lm_head.weight"]
-    _tied_weights_keys = ["embedding.weight", "lm_head.weight"]
+    _keys_to_ignore_on_load_missing = [r"lm_head.weight", r"decoder\.model\.embedding\.weight"]
+    _tied_weights_keys = {
+        "decoder.model.embedding.weight": "embedding.weight",
+    }
 
     def __init__(self, config: HFAdaptedLLaMAConfig, *args, **kwargs):
         super().__init__(config=config, bias=False, *args, **kwargs)
+
+    def _tie_weights(self):
+        self.decoder.model.embedding.weight = self.embedding.weight
+        if self.config.tie_word_embeddings:
+            self.lm_head.weight = self.embedding.weight
 
     @classmethod
     def _hf_model_from_fms(
         cls, model: LLaMA, config: HFAdaptedLLaMAConfig
     ) -> "HFAdaptedLLaMAForCausalLM":
+        config.tie_word_embeddings = True
+        print(f"{config=}")
         out = cls(
             config=config,
             decoder=model.base_model,

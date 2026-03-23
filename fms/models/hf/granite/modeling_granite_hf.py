@@ -53,8 +53,6 @@ class HFAdaptedGraniteHeadless(HFDecoderModelArchitecture):
     config_class = HFAdaptedGraniteConfig
     base_model_prefix = "hf_adapted_granite"
 
-    _tied_weights_keys = ["decoder.model.embedding.weight", "embedding.weight"]
-    _keys_to_ignore_on_save = ["embedding.weight"]
 
     def __init__(
         self,
@@ -110,8 +108,10 @@ class HFAdaptedGraniteHeadless(HFDecoderModelArchitecture):
 
 class HFAdaptedGraniteForCausalLM(LMHeadModelLMHeadMixin, HFAdaptedGraniteHeadless):
     _keys_to_ignore_on_load_missing = [r"lm_head.weight"]
-    _tied_weights_keys = ["embedding.weight", "lm_head.weight"]
-
+    _tied_weights_keys = {
+        "lm_head.weight": "decoder.model.embedding.weight",
+        "embedding.weight": "decoder.model.embedding.weight",
+    }
     def __init__(self, config: HFAdaptedGraniteConfig, *args, **kwargs):
         super().__init__(config=config, bias=False, *args, **kwargs)
 
@@ -119,6 +119,7 @@ class HFAdaptedGraniteForCausalLM(LMHeadModelLMHeadMixin, HFAdaptedGraniteHeadle
     def _hf_model_from_fms(
         cls, model: Granite, config: HFAdaptedGraniteConfig
     ) -> "HFAdaptedGraniteForCausalLM":
+        config.tie_word_embeddings = True
         return cls(
             config=config,
             decoder=model.base_model,

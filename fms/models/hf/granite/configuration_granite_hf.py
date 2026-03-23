@@ -57,7 +57,7 @@ class HFAdaptedGraniteConfig(PretrainedConfig):
             bos_token_id=bos_token_id,
             is_decoder=is_decoder,
             tie_word_embeddings=kwargs.pop(
-                "tie_word_embeddings", False
+                "tie_word_embeddings", True
             ),  # note: This was added here as we handle tying of heads with our underlying model, we may want to revisit this in future
             **kwargs,
         )
