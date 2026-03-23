@@ -1,5 +1,6 @@
 from typing import List, Tuple
 
+import logging
 import time
 import torch
 import torch.nn.functional as F
@@ -10,6 +11,8 @@ from lm_eval.api.registry import register_model  # type: ignore
 from torch import nn
 
 from fms.utils import tokenizers
+
+logger = logging.getLogger(__name__)
 
 
 @register_model("fms")
@@ -68,7 +71,7 @@ class FMSEvalHarnessLM(LM):
 
         if self.batch_size > 1:
             if not sorting:
-                print('Sorting can reduce padding and therefore increase throughput considerably.')
+                logger.info('Sorting can reduce padding and therefore increase throughput considerably.')
         else:
             # Sorting with batch size 1 has no effect, overriding sorting = False
             sorting = False
@@ -84,7 +87,7 @@ class FMSEvalHarnessLM(LM):
         if sorting:
             start_time = time.time()
             indexed_requests.sort(key=_req_len)
-            print('Sorting of requests took', time.time() - start_time, 's.')
+            logger.info(f'Sorting of requests took {time.time() - start_time:.3f}s')
 
         results_with_idx: List[Tuple[int, Tuple[float, bool]]] = []
 
@@ -92,7 +95,7 @@ class FMSEvalHarnessLM(LM):
         # Note: is safe because padding tokens are never attended since masked out
         pad_id = getattr(self.tokenizer, "pad_token_id", None)
         if pad_id is None:
-            print('pad_token_id not provided for this tokenizer, defaulting to eos_token_id.')
+            logger.warning('pad_token_id not provided for this tokenizer, defaulting to eos_token_id.')
             pad_id = getattr(self.tokenizer, "eos_token_id")
 
         # looping over batches
