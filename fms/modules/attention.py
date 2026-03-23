@@ -245,7 +245,7 @@ def _sdpa_compute_op(
 
     # TODO: when updating to 2.7, use enable_gqa and stop using keys_e and values_e
     attn = F.scaled_dot_product_attention(
-        queries,
+        queries.to("cpu").to("spyre"),
         keys_e,
         values_e,
         attn_mask=attn_mask if isinstance(attn_mask, torch.Tensor) else None,
@@ -263,7 +263,7 @@ def _sdpa_compute_op(
     # attn: b x h x qlen x ds
     # attn after permute: b x qlen x h x ds
     # b x qlen x (d)
-    attn = attn.transpose(2, 1).clone(memory_format=torch.contiguous_format)
+    attn = attn.transpose(2, 1)
     return attn
 
 
@@ -715,7 +715,7 @@ class MultiHeadAttention(nn.Module):
                 **attn_kwargs,
             )
 
-        attn = attn.view(batch_size, q_len, self.nheads * self.emb_v_per_head).clone(memory_format=torch.contiguous_format)
+        attn = attn.view(batch_size, q_len, self.nheads * self.emb_v_per_head)
         out = self.dense(attn)
 
         # if use_cache=True, we return the hidden_state as well as the kv cache
