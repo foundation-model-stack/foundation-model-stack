@@ -41,13 +41,10 @@ class FMSEvalHarnessLM(LM):
         self.model = generic_object
         self.model.config = generic_object  # type: ignore
         self.model.config._name_or_path = "FMSEvalHarnessLM"  # type: ignore
-    
-    def _tokenize(
-        self,
-        context: str,
-        continuation: str
-    ) -> Tuple[List[int], List[int], List[int]]:
 
+    def _tokenize(
+        self, context: str, continuation: str
+    ) -> Tuple[List[int], List[int], List[int]]:
         context_ids = self.tokenizer.convert_tokens_to_ids(
             self.tokenizer.tokenize(context)
         )
@@ -66,26 +63,28 @@ class FMSEvalHarnessLM(LM):
         requests: List[Instance],
         sorting: bool = True,
     ) -> List[Tuple[float, bool]]:
-
         if self.batch_size > 1:
             if not sorting:
-                logger.info('Sorting can reduce padding and therefore increase throughput considerably.')
+                logger.info(
+                    "Sorting can reduce padding and therefore increase throughput considerably."
+                )
         else:
             # Sorting with batch size 1 has no effect, overriding sorting = False
             sorting = False
-        
+
         # attach original indices and sort by length
         indexed_requests = list(enumerate(requests))
 
-        _req_len = lambda x: (
-            len(self.tokenizer.tokenize(x[1].args[0]))
-            + len(self.tokenizer.tokenize(x[1].args[1]))
-        )
-
         if sorting:
+
+            def _req_len(x):
+                return len(self.tokenizer.tokenize(x[1].args[0])) + len(
+                    self.tokenizer.tokenize(x[1].args[1])
+                )
+
             start_time = time.time()
             indexed_requests.sort(key=_req_len)
-            logger.info(f'Sorting of requests took {time.time() - start_time:.3f}s')
+            logger.info(f"Sorting of requests took {time.time() - start_time:.3f}s")
 
         results_with_idx: List[Tuple[int, Tuple[float, bool]]] = []
 
@@ -93,31 +92,35 @@ class FMSEvalHarnessLM(LM):
         # Note: is safe because padding tokens are never attended since masked out
         pad_id = getattr(self.tokenizer, "pad_token_id", None)
         if pad_id is None:
-            logger.warning('pad_token_id not provided for this tokenizer, defaulting to eos_token_id.')
+            logger.warning(
+                "pad_token_id not provided for this tokenizer, defaulting to eos_token_id."
+            )
             pad_id = getattr(self.tokenizer, "eos_token_id")
 
         # looping over batches
         for start in tqdm.tqdm(range(0, len(indexed_requests), self.batch_size)):
             batch = indexed_requests[start : start + self.batch_size]
 
-            context_lens = []
-            continuation_ids_list = []
-            input_ids_list = []
-            orig_indices = []
+            context_lens: List[int] = []
+            continuation_ids_list: List[List[int]] = []
+            input_ids_list: List[torch.Tensor] = []
+            orig_indices: List[int] = []
 
             # tokenize batch
             for orig_idx, req in batch:
                 context, continuation = req.args
-                context_ids, continuation_ids, input_ids = self._tokenize(context, continuation)
+                context_ids, continuation_ids, input_ids_raw = self._tokenize(
+                    context, continuation
+                )
                 context_lens.append(len(context_ids))
                 continuation_ids_list.append(continuation_ids)
-                input_ids_list.append(torch.tensor(input_ids, dtype=torch.long))
+                input_ids_list.append(torch.tensor(input_ids_raw, dtype=torch.long))
                 orig_indices.append(orig_idx)
 
             # pad inputs ids
             max_len = max(x.size(0) for x in input_ids_list)
 
-            input_ids = torch.full(
+            input_ids_batch: torch.Tensor = torch.full(
                 (len(batch), max_len),
                 pad_id,
                 dtype=torch.long,
@@ -125,29 +128,34 @@ class FMSEvalHarnessLM(LM):
             )
 
             for i, ids in enumerate(input_ids_list):
-                input_ids[i, : ids.size(0)] = ids.to(self.device)
+                input_ids_batch[i, : ids.size(0)] = ids.to(self.device)
 
             # forward
             with torch.no_grad():
-                logits = self.wrapped_model(input_ids)
+                logits = self.wrapped_model(input_ids_batch)
                 log_probs = F.log_softmax(logits, dim=-1)
 
             # post-process per sample
             for i in range(len(batch)):
                 context_len = context_lens[i]
                 continuation_ids = continuation_ids_list[i]
-                continuation_probs = log_probs[i, context_len - 1 : context_len - 1 + len(continuation_ids)]
+                continuation_probs = log_probs[
+                    i, context_len - 1 : context_len - 1 + len(continuation_ids)
+                ]
                 loglikelihood = continuation_probs.gather(
-                    1, torch.tensor(continuation_ids, device=self.device).unsqueeze(1),
+                    1,
+                    torch.tensor(continuation_ids, device=self.device).unsqueeze(1),
                 ).squeeze(1)
                 predicted = torch.argmax(continuation_probs, -1).tolist()
                 greedy = predicted == continuation_ids
-                results_with_idx.append((orig_indices[i], (loglikelihood.sum().item(), greedy)))
+                results_with_idx.append(
+                    (orig_indices[i], (loglikelihood.sum().item(), greedy))
+                )
 
         # restore original request order
         if sorting:
             results_with_idx.sort(key=lambda x: x[0])
-        
+
         return [r for _, r in results_with_idx]
 
     def loglikelihood_rolling(
