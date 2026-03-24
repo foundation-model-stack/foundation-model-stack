@@ -594,6 +594,17 @@ class UnfusedQKV(QKV):
             queries = queries.view(batch_size, q_len, self.nheads, self.head_dim)
             keys = keys.view(batch_size, k_len, self.kvheads, self.head_dim)
 
+            if torch._dynamo.is_compiling():
+                queries = (
+                    queries.transpose(-1, -2)
+                    .contiguous()
+                    .transpose(-1, -2)
+                    .contiguous()
+                )
+                keys = (
+                    keys.transpose(-1, -2).contiguous().transpose(-1, -2).contiguous()
+                )
+
             # Apply normalization per head
             queries = self.q_norm(queries)
             keys = self.k_norm(keys)
