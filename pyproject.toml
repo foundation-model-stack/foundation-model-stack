@@ -50,7 +50,7 @@ dev = [
 "types-requests==2.32.0.20241016",
 "lm_eval==0.4.7",
 "peft==0.14.0",
-"fms-model-optimizer @ git+https://github.com/foundation-model-stack/fms-model-optimizer.git"
+"fms-model-optimizer>=0.8.1",
 ]
 
 [tool.setuptools_scm]
