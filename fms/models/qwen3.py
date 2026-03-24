@@ -532,6 +532,8 @@ def _hf_to_fms_names(
     """
     replacements = [
         (r"^lm_head.weight", "head.weight"),
+        # Qwen3 Embedding models have no "model." prefix, but the generative ones do
+        (r"^model.", ""),
         (r"^norm.weight", "base_model.dec_norm.weight"),
         (r"^embed_tokens.weight", "base_model.embedding.weight"),
         (r"layers", "base_model.layers"),
