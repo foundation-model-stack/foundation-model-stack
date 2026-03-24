@@ -53,7 +53,6 @@ class HFAdaptedGraniteHeadless(HFDecoderModelArchitecture):
     config_class = HFAdaptedGraniteConfig
     base_model_prefix = "hf_adapted_granite"
 
-
     def __init__(
         self,
         config: PretrainedConfig,
@@ -112,6 +111,7 @@ class HFAdaptedGraniteForCausalLM(LMHeadModelLMHeadMixin, HFAdaptedGraniteHeadle
         "lm_head.weight": "decoder.model.embedding.weight",
         "embedding.weight": "decoder.model.embedding.weight",
     }
+
     def __init__(self, config: HFAdaptedGraniteConfig, *args, **kwargs):
         super().__init__(config=config, bias=False, *args, **kwargs)
 

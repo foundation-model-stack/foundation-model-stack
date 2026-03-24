@@ -73,7 +73,6 @@ def test_as_fms_model_equivalency_for_encoder(model_id_or_path):
             bos_token_id=hf_model.config.bos_token_id,
             pad_token_id=hf_model.config.pad_token_id,
             eos_token_id=hf_model.config.eos_token_id,
-           # task_specific_params=hf_model.config.task_specific_params,
         )
     fms_model = fms_model.eval()
     hf_model = hf_model.eval()

@@ -36,7 +36,7 @@ classifiers=[
 ]
 dependencies = [
   "torch >= 2.5.1",
-  "transformers==4.57.6",
+  "transformers>=5.0.0",
 ]
 
 [project.optional-dependencies]

@@ -276,7 +276,7 @@ class SequenceClassificationLMHeadMixin(LMHeadMixin):
 
     _tied_weights_keys = {
         "lm_head.head.weight": "lm_head.head.weight",
-        "lm_head.head.bias": "lm_head.head.bias"
+        "lm_head.head.bias": "lm_head.head.bias",
     }
 
     def __init__(
@@ -377,7 +377,7 @@ class MaskedLMHeadMixin(LMHeadMixin):
     _tied_weights_keys = {
         "lm_head.head.weight": "lm_head.head.weight",
         "lm_head.head.bias": "lm_head.head.bias",
-        "embedding.weight": "embedding.weight"
+        "embedding.weight": "embedding.weight",
     }
 
     def __init__(

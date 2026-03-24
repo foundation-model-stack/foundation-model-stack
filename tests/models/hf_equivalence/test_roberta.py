@@ -46,10 +46,7 @@ def test_roberta_base_for_masked_lm_equivalency(model_id):
         hf_model_param_count -= 2 * 768
     assert model_param_count == hf_model_param_count
 
-    hf_model_fms = to_hf_api(
-        model, 
-        #task_specific_params=hf_model.config.task_specific_params
-    )
+    hf_model_fms = to_hf_api(model)
 
     # test the param count is the same between hf model and hf fms model
     hf_model_fms_param_count = sum([p.numel() for p in hf_model_fms.parameters()])

@@ -11,6 +11,7 @@ from fms.models.hf.llama.configuration_llama_hf import HFAdaptedLLaMAConfig
 from fms.models.hf.lm_head_mixins import LMHeadModelLMHeadMixin
 from fms.models.hf.modeling_hf_adapter import HFDecoder, HFDecoderModelArchitecture
 from fms.models.llama import LLaMA, LLaMAHeadless
+from fms.modules.head import LinearClassificationHead
 
 
 class HFAdaptedLLaMADecoder(HFDecoder):
@@ -108,25 +109,65 @@ class HFAdaptedLLaMAHeadless(HFDecoderModelArchitecture):
 
 
 class HFAdaptedLLaMAForCausalLM(LMHeadModelLMHeadMixin, HFAdaptedLLaMAHeadless):
-    _keys_to_ignore_on_load_missing = [r"lm_head.weight", r"decoder\.model\.embedding\.weight"]
+    _keys_to_ignore_on_load_missing = [
+        r"lm_head.weight",
+        r"decoder\.model\.embedding\.weight",
+    ]
     _tied_weights_keys = {
+        "lm_head.weight": "embedding.weight",
         "decoder.model.embedding.weight": "embedding.weight",
     }
 
     def __init__(self, config: HFAdaptedLLaMAConfig, *args, **kwargs):
         super().__init__(config=config, bias=False, *args, **kwargs)
 
+    def _get_empty_lm_head(self, bias: bool) -> nn.Module:
+        """Override to use LinearClassificationHead instead of nn.Linear"""
+        return LinearClassificationHead(
+            self.config.hidden_size, self.config.vocab_size, bias=bias
+        )
+
+    def set_output_embeddings(self, new_embeddings):
+        """Override to ensure we always use LinearClassificationHead"""
+        if new_embeddings is not None and not isinstance(
+            new_embeddings, LinearClassificationHead
+        ):
+            # If transformers tries to set a regular nn.Linear, convert it to LinearClassificationHead
+            if isinstance(new_embeddings, nn.Linear):
+                lm_head = LinearClassificationHead(
+                    new_embeddings.in_features,
+                    new_embeddings.out_features,
+                    bias=new_embeddings.bias is not None,
+                )
+                # Copy the weights and bias
+                lm_head.weight = new_embeddings.weight
+                if new_embeddings.bias is not None:
+                    lm_head.bias = new_embeddings.bias
+                self.lm_head = lm_head
+            else:
+                self.lm_head = new_embeddings
+        else:
+            self.lm_head = new_embeddings
+
     def _tie_weights(self):
-        self.decoder.model.embedding.weight = self.embedding.weight
+        """Tie weights at runtime - FMS models save lm_head.weight, so use that as the source"""
         if self.config.tie_word_embeddings:
-            self.lm_head.weight = self.embedding.weight
+            self.embedding.weight = self.lm_head.weight
+        self.decoder.model.embedding.weight = self.embedding.weight
+
+    def load_state_dict(self, state_dict, strict=True, assign=False):
+        """Override to ensure weights are tied after loading"""
+        result = super().load_state_dict(state_dict, strict=strict, assign=assign)
+        # Re-tie weights after loading to ensure correct references
+        self._tie_weights()
+        return result
 
     @classmethod
     def _hf_model_from_fms(
         cls, model: LLaMA, config: HFAdaptedLLaMAConfig
     ) -> "HFAdaptedLLaMAForCausalLM":
-        config.tie_word_embeddings = True
-        print(f"{config=}")
+        # Respect the FMS model's tie_heads setting
+        config.tie_word_embeddings = model.config.tie_heads
         out = cls(
             config=config,
             decoder=model.base_model,

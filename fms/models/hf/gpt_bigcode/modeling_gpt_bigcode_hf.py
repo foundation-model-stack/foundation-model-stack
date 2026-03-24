@@ -77,7 +77,11 @@ class HFAdaptedGPTBigCodeForCausalLM(
     LMHeadModelLMHeadMixin, HFAdaptedGPTBigCodeHeadless
 ):
     _keys_to_ignore_on_load_missing = [r"lm_head.weight"]
-    _tied_weights_keys = ["embedding.weight", "lm_head.weight"]
+    _tied_weights_keys = {
+        "decoder.model.embedding.weight": "embedding.weight",
+        "embedding.weight": "embedding.weight",
+        "lm_head.head.weight": "lm_head.head.weight",
+    }
 
     def __init__(self, config: HFAdaptedGPTBigCodeConfig, *args, **kwargs):
         super().__init__(config=config, bias=False, *args, **kwargs)
