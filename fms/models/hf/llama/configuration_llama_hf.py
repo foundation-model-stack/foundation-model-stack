@@ -57,8 +57,8 @@ class HFAdaptedLLaMAConfig(PretrainedConfig):
             bos_token_id=bos_token_id,
             is_decoder=is_decoder,
             tie_word_embeddings=kwargs.pop(
-                "tie_word_embeddings", False
-            ),  # note: This was added here as we handle tying of heads with our underlying model, we may want to revisit this in future
+                "tie_word_embeddings", True
+            ),  # note: FMS models tie embeddings by default
             **kwargs,
         )
 

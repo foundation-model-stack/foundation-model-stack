@@ -12,6 +12,9 @@ from fms.models.hf.gpt_bigcode.configuration_gpt_bigcode_hf import (
 from fms.models.hf.lm_head_mixins import LMHeadModelLMHeadMixin
 from fms.models.hf.modeling_hf_adapter import HFDecoder, HFDecoderModelArchitecture
 
+from packaging.version import Version
+from transformers import __version__ as tf_version
+
 
 class HFAdaptedGPTBigCodeDecoder(HFDecoder):
     """Adapter for the GPTBigCodeDecoder"""
@@ -76,12 +79,17 @@ class HFAdaptedGPTBigCodeHeadless(HFDecoderModelArchitecture):
 class HFAdaptedGPTBigCodeForCausalLM(
     LMHeadModelLMHeadMixin, HFAdaptedGPTBigCodeHeadless
 ):
-    _keys_to_ignore_on_load_missing = [r"lm_head.weight"]
-    _tied_weights_keys = {
-        "decoder.model.embedding.weight": "embedding.weight",
-        "embedding.weight": "embedding.weight",
-        "lm_head.head.weight": "lm_head.head.weight",
-    }
+    ## Address transformers API changes
+    if Version(tf_version) >= Version("5.0.0"):
+        _keys_to_ignore_on_load_missing = [r"lm_head.weight"]
+        _tied_weights_keys = {
+            "decoder.model.embedding.weight": "embedding.weight",
+            "embedding.weight": "embedding.weight",
+            "lm_head.head.weight": "lm_head.head.weight",
+        }
+    else:
+        _keys_to_ignore_on_load_missing = [r"lm_head.weight"]
+        _tied_weights_keys = ["embedding.weight", "lm_head.weight"]
 
     def __init__(self, config: HFAdaptedGPTBigCodeConfig, *args, **kwargs):
         super().__init__(config=config, bias=False, *args, **kwargs)

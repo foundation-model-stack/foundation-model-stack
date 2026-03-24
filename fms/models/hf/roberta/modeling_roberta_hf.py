@@ -13,6 +13,9 @@ from fms.models.hf.lm_head_mixins import (
 from fms.models.hf.modeling_hf_adapter import HFEncoder, HFEncoderModelArchitecture
 from fms.models.roberta import RoBERTa, RoBERTaConfig, RoBERTaHeadless
 
+from packaging.version import Version
+from transformers import __version__ as tf_version
+
 
 class HFAdaptedRoBERTaConfig(PretrainedConfig):
     model_type = "hf_adapted_roberta"
@@ -120,11 +123,15 @@ class HFAdaptedRoBERTaHeadless(HFEncoderModelArchitecture):
     config_class = HFAdaptedRoBERTaConfig
     base_model_prefix = "hf_adapted_roberta"
 
-    _tied_weights_keys = {
-        "encoder.model.embedding.weight": "roberta.embeddings.word_embeddings.weight",
-        "embedding.weight": "embedding.weight",
-        "lm_head.head.weight": "lm_head.head.weight",
-    }
+    ## Address transformers API changes
+    if Version(tf_version) >= Version("5.0.0"):
+        _tied_weights_keys = {
+            "encoder.model.embedding.weight": "roberta.embeddings.word_embeddings.weight",
+            "embedding.weight": "embedding.weight",
+            "lm_head.head.weight": "lm_head.head.weight",
+        }
+    else:
+        _tied_weights_keys = ["embedding.weight"]
 
     def __init__(
         self,

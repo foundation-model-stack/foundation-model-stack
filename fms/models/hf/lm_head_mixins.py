@@ -17,6 +17,9 @@ from transformers.utils import ModelOutput
 from fms.modules.head import MLPClassificationHead
 from fms.utils.activation import str_to_activation
 
+from packaging.version import Version
+from transformers import __version__ as tf_version
+
 
 class LMHeadMixin:
     """
@@ -274,10 +277,17 @@ class SequenceClassificationLMHeadMixin(LMHeadMixin):
     set at run-time based on config.num_labels and the label dtype.
     """
 
-    _tied_weights_keys = {
-        "lm_head.head.weight": "lm_head.head.weight",
-        "lm_head.head.bias": "lm_head.head.bias",
-    }
+    ## Address transformers API changes
+    if Version(tf_version) >= Version("5.0.0"):
+        _tied_weights_keys = {
+            "lm_head.head.weight": "lm_head.head.weight",
+            "lm_head.head.bias": "lm_head.head.bias",
+        }
+    else:
+        _tied_weights_keys = [
+            "lm_head.head.weight",
+            "lm_head.head.bias",
+        ]
 
     def __init__(
         self,
@@ -374,11 +384,19 @@ class SequenceClassificationLMHeadMixin(LMHeadMixin):
 class MaskedLMHeadMixin(LMHeadMixin):
     """Provides a model architecture with a masked lm head"""
 
-    _tied_weights_keys = {
-        "lm_head.head.weight": "lm_head.head.weight",
-        "lm_head.head.bias": "lm_head.head.bias",
-        "embedding.weight": "embedding.weight",
-    }
+    ## Address transformers API changes
+    if Version(tf_version) >= Version("5.0.0"):
+        _tied_weights_keys = {
+            "lm_head.head.weight": "lm_head.head.weight",
+            "lm_head.head.bias": "lm_head.head.bias",
+            "embedding.weight": "embedding.weight",
+        }
+    else:
+        _tied_weights_keys = [
+            "lm_head.head.weight",
+            "lm_head.head.bias",
+            "embedding.weight",
+        ]
 
     def __init__(
         self,

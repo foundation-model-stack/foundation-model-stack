@@ -13,6 +13,9 @@ from fms.models.hf.modeling_hf_adapter import HFDecoder, HFDecoderModelArchitect
 from fms.models.llama import LLaMA, LLaMAHeadless
 from fms.modules.head import LinearClassificationHead
 
+from packaging.version import Version
+from transformers import __version__ as tf_version
+
 
 class HFAdaptedLLaMADecoder(HFDecoder):
     """Adapter for the LLaMA decoder"""
@@ -109,14 +112,19 @@ class HFAdaptedLLaMAHeadless(HFDecoderModelArchitecture):
 
 
 class HFAdaptedLLaMAForCausalLM(LMHeadModelLMHeadMixin, HFAdaptedLLaMAHeadless):
-    _keys_to_ignore_on_load_missing = [
-        r"lm_head.weight",
-        r"decoder\.model\.embedding\.weight",
-    ]
-    _tied_weights_keys = {
-        "lm_head.weight": "embedding.weight",
-        "decoder.model.embedding.weight": "embedding.weight",
-    }
+    ## Address transformers API changes
+    if Version(tf_version) >= Version("5.0.0"):
+        _keys_to_ignore_on_load_missing = [
+            r"lm_head.weight",
+            r"decoder\.model\.embedding\.weight",
+        ]
+        _tied_weights_keys = {
+            "lm_head.weight": "embedding.weight",
+            "decoder.model.embedding.weight": "embedding.weight",
+        }
+    else:
+        _keys_to_ignore_on_load_missing = [r"lm_head.weight"]
+        _tied_weights_keys = ["embedding.weight", "lm_head.weight"]
 
     def __init__(self, config: HFAdaptedLLaMAConfig, *args, **kwargs):
         super().__init__(config=config, bias=False, *args, **kwargs)
