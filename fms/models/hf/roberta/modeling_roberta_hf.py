@@ -131,7 +131,7 @@ class HFAdaptedRoBERTaHeadless(HFEncoderModelArchitecture):
             "lm_head.head.weight": "lm_head.head.weight",
         }
     else:
-        _tied_weights_keys = ["embedding.weight"]
+        _tied_weights_keys = ["encoder.model.embedding.weight", "embedding.weight"]
 
     def __init__(
         self,
