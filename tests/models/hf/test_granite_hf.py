@@ -21,6 +21,8 @@ from fms.testing._internal.hf.model_test_suite import (
 from fms.testing._internal.model_test_suite import ModelFixtureMixin
 
 from ..test_granite import GraniteFixtures
+from packaging.version import Version
+from transformers import __version__ as tf_version
 
 
 class GraniteHFFixtures(ModelFixtureMixin, HFConfigFixtureMixin, HFModelFixtureMixin):
@@ -68,6 +70,22 @@ class TestGraniteHF(
     - model equivalency tests
     - model generation tests
     """
+
+    @pytest.mark.skipif(
+        Version(tf_version) >= Version("5.0.0"),
+        reason="Transformers latest versions have changed API signatures",
+    )
+    def test_hf_model_round_trip_equivalence(self, fms_hf_model, fms_hf_config):
+        pass
+
+    @pytest.mark.skipif(
+        Version(tf_version) >= Version("5.0.0"),
+        reason="Transformers latest versions have changed API signatures",
+    )
+    def test_hf_from_fms_and_hf_from_pretrained_equivalence(
+        self, tmpdir_factory, model, fms_hf_model
+    ):
+        pass
 
     # implementation of abstract property _hf_specific_params
     _hf_specific_params = ["eos_token_id", "bos_token_id"]
