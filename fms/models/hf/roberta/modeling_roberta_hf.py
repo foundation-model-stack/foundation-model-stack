@@ -123,16 +123,6 @@ class HFAdaptedRoBERTaHeadless(HFEncoderModelArchitecture):
     config_class = HFAdaptedRoBERTaConfig
     base_model_prefix = "hf_adapted_roberta"
 
-    ## Address transformers API changes
-    if Version(tf_version) >= Version("5.0.0"):
-        _tied_weights_keys = {
-            "encoder.model.embedding.weight": "roberta.embeddings.word_embeddings.weight",
-            "embedding.weight": "embedding.weight",
-            "lm_head.head.weight": "lm_head.head.weight",
-        }
-    else:
-        _tied_weights_keys = ["encoder.model.embedding.weight", "embedding.weight"]
-
     def __init__(
         self,
         config: PretrainedConfig,
@@ -154,6 +144,24 @@ class HFAdaptedRoBERTaHeadless(HFEncoderModelArchitecture):
 
 
 class HFAdaptedRoBERTaForMaskedLM(MaskedLMHeadMixin, HFAdaptedRoBERTaHeadless):
+    ## Address transformers API changes
+    if Version(tf_version) >= Version("5.0.0"):
+        _keys_to_ignore_on_load_missing = [
+            r"encoder\.model\.embedding\.weight",
+        ]
+        _tied_weights_keys = {
+            "encoder.model.embedding.weight": "embedding.weight",
+            "lm_head.head.weight": "embedding.weight",
+        }
+    else:
+        _keys_to_ignore_on_load_missing = [
+            r"encoder\.model\.embedding\.weight",
+            r"lm_head\.head\.weight",
+        ]
+        # For transformers < 5.0.0, set to empty list to disable automatic tying
+        # We'll handle tying manually in load_state_dict
+        _tied_weights_keys = []
+
     def __init__(self, config: HFAdaptedRoBERTaConfig, *args, **kwargs):
         super().__init__(
             config=config,
@@ -162,6 +170,78 @@ class HFAdaptedRoBERTaForMaskedLM(MaskedLMHeadMixin, HFAdaptedRoBERTaHeadless):
             *args,
             **kwargs,
         )
+
+    def state_dict(self, *args, **kwargs):
+        """Override to exclude tied weights from state_dict.
+
+        This prevents saving duplicate embeddings. The tied weights will be
+        restored during load via load_state_dict().
+        """
+        state_dict = super().state_dict(*args, **kwargs)
+        # Remove encoder.model.embedding.weight as it's tied to embedding.weight
+        if "encoder.model.embedding.weight" in state_dict:
+            del state_dict["encoder.model.embedding.weight"]
+        # For transformers < 5.0.0, also remove lm_head.head.weight if tied
+        if Version(tf_version) < Version("5.0.0") and self.config.tie_word_embeddings:
+            if "lm_head.head.weight" in state_dict:
+                del state_dict["lm_head.head.weight"]
+        return state_dict
+
+    def load_state_dict(self, state_dict, strict=True, assign=False):
+        """Override to handle missing encoder.model.embedding.weight and ensure weights are tied after loading"""
+        # If encoder.model.embedding.weight is missing from state_dict, that's expected
+        # because we exclude it in state_dict(). It will be tied to embedding.weight.
+        # So we load with strict=False first
+        result = super().load_state_dict(state_dict, strict=False, assign=assign)
+
+        # Filter out the expected missing keys from the result
+        expected_missing_keys = ["encoder.model.embedding.weight"]
+        if self.config.tie_word_embeddings:
+            expected_missing_keys.append("lm_head.head.weight")
+        filtered_missing_keys = [
+            k for k in result.missing_keys if k not in expected_missing_keys
+        ]
+
+        # Manually tie the weights after loading
+        if self.config.tie_word_embeddings:
+            # Tie encoder.model.embedding to embedding
+            if (
+                hasattr(self, "encoder")
+                and hasattr(self.encoder, "model")
+                and hasattr(self.encoder.model, "embedding")
+            ):
+                self.encoder.model.embedding.weight = self.embedding.weight
+            # Tie lm_head to embedding
+            if hasattr(self, "lm_head") and hasattr(self.lm_head, "head"):
+                self.lm_head.head.weight = self.embedding.weight
+
+        # If strict mode was requested and there are still missing/unexpected keys, raise an error
+        if strict and (filtered_missing_keys or result.unexpected_keys):
+            error_msgs = []
+            if result.unexpected_keys:
+                error_msgs.append(
+                    f"Unexpected key(s) in state_dict: {', '.join(result.unexpected_keys)}"
+                )
+            if filtered_missing_keys:
+                error_msgs.append(
+                    f"Missing key(s) in state_dict: {', '.join(filtered_missing_keys)}"
+                )
+            if error_msgs:
+                raise RuntimeError(
+                    f"Error(s) in loading state_dict for {self.__class__.__name__}:\n\t"
+                    + "\n\t".join(error_msgs)
+                )
+
+        # Manually tie encoder.model.embedding.weight to embedding.weight after loading
+        if self.encoder.model.embedding is not self.embedding:
+            self.encoder.model.embedding.weight = self.embedding.weight
+
+        # If tie_word_embeddings is True, also tie lm_head to embedding
+        # Only tie if lm_head.head.weight was not in the state_dict (respects separate weights)
+        if self.config.tie_word_embeddings and "lm_head.head.weight" not in state_dict:
+            self.lm_head.head.weight = self.embedding.weight
+
+        return result
 
     @classmethod
     def _hf_model_from_fms(
