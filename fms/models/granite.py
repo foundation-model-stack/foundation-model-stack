@@ -67,12 +67,10 @@ class GraniteBlock(nn.Module):
             self.config.emb_dim,
             eps=self.config.norm_eps,
         )
-        self.ln.compile()
         self.ff_ln = torch.nn.RMSNorm(
             self.config.emb_dim,
             eps=self.config.norm_eps,
         )
-        self.ff_ln.compile()
 
         if self.config.kvheads == 0:
             kvheads = self.config.nheads
@@ -93,7 +91,6 @@ class GraniteBlock(nn.Module):
             linear_config=self.config.linear_config,
             scale_factor=self.config.attention_multiplier,
         )
-        self.attn.compile()
 
         self.ff_sub_layer = GatedLinearUnit(
             self.config.emb_dim,
@@ -105,7 +102,6 @@ class GraniteBlock(nn.Module):
             fused=self.config.fused_weights,
             linear_config=self.config.linear_config,
         )
-        self.ff_sub_layer.compile()
 
         if self.config.p_dropout != 0:
             self.dropout = nn.Dropout(self.config.p_dropout)
@@ -199,6 +195,7 @@ class GraniteHeadless(nn.Module):
         for i in range(self.config.nlayers):
             block: nn.Module = GraniteBlock(self.config, self.rot_emb)
             block = self.distributed_strategy.distribute_layer(block, i)
+            block.compile()
             layers.append(block)
         self.layers = nn.ModuleList(layers)
 

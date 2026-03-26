@@ -609,8 +609,6 @@ class MultiHeadAttention(nn.Module):
         if self.p_dropout:
             self.attn_dropout = nn.Dropout(self.p_dropout)
         self.position_encoder = position_encoder
-        if self.position_encoder is not None:
-            self.position_encoder.adjusted_qk = torch.compile(self.position_encoder.adjusted_qk)
 
     def reset_parameters(self):
         for m in self.modules():
