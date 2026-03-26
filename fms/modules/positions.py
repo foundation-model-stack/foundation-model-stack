@@ -277,8 +277,8 @@ class RotaryEmbedding(PositionEncoder):
                         torch.sin(freqs),
                         torch.cos(freqs),
                     ],
-                    dim=2,
-                ).view(*freqs.size(), 2, 2).permute([0, 2, 3, 1]).contiguous().to(dtype=torch.float16) # S, D/2, 2, 2 -> S, 2, 2, D/2
+                    dim=1,
+                ).view(freqs.shape[0], 2, 2, freqs.shape[1]).contiguous().to(dtype=torch.float16) # S, D/2, 2, 2 -> S, 2, 2, D/2
 
         return alpha
 
