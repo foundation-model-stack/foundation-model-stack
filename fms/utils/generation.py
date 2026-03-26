@@ -8,6 +8,7 @@ import torch
 import torch.nn.functional as F
 
 from fms.modules.ssm import SSMCacheUnit
+import math
 
 
 logger = logging.getLogger(__name__)
@@ -187,6 +188,7 @@ def generate(
         ]
     ] = None,
     extra_kwargs: Optional[MutableMapping[str, Any]] = None,
+    decode_multiple: int = 4,  # NEW PARAMETER
 ):
     """
     A trivial generate function that can be used for validation/testing in
@@ -245,6 +247,26 @@ def generate(
         input_ids.shape[0], dtype=torch.bool, device=input_ids.device
     )
 
+    prefill = True
+    prompt_length  = input_ids.shape[1]
+    print(f'{input_ids=}, ,{input_ids.shape=}, {prompt_length=}')
+    if decode_multiple > 1:
+        
+        padded_len = math.ceil(prompt_length / decode_multiple) * decode_multiple
+        if padded_len > prompt_length:
+            padding = torch.zeros(
+                input_ids.shape[0], 
+                padded_len - prompt_length, 
+                dtype=input_ids.dtype, 
+                device=input_ids.device
+            )
+            input_ids = torch.cat([input_ids, padding], dim=1)
+            print(f'{padding.shape=}')
+        print(f'{padded_len=}, {input_ids.shape=}')
+
+    prompt_offset = (input_ids[0] == 0).sum().item()  # Count leading zeros
+    kwargs["prompt_offset"] = prompt_offset
+
     result = input_ids
     next_input = input_ids
     kwargs["past_key_value_states"] = None
@@ -254,7 +276,11 @@ def generate(
     if "last_n_tokens" not in kwargs and kwargs.get("only_last_token", False):
         kwargs["last_n_tokens"] = 1
 
-    prompt_length = input_ids.shape[1]
+    if decode_multiple > 1:
+        current_cache_len = input_ids.shape[1]
+        print(f'{current_cache_len=}, {decode_multiple=}')
+        tokens_in_current_block = 0
+        filling_input_ids = None  
 
     if timing != "":
         times: List[float] = []
@@ -263,25 +289,93 @@ def generate(
     eos_reached: bool = False
 
     for i in range(max_new_tokens):
-        input_ids = next_input[:, -max_seq_len:]
+        # NEW: Determine if we're in batched decode mode
+        if decode_multiple > 1 and i > 0:  # Skip prefill (i=0)
+            is_filling = 0 < tokens_in_current_block < decode_multiple
+            print(f'{i=}, {tokens_in_current_block=}')
+            
+            if is_filling:
+                print(f'is_filling {i=}, {is_filling=}, {tokens_in_current_block=}, {current_cache_len=}, {decode_multiple=}')
+                # FILLING MODE: Custom mask/position_ids
+                print(f'{input_ids=}, {input_ids.shape=}')
+                 # Build input_ids with the actual generated tokens + padding
+                if tokens_in_current_block == 1:
+                    # First token in block: use the newly generated token + padding
+                    filling_input_ids = torch.cat([                                                             
+                        result[:, current_cache_len - decode_multiple:current_cache_len - decode_multiple + 1], 
+                        torch.zeros(result.shape[0], decode_multiple - 1,                                       
+                                dtype=result.dtype, device=result.device)                                       
+                    ], dim=1) 
+                else:
+                    # Update the filling_input_ids with the new token at the correct position
+                    filling_input_ids[:, tokens_in_current_block - 1] = result[:, current_cache_len - decode_multiple + tokens_in_current_block - 1]  
+                
+                input_ids = filling_input_ids
+                print(f'{input_ids=},{input_ids.shape=} , {filling_input_ids=}')
+                
+                kwargs["is_filling_mode"] = True
+                kwargs["tokens_in_current_block"] = tokens_in_current_block
+                kwargs["cache_update_position"] = current_cache_len - decode_multiple + tokens_in_current_block - 1
+                
+                # Custom mask
+                mask = create_filling_mask(
+                    input_ids.shape[0], 
+                    current_cache_len, 
+                    tokens_in_current_block, 
+                    decode_multiple,
+                    prompt_offset=kwargs.get("prompt_offset", 0),
+                    device=input_ids.device,
+                    active_position=tokens_in_current_block - 1  # NEW: 0-indexed position
+                )
+                kwargs["mask"] = mask
+                kwargs["last_n_tokens"] = decode_multiple
+            else:
+                
+                # EXPANSION MODE: Create proper mask for n tokens
+                if prefill:
+                    input_ids = result[:, -decode_multiple:]
+                    prefill = False
+                else:
+                    input_ids = result[:, current_cache_len - decode_multiple:current_cache_len]
+                print(f'EXPANSION {i=},{is_filling=}, {input_ids=}, {input_ids.shape=}, {input_ids.shape=}')
+                kwargs["is_filling_mode"] = False
+                kwargs.pop("cache_update_position", None)
+                
+                # Create expansion mask.
+                # Expansion concatenates decode_multiple new KVs, so total KV len = current_cache_len + decode_multiple.
+                
+                mask = torch.zeros(
+                    (input_ids.shape[0], decode_multiple, current_cache_len + decode_multiple),
+                    device=input_ids.device
+                )
+                prompt_offset = kwargs.get("prompt_offset", 0)
+                if prompt_offset > 0:
+                    # Mask out padded prompt tokens
+                    mask[:, :, :prompt_offset] = -torch.inf
 
-        # prepare any padding keyword arguments
-        # iteration 0 is the prefill step (cache has not been filled yet), so no need to extend the mask/position_ids
-        if i > 0:
-            kwargs = __update_padding_kwargs(use_cache, kwargs)
+                for j in range(decode_multiple):
+                    attend_up_to = current_cache_len - decode_multiple + j + 1
+                    mask[:, j, attend_up_to:] = -torch.inf
+
+                print(f'final expansion {mask.shape=}, {mask=}')
+                kwargs["mask"] = mask
+                
+                kwargs["last_n_tokens"] = decode_multiple
+        else:
+            input_ids = next_input[:, -max_seq_len:]
+            # prepare any padding keyword arguments
+            # iteration 0 is the prefill step (cache has not been filled yet), so no need to extend the mask/position_ids
+
+            print(f'decode token = 1 {input_ids=}')
+            if i > 0:
+                print(f'i > 0 call update_padding_kwargs')
+                kwargs = __update_padding_kwargs(use_cache, kwargs)
+            kwargs["last_n_tokens"] = kwargs.get("last_n_tokens", 1)
 
         if prepare_model_inputs_hook is not None:
             input_ids, kwargs = prepare_model_inputs_hook(i, input_ids, kwargs)
 
-        print(f"Input ids device: {input_ids.device}")
-        # with PrintingMode():
-        alpha = model.base_model.rot_emb.compute_freqs_cis(torch.device("spyre"), max_seq_len)
-        kwargs["selected_freqs"] = model.base_model.rot_emb.cached_freqs[0][alpha][kwargs["position_ids"]].contiguous().to("spyre")
-        print(f"{kwargs['mask']=}")
-        kwargs["mask"] = kwargs["mask"].to(dtype=torch.float16).to("spyre")
-        kwargs["last_n_tokens"] = 0
-        output = model(input_ids.to(device="spyre"), **kwargs)
-        print("DEBUG! Forward pass over")
+        output = model(input_ids, **kwargs)
         if use_cache:
             logits, past_key_value_states = output
             # TODO: this should go away when reduce-overhead issues are fixed, or
@@ -298,9 +392,18 @@ def generate(
         else:
             logits = output
 
-        # always get last now since we still have this dim
-        logits = logits.to("cpu")[:, -1, :]
-        print(f"Output logits: {logits}")
+        if decode_multiple > 1 and i > 0 and is_filling:
+            if is_filling:
+                # Filling: extract from active position
+                logits = logits.to('cpu')
+                print(f'is_filling {logits=}')
+        elif decode_multiple > 1 and i > 0 and not is_filling:
+                # Expansion: extract from first position
+                logits = logits.to('cpu')
+                print(f'expansion {logits=}')
+        else:
+            logits = logits.to("cpu")[:, -1, :]
+            print(f'{logits=}')
 
         if do_sample:
             # get logits from last value in sequence nad scale
@@ -312,14 +415,45 @@ def generate(
             probs = F.softmax(logits, dim=-1)
             next_val = torch.multinomial(probs, num_samples=1)
         else:
-            next_val = torch.argmax(logits, dim=-1).unsqueeze(0).t()
+            if decode_multiple > 1 and i > 0:
+                next_val = torch.argmax(logits, dim=-1)  # [batch, decode_multiple]                                                                    
+                print(f'decode multiple > 1 {next_val=}')                                                                                    
+            else:                                                                                                                                      
+                next_val = torch.argmax(logits, dim=-1).unsqueeze(0).t()
+                print(f'not decode multiple > 1 {next_val=}')
 
         if post_iteration_hook is not None:
             next_val, kwargs = post_iteration_hook(
                 i + prompt_length, logits, next_val, kwargs
             )
 
-        result = torch.cat((result, next_val), dim=-1)
+        # accumulate tokens
+        if decode_multiple > 1 and i > 0:
+            if is_filling:
+                # Update in-place
+                block_start = current_cache_len - decode_multiple
+                result[:, block_start + tokens_in_current_block] = next_val[:, tokens_in_current_block - 1]
+                tokens_in_current_block += 1
+                print(f'is_filling decode_multiple > 1 and i > 0 {result=}')
+                print(f'is_filling decode_multiple > 1 and i > 0 {tokens_in_current_block=}')
+            else:
+                valid_token = next_val[:, -1:]  # shape [batch, 1]
+                padding = torch.zeros(
+                    result.shape[0],
+                    decode_multiple - 1,
+                    dtype=result.dtype,
+                    device=result.device
+                )
+                new_block = torch.cat([valid_token, padding], dim=1)
+                result = torch.cat([result, new_block], dim=1)
+                current_cache_len += decode_multiple
+                tokens_in_current_block = 1
+                print(f'expansion decode_multiple > 1 and i > 0 {result=}')
+                print(f'expansion decode_multiple > 1 and i > 0 {tokens_in_current_block=}')
+        elif decode_multiple == 1:
+            # Original decode of single token
+            result = torch.cat((result, next_val), dim=-1)
+            print(f'decode_multiple=1 {result=}')
 
         # avoid continuing to generate if all have reached EOS
         if eos_token_id is not None:
@@ -329,6 +463,7 @@ def generate(
 
         if use_cache:
             next_input = next_val
+            print(f'{next_input=}')
         else:
             next_input = result
 
@@ -398,3 +533,32 @@ def trim_prefix(result: torch.Tensor, pad_token_id: int = 0) -> torch.Tensor:
     bos_index = first_real_token_idx[0][0]
     result = result[bos_index + 1 :]
     return result
+
+
+def create_filling_mask(batch_size, cache_len, tokens_in_current_block, decode_multiple,
+                        prompt_offset=0, device="cpu", active_position=None):
+    """
+    Progressive masking pattern for filling mode.
+    """
+    mask = torch.full((batch_size, decode_multiple, cache_len), -torch.inf, device=device)
+
+    block_start = cache_len - decode_multiple
+
+    # Only create valid mask for the active position
+    if active_position is not None:
+        i = active_position
+        attend_up_to = block_start + i + 1
+        mask[:, i, :attend_up_to] = 0.0          # open the attend window                           
+        if prompt_offset > 0:                                                                       
+            mask[:, i, :prompt_offset] = -torch.inf  # re-mask the pads on top   
+        print(f'create_filling_mask() if active postition is not None {mask=}, {mask.shape=}')
+    else:
+        # Fallback: create masks for all positions (less efficient)
+        for i in range(decode_multiple):
+            if prompt_offset > 0:
+                mask[:, i, :prompt_offset] = -torch.inf
+            attend_up_to = block_start + i + 1
+            mask[:, i, :attend_up_to] = 0.0
+            mask[:, i, attend_up_to:] = -torch.inf
+            print(f'create_filling_mask()  else {mask=}, {mask.shape=}')
+    return mask

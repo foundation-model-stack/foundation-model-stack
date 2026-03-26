@@ -161,6 +161,9 @@ class SDPAAttentionKwargs(AttentionKwargs):
     mask: NotRequired[torch.Tensor]
     attn_algorithm: NotRequired[str]
     is_causal_mask: bool
+    is_filling_mode: NotRequired[bool]  # NEW
+    cache_update_position: NotRequired[int]  # NEW
+    tokens_in_current_block: NotRequired[int]  # NEW
 
 
 def _sdpa_store_op(
@@ -173,15 +176,29 @@ def _sdpa_store_op(
     keys = keys.transpose(2, 1)
     values = values.transpose(2, 1)
 
+    is_filling = attn_kwargs.get("is_filling_mode", False)
+    update_pos = attn_kwargs.get("cache_update_position", None)
+
     if key_cache is not None and value_cache is not None and value_cache.numel() > 0:
-        key_cache_result = torch.cat((key_cache, keys), dim=2)
-        value_cache_result = torch.cat((value_cache, values), dim=2)
-        return (
-            key_cache_result,
-            value_cache_result,
-            key_cache_result,
-            value_cache_result,
-        )
+        if is_filling and update_pos is not None:
+            # In-place update at specific position
+            token_index = attn_kwargs.get("tokens_in_current_block", 0) - 1
+            key_cache[:, :, update_pos:update_pos+1, :] = keys[:, :, token_index:token_index+1, :]
+            value_cache[:, :, update_pos:update_pos+1, :] = values[:, :, token_index:token_index+1, :]
+
+            print(f'{is_filling=}, {key_cache.shape=}, {value_cache.shape=}')
+            return key_cache, value_cache, key_cache, value_cache
+        else:
+            # Normal concatenation
+            key_cache_result = torch.cat((key_cache, keys), dim=2)
+            value_cache_result = torch.cat((value_cache, values), dim=2)
+            print(f'{is_filling=}, {key_cache_result.shape=}, {value_cache_result.shape=}')
+            return (
+                key_cache_result,
+                value_cache_result,
+                key_cache_result,
+                value_cache_result,
+            )
     else:
         return (keys, values, keys, values)
 
@@ -669,7 +686,7 @@ class MultiHeadAttention(nn.Module):
         # You want to apply rotary embeddings pre-cache
         if self.position_encoder is not None:
             queries, keys = self.position_encoder.adjusted_qk(
-                queries, keys, past_kv_state=past_key_value_state, selected_freqs=attn_kwargs["selected_freqs"], use_cache=use_cache
+                queries, keys, past_kv_state=past_key_value_state, use_cache=use_cache
             )
 
         attn_compute_dict = get_attention_type(**attn_kwargs)

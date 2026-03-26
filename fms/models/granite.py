@@ -378,7 +378,7 @@ class Granite(nn.Module):
 
         output = gather_outputs(output, last_n_tokens, **attn_kwargs)
         self.head.weight = torch.nn.Parameter(self.head.weight.to("cpu"))
-        preds = self.head(output.to("cpu")).to("spyre")
+        preds = self.head(output.to("cpu")).to("cpu") #TODO: restore to spyre
         preds = preds / self.config.logits_scaling
 
         if use_cache:
