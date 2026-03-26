@@ -76,4 +76,7 @@ class HFAdaptedGraniteConfig(PretrainedConfig):
     def from_fms_config(cls, config: GraniteConfig, **hf_kwargs):
         config_dict = config.as_dict()
         config_dict["pad_token_id"] = config_dict.pop("pad_id")
+        # Set tie_word_embeddings based on tie_heads from FMS config if not explicitly provided
+        if "tie_word_embeddings" not in hf_kwargs:
+            hf_kwargs["tie_word_embeddings"] = config_dict.get("tie_heads", False)
         return cls.from_dict(config_dict, **hf_kwargs)
