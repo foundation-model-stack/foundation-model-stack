@@ -115,19 +115,36 @@ class HFAdaptedLLaMAForCausalLM(LMHeadModelLMHeadMixin, HFAdaptedLLaMAHeadless):
     ## Address transformers API changes
     if Version(tf_version) >= Version("5.0.0"):
         _keys_to_ignore_on_load_missing = [
-            r"lm_head.weight",
             r"decoder\.model\.embedding\.weight",
         ]
         _tied_weights_keys = {
-            "lm_head.weight": "embedding.weight",
             "decoder.model.embedding.weight": "embedding.weight",
         }
     else:
-        _keys_to_ignore_on_load_missing = [r"lm_head.weight"]
-        _tied_weights_keys = ["embedding.weight", "lm_head.weight"]
+        _keys_to_ignore_on_load_missing = [r"decoder\.model\.embedding\.weight"]
+        # Declare that decoder.model.embedding.weight is tied to embedding.weight
+        _tied_weights_keys = ["decoder.model.embedding.weight"]
 
     def __init__(self, config: HFAdaptedLLaMAConfig, *args, **kwargs):
         super().__init__(config=config, bias=False, *args, **kwargs)
+
+        # Ensure padding token embeddings are zeroed after initialization
+        if (
+            hasattr(self, "embedding")
+            and self.config.pad_token_id is not None
+            and self.config.pad_token_id >= 0
+        ):
+            with torch.no_grad():
+                if hasattr(self.embedding, "weight"):
+                    self.embedding.weight[self.config.pad_token_id].zero_()
+                if (
+                    hasattr(self, "decoder")
+                    and hasattr(self.decoder, "model")
+                    and hasattr(self.decoder.model, "embedding")
+                ):
+                    self.decoder.model.embedding.weight[
+                        self.config.pad_token_id
+                    ].zero_()
 
     def _get_empty_lm_head(self, bias: bool) -> nn.Module:
         """Override to use LinearClassificationHead instead of nn.Linear"""
@@ -157,17 +174,47 @@ class HFAdaptedLLaMAForCausalLM(LMHeadModelLMHeadMixin, HFAdaptedLLaMAHeadless):
         else:
             self.lm_head = new_embeddings
 
-    def _tie_weights(self):
-        """Tie weights at runtime - FMS models save lm_head.weight, so use that as the source"""
-        if self.config.tie_word_embeddings:
-            self.embedding.weight = self.lm_head.weight
-        self.decoder.model.embedding.weight = self.embedding.weight
+    def state_dict(self, *args, **kwargs):
+        """Override to exclude decoder.model.embedding.weight from state_dict.
+
+        This prevents saving duplicate embeddings. The decoder's embedding will be
+        tied to the main embedding during load via tie_weights().
+        """
+        state_dict = super().state_dict(*args, **kwargs)
+        # Remove decoder.model.embedding.weight as it's tied to embedding.weight
+        if "decoder.model.embedding.weight" in state_dict:
+            del state_dict["decoder.model.embedding.weight"]
+        return state_dict
 
     def load_state_dict(self, state_dict, strict=True, assign=False):
-        """Override to ensure weights are tied after loading"""
-        result = super().load_state_dict(state_dict, strict=strict, assign=assign)
-        # Re-tie weights after loading to ensure correct references
-        self._tie_weights()
+        """Override to handle missing decoder.model.embedding.weight and ensure weights are tied after loading"""
+        # If decoder.model.embedding.weight is missing from state_dict, that's expected
+        # because we exclude it in state_dict(). It will be tied to embedding.weight.
+        # So we load with strict=False first
+        result = super().load_state_dict(state_dict, strict=False, assign=assign)
+
+        # Filter out the expected missing key from the result
+        filtered_missing_keys = [
+            k for k in result.missing_keys if k != "decoder.model.embedding.weight"
+        ]
+
+        # If strict mode was requested and there are still missing/unexpected keys, raise an error
+        if strict and (filtered_missing_keys or result.unexpected_keys):
+            error_msgs = []
+            if result.unexpected_keys:
+                error_msgs.append(
+                    f"Unexpected key(s) in state_dict: {', '.join(result.unexpected_keys)}"
+                )
+            if filtered_missing_keys:
+                error_msgs.append(
+                    f"Missing key(s) in state_dict: {', '.join(filtered_missing_keys)}"
+                )
+            if error_msgs:
+                raise RuntimeError(
+                    f"Error(s) in loading state_dict for {self.__class__.__name__}:\n\t"
+                    + "\n\t".join(error_msgs)
+                )
+
         return result
 
     @classmethod
