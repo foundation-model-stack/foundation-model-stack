@@ -12,6 +12,7 @@ from packaging.version import Version
 
 device = "cpu"
 
+
 def _get_inputs(processor, model_path):
     from PIL import Image
 
@@ -35,9 +36,7 @@ def _get_inputs(processor, model_path):
     text = processor.apply_chat_template(
         messages, tokenize=False, add_generation_prompt=True
     )
-    inputs = processor(text=text, images=images, return_tensors="pt").to(
-        device
-    )
+    inputs = processor(text=text, images=images, return_tensors="pt").to(device)
     return inputs
 
 
@@ -94,7 +93,9 @@ def test_ministral3_8b_equivalence():
     from transformers import AutoProcessor
 
     if Version(tf_version) < Version("5.0.0"):
-        warnings.warn(f"This test requires transformers version > 5.0.0. Installed version {tf_version}. Skipping this test!")
+        warnings.warn(
+            f"This test requires transformers version > 5.0.0. Installed version {tf_version}. Skipping this test!"
+        )
         return
 
     # for now, this test won't be run, but it has been verified

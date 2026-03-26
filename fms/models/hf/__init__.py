@@ -39,6 +39,7 @@ from transformers import __version__ as tf_version
 # Register Ministral3 if transformers is less than 5.x.x
 if Version(tf_version) < Version("5.0.0"):
     from transformers import AutoConfig, AutoModelForCausalLM
+
     # This applies FMS serialization adapters (RoPE fix, weight fusion, etc.)
     from fms.models.hf.ministral3 import (
         HFAdaptedMinistral3Config,
@@ -48,7 +49,9 @@ if Version(tf_version) < Version("5.0.0"):
 
     # Register FMS adapter
     AutoConfig.register("ministral3", HFAdaptedMinistral3Config)
-    AutoModelForCausalLM.register(HFAdaptedMinistral3Config, HFAdaptedMinistral3ForCausalLM)
+    AutoModelForCausalLM.register(
+        HFAdaptedMinistral3Config, HFAdaptedMinistral3ForCausalLM
+    )
 
 """
 mapping from an FMS model to its equivalent HF-Adapted model
@@ -74,6 +77,7 @@ try:
         HFAdaptedMinistral3ForCausalLM,
         HFAdaptedMinistral3Headless,
     )
+
     _fms_to_hf_adapt_map[Ministral3Text] = HFAdaptedMinistral3ForCausalLM
     _fms_to_hf_adapt_map[Ministral3] = HFAdaptedMinistral3ForCausalLM
 except ImportError:
@@ -94,6 +98,7 @@ _headless_models = [
 # Add Ministral3 headless if available
 try:
     from fms.models.hf.ministral3 import HFAdaptedMinistral3Headless
+
     _headless_models.append(HFAdaptedMinistral3Headless)
 except ImportError:
     pass
@@ -112,6 +117,7 @@ _causal_lm_models = [
 # Add Ministral3 causal LM if available
 try:
     from fms.models.hf.ministral3 import HFAdaptedMinistral3ForCausalLM
+
     _causal_lm_models.append(HFAdaptedMinistral3ForCausalLM)
 except ImportError:
     pass
