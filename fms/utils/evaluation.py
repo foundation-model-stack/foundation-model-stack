@@ -106,12 +106,7 @@ class FMSEvalHarnessLM(LM):
 
         # getting the pad token id and default to EOS token id if no pad id found
         # Note: is safe because padding tokens are never attended since masked out
-        pad_id = getattr(self.tokenizer, "pad_token_id", None)
-        if pad_id is None:
-            logger.warning(
-                "pad_token_id not provided for this tokenizer, defaulting to eos_token_id."
-            )
-            pad_id = getattr(self.tokenizer, "eos_token_id")
+        pad_id = getattr(self.tokenizer, "pad_token_id", getattr(self.tokenizer, "eos_token_id"))
 
         # looping over batches
         for start in tqdm.tqdm(range(0, len(indexed_requests), self.batch_size)):
