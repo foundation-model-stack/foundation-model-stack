@@ -21,8 +21,6 @@ from fms.testing._internal.hf.model_test_suite import (
 from fms.testing._internal.model_test_suite import ModelFixtureMixin
 
 from ..test_granite import GraniteFixtures
-from packaging.version import Version
-from transformers import __version__ as tf_version
 
 
 class GraniteHFFixtures(ModelFixtureMixin, HFConfigFixtureMixin, HFModelFixtureMixin):
