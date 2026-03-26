@@ -186,7 +186,6 @@ def _sdpa_store_op(
         return (keys, values, keys, values)
 
 
-@torch.compile(dynamic=False)
 def _sdpa_compute_op(
     query: torch.Tensor,
     key_cache: torch.Tensor,
