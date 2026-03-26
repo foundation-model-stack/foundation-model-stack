@@ -186,6 +186,7 @@ def _sdpa_store_op(
         return (keys, values, keys, values)
 
 
+@torch.compile(dynamic=False)
 def _sdpa_compute_op(
     query: torch.Tensor,
     key_cache: torch.Tensor,
@@ -215,9 +216,9 @@ def _sdpa_compute_op(
     expansion = nheads // kvheads
     # k/v: b h l d
     if expansion != 1:
-        keys_e = key_cache.to("cpu").unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2).to("spyre")
+        keys_e = key_cache.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
         values_e = (
-            value_cache.to("cpu").unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2).to("spyre")
+            value_cache.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
         )
     else:
         keys_e = key_cache
@@ -245,7 +246,7 @@ def _sdpa_compute_op(
 
     # TODO: when updating to 2.7, use enable_gqa and stop using keys_e and values_e
     attn = F.scaled_dot_product_attention(
-        queries.to("cpu").to("spyre"),
+        queries,
         keys_e,
         values_e,
         attn_mask=attn_mask if isinstance(attn_mask, torch.Tensor) else None,

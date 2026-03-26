@@ -300,6 +300,7 @@ def generate(
 
         # always get last now since we still have this dim
         logits = logits.to("cpu")[:, -1, :]
+        print(f"Output logits: {logits}")
 
         if do_sample:
             # get logits from last value in sequence nad scale
