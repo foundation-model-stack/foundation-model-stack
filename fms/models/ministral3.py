@@ -50,12 +50,11 @@ class Ministral3TextConfig(ModelConfig):
     max_expected_seq_len: int = 262144
     kvheads: int = 8
     norm_eps: float = 1e-5
-    sliding_window: int = 4000  # null for ministral3 in the model itself
+    sliding_window: Optional[int] = None  # null for ministral3 in the model itself
     rope_parameters: Dict = field(default_factory=dict)
     fused_weights: bool = True  # FMS Specific -- For CPU/GPU = T, AIU = F
     pad_id: int = -1  # borrowed from granite, we do need it
     linear_config: Optional[Mapping[str, Any]] = None  # To support quantization
-
 
 @dataclass
 class Ministral3Config(ModelConfig):
