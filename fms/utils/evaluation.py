@@ -19,20 +19,14 @@ logger = logging.getLogger(__name__)
 # Module-level cache for tokenization to avoid self being part of cache key
 @functools.lru_cache(maxsize=None)
 def _tokenize_cached(
-    tokenizer: tokenizers.BaseTokenizer,
-    context: str,
-    continuation: str
+    tokenizer: tokenizers.BaseTokenizer, context: str, continuation: str
 ) -> Tuple[List[int], List[int], List[int]]:
     """Tokenize context and continuation strings - cached implementation."""
-    context_ids = tokenizer.convert_tokens_to_ids(
-        tokenizer.tokenize(context)
-    )
+    context_ids = tokenizer.convert_tokens_to_ids(tokenizer.tokenize(context))
     if not len(context_ids):
         context_ids = [tokenizer.bos_token_id]
 
-    continuation_ids = tokenizer.convert_tokens_to_ids(
-        tokenizer.tokenize(continuation)
-    )
+    continuation_ids = tokenizer.convert_tokens_to_ids(tokenizer.tokenize(continuation))
     input_ids = context_ids + continuation_ids[:-1]
 
     return context_ids, continuation_ids, input_ids
@@ -69,7 +63,7 @@ class FMSEvalHarnessLM(LM):
         self, context: str, continuation: str
     ) -> Tuple[List[int], List[int], List[int]]:
         """Tokenize context and continuation strings.
-        
+
         Cached to avoid redundant tokenization when sorting requests by length.
         """
         return _tokenize_cached(self.tokenizer, context, continuation)
@@ -106,7 +100,9 @@ class FMSEvalHarnessLM(LM):
 
         # getting the pad token id and default to EOS token id if no pad id found
         # Note: is safe because padding tokens are never attended since masked out
-        pad_id = getattr(self.tokenizer, "pad_token_id", getattr(self.tokenizer, "eos_token_id"))
+        pad_id = getattr(
+            self.tokenizer, "pad_token_id", getattr(self.tokenizer, "eos_token_id")
+        )
 
         # looping over batches
         for start in tqdm.tqdm(range(0, len(indexed_requests), self.batch_size)):
