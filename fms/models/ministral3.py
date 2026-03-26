@@ -24,8 +24,8 @@ from fms.modules.attention import (
 )
 from fms.modules.feedforward import GatedLinearUnit
 from fms.modules.layernorm import LayerNormParameterized
-from fms.modules.positions import CachedYarnRotaryEmbedding, RotaryEmbedding
-from fms.models.mistral import MistralBlock
+from fms.modules.positions import CachedYarnRotaryEmbedding
+from fms.models.mistral import Mistral, MistralBlock, MistralHeadless
 from fms.models.mistral3 import Mistral3, Mistral3MultiModalProjector
 from fms.models.pixtral_vision import PixtralVisionConfig, PixtralVisionModel
 
@@ -56,6 +56,7 @@ class Ministral3TextConfig(ModelConfig):
     pad_id: int = -1  # borrowed from granite, we do need it
     linear_config: Optional[Mapping[str, Any]] = None  # To support quantization
 
+
 @dataclass
 class Ministral3Config(ModelConfig):
     """
@@ -83,7 +84,7 @@ _14b_config = Ministral3Config()
 # =============== Modeling ======================
 
 
-class Ministral3Headless(nn.Module):
+class Ministral3Headless(MistralHeadless):
     def __init__(
         self,
         config: Ministral3TextConfig,
@@ -184,52 +185,8 @@ class Ministral3Headless(nn.Module):
         ):
             self.rot_emb.compute_freqs_cis(device, self.config.max_expected_seq_len)
 
-    def forward(
-        self,
-        x_in,
-        position_ids=None,
-        past_key_value_states=None,
-        use_cache=False,
-        **attn_kwargs: Unpack[AttentionKwargs],
-    ):
-        # Embed the given vocabulary indices using the given attention mask, with pre-/post-norm and dropout as specified
-        # x_in: batch_size x seq_len
-        # mask: batch_size x seq_len x seq_len
-        # bias: nheads x seq_len x seq_len
-        if past_key_value_states is None or len(past_key_value_states) == 0:
-            past_key_value_states = [None for _ in range(len(self.layers))]
 
-        if x_in.dim() == 2:  # input is not already embedded
-            x_in = self.embedding(x_in)
-
-        # this is the output cache for all the decoder layers
-        present_key_value_states = []
-
-        for i, layer in enumerate(self.layers):
-            output = layer(
-                x=x_in,
-                position_ids=position_ids,
-                past_key_value_state=past_key_value_states[i],
-                use_cache=use_cache,
-                **attn_kwargs,
-            )
-
-            if use_cache:
-                x_in, present_key_value_state = output
-                present_key_value_states.append(present_key_value_state)
-
-            else:
-                x_in = output
-
-        dec_out = x_in
-        dec_out = self.dec_norm(dec_out)
-        if self.config.p_dropout:
-            dec_out = self.dropout(dec_out)
-
-        return dec_out, present_key_value_states
-
-
-class Ministral3Text(nn.Module):
+class Ministral3Text(Mistral):
     def __init__(
         self,
         config: Optional[Ministral3TextConfig] = None,
@@ -255,51 +212,6 @@ class Ministral3Text(nn.Module):
 
     def get_config(self) -> Ministral3TextConfig:
         return self.config
-
-    def reset_parameters(self):
-        self.head.weight.data.normal_(
-            0,
-            1 / math.sqrt(math.sqrt(self.config.emb_dim * self.config.src_vocab_size)),
-        )
-        self.base_model.reset_parameters()
-
-    def post_init(self):
-        # if this model ties weights, they are tied here
-        if self.config.tie_heads:
-            # handle assignment of non-meta weights to meta parameters
-            if self.head.weight.device == torch.device("meta"):
-                self.head.weight = self.base_model.embedding.weight
-            else:
-                self.base_model.embedding.weight = self.head.weight
-
-        self.base_model.post_init()
-
-    def forward(
-        self,
-        x: torch.LongTensor,
-        position_ids: Optional[torch.LongTensor] = None,
-        past_key_value_states: Optional[Tuple[torch.FloatTensor,]] = None,
-        use_cache: bool = False,
-        last_n_tokens: int = 0,
-        **attn_kwargs: Unpack[AttentionKwargs],
-    ):
-        get_attention_type(**attn_kwargs)["validate_attn_kwargs"](
-            input_ids=x,
-            position_ids=position_ids,
-            past_key_value_states=past_key_value_states,
-            **attn_kwargs,
-        )
-        output, cache = self.base_model(
-            x, position_ids, past_key_value_states, use_cache, **attn_kwargs
-        )
-
-        output = gather_outputs(output, last_n_tokens, **attn_kwargs)
-        preds = self.head(output)
-
-        if use_cache:
-            return preds, cache
-        else:
-            return preds
 
 
 class Ministral3(Mistral3):
