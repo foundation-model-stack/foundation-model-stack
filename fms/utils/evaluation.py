@@ -1,5 +1,6 @@
 from typing import List, Tuple
 
+import functools
 import logging
 import time
 import torch
@@ -13,6 +14,28 @@ from torch import nn
 from fms.utils import tokenizers
 
 logger = logging.getLogger(__name__)
+
+
+# Module-level cache for tokenization to avoid self being part of cache key
+@functools.lru_cache(maxsize=None)
+def _tokenize_cached(
+    tokenizer: tokenizers.BaseTokenizer,
+    context: str,
+    continuation: str
+) -> Tuple[List[int], List[int], List[int]]:
+    """Tokenize context and continuation strings - cached implementation."""
+    context_ids = tokenizer.convert_tokens_to_ids(
+        tokenizer.tokenize(context)
+    )
+    if not len(context_ids):
+        context_ids = [tokenizer.bos_token_id]
+
+    continuation_ids = tokenizer.convert_tokens_to_ids(
+        tokenizer.tokenize(continuation)
+    )
+    input_ids = context_ids + continuation_ids[:-1]
+
+    return context_ids, continuation_ids, input_ids
 
 
 @register_model("fms")
@@ -45,18 +68,11 @@ class FMSEvalHarnessLM(LM):
     def _tokenize(
         self, context: str, continuation: str
     ) -> Tuple[List[int], List[int], List[int]]:
-        context_ids = self.tokenizer.convert_tokens_to_ids(
-            self.tokenizer.tokenize(context)
-        )
-        if not len(context_ids):
-            context_ids = [self.tokenizer.bos_token_id]
-
-        continuation_ids = self.tokenizer.convert_tokens_to_ids(
-            self.tokenizer.tokenize(continuation)
-        )
-        input_ids = context_ids + continuation_ids[:-1]
-
-        return context_ids, continuation_ids, input_ids
+        """Tokenize context and continuation strings.
+        
+        Cached to avoid redundant tokenization when sorting requests by length.
+        """
+        return _tokenize_cached(self.tokenizer, context, continuation)
 
     def loglikelihood(
         self,
