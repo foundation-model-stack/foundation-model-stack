@@ -84,13 +84,13 @@ _14b_config = Ministral3Config()
 # =============== Modeling ======================
 
 
-class Ministral3Headless(MistralHeadless):
+class Ministral3Headless(MistralHeadless, nn.Module):
     def __init__(
         self,
         config: Ministral3TextConfig,
         distributed_strategy: DistributedStrategy = NoOpStrategy,
     ):
-        super(Ministral3Headless, self).__init__()
+        nn.Module.__init__(self)
         self.config = config
         self.distributed_strategy = distributed_strategy
 
@@ -186,14 +186,14 @@ class Ministral3Headless(MistralHeadless):
             self.rot_emb.compute_freqs_cis(device, self.config.max_expected_seq_len)
 
 
-class Ministral3Text(Mistral):
+class Ministral3Text(Mistral, nn.Module):
     def __init__(
         self,
         config: Optional[Ministral3TextConfig] = None,
         distributed_strategy: DistributedStrategy = NoOpStrategy,
         **kwargs,
     ):
-        super(Ministral3Text, self).__init__()
+        nn.Module.__init__(self)
         if config is not None:
             self.config = config
         else:
