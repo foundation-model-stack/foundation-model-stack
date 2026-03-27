@@ -365,7 +365,7 @@ def generate(
         else:
             logits = output
 
-        if decode_multiple > 1 and i >= 0:
+        if decode_multiple > 1:
             logits = logits.to('cpu')
         else:
             logits = logits.to("cpu")[:, -1, :]
@@ -380,7 +380,7 @@ def generate(
             probs = F.softmax(logits, dim=-1)
             next_val = torch.multinomial(probs, num_samples=1)
         else:
-            if decode_multiple > 1 and i >= 0:
+            if decode_multiple > 1:
                 next_val = torch.argmax(logits, dim=-1)  # [batch, decode_multiple]                                                                                   
             else:                                                                                                                                      
                 next_val = torch.argmax(logits, dim=-1).unsqueeze(0).t()
