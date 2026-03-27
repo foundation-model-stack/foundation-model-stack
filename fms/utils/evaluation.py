@@ -98,12 +98,6 @@ class FMSEvalHarnessLM(LM):
 
         results_with_idx: List[Tuple[int, Tuple[float, bool]]] = []
 
-        # getting the pad token id and default to EOS token id if no pad id found
-        # Note: is safe because padding tokens are never attended since masked out
-        pad_id = getattr(
-            self.tokenizer, "pad_token_id", getattr(self.tokenizer, "eos_token_id")
-        )
-
         # looping over batches
         for start in tqdm.tqdm(range(0, len(indexed_requests), self.batch_size)):
             batch = indexed_requests[start : start + self.batch_size]
@@ -124,12 +118,14 @@ class FMSEvalHarnessLM(LM):
                 input_ids_list.append(torch.tensor(input_ids_raw, dtype=torch.long))
                 orig_indices.append(orig_idx)
 
-            # pad inputs ids
+            # pad input ids with token id 0 to create a rectangular batch tensor
+            # Note: we can use any token id here as the padding part of the logits
+            # will be cut during post-processing before computing the log likelihood
             max_len = max(x.size(0) for x in input_ids_list)
 
             input_ids_batch: torch.Tensor = torch.full(
                 (len(batch), max_len),
-                pad_id,
+                0,
                 dtype=torch.long,
                 device=self.device,
             )
