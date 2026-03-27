@@ -368,6 +368,28 @@ def build_mistral3_params(config: PretrainedConfig) -> dict:
     return config_params
 
 
+def build_qwen3_embeddings_params(config: PretrainedConfig) -> dict:
+    """Param builder for mapping Qwen3ForCausalLM to FMS."""
+    config_params = {
+        "norm_eps": config.rms_norm_eps,
+        "bos_token_id": config.bos_token_id,
+        "eos_token_id": config.eos_token_id,
+        "initializer_range": config.initializer_range,
+        "activation_fn": config.hidden_act,
+        "emb_dim": config.hidden_size,
+        "max_expected_seq_len": config.max_position_embeddings,
+        "kvheads": config.num_key_value_heads,
+        "p_dropout": config.attention_dropout,
+        "rope_base": config.rope_theta,
+        "head_dim": getattr(
+            config, "head_dim", config.hidden_size // config.num_attention_heads
+        ),
+    }
+    return model_params_with_common_opts(
+        config, config_params, inner_dim=config.intermediate_size
+    )
+
+
 def model_params_with_common_opts(
     config: PretrainedConfig, config_params: dict, inner_dim: int
 ) -> dict:
