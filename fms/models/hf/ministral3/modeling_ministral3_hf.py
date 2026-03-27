@@ -6,7 +6,9 @@ from transformers.modeling_outputs import BaseModelOutputWithPastAndCrossAttenti
 
 from fms.models.hf.lm_head_mixins import LMHeadModelLMHeadMixin
 from fms.models.hf.modeling_hf_adapter import HFDecoder, HFDecoderModelArchitecture
-from fms.models.hf.ministral3.configuration_ministral3_hf import HFAdaptedMinistral3Config
+from fms.models.hf.ministral3.configuration_ministral3_hf import (
+    HFAdaptedMinistral3Config,
+)
 from fms.models.ministral3 import Ministral3Text, Ministral3TextConfig
 
 
@@ -62,21 +64,21 @@ class HFAdaptedMinistral3Headless(HFDecoderModelArchitecture):
     ):
         if decoder is None or embedding is None:
             # Create FMS model from config
-            if hasattr(config, 'to_fms_config'):
+            if hasattr(config, "to_fms_config"):
                 text_config = config.to_fms_config()
             else:
                 # Fallback: create config from dict
                 params = config.to_dict()
                 text_config = Ministral3TextConfig(
-                    src_vocab_size=params.get('vocab_size', 131072),
-                    emb_dim=params.get('hidden_size', 5120),
-                    nheads=params.get('num_attention_heads', 32),
-                    nlayers=params.get('num_hidden_layers', 40),
-                    kvheads=params.get('num_key_value_heads', 8),
-                    head_dim=params.get('head_dim', 128),
-                    max_expected_seq_len=params.get('max_position_embeddings', 262144),
-                    norm_eps=params.get('rms_norm_eps', 1e-5),
-                    pad_id=params.get('pad_token_id', -1),
+                    src_vocab_size=params.get("vocab_size", 131072),
+                    emb_dim=params.get("hidden_size", 5120),
+                    nheads=params.get("num_attention_heads", 32),
+                    nlayers=params.get("num_hidden_layers", 40),
+                    kvheads=params.get("num_key_value_heads", 8),
+                    head_dim=params.get("head_dim", 128),
+                    max_expected_seq_len=params.get("max_position_embeddings", 262144),
+                    norm_eps=params.get("rms_norm_eps", 1e-5),
+                    pad_id=params.get("pad_token_id", -1),
                 )
 
             model = Ministral3Text(text_config)
@@ -97,7 +99,6 @@ class HFAdaptedMinistral3Headless(HFDecoderModelArchitecture):
         import os
         from pathlib import Path
         from transformers import AutoConfig
-        from fms import models
         from fms.utils import serialization
 
         # Load config
@@ -110,6 +111,7 @@ class HFAdaptedMinistral3Headless(HFDecoderModelArchitecture):
         if not os.path.exists(model_path):
             # Download from HuggingFace Hub
             from huggingface_hub import snapshot_download
+
             model_path = snapshot_download(
                 repo_id=pretrained_model_name_or_path,
                 allow_patterns=["*.safetensors", "*config.json"],
@@ -117,7 +119,7 @@ class HFAdaptedMinistral3Headless(HFDecoderModelArchitecture):
             )
 
         # Convert HF config to FMS config
-        if hasattr(config, 'to_fms_config'):
+        if hasattr(config, "to_fms_config"):
             fms_text_config = config.to_fms_config()
         else:
             fms_text_config = Ministral3TextConfig()
@@ -146,7 +148,7 @@ class HFAdaptedMinistral3Headless(HFDecoderModelArchitecture):
             decoder=fms_model,
             embedding=fms_model.base_model.embedding,
             *args,
-            **kwargs
+            **kwargs,
         )
 
     def _prepare_inputs_for_generation(
@@ -166,9 +168,11 @@ class HFAdaptedMinistral3Headless(HFDecoderModelArchitecture):
             position_ids = attention_mask.long().cumsum(-1)
 
         # Add more cached rope freqs if over cached number
-        if hasattr(self.decoder.model, 'rot_emb'):
+        if hasattr(self.decoder.model, "rot_emb"):
             max_expected_len = input_ids.shape[1] + torch.max(position_ids)
-            if max_expected_len > self.decoder.model.rot_emb.max_seq_len_cached.get(input_ids.device, 0):
+            if max_expected_len > self.decoder.model.rot_emb.max_seq_len_cached.get(
+                input_ids.device, 0
+            ):
                 self.decoder.model.rot_emb.compute_freqs_cis(
                     input_ids.device, max_expected_len
                 )
@@ -183,23 +187,21 @@ class HFAdaptedMinistral3Headless(HFDecoderModelArchitecture):
         }
 
 
-class HFAdaptedMinistral3ForCausalLM(LMHeadModelLMHeadMixin, HFAdaptedMinistral3Headless):
+class HFAdaptedMinistral3ForCausalLM(
+    LMHeadModelLMHeadMixin, HFAdaptedMinistral3Headless
+):
     """Ministral3 with LM head for causal language modeling"""
 
     def __init__(self, config: PretrainedConfig, *args, **kwargs):
         decoder = kwargs.pop("decoder", None)
         lm_head = None
 
-        if decoder is not None and hasattr(decoder, 'head'):
+        if decoder is not None and hasattr(decoder, "head"):
             lm_head = decoder.head
 
         super().__init__(
-            config=config,
-            decoder=decoder,
-            bias=False,
-            lm_head=lm_head,
-            *args,
-            **kwargs
+            config=config, decoder=decoder, bias=False, lm_head=lm_head, *args, **kwargs
         )
+
 
 # Made with Bob

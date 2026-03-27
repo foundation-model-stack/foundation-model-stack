@@ -29,7 +29,7 @@ class HFAdaptedMinistral3Config(PretrainedConfig):
         eos_token_id=2,
         tie_word_embeddings=False,
         rope_parameters=None,
-        **kwargs
+        **kwargs,
     ):
         self.vocab_size = vocab_size
         self.hidden_size = hidden_size
@@ -49,13 +49,12 @@ class HFAdaptedMinistral3Config(PretrainedConfig):
             bos_token_id=bos_token_id,
             eos_token_id=eos_token_id,
             tie_word_embeddings=tie_word_embeddings,
-            **kwargs
+            **kwargs,
         )
 
     def to_fms_config(self):
         """Convert to FMS Ministral3TextConfig"""
         from fms.models.ministral3 import Ministral3TextConfig
-
 
         return Ministral3TextConfig(
             src_vocab_size=self.vocab_size,
@@ -71,4 +70,3 @@ class HFAdaptedMinistral3Config(PretrainedConfig):
             pad_id=self.pad_token_id,
             rope_parameters=self.rope_parameters,
         )
-

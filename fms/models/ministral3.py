@@ -1,9 +1,7 @@
-import math
 import logging
 import re
 from dataclasses import dataclass, field
-from typing import Any, Dict, Mapping, Optional, Tuple
-from typing_extensions import Unpack
+from typing import Any, Dict, Mapping, Optional
 
 import torch
 import torch.nn as nn
@@ -16,11 +14,8 @@ from fms.distributed.strategy import (
 
 from fms.utils.config import ModelConfig
 from fms.utils import serialization
-from fms.utils.headless import gather_outputs
 from fms.modules.attention import (
-    AttentionKwargs,
     MultiHeadAttention,
-    get_attention_type,
 )
 from fms.modules.feedforward import GatedLinearUnit
 from fms.modules.layernorm import LayerNormParameterized
