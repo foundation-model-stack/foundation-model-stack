@@ -161,9 +161,9 @@ class SDPAAttentionKwargs(AttentionKwargs):
     mask: NotRequired[torch.Tensor]
     attn_algorithm: NotRequired[str]
     is_causal_mask: bool
-    is_filling_mode: NotRequired[bool]  # NEW
-    cache_update_position: NotRequired[int]  # NEW
-    tokens_in_current_block: NotRequired[int]  # NEW
+    is_filling_mode: NotRequired[bool]
+    cache_update_position: NotRequired[int]
+    tokens_in_current_block: NotRequired[int]
 
 
 def _sdpa_store_op(
@@ -185,14 +185,11 @@ def _sdpa_store_op(
             token_index = attn_kwargs.get("tokens_in_current_block", 0) - 1
             key_cache[:, :, update_pos:update_pos+1, :] = keys[:, :, token_index:token_index+1, :]
             value_cache[:, :, update_pos:update_pos+1, :] = values[:, :, token_index:token_index+1, :]
-
-            print(f'{is_filling=}, {key_cache.shape=}, {value_cache.shape=}')
             return key_cache, value_cache, key_cache, value_cache
         else:
             # Normal concatenation
             key_cache_result = torch.cat((key_cache, keys), dim=2)
             value_cache_result = torch.cat((value_cache, values), dim=2)
-            print(f'{is_filling=}, {key_cache_result.shape=}, {value_cache_result.shape=}')
             return (
                 key_cache_result,
                 value_cache_result,
