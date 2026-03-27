@@ -281,6 +281,7 @@ def generate(
         start_time = time.time()
 
     eos_reached: bool = False
+    is_filling = 0
 
     for i in range(max_new_tokens):
         if decode_multiple > 1 and i > 0:  # Skip prefill (i=0)
@@ -334,6 +335,9 @@ def generate(
 
                 kwargs["mask"] = mask
                 kwargs["last_n_tokens"] = decode_multiple
+        elif decode_multiple > 1 and i == 0: # iter 0 is just for setup
+            input_ids = next_input[:, -max_seq_len:]
+            kwargs["last_n_tokens"] = decode_multiple
         else:
             input_ids = next_input[:, -max_seq_len:]
             # iteration 0 is the prefill step (cache has not been filled yet), so no need to extend mask/position_ids
@@ -361,7 +365,7 @@ def generate(
         else:
             logits = output
 
-        if decode_multiple > 1 and i > 0:
+        if decode_multiple > 1 and i >= 0:
             logits = logits.to('cpu')
         else:
             logits = logits.to("cpu")[:, -1, :]
@@ -376,7 +380,7 @@ def generate(
             probs = F.softmax(logits, dim=-1)
             next_val = torch.multinomial(probs, num_samples=1)
         else:
-            if decode_multiple > 1 and i > 0:
+            if decode_multiple > 1 and i >= 0:
                 next_val = torch.argmax(logits, dim=-1)  # [batch, decode_multiple]                                                                                   
             else:                                                                                                                                      
                 next_val = torch.argmax(logits, dim=-1).unsqueeze(0).t()
