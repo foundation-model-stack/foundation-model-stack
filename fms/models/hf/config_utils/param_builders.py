@@ -6,7 +6,7 @@ to the model at init time.
 
 # Used in Llava Next for Granite vision
 from fms.models.siglip_vision import SiglipVisionConfig
-from fms.models.granite import GraniteConfig
+from fms.models.llama import LLaMAConfig
 
 # Used for mistral3
 from fms.models.pixtral_vision import PixtralVisionConfig
@@ -216,12 +216,60 @@ def build_siglip_vision_params(config: PretrainedConfig) -> dict:
         "layer_norm_eps": vision_cfg.layer_norm_eps,
         "attention_dropout": vision_cfg.attention_dropout,
     }
+    # Most HF SigLIP configs do not use NaViT position bucketing. If HF exposes an explicit
+    # attribute, honor it, otherwise default to False.
+    config_params["use_navit_position_buckets"] = bool(
+        getattr(vision_cfg, "use_navit_position_buckets", False)
+    )
     # Don't build common opts for the vision encoder
+    return config_params
+
+
+def build_siglip_idefics3_vision_params(config: PretrainedConfig) -> dict:
+    """
+    Param builder for SigLIP when used as the vision tower for Idefics3/SmolVLM.
+
+    HF Idefics3VisionConfig (transformers) does not currently expose an explicit
+    `use_navit_position_buckets` boolean, so we infer it using a small heuristic.
+    If HF adds an explicit flag in the future, we will prefer that.
+    """
+    vision_cfg = config.vision_config
+    config_params = build_siglip_vision_params(config)
+
+    explicit_use_navit = getattr(vision_cfg, "use_navit_position_buckets", None)
+    if explicit_use_navit is not None:
+        config_params["use_navit_position_buckets"] = bool(explicit_use_navit)
+        return config_params
+
+    model_type = getattr(vision_cfg, "model_type", None)
+    parent_model_type = getattr(config, "model_type", None)
+    enable_idefics3_heuristics = model_type in (
+        "idefics3",
+        "idefics3_vision",
+    ) or parent_model_type in (
+        "idefics3",
+        "smolvlm",  # SmolVLM is Idefics3-derived in HF; treat it as idefics3-like here.
+    )
+
+    use_navit = False
+    if enable_idefics3_heuristics:
+        # Some Idefics3/SmolVLM configs encode the NaViT usage in the model_type.
+        if model_type in ("idefics3", "idefics3_vision"):
+            use_navit = True
+        # Some Idefics3VisionConfig variants expose `max_image_size` as a distinguishing
+        # attribute for NaViT bucketing support. Keep this heuristic scoped to idefics3-like
+        # configs to avoid accidentally enabling NaViT for unrelated SigLIP variants.
+        elif getattr(vision_cfg, "max_image_size", None) is not None:
+            use_navit = True
+
+    config_params["use_navit_position_buckets"] = use_navit
     return config_params
 
 
 def build_llava_next_params(config: PretrainedConfig) -> dict:
     """Param builder for mapping LlavaNextForConditionalGeneration to FMS."""
+    from fms.models.granite import GraniteConfig
+
     config_params = {
         "image_token_index": config.image_token_index,
         "image_grid_pinpoints": config.image_grid_pinpoints,
@@ -244,6 +292,47 @@ def build_llava_next_params(config: PretrainedConfig) -> dict:
     text_config_params = build_granite_params(config.text_config)
     config_params["text_config"] = GraniteConfig(**text_config_params)
     # Don't see common opts for the VLM; they'll generally be set in the LLM recursively
+    return config_params
+
+
+def build_idefics3_params(config: PretrainedConfig) -> dict:
+    """Param builder for mapping Idefics3ForConditionalGeneration (SmolVLM/Idefics3) to FMS."""
+    config_params: dict = {}
+
+    image_token_id = getattr(config, "image_token_id", None)
+    if image_token_id is not None:
+        config_params["image_token_id"] = int(image_token_id)
+
+    # Vision config (SigLIP)
+    vision_config_params = build_siglip_idefics3_vision_params(config)
+    config_params["vision_config"] = SiglipVisionConfig(**vision_config_params)
+
+    # Text config (LLaMA-like)
+    text_cfg = getattr(config, "text_config", None)
+    if text_cfg is None:
+        raise ValueError("Idefics3 config missing required text_config")
+    text_config_params = build_llama_params(text_cfg)
+    # Idefics3/SmolVLM uses a non-zero pad token; ensure it is propagated.
+    if getattr(text_cfg, "pad_token_id", None) is not None:
+        text_config_params["pad_id"] = int(text_cfg.pad_token_id)
+    config_params["text_config"] = LLaMAConfig(**text_config_params)
+
+    # Connector + packing parameters.
+    #
+    # SmolVLM/Idefics3 exposes the connector downsample as `pixel_shuffle_factor` on the *text_config*
+    # in HF (even though it affects how vision tokens are packed). We intentionally source it from
+    # `text_cfg` to match HF behavior.
+    pixel_shuffle_factor = getattr(text_cfg, "pixel_shuffle_factor", 4)
+    connector_scale = (
+        int(pixel_shuffle_factor) if pixel_shuffle_factor is not None else 4
+    )
+    config_params["connector_scale"] = connector_scale
+
+    image_size = config_params["vision_config"].image_size
+    patch_size = config_params["vision_config"].patch_size
+    patches_per_side = image_size // patch_size
+    config_params["image_span_len"] = (patches_per_side // connector_scale) ** 2
+
     return config_params
 
 
