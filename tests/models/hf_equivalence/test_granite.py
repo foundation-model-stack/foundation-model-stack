@@ -1,5 +1,4 @@
 import pytest
-import torch
 
 from fms.models import get_model
 from fms.models.hf import to_hf_api
