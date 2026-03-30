@@ -28,7 +28,6 @@ def test_as_fms_model_equivalency_for_decoder(model_id_or_path):
     fms_model = to_hf_api(
         fms_model,
         bos_token_id=hf_model.config.bos_token_id,
-        pad_token_id=hf_model.config.pad_token_id,
         eos_token_id=hf_model.config.eos_token_id,
     )
     hf_model = hf_model.eval()

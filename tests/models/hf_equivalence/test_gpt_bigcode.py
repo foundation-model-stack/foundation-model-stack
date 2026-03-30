@@ -36,7 +36,6 @@ def test_gptbigcode_equivalence():
         fms_model,
         bos_token_id=hf_model.config.bos_token_id,
         eos_token_id=hf_model.config.eos_token_id,
-        pad_token_id=hf_model.config.pad_token_id,
     )
 
     def count_parameters(m):
