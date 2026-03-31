@@ -12,7 +12,6 @@ from transformers import __version__ as tf_version
 @pytest.mark.slow
 def test_gptbigcode_equivalence():
     """Tests GPT BigCode equivalence with a known implementation. Takes approximately 1:11 on an mbp with M1 chip"""
-    import torch
     from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
 
     tokenizer = AutoTokenizer.from_pretrained("bigcode/gpt_bigcode-santacoder")
