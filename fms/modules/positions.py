@@ -707,19 +707,19 @@ class CachedYarnRotaryEmbedding(PositionEncoder):
         dev_idx = device.index
 
         # Initialize cache entries for this device if not present
-        if dev_idx not in self.cached_freqs:
-            self.cached_freqs[dev_idx] = None
         if dev_idx not in self.max_seq_len_cached:
             self.max_seq_len_cached[dev_idx] = 0
 
-        # Check if cache is empty (first time)
-        if self.cached_freqs[dev_idx] is None:
+        # Check if cache is empty (first time) or needs to be recomputed
+        if dev_idx not in self.cached_freqs:
             # Use scaled max_seq_len for cache size
             # This avoids a graph break from computing scaled_max_seq_len if not needed
-            scaled_max_seq_len = int(self.original_max_position_embeddings * self.scaling_factor)
+            scaled_max_seq_len = int(
+                self.original_max_position_embeddings * self.scaling_factor
+            )
             cache_size = max(max_seq_len, scaled_max_seq_len)
 
-            # Only recompute if we need a longer sequence than what's cached
+            # Only compute if we need a longer sequence than what's cached
             if cache_size > self.max_seq_len_cached[dev_idx]:
                 freqs = self.base ** (
                     torch.arange(0, self.dim, 2, device=device).float() / self.dim
@@ -732,13 +732,15 @@ class CachedYarnRotaryEmbedding(PositionEncoder):
                 low = math.floor(
                     self.dim
                     * math.log(
-                        self.original_max_position_embeddings / (self.beta_fast * 2 * math.pi)
+                        self.original_max_position_embeddings
+                        / (self.beta_fast * 2 * math.pi)
                     )
                 ) / (2 * math.log(self.base))
                 high = math.ceil(
                     self.dim
                     * math.log(
-                        self.original_max_position_embeddings / (self.beta_slow * 2 * math.pi)
+                        self.original_max_position_embeddings
+                        / (self.beta_slow * 2 * math.pi)
                     )
                 ) / (2 * math.log(self.base))
 
@@ -751,7 +753,8 @@ class CachedYarnRotaryEmbedding(PositionEncoder):
 
                 # Get n-dimensional rotational scaling corrected for extrapolation
                 linear_func = (
-                    torch.arange(self.dim // 2, dtype=torch.float32, device=device) - low
+                    torch.arange(self.dim // 2, dtype=torch.float32, device=device)
+                    - low
                 ) / (high - low)
 
                 # Compute ramp function (clamped linear interpolation)

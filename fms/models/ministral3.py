@@ -91,6 +91,7 @@ class Ministral3Headless(nn.Module):
     This approach ensures proper type checking with mypy while allowing code reuse
     through shared utility functions and modules (MistralBlock, etc.).
     """
+
     def __init__(
         self,
         config: Ministral3TextConfig,
@@ -261,6 +262,7 @@ class Ministral3Text(nn.Module):
     methods while maintaining a similar structure to Mistral. This approach ensures
     proper type checking with mypy.
     """
+
     def __init__(
         self,
         config: Optional[Ministral3TextConfig] = None,
@@ -292,6 +294,7 @@ class Ministral3Text(nn.Module):
         Reset model parameters. Re-implemented from Mistral to maintain functionality.
         """
         import math
+
         self.head.weight.data.normal_(
             0,
             1 / math.sqrt(math.sqrt(self.config.emb_dim * self.config.src_vocab_size)),
@@ -354,6 +357,7 @@ class Ministral3(Mistral3):
     Mistral3Config and Mistral. Type ignore comments are used where the types differ
     but are structurally compatible.
     """
+
     def __init__(
         self,
         config: Optional[Ministral3Config] = None,
