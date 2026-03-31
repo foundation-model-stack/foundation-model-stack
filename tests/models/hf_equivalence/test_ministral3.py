@@ -86,7 +86,7 @@ def _get_fms_model_output(model_path, inputs, max_new_tokens=6):
 
 
 @pytest.mark.slow
-def test_ministral3_8b_equivalence():
+def test_ministral3_14b_equivalence():
     from transformers import __version__ as tf_version
     from transformers import AutoProcessor
 
@@ -100,11 +100,10 @@ def test_ministral3_8b_equivalence():
     # if you would like to try this, set model_path to the HF model path
     # for ministral-3
 
-    model_path = "/path/to/mistralai/Ministral-3-14B-Reasoning-2512/"
-    # NOTE: Ministral-3-8B-Instruct-2512-BF16 model doesn't come with its own processor
-    # You can use mistralai/Ministral-3-14B-Reasoning-2512 in that case
+    # NOTE: Since ministral3-8b doesn't come with its own processor
+    # we are using 14B model here
+    model_path = "mistralai/Ministral-3-14B-Reasoning-2512"
 
-    # model_path = ""
     processor = AutoProcessor.from_pretrained(model_path)
 
     # Get inputs with the model path for system prompt loading
@@ -118,4 +117,4 @@ def test_ministral3_8b_equivalence():
 
 
 if __name__ == "__main__":
-    test_ministral3_8b_equivalence()
+    test_ministral3_14b_equivalence()
