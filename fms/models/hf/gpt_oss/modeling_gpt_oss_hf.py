@@ -108,7 +108,6 @@ class HFAdaptedGptOssHeadless(HFDecoderModelArchitecture):
         token_type_ids = kwargs.get("token_type_ids", None)
         # only last token for inputs_ids if past is defined in kwargs
 
-        print(f"{type(past_key_values)=}")
         if isinstance(past_key_values, DynamicCache):
             past_key_values = None
 
@@ -120,16 +119,9 @@ class HFAdaptedGptOssHeadless(HFDecoderModelArchitecture):
         attention_mask = kwargs.get("attention_mask", None)
         position_ids = kwargs.get("position_ids", None)
 
-        if position_ids is not None:
-            print("before mask")
-            print(f"position_ids: {position_ids.shape}")
-            print(position_ids)
-
         if attention_mask is not None and position_ids is None:
             # create position_ids on the fly for batch generation
             position_ids = attention_mask.long().cumsum(-1) - 1
-            print(f"position_ids: {position_ids.shape}")
-            print(position_ids)
 
             # Don't mask position_ids with 1, keep them as-is for padding tokens
             # The attention mask will handle padding separately
@@ -137,10 +129,6 @@ class HFAdaptedGptOssHeadless(HFDecoderModelArchitecture):
                 position_ids = position_ids[:, -1].unsqueeze(-1)
         else:
             position_ids = None
-
-        if position_ids is not None:
-            print(f"position_ids: {position_ids.shape}")
-            print(position_ids)
 
         # if `inputs_embeds` are passed, we only want to use them in the 1st generation step
         if inputs_embeds is not None and past_key_values is None:
