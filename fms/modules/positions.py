@@ -653,18 +653,20 @@ class CachedYarnRotaryEmbedding(PositionEncoder):
         return 0.1 * mscale * math.log(self.scaling_factor) + 1.0
 
     def _compute_cos_sin_cache(
-        self, inv_freq: torch.Tensor, device: torch.device
+        self, inv_freq: torch.Tensor, device: torch.device, max_seq_len: int
     ) -> torch.Tensor:
         """
         Compute the rotation matrix cache for the rotary embedding to avoid computing
         while doing the forward pass.
         Args:
             inv_freq: The precomputed inverse frequency tensor
+            device: The device to compute on
+            max_seq_len: Maximum sequence length to cache
         Returns:
             Rotation matrices with shape [max_pos, dim/2, 2, 2]
         """
         t = torch.arange(
-            int(self.original_max_position_embeddings * self.scaling_factor),
+            max_seq_len,
             device=device,
             dtype=torch.float32,
         )
@@ -688,77 +690,91 @@ class CachedYarnRotaryEmbedding(PositionEncoder):
 
     def compute_freqs_cis(self, device: torch.device, max_seq_len) -> None:
         """
-        Transfer pre-computed rotation matrices to the target device.
+        Compute and cache rotation matrices for the target device.
 
-        This method no longer computes cos/sin - those are pre-computed on CPU
-        during __init__. This method only handles device transfers.
+        This method computes cos/sin rotation matrices and caches them per device.
+        If the requested max_seq_len exceeds the cached length, it recomputes with
+        the new length.
 
         Args:
-            device: target device to transfer rotation matrices to
-            max_seq_len: maximum sequence length (must not exceed original_max_position_embeddings)
+            device: target device to compute rotation matrices on
+            max_seq_len: maximum sequence length for the model, if exceeded the cached freqs will be recomputed
         """
 
         if device == torch.device("meta"):
             return
 
-        if device.index in self.cached_freqs:
-            return
-
         dev_idx = device.index
 
-        freqs = self.base ** (
-            torch.arange(0, self.dim, 2, device=device).float() / self.dim
-        )
+        # Initialize cache entries for this device if not present
+        if dev_idx not in self.cached_freqs:
+            self.cached_freqs[dev_idx] = None
+        if dev_idx not in self.max_seq_len_cached:
+            self.max_seq_len_cached[dev_idx] = 0
 
-        inv_freq_extrapolation = 1.0 / freqs
-        inv_freq_interpolation = 1.0 / (self.scaling_factor * freqs)
+        # Check if cache is empty (first time)
+        if self.cached_freqs[dev_idx] is None:
+            # Use scaled max_seq_len for cache size
+            # This avoids a graph break from computing scaled_max_seq_len if not needed
+            scaled_max_seq_len = int(self.original_max_position_embeddings * self.scaling_factor)
+            cache_size = max(max_seq_len, scaled_max_seq_len)
 
-        # NOTE: math.floor and math.ceil being used here are referred to as "truncate" option
-        low = math.floor(
-            self.dim
-            * math.log(
-                self.original_max_position_embeddings / (self.beta_fast * 2 * math.pi)
-            )
-        ) / (2 * math.log(self.base))
-        high = math.ceil(
-            self.dim
-            * math.log(
-                self.original_max_position_embeddings / (self.beta_slow * 2 * math.pi)
-            )
-        ) / (2 * math.log(self.base))
+            # Only recompute if we need a longer sequence than what's cached
+            if cache_size > self.max_seq_len_cached[dev_idx]:
+                freqs = self.base ** (
+                    torch.arange(0, self.dim, 2, device=device).float() / self.dim
+                )
 
-        # Make sure values are not going outside range
-        low = max(low, 0)
-        high = min(high, self.dim - 1)
+                inv_freq_extrapolation = 1.0 / freqs
+                inv_freq_interpolation = 1.0 / (self.scaling_factor * freqs)
 
-        if low == high:
-            high += 0.001  # Prevent singularity
+                # NOTE: math.floor and math.ceil being used here are referred to as "truncate" option
+                low = math.floor(
+                    self.dim
+                    * math.log(
+                        self.original_max_position_embeddings / (self.beta_fast * 2 * math.pi)
+                    )
+                ) / (2 * math.log(self.base))
+                high = math.ceil(
+                    self.dim
+                    * math.log(
+                        self.original_max_position_embeddings / (self.beta_slow * 2 * math.pi)
+                    )
+                ) / (2 * math.log(self.base))
 
-        # Get n-dimensional rotational scaling corrected for extrapolation
-        linear_func = (
-            torch.arange(self.dim // 2, dtype=torch.float32, device=device) - low
-        ) / (high - low)
+                # Make sure values are not going outside range
+                low = max(low, 0)
+                high = min(high, self.dim - 1)
 
-        # Compute ramp function (clamped linear interpolation)
-        ramp_func = torch.clamp(linear_func, 0, 1)
+                if low == high:
+                    high += 0.001  # Prevent singularity
 
-        # inv_freq_extrapolation_factor is the weight for extrapolation
-        # (1 - ramp_func) means: use extrapolation for low frequencies (< low)
-        # ramp_func means: use interpolation for high frequencies (> high)
-        inv_freq_extrapolation_factor = 1 - ramp_func
+                # Get n-dimensional rotational scaling corrected for extrapolation
+                linear_func = (
+                    torch.arange(self.dim // 2, dtype=torch.float32, device=device) - low
+                ) / (high - low)
 
-        # Blend between interpolation and extrapolation
-        # Note: extrapolation_factor is applied to the extrapolation frequencies
-        inv_freq = (
-            inv_freq_interpolation * (1 - inv_freq_extrapolation_factor)
-            + inv_freq_extrapolation
-            * inv_freq_extrapolation_factor
-            * self.extrapolation_factor
-        )
+                # Compute ramp function (clamped linear interpolation)
+                ramp_func = torch.clamp(linear_func, 0, 1)
 
-        # Cache the computed rotation matrices for this device
-        freqs_cis = self._compute_cos_sin_cache(inv_freq, device)
-        self.cached_freqs[dev_idx] = freqs_cis
+                # inv_freq_extrapolation_factor is the weight for extrapolation
+                # (1 - ramp_func) means: use extrapolation for low frequencies (< low)
+                # ramp_func means: use interpolation for high frequencies (> high)
+                inv_freq_extrapolation_factor = 1 - ramp_func
+
+                # Blend between interpolation and extrapolation
+                # Note: extrapolation_factor is applied to the extrapolation frequencies
+                inv_freq = (
+                    inv_freq_interpolation * (1 - inv_freq_extrapolation_factor)
+                    + inv_freq_extrapolation
+                    * inv_freq_extrapolation_factor
+                    * self.extrapolation_factor
+                )
+
+                # Cache the computed rotation matrices for this device
+                freqs_cis = self._compute_cos_sin_cache(inv_freq, device, cache_size)
+                self.cached_freqs[dev_idx] = freqs_cis
+                self.max_seq_len_cached[dev_idx] = cache_size
 
     def adjusted_qk(
         self,
