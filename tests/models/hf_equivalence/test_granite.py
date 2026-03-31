@@ -38,11 +38,21 @@ def test_granite_8b_equivalence():
 
     prompt = """q: how are you? a: I am good. How about you? q: What is the weather like today? a:"""
 
+    use_cache = False
+
+    if Version(tf_version) >= Version("5.0.0"):
+        use_cache = True
+    else:
+        # for versions > 4.57.x and < 5.0.0, use_cache is disabled;
+        # this way we are retro compatible with parameter called cache_position
+        # https://huggingface.co/docs/transformers/cache_explanation#cache-position
+        use_cache = False
+
     generator_hf = pipeline(
         task="text-generation",
         model=hf_model,
         tokenizer=tokenizer,
-        use_cache=True,
+        use_cache=use_cache,
         max_new_tokens=20,
         do_sample=False,
     )
@@ -50,7 +60,7 @@ def test_granite_8b_equivalence():
         task="text-generation",
         model=hf_model_fms,
         tokenizer=tokenizer,
-        use_cache=True,
+        use_cache=use_cache,
         max_new_tokens=20,
         do_sample=False,
     )
