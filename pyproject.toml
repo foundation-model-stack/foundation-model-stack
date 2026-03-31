@@ -36,20 +36,23 @@ classifiers=[
 ]
 dependencies = [
   "torch >= 2.5.1",
+  "transformers==4.57.6",
 ]
 
 [project.optional-dependencies]
-hf = ["transformers==4.48.3"]
+hf = ["transformers==4.57.6"]
 dev = [
 "mypy==1.15.0",
 "mypy-extensions==1.0.0",
 "pytest==8.3.4",
 "sentencepiece==0.2.0",
-"transformers==4.55.4",
 "pyarrow-stubs==17.16",
 "types-requests==2.32.0.20241016",
+"tqdm==4.67.1",
+"types-tqdm",
 "lm_eval==0.4.7",
-"peft==0.14.0"
+"peft==0.14.0",
+"fms-model-optimizer>=0.8.1",
 ]
 
 [tool.setuptools_scm]
@@ -63,3 +66,9 @@ include = ["fms", "fms*", "tests/models*"]
 Homepage = "https://github.com/foundation-model-stack/foundation-model-stack"
 Repository = "https://github.com/foundation-model-stack/foundation-model-stack"
 Issues = "https://github.com/foundation-model-stack/foundation-model-stack/issues"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+addopts = ["--import-mode=importlib"]
