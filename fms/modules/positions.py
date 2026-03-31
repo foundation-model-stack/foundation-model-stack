@@ -629,10 +629,12 @@ class CachedYarnRotaryEmbedding(PositionEncoder):
         self.extrapolation_factor = extrapolation_factor
         self.beta_fast = beta_fast  # low
         self.beta_slow = beta_slow  # high
-        self.llama_4_scaling_beta = llama_4_scaling_beta
+        self.llama_4_scaling_beta = (
+            llama_4_scaling_beta if llama_4_scaling_beta is not None else 1
+        )
 
         self.cached_freqs: dict[int, torch.Tensor] = {}
-        self.max_seq_len_cached = {}
+        self.max_seq_len_cached: MutableMapping[int, int] = {}
 
         # magnitude scaling factor
         self.mscale = float(self._yarn_get_mscale(mscale))
@@ -684,7 +686,7 @@ class CachedYarnRotaryEmbedding(PositionEncoder):
         )
         return scaling.unsqueeze(-1)
 
-    def compute_freqs_cis(self, device: torch.device, max_seq_len: int) -> None:
+    def compute_freqs_cis(self, device: torch.device, max_seq_len) -> None:
         """
         Transfer pre-computed rotation matrices to the target device.
 

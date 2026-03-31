@@ -1,7 +1,8 @@
 import logging
 import re
 from dataclasses import dataclass, field
-from typing import Any, Dict, Mapping, Optional
+from typing import Any, Dict, Mapping, Optional, Tuple
+from typing_extensions import Unpack
 
 import torch
 import torch.nn as nn
@@ -15,12 +16,13 @@ from fms.distributed.strategy import (
 from fms.utils.config import ModelConfig
 from fms.utils import serialization
 from fms.modules.attention import (
+    AttentionKwargs,
     MultiHeadAttention,
 )
 from fms.modules.feedforward import GatedLinearUnit
 from fms.modules.layernorm import LayerNormParameterized
 from fms.modules.positions import CachedYarnRotaryEmbedding
-from fms.models.mistral import Mistral, MistralBlock, MistralHeadless
+from fms.models.mistral import MistralBlock
 from fms.models.mistral3 import Mistral3, Mistral3MultiModalProjector
 from fms.models.pixtral_vision import PixtralVisionConfig, PixtralVisionModel
 
@@ -79,14 +81,23 @@ _14b_config = Ministral3Config()
 # =============== Modeling ======================
 
 
-class Ministral3Headless(MistralHeadless, nn.Module):
+class Ministral3Headless(nn.Module):
+    """
+    Headless Ministral3 model (without the language modeling head).
+
+    This class does not inherit from MistralHeadless to avoid type conflicts
+    between Ministral3TextConfig and MistralConfig. Instead, it re-implements
+    the necessary methods while maintaining a similar structure to MistralHeadless.
+    This approach ensures proper type checking with mypy while allowing code reuse
+    through shared utility functions and modules (MistralBlock, etc.).
+    """
     def __init__(
         self,
         config: Ministral3TextConfig,
         distributed_strategy: DistributedStrategy = NoOpStrategy,
     ):
-        nn.Module.__init__(self)
-        self.config = config
+        super().__init__()
+        self.config: Ministral3TextConfig = config
         self.distributed_strategy = distributed_strategy
 
         self.embedding = nn.Embedding(
@@ -100,8 +111,8 @@ class Ministral3Headless(MistralHeadless, nn.Module):
 
         self.rot_emb = CachedYarnRotaryEmbedding(
             dim=self.config.head_dim,
-            base=self.config.rope_parameters.get("rope_theta"),
-            scaling_factor=config.rope_parameters.get("factor"),
+            base=self.config.rope_parameters.get("rope_theta"),  # type: ignore[arg-type]
+            scaling_factor=config.rope_parameters.get("factor"),  # type: ignore[arg-type]
             **rope_params,
         )
         for device in set(
@@ -115,7 +126,8 @@ class Ministral3Headless(MistralHeadless, nn.Module):
 
         layers = []
         for i in range(self.config.nlayers):
-            block: nn.Module = MistralBlock(self.config, self.rot_emb)
+            # MistralBlock expects MistralConfig, but Ministral3TextConfig has compatible fields
+            block: nn.Module = MistralBlock(self.config, self.rot_emb)  # type: ignore[arg-type]
             block = self.distributed_strategy.distribute_layer(block, i)
             layers.append(block)
         self.layers = nn.ModuleList(layers)
@@ -157,20 +169,29 @@ class Ministral3Headless(MistralHeadless, nn.Module):
         cached_freqs: dict[Optional[torch.device], dict[int, torch.Tensor]],
         max_seq_len_cached: dict[Optional[torch.device], int],
     ):
+        """
+        Clean up meta tensors from RoPE cache.
+        Re-implemented from MistralHeadless to maintain functionality.
+        """
         # remove meta tensors from cached_freqs
         for dev in list(cached_freqs.keys()):
-            if cached_freqs[dev].device == torch.device("meta"):
-                if len(cached_freqs[dev]) == 0:
-                    del cached_freqs[dev]
-                    del max_seq_len_cached[dev]
+            # Check if any tensor in this device's cache is on meta device
+            for tensor in cached_freqs[dev].values():
+                if tensor.device == torch.device("meta"):
+                    if len(cached_freqs[dev]) == 0:
+                        del cached_freqs[dev]
+                        del max_seq_len_cached[dev]
+                    break
 
     def post_init(self):
-        # This function is called in `get_model` after the model is
-        # fully initalized on the correct device
+        """
+        Post-initialization hook called after the model is fully initialized on the correct device.
+        Cleans up meta tensors from RoPE cache and initializes RoPE on the correct device(s).
+        """
         # TODO: Currently we are not adding max_seq_len_cached to the cache, so we are not cleaning it up.
         self._clean_up_rot_emb_cache(
             self.rot_emb.cached_freqs,
-            self.rot_emb.max_seq_len_cached,
+            self.rot_emb.max_seq_len_cached,  # type: ignore[arg-type]
         )
 
         # init RoPE on the right device(s)
@@ -180,17 +201,75 @@ class Ministral3Headless(MistralHeadless, nn.Module):
         ):
             self.rot_emb.compute_freqs_cis(device, self.config.max_expected_seq_len)
 
+    def forward(
+        self,
+        x_in,
+        position_ids=None,
+        past_key_value_states=None,
+        use_cache=False,
+        **attn_kwargs: Unpack[AttentionKwargs],
+    ):
+        """
+        Forward pass through the headless model.
 
-class Ministral3Text(Mistral, nn.Module):
+        This method is re-implemented from MistralHeadless to maintain the same
+        functionality while using Ministral3TextConfig instead of MistralConfig.
+        """
+        # Embed the given vocabulary indices using the given attention mask, with pre-/post-norm and dropout as specified
+        # x_in: batch_size x seq_len
+        # mask: batch_size x seq_len x seq_len
+        # bias: nheads x seq_len x seq_len
+        if past_key_value_states is None or len(past_key_value_states) == 0:
+            past_key_value_states = [None for _ in range(len(self.layers))]
+
+        if x_in.dim() == 2:  # input is not already embedded
+            x_in = self.embedding(x_in)
+
+        # this is the output cache for all the decoder layers
+        present_key_value_states = []
+
+        for i, layer in enumerate(self.layers):
+            output = layer(
+                x=x_in,
+                position_ids=position_ids,
+                past_key_value_state=past_key_value_states[i],
+                use_cache=use_cache,
+                **attn_kwargs,
+            )
+
+            if use_cache:
+                x_in, present_key_value_state = output
+                present_key_value_states.append(present_key_value_state)
+
+            else:
+                x_in = output
+
+        dec_out = x_in
+        dec_out = self.dec_norm(dec_out)
+        if self.config.p_dropout:
+            dec_out = self.dropout(dec_out)
+
+        return dec_out, present_key_value_states
+
+
+class Ministral3Text(nn.Module):
+    """
+    Ministral3 text model with language modeling head.
+
+    This class does not inherit from Mistral to avoid type conflicts between
+    Ministral3TextConfig and MistralConfig. Instead, it re-implements the necessary
+    methods while maintaining a similar structure to Mistral. This approach ensures
+    proper type checking with mypy.
+    """
     def __init__(
         self,
         config: Optional[Ministral3TextConfig] = None,
         distributed_strategy: DistributedStrategy = NoOpStrategy,
         **kwargs,
     ):
-        nn.Module.__init__(self)
+        super().__init__()
         if config is not None:
-            self.config = config
+            self.config: Ministral3TextConfig = config
         else:
             self.config = Ministral3TextConfig()
         self.config = self.config.updated(**kwargs)
@@ -202,14 +281,79 @@ class Ministral3Text(Mistral, nn.Module):
         )
 
     @classmethod
-    def from_config(cls, config: Ministral3TextConfig) -> "Ministral3":
+    def from_config(cls, config: Ministral3TextConfig) -> "Ministral3Text":
         return cls(config)
 
     def get_config(self) -> Ministral3TextConfig:
         return self.config
 
+    def reset_parameters(self):
+        """
+        Reset model parameters. Re-implemented from Mistral to maintain functionality.
+        """
+        import math
+        self.head.weight.data.normal_(
+            0,
+            1 / math.sqrt(math.sqrt(self.config.emb_dim * self.config.src_vocab_size)),
+        )
+        self.base_model.reset_parameters()
+
+    def post_init(self):
+        """
+        Post-initialization hook. Re-implemented from Mistral to maintain functionality.
+        """
+        # if this model ties weights, they are tied here
+        if self.config.tie_heads:
+            # handle assignment of non-meta weights to meta parameters
+            if self.head.weight.device == torch.device("meta"):
+                self.head.weight = self.base_model.embedding.weight
+            else:
+                self.base_model.embedding.weight = self.head.weight
+
+        self.base_model.post_init()
+
+    def forward(
+        self,
+        x: torch.LongTensor,
+        position_ids: Optional[torch.LongTensor] = None,
+        past_key_value_states: Optional[Tuple[torch.FloatTensor,]] = None,
+        use_cache: bool = False,
+        last_n_tokens: int = 0,
+        **attn_kwargs: Unpack[AttentionKwargs],
+    ):
+        """
+        Forward pass through the model. Re-implemented from Mistral to maintain functionality.
+        """
+        from fms.modules.attention import get_attention_type
+        from fms.utils.headless import gather_outputs
+
+        get_attention_type(**attn_kwargs)["validate_attn_kwargs"](
+            input_ids=x,
+            position_ids=position_ids,
+            past_key_value_states=past_key_value_states,
+            **attn_kwargs,
+        )
+        output, cache = self.base_model(
+            x, position_ids, past_key_value_states, use_cache, **attn_kwargs
+        )
+
+        output = gather_outputs(output, last_n_tokens, **attn_kwargs)
+        preds = self.head(output)
+
+        if use_cache:
+            return preds, cache
+        else:
+            return preds
+
 
 class Ministral3(Mistral3):
+    """
+    Ministral3 multimodal model combining text and vision.
+
+    Inherits from Mistral3 but uses Ministral3Config and Ministral3Text instead of
+    Mistral3Config and Mistral. Type ignore comments are used where the types differ
+    but are structurally compatible.
+    """
     def __init__(
         self,
         config: Optional[Ministral3Config] = None,
@@ -219,11 +363,11 @@ class Ministral3(Mistral3):
         super().__init__()
 
         if config is not None:
-            self.config = config
+            self.config = config  # type: ignore[assignment]
         else:
-            self.config = Ministral3Config()
+            self.config = Ministral3Config()  # type: ignore[assignment]
 
-        self.config = self.config.updated(**kwargs)
+        self.config = self.config.updated(**kwargs)  # type: ignore[assignment]
 
         # Ensure weight fusion correctly propogates;
         # NOTE: since pixtral is only run as a standalone model
@@ -233,16 +377,17 @@ class Ministral3(Mistral3):
 
         self.distributed_strategy = distributed_strategy
 
-        # Currently, we always use mistral for the LLM
-        self.language_model = Ministral3Text(
+        # Ministral3Text is structurally compatible with Mistral for the language model
+        self.language_model: Ministral3Text = Ministral3Text(  # type: ignore[assignment]
             self.config.text_config, self.distributed_strategy
         )
         # Vision encoder and projector for multimodal features
         self.vision_tower = PixtralVisionModel(
             self.config.vision_config, self.distributed_strategy
         )
+        # Ministral3Config is compatible with Mistral3Config for the projector
         self.multi_modal_projector = Mistral3MultiModalProjector(
-            self.config,
+            self.config,  # type: ignore[arg-type]
         )
 
 
