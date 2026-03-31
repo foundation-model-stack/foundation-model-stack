@@ -188,7 +188,7 @@ def generate(
         ]
     ] = None,
     extra_kwargs: Optional[MutableMapping[str, Any]] = None,
-    decode_multiple: int = 4,  # NEW PARAMETER
+    decode_multiple: int = 64,  # NEW PARAMETER
 ):
     """
     A trivial generate function that can be used for validation/testing in
@@ -251,16 +251,13 @@ def generate(
     if decode_multiple > 1:
         padded_len = math.ceil(prompt_length / decode_multiple) * decode_multiple
         if padded_len > prompt_length:
-            padding = torch.zeros(
-                input_ids.shape[0],
-                padded_len - prompt_length,
-                dtype=input_ids.dtype,
-                device=input_ids.device
-            )
-            input_ids = torch.cat([input_ids, padding], dim=1)
-
-    prompt_offset = (input_ids[0] == 0).sum().item()
-    kwargs["prompt_offset"] = prompt_offset
+            padding = input_ids.new_zeros((input_ids.shape[0], padded_len - prompt_length))
+            input_ids = torch.cat([padding, input_ids], dim=1)
+            if "position_ids" in kwargs:
+                kwargs["position_ids"] = torch.cat([padding, kwargs["position_ids"]], dim=1)
+        # Compute padding length
+        prompt_offset = torch.sum(kwargs["position_ids"] == 0, dim=1)
+            
 
     result = input_ids
     next_input = input_ids
@@ -271,10 +268,15 @@ def generate(
     if "last_n_tokens" not in kwargs and kwargs.get("only_last_token", False):
         kwargs["last_n_tokens"] = 1
 
+    # Fix until slicing works on Spyre
+    kwargs["last_n_tokens"] = 0
+
     if decode_multiple > 1:
         current_cache_len = input_ids.shape[1]
-        tokens_in_current_block = 0
+        tokens_in_current_block = decode_multiple - 1
         filling_input_ids = None
+        # Disabled until slicing works
+        # kwargs["last_n_tokens"] = decode_multiple
 
     if timing != "":
         times: List[float] = []
@@ -284,71 +286,69 @@ def generate(
     is_filling = 0
 
     for i in range(max_new_tokens):
-        if decode_multiple > 1 and i > 0:  # Skip prefill (i=0)
-            is_filling = 0 < tokens_in_current_block < decode_multiple
+        input_ids = next_input[:, -max_seq_len:]
+        if i > 0:  # Decode
+            if decode_multiple > 1:  # Padded decode
+                # In padded decode for Spyre, we either add a new 64 block to the kv-cache, or we fill that block
+                is_filling = tokens_in_current_block > 0
 
-            if is_filling:
-                # FILLING MODE: re-run the block with the newly generated token in place
-                if tokens_in_current_block == 1:
-                    filling_input_ids = torch.cat([
-                        result[:, current_cache_len - decode_multiple:current_cache_len - decode_multiple + 1],
-                        torch.zeros(result.shape[0], decode_multiple - 1,
-                                dtype=result.dtype, device=result.device)
-                    ], dim=1)
+                if is_filling:
+                    # FILLING MODE: re-run the block with the newly generated token in place
+                    kwargs["is_filling_mode"] = True
+                    kwargs["tokens_in_current_block"] = tokens_in_current_block
+                    kwargs["cache_update_position"] = current_cache_len - decode_multiple + tokens_in_current_block
+
+                    mask = create_filling_mask(
+                        input_ids.shape[0],
+                        current_cache_len,
+                        tokens_in_current_block,
+                        decode_multiple,
+                        prompt_offset=prompt_offset,
+                        device=input_ids.device,
+                        active_position=tokens_in_current_block - 1
+                    )
+                    kwargs["mask"] = mask
                 else:
-                    filling_input_ids[:, tokens_in_current_block - 1] = result[:, current_cache_len - decode_multiple + tokens_in_current_block - 1]
+                    # EXPANSION MODE: feed the last decode_multiple tokens, get decode_multiple new KVs
+                    kwargs["is_filling_mode"] = False
+                    kwargs.pop("cache_update_position", None)
 
-                input_ids = filling_input_ids
-                kwargs["is_filling_mode"] = True
-                kwargs["tokens_in_current_block"] = tokens_in_current_block
-                kwargs["cache_update_position"] = current_cache_len - decode_multiple + tokens_in_current_block - 1
-
-                mask = create_filling_mask(
-                    input_ids.shape[0],
-                    current_cache_len,
-                    tokens_in_current_block,
-                    decode_multiple,
-                    prompt_offset=kwargs.get("prompt_offset", 0),
-                    device=input_ids.device,
-                    active_position=tokens_in_current_block - 1
-                )
-                kwargs["mask"] = mask
-                kwargs["last_n_tokens"] = decode_multiple
-            else:
-                # EXPANSION MODE: feed the last decode_multiple tokens, get decode_multiple new KVs
-                input_ids = result[:, current_cache_len - decode_multiple:current_cache_len]
-                kwargs["is_filling_mode"] = False
-                kwargs.pop("cache_update_position", None)
-
-                # Total KV len after expansion = current_cache_len + decode_multiple
-                mask = torch.zeros(
-                    (input_ids.shape[0], decode_multiple, current_cache_len + decode_multiple),
-                    device=input_ids.device
-                )
-                prompt_offset = kwargs.get("prompt_offset", 0)
-                if prompt_offset > 0:
+                    # Total KV len after expansion = current_cache_len + decode_multiple
+                    mask = torch.zeros(
+                        (input_ids.shape[0], decode_multiple, current_cache_len + decode_multiple),
+                        device=input_ids.device
+                    )
                     mask[:, :, :prompt_offset] = -torch.inf
 
-                for j in range(decode_multiple):
-                    attend_up_to = current_cache_len - decode_multiple + j + 1
-                    mask[:, j, attend_up_to:] = -torch.inf
+                    for j in range(decode_multiple):
+                        attend_up_to = current_cache_len - decode_multiple + j + 1
+                        mask[:, j, attend_up_to:] = -torch.inf
 
-                kwargs["mask"] = mask
-                kwargs["last_n_tokens"] = decode_multiple
-        elif decode_multiple > 1 and i == 0: # iter 0 is just for setup
-            input_ids = next_input[:, -max_seq_len:]
-            kwargs["last_n_tokens"] = decode_multiple
-        else:
-            input_ids = next_input[:, -max_seq_len:]
-            # iteration 0 is the prefill step (cache has not been filled yet), so no need to extend mask/position_ids
-            if i > 0:
+                    kwargs["mask"] = mask
+                    current_cache_len += decode_multiple
+                    
+                    position_ids = kwargs.get("position_ids", None)
+                    if position_ids is not None:
+                        if use_cache:
+                            position_ids = position_ids[:, -decode_multiple:] + decode_multiple
+                        else:
+                            position_ids = torch.cat(
+                                (position_ids, position_ids[:, -decode_multiple:] + decode_multiple),
+                                dim=1,
+                            )
+                        kwargs["position_ids"] = position_ids
+
+            else:  # Regular decode
                 kwargs = __update_padding_kwargs(use_cache, kwargs)
-            kwargs["last_n_tokens"] = kwargs.get("last_n_tokens", 1)
 
         if prepare_model_inputs_hook is not None:
             input_ids, kwargs = prepare_model_inputs_hook(i, input_ids, kwargs)
 
-        output = model(input_ids, **kwargs)
+        alpha = model.base_model.rot_emb.compute_freqs_cis(torch.device("spyre"), max_seq_len)
+        kwargs["selected_freqs"] = model.base_model.rot_emb.cached_freqs[0][alpha][kwargs["position_ids"]].contiguous().to("spyre")
+        kwargs["mask"] = kwargs["mask"].to(dtype=torch.float16).to("spyre")
+        print(f"{input_ids.shape=}\n {kwargs['mask'].shape=}\n {kwargs['position_ids'].shape=}\n {kwargs['selected_freqs'].shape=}\n {kwargs.get('is_filling_mode', None)=}\n {kwargs.get('tokens_in_current_block', None)=}\n {kwargs.get('cache_update_position')=}")
+        output = model(input_ids.to("spyre"), **kwargs)
         if use_cache:
             logits, past_key_value_states = output
             # TODO: this should go away when reduce-overhead issues are fixed, or
@@ -365,8 +365,11 @@ def generate(
         else:
             logits = output
 
+        # Fix logic for Spyre when slicing well supported
         if decode_multiple > 1:
-            logits = logits.to('cpu')
+            grab_idx = decode_multiple - tokens_in_current_block
+            logits = logits.to('cpu')[:, -grab_idx, :]
+            print(f"{grab_idx=} ")
         else:
             logits = logits.to("cpu")[:, -1, :]
 
@@ -379,36 +382,25 @@ def generate(
 
             probs = F.softmax(logits, dim=-1)
             next_val = torch.multinomial(probs, num_samples=1)
-        else:
-            if decode_multiple > 1:
-                next_val = torch.argmax(logits, dim=-1)  # [batch, decode_multiple]                                                                                   
-            else:                                                                                                                                      
-                next_val = torch.argmax(logits, dim=-1).unsqueeze(0).t()
+        else:                                                                                                                   
+            next_val = torch.argmax(logits, dim=-1).unsqueeze(1)
+            print(f"{next_val=} ")
 
         if post_iteration_hook is not None:
             next_val, kwargs = post_iteration_hook(
                 i + prompt_length, logits, next_val, kwargs
             )
 
-        # accumulate tokens
-        if decode_multiple > 1 and i > 0:
-            if is_filling:
-                block_start = current_cache_len - decode_multiple
-                result[:, block_start + tokens_in_current_block] = next_val[:, tokens_in_current_block - 1]
-                tokens_in_current_block += 1
-            else:
-                valid_token = next_val[:, -1:]  # shape [batch, 1]
-                padding = torch.zeros(
-                    result.shape[0],
-                    decode_multiple - 1,
-                    dtype=result.dtype,
-                    device=result.device
-                )
-                result = torch.cat([result, torch.cat([valid_token, padding], dim=1)], dim=1)
-                current_cache_len += decode_multiple
-                tokens_in_current_block = 1
-        elif decode_multiple == 1:
-            # Original decode of single token
+        if decode_multiple > 1:
+            if tokens_in_current_block == decode_multiple - 1:
+                result = torch.nn.functional.pad(result, (0, decode_multiple))
+            
+            tokens_in_current_block += 1
+            tokens_in_current_block %= 64
+
+            grab_idx = decode_multiple - tokens_in_current_block
+            result[:, -grab_idx] = next_val
+        else:
             result = torch.cat((result, next_val), dim=-1)
 
         # avoid continuing to generate if all have reached EOS
@@ -418,7 +410,10 @@ def generate(
                 eos_reached = True
 
         if use_cache:
-            next_input = next_val
+            if decode_multiple > 1:
+                next_input = result[:, -decode_multiple:]
+            else:
+                next_input = next_val
         else:
             next_input = result
 

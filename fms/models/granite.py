@@ -195,7 +195,7 @@ class GraniteHeadless(nn.Module):
         for i in range(self.config.nlayers):
             block: nn.Module = GraniteBlock(self.config, self.rot_emb)
             block = self.distributed_strategy.distribute_layer(block, i)
-            block.compile()
+            block.compile(dynamic=False)
             layers.append(block)
         self.layers = nn.ModuleList(layers)
 
@@ -377,8 +377,9 @@ class Granite(nn.Module):
         )
 
         output = gather_outputs(output, last_n_tokens, **attn_kwargs)
-        self.head.weight = torch.nn.Parameter(self.head.weight.to("cpu"))
-        preds = self.head(output.to("cpu")).to("cpu") #TODO: restore to spyre
+        # self.head.weight = torch.nn.Parameter(self.head.weight.to("cpu"))
+        # preds = self.head(output.to("cpu")).to("spyre")
+        preds = self.head(output)
         preds = preds / self.config.logits_scaling
 
         if use_cache:
