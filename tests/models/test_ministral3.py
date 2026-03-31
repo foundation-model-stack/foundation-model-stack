@@ -1,14 +1,10 @@
 import pytest
 import torch
 
-# Skip entire module if transformers version is not > 5.0.0
-# transformers = pytest.importorskip("transformers", minversion="5.0.1")
-
 from fms.models.pixtral_vision import PixtralVisionConfig
 from fms.models.ministral3 import (
     Ministral3,
     Ministral3Config,
-    Ministral3Text,
     Ministral3TextConfig,
 )
 from fms.testing._internal.model_test_suite import (
@@ -21,78 +17,11 @@ from fms.testing._internal.model_test_suite import (
 from fms.utils.config import ModelConfig
 
 
-class Ministral3TextFixtures(ConfigFixtureMixin, ModelFixtureMixin):
-    """
-    Base Ministral3Text Fixtures for text-only model testing
-
-    This will include the config and model signatures for the text-only variant
-    """
-
-    @pytest.fixture(scope="class", autouse=True)
-    def uninitialized_model(self, config: Ministral3TextConfig):
-        return Ministral3Text(config)
-
-    @pytest.fixture(scope="class", autouse=True)
-    def config(self) -> ModelConfig:
-        # Text config for ministral3 text-only model
-        return Ministral3TextConfig(
-            src_vocab_size=384,
-            nheads=8,
-            nlayers=2,
-            hidden_grow_factor=3.5,
-            multiple_of=2,
-            tie_heads=False,
-            p_dropout=0.0,
-            activation_fn="silu",
-            emb_dim=16,
-            head_dim=128,
-            max_expected_seq_len=4096,
-            kvheads=2,
-            norm_eps=1e-05,
-            sliding_window=4000,
-            rope_parameters={
-                "rope_type": "yarn",
-                "rope_theta": 100_0000.0,
-                "beta_fast": 32.0,
-                "beta_slow": 1.0,
-                "factor": 1.0,
-                "original_max_position_embeddings": 4096,
-                "mscale": 1.0,
-                "mscale_all_dim": 1.0,
-            },
-            fused_weights=True,
-            pad_id=0,
-        )
-
-
-class TestMinistral3Text(
-    ModelConfigTestSuite,
-    ModelConsistencyTestSuite,
-    ModelCompileTestSuite,
-    Ministral3TextFixtures,
-):
-    """Test suite for Ministral3Text (text-only model)"""
-
-    @staticmethod
-    def get_logits(f_out):
-        return f_out
-
-    input_ids = torch.arange(380).unsqueeze(0)
-
-    _get_signature_params = ["x"]
-    _get_signature_input_ids = input_ids
-    _get_signature_optional_params = {
-        "last_n_tokens": 1,
-    }
-
-    _get_signature_logits_getter_fn = get_logits
-
-
 class Ministral3Fixtures(ConfigFixtureMixin, ModelFixtureMixin):
     """
-    Base Ministral3 Fixtures for multimodal model testing
+    Base Ministral3 Fixtures that can be re-used for other purposes
 
-    This will include the config and model signatures for the full multimodal variant
+    This will include the config and model signatures for the multimodal variant
     """
 
     @pytest.fixture(scope="class", autouse=True)
