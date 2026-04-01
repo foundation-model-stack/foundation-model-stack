@@ -683,10 +683,10 @@ class CachedYarnRotaryEmbedding(PositionEncoder):
         return freqs_cis
 
     def _get_llama_4_attn_scale(self, positions_ids: torch.Tensor) -> torch.Tensor:
-        scaling = 1 + self.llama_4_scaling_beta * torch.log(
-            1 + torch.floor(positions_ids / self.original_max_position_embeddings)
-        )
-        return scaling.unsqueeze(-1)
+        pos_idx = (positions_ids // self.original_max_position_embeddings).float()
+
+        scaling = 1 + self.llama_4_scaling_beta * torch.log(1 + torch.floor(pos_idx))
+        return scaling
 
     def compute_freqs_cis(self, device: torch.device, max_seq_len) -> None:
         """
@@ -866,10 +866,17 @@ class CachedYarnRotaryEmbedding(PositionEncoder):
 
         # Apply llama_4_scaling
         if self.llama_4_scaling_beta:
-            cache_position = torch.arange(
-                q_out.shape[2], device=q_out.device, dtype=q_out.dtype
-            )
-            q_out = q_out * self._get_llama_4_attn_scale(cache_position)
+            # Compute scaling per position: [B, L]
+            scaling = self._get_llama_4_attn_scale(position_ids)
+
+            # Convert to target dtype and add singleton dimensions for broadcasting
+            # Instead of creating [B, L, 1, 1], use in-place broadcasting which is more memory efficient
+            # This avoids creating large intermediate tensors at high context lengths
+            scaling = scaling.to(q_out.dtype)
+
+            # Apply scaling using implicit broadcasting: [B, L] broadcasts to [B, L, H, D]
+            # Reshape to [B, L, 1, 1] only for the multiplication to ensure proper broadcasting
+            q_out = q_out * scaling[:, :, None, None]
 
         q_out = q_out.view_as(q_rope)
         k_out = k_out.view_as(k_rope)
