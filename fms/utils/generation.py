@@ -256,7 +256,7 @@ def generate(
             if "position_ids" in kwargs:
                 kwargs["position_ids"] = torch.cat([padding, kwargs["position_ids"]], dim=1)
         # Compute padding length
-        prompt_offset = torch.sum(kwargs["position_ids"] == 0, dim=1)
+        prompt_offset = torch.sum(kwargs["position_ids"] == 0, dim=1) - 1
             
 
     result = input_ids
@@ -297,25 +297,15 @@ def generate(
                     kwargs["is_filling_mode"] = True
                     kwargs["tokens_in_current_block"] = tokens_in_current_block
                     kwargs["cache_update_position"] = current_cache_len - decode_multiple + tokens_in_current_block
-
-                    mask = create_filling_mask(
-                        input_ids.shape[0],
-                        current_cache_len,
-                        tokens_in_current_block,
-                        decode_multiple,
-                        prompt_offset=prompt_offset,
-                        device=input_ids.device,
-                        active_position=tokens_in_current_block - 1
-                    )
-                    kwargs["mask"] = mask
                 else:
                     # EXPANSION MODE: feed the last decode_multiple tokens, get decode_multiple new KVs
                     kwargs["is_filling_mode"] = False
                     kwargs.pop("cache_update_position", None)
+                    current_cache_len += decode_multiple
 
                     # Total KV len after expansion = current_cache_len + decode_multiple
                     mask = torch.zeros(
-                        (input_ids.shape[0], decode_multiple, current_cache_len + decode_multiple),
+                        (input_ids.shape[0], decode_multiple, current_cache_len),
                         device=input_ids.device
                     )
                     mask[:, :, :prompt_offset] = -torch.inf
@@ -325,7 +315,6 @@ def generate(
                         mask[:, j, attend_up_to:] = -torch.inf
 
                     kwargs["mask"] = mask
-                    current_cache_len += decode_multiple
                     
                     position_ids = kwargs.get("position_ids", None)
                     if position_ids is not None:
@@ -348,6 +337,8 @@ def generate(
         kwargs["selected_freqs"] = model.base_model.rot_emb.cached_freqs[0][alpha][kwargs["position_ids"]].contiguous().to("spyre")
         kwargs["mask"] = kwargs["mask"].to(dtype=torch.float16).to("spyre")
         print(f"{input_ids.shape=}\n {kwargs['mask'].shape=}\n {kwargs['position_ids'].shape=}\n {kwargs['selected_freqs'].shape=}\n {kwargs.get('is_filling_mode', None)=}\n {kwargs.get('tokens_in_current_block', None)=}\n {kwargs.get('cache_update_position')=}")
+        # torch.set_printoptions(threshold=100000)
+        # print(f"{kwargs['mask']}")
         output = model(input_ids.to("spyre"), **kwargs)
         if use_cache:
             logits, past_key_value_states = output
@@ -368,8 +359,10 @@ def generate(
         # Fix logic for Spyre when slicing well supported
         if decode_multiple > 1:
             grab_idx = decode_multiple - tokens_in_current_block
-            logits = logits.to('cpu')[:, -grab_idx, :]
-            print(f"{grab_idx=} ")
+            logits = logits.to('cpu')
+            print(f"{grab_idx=} {logits[:, :, :49159]=}")
+            logits = logits[:, -grab_idx, :]
+            
         else:
             logits = logits.to("cpu")[:, -1, :]
 
@@ -483,30 +476,3 @@ def trim_prefix(result: torch.Tensor, pad_token_id: int = 0) -> torch.Tensor:
     bos_index = first_real_token_idx[0][0]
     result = result[bos_index + 1 :]
     return result
-
-
-def create_filling_mask(batch_size, cache_len, tokens_in_current_block, decode_multiple,
-                        prompt_offset=0, device="cpu", active_position=None):
-    """
-    Progressive masking pattern for filling mode.
-    """
-    mask = torch.full((batch_size, decode_multiple, cache_len), -torch.inf, device=device)
-
-    block_start = cache_len - decode_multiple
-
-    # Only create valid mask for the active position
-    if active_position is not None:
-        i = active_position
-        attend_up_to = block_start + i + 1
-        mask[:, i, :attend_up_to] = 0.0          # open the attend window                           
-        if prompt_offset > 0:                                                                       
-            mask[:, i, :prompt_offset] = -torch.inf  # re-mask the pads on top   
-    else:
-        # Fallback: create masks for all positions (less efficient)
-        for i in range(decode_multiple):
-            if prompt_offset > 0:
-                mask[:, i, :prompt_offset] = -torch.inf
-            attend_up_to = block_start + i + 1
-            mask[:, i, :attend_up_to] = 0.0
-            mask[:, i, attend_up_to:] = -torch.inf
-    return mask
