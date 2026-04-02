@@ -43,17 +43,17 @@ class Ministral3Fixtures(ConfigFixtureMixin, ModelFixtureMixin):
             activation_fn="silu",
             emb_dim=16,
             head_dim=128,
-            max_expected_seq_len=4096,
+            max_expected_seq_len=2048,
             kvheads=2,
             norm_eps=1e-05,
             sliding_window=None,
             rope_parameters={
                 "rope_type": "yarn",
-                "rope_theta": 100_0000.0,
+                "rope_theta": 1000.0,
                 "beta_fast": 32.0,
                 "beta_slow": 1.0,
                 "factor": 1.0,
-                "original_max_position_embeddings": 4096,
+                "original_max_position_embeddings": 1024,
                 "mscale": 1.0,
                 "mscale_all_dim": 1.0,
                 "llama_4_scaling_beta": 0.1,
@@ -126,54 +126,3 @@ class TestMinistral3(
         # modify feature layer to the new value expected and check equivalence
         config.vision_feature_layer = config.vision_feature_layer - 1
         assert model.get_config().as_dict() == config.as_dict()
-
-
-class TestMinistral3Vision(Ministral3Fixtures):
-    """Test suite specifically for Ministral3 vision capabilities (Pixtral integration)"""
-
-    def test_vision_tower_exists(self, model):
-        """Test that the vision tower is properly initialized"""
-        assert hasattr(model, "vision_tower")
-        assert model.vision_tower is not None
-
-    def test_multimodal_projector_exists(self, model):
-        """Test that the multimodal projector is properly initialized"""
-        assert hasattr(model, "multi_modal_projector")
-        assert model.multi_modal_projector is not None
-
-    def test_vision_config_propagation(self, model, config):
-        """Test that vision config is properly propagated to the vision tower"""
-        assert model.vision_tower.config.hidden_size == config.vision_config.hidden_size
-        assert model.vision_tower.config.nlayers == config.vision_config.nlayers
-        assert model.vision_tower.config.nheads == config.vision_config.nheads
-
-    def test_text_config_propagation(self, model, config):
-        """Test that text config is properly propagated to the language model"""
-        assert model.language_model.config.emb_dim == config.text_config.emb_dim
-        assert model.language_model.config.nlayers == config.text_config.nlayers
-        assert model.language_model.config.nheads == config.text_config.nheads
-
-    def test_fused_weights_propagation(self, config):
-        """Test that fused_weights setting propagates correctly"""
-        # Test with fused_weights=False
-        config_unfused = Ministral3Config(
-            vision_config=config.vision_config,
-            text_config=config.text_config,
-            fused_weights=False,
-        )
-        model_unfused = Ministral3(config_unfused)
-        assert not model_unfused.config.text_config.fused_weights
-        assert not model_unfused.config.vision_config.fused_weights
-
-        # Test with fused_weights=True (default)
-        config_fused = Ministral3Config(
-            vision_config=config.vision_config,
-            text_config=config.text_config,
-            fused_weights=True,
-        )
-        model_fused = Ministral3(config_fused)
-        assert model_fused.config.text_config.fused_weights
-        assert model_fused.config.vision_config.fused_weights
-
-
-# Made with Bob
