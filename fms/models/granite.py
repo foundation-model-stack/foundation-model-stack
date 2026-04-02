@@ -350,6 +350,11 @@ class Granite(nn.Module):
             else:
                 self.base_model.embedding.weight = self.head.weight
 
+        # Make sure LM head is a multiple of 64 and also not 64*prime_number if running on Spyre
+        if self.head.weight.device.type == "spyre":
+            remainder = ((self.head.weight.shape[0] + 64 - 1) // 64 * 64) - self.head.weight.shape[0]
+            self.head.weight = torch.nn.Parameter(torch.nn.functional.pad(self.head.weight.to("cpu"), (0, 0, 0, remainder+64)).to("spyre"))
+
         self.base_model.post_init()
 
     def forward(
