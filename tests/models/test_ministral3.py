@@ -46,7 +46,7 @@ class Ministral3Fixtures(ConfigFixtureMixin, ModelFixtureMixin):
             max_expected_seq_len=4096,
             kvheads=2,
             norm_eps=1e-05,
-            sliding_window=4000,
+            sliding_window=None,
             rope_parameters={
                 "rope_type": "yarn",
                 "rope_theta": 100_0000.0,
@@ -56,6 +56,7 @@ class Ministral3Fixtures(ConfigFixtureMixin, ModelFixtureMixin):
                 "original_max_position_embeddings": 4096,
                 "mscale": 1.0,
                 "mscale_all_dim": 1.0,
+                "llama_4_scaling_beta": 0.1,
             },
             fused_weights=True,
             pad_id=0,
