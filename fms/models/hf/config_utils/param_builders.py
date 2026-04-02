@@ -397,19 +397,19 @@ def build_mistral3_params(config: PretrainedConfig) -> dict:
 def build_ministral3_params(config: PretrainedConfig) -> dict:
     """Param builder for ministral3 mapping Mistral3ForConditionalGeneration to FMS."""
 
-    ## NOTE: Since ministral3 and mistral3 uses same architecture class
+    ## NOTE: Since ministral3 and ministral3 uses same architecture class
     # we are combining their build params function into one. They also
     # use same vision model
 
     # Sanity checks – we currently support only Mistral text + Pixtral vision
     if getattr(config.text_config, "model_type", None) != "ministral3":
         raise ValueError(
-            "FMS implementation of Mistral3 currently supports only 'mistral' language model"
+            "FMS implementation of Ministral3 currently supports only 'ministral3' language model"
         )
 
     if getattr(config.vision_config, "model_type", None) != "pixtral":
         raise ValueError(
-            "FMS implementation of Mistral3 currently supports only 'pixtral' vision tower"
+            "FMS implementation of Ministral3 currently supports only 'pixtral' vision tower"
         )
     config_params = {
         "projector_hidden_act": config.projector_hidden_act,

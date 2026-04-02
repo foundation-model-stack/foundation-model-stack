@@ -484,7 +484,7 @@ def _hf_to_fms_rope(
     new_sd = {}
 
     if model_config is None:
-        # It Fall back to values for Ministral3; ModelConfig should really not be
+        # Fall back to values for Ministral3; ModelConfig should really not be
         # optional here though, as setting the wrong head dimensions can cause a
         # lot of confusion.
         lm_head_dim = 128
