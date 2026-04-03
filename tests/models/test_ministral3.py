@@ -43,7 +43,7 @@ class Ministral3Fixtures(ConfigFixtureMixin, ModelFixtureMixin):
             activation_fn="silu",
             emb_dim=16,
             head_dim=64,
-            max_expected_seq_len=256,
+            max_expected_seq_len=1024,
             kvheads=2,
             norm_eps=1e-05,
             sliding_window=None,
@@ -53,7 +53,7 @@ class Ministral3Fixtures(ConfigFixtureMixin, ModelFixtureMixin):
                 "beta_fast": 32.0,
                 "beta_slow": 1.0,
                 "factor": 1.0,
-                "original_max_position_embeddings": 128,
+                "original_max_position_embeddings": 512,
                 "mscale": 1.0,
                 "mscale_all_dim": 1.0,
                 "llama_4_scaling_beta": 0.1,
@@ -68,7 +68,7 @@ class Ministral3Fixtures(ConfigFixtureMixin, ModelFixtureMixin):
             nlayers=2,
             nheads=8,
             nchannels=3,
-            image_size=84,
+            image_size=280,
             patch_size=14,
             hidden_act="silu",
             layer_norm_eps=1e-5,
@@ -99,16 +99,16 @@ class TestMinistral3(
         return f_out[0]
 
     pixel_values = [
-        [[torch.arange(0, 1, 1 / 84).tolist() for _ in range(84)] for _ in range(3)]
+        [[torch.arange(0, 1, 1 / 280).tolist() for _ in range(280)] for _ in range(3)]
     ]
     input_ids = torch.arange(380).unsqueeze(0)
-    pixel_values = torch.tensor(pixel_values)  # [1, 3, 84, 84]
+    pixel_values = torch.tensor(pixel_values)  # [1, 3, 280, 280]
 
     _get_signature_params = ["input_ids_or_embeds"]
     _get_signature_input_ids = input_ids
     _get_signature_optional_params = {
         "pixel_values": pixel_values,
-        "image_sizes": [(84, 84)],
+        "image_sizes": [(280, 280)],
         "last_n_tokens": 1,
     }
 

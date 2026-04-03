@@ -349,7 +349,7 @@ class Ministral3Text(nn.Module):
             return preds
 
 
-class Ministral3(Mistral3):
+class Ministral3(Mistral3):  # type: ignore[misc]
     """
     Ministral3 multimodal model combining text and vision.
 
@@ -364,10 +364,10 @@ class Ministral3(Mistral3):
         distributed_strategy: DistributedStrategy = NoOpStrategy,
         **kwargs,
     ):
-        super().__init__()
+        nn.Module.__init__(self)
 
         if config is not None:
-            self.config = config  # type: ignore[assignment]
+            self.config: Ministral3Config = config  # type: ignore[assignment]
         else:
             self.config = Ministral3Config()  # type: ignore[assignment]
 
