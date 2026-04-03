@@ -182,6 +182,20 @@ def build_mistral_params(config: PretrainedConfig) -> dict:
         "rope_base": rope_theta,
         "sliding_window": config.sliding_window,
     }
+
+    rope_scaling = getattr(config, "rope_scaling", None)
+    if rope_scaling is not None:
+        rope_type = rope_scaling.get("rope_type", "regular")
+        if rope_type == "yarn":
+            config_params["rope_scaling"] = {
+                "rope_type": "yarn",
+                "scaling_factor": rope_scaling["factor"],
+                "ntk_alpha": rope_scaling["beta_slow"],
+                "ntk_beta": rope_scaling["beta_fast"],
+            }
+        else:
+            config_params["rope_scaling"] = rope_scaling
+
     return model_params_with_common_opts(
         config, config_params, inner_dim=config.intermediate_size
     )
