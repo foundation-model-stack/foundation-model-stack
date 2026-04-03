@@ -400,6 +400,14 @@ def load_state_dict(
             file_list = list(model_path.glob(glob_pattern_possibility))
             if len(file_list) > 0:
                 checkpoints = sorted(file_list)
+                # Filter out consolidated.safetensors for HF models when loading from local path
+                # as it contains duplicate keys in original Mistral format
+                if source == "hf":
+                    checkpoints = [
+                        ckpt
+                        for ckpt in checkpoints
+                        if ckpt.name != "consolidated.safetensors"
+                    ]
                 break
 
     if model_path.is_file():
