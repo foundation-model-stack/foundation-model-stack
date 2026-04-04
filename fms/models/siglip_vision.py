@@ -40,6 +40,7 @@ class SiglipVisionConfig(ModelConfig):
     attention_dropout: float = 0.0
     linear_config: Optional[Mapping[str, Any]] = None
     fused_weights: bool = True
+    use_navit_position_buckets: bool = False
 
 
 class SiglipVisionEmbeddings(nn.Module):
@@ -58,10 +59,14 @@ class SiglipVisionEmbeddings(nn.Module):
             padding="valid",
         )
 
-        self.num_patches = (self.image_size // self.patch_size) ** 2
+        self.num_patches_per_side = self.image_size // self.patch_size
+        self.num_patches = self.num_patches_per_side**2
         self.num_positions = self.num_patches
         self.position_embedding = nn.Embedding(self.num_positions, self.embed_dim)
-        self.position_ids = torch.arange(self.num_positions).expand((1, -1))
+        # Register position_ids as a buffer so it moves with the model
+        self.register_buffer(
+            "position_ids", torch.arange(self.num_positions).expand((1, -1))
+        )
 
     def reset_parameters(self):
         nn.init.normal_(
@@ -76,20 +81,97 @@ class SiglipVisionEmbeddings(nn.Module):
         nn.init.trunc_normal_(tensor, std=math.sqrt(variance))
 
     def post_init(self):
-        device = self.position_embedding.weight.device
-        self.position_ids = torch.arange(self.num_positions, device=device).expand(
-            (1, -1)
-        )
+        # position_ids is now registered as a buffer, so it automatically moves with the model
+        pass
 
     # NOTE: Does not support interpolation of position encodings-- not used by granite-vision
-    def forward(self, pixel_values: torch.FloatTensor) -> torch.Tensor:
+    def _navit_position_ids(
+        self, patch_attention_mask: torch.Tensor, device: torch.device
+    ) -> torch.Tensor:
+        """
+        Compute NaViT-style bucketed position ids.
+
+        This matches HF Idefics3VisionEmbeddings semantics, where the patch grid can vary per
+        example and positions are bucketed against fixed `boundaries`.
+        """
+        patch_attention_mask = patch_attention_mask.to(device=device)
+        batch_size, max_nb_patches_h, max_nb_patches_w = patch_attention_mask.shape
+
+        boundaries = torch.arange(
+            1 / self.num_patches_per_side,
+            1.0,
+            1 / self.num_patches_per_side,
+            device=device,
+        )
+        position_ids = torch.zeros(
+            (batch_size, max_nb_patches_h * max_nb_patches_w),
+            device=device,
+            dtype=torch.long,
+        )
+
+        for batch_idx, p_attn_mask in enumerate(patch_attention_mask):
+            nb_patches_h = p_attn_mask[:, 0].sum()
+            nb_patches_w = p_attn_mask[0].sum()
+
+            h_indices = torch.arange(
+                nb_patches_h, device=position_ids.device, dtype=position_ids.dtype
+            )
+            w_indices = torch.arange(
+                nb_patches_w, device=position_ids.device, dtype=position_ids.dtype
+            )
+
+            # Match HF NaViT bucketing: we bucketize exact grid fractions against `boundaries` with
+            # `right=True` so values that land exactly on a boundary map to the higher bucket. `i / n` is
+            # already in [0, 1) and preserves that boundary alignment; scaling by (1 - 1e-6) perturbs it and
+            # can shift bucket indices.
+            fractional_coords_h = h_indices / nb_patches_h
+            fractional_coords_w = w_indices / nb_patches_w
+
+            bucket_coords_h = torch.bucketize(
+                fractional_coords_h, boundaries, right=True
+            )
+            bucket_coords_w = torch.bucketize(
+                fractional_coords_w, boundaries, right=True
+            )
+
+            pos_ids = (
+                bucket_coords_h[:, None] * self.num_patches_per_side + bucket_coords_w
+            ).flatten()
+            position_ids[batch_idx][p_attn_mask.view(-1)] = pos_ids
+
+        return position_ids
+
+    def forward(
+        self,
+        pixel_values: torch.FloatTensor,
+        patch_attention_mask: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
         _, _, height, width = pixel_values.shape
         target_dtype = self.patch_embedding.weight.dtype
         patch_embeds = self.patch_embedding(
             pixel_values.to(dtype=target_dtype)
         )  # shape = [*, width, grid, grid]
         embeddings = patch_embeds.flatten(2).transpose(1, 2)
-        embeddings = embeddings + self.position_embedding(self.position_ids)
+
+        if patch_attention_mask is None and self.config.use_navit_position_buckets:
+            patch_attention_mask = torch.ones(
+                (
+                    pixel_values.shape[0],
+                    height // self.patch_size,
+                    width // self.patch_size,
+                ),
+                device=pixel_values.device,
+                dtype=torch.bool,
+            )
+        if patch_attention_mask is None or not self.config.use_navit_position_buckets:
+            embeddings = embeddings + self.position_embedding(self.position_ids)
+            return embeddings
+
+        position_ids = self._navit_position_ids(
+            patch_attention_mask, device=pixel_values.device
+        )
+
+        embeddings = embeddings + self.position_embedding(position_ids)
         return embeddings
 
 
@@ -285,10 +367,13 @@ class SiglipVisionHeadless(nn.Module):
     def forward(
         self,
         pixel_values,
+        patch_attention_mask: Optional[torch.BoolTensor] = None,
         output_hidden_states=False,
         **attn_kwargs: Unpack[AttentionKwargs],
     ):
-        hidden_states = self.embeddings(pixel_values)
+        hidden_states = self.embeddings(
+            pixel_values, patch_attention_mask=patch_attention_mask
+        )
         last_hidden_state, hidden_states = self.encoder(
             inputs_embeds=hidden_states,
             output_hidden_states=output_hidden_states,
@@ -334,11 +419,15 @@ class SiglipVision(nn.Module):
     def forward(
         self,
         pixel_values,
+        patch_attention_mask: Optional[torch.BoolTensor] = None,
         output_hidden_states=False,
         **attn_kwargs: Unpack[AttentionKwargs],
     ):
         last_hidden_state, hidden_states = self.base_model(
-            pixel_values, output_hidden_states=output_hidden_states, **attn_kwargs
+            pixel_values,
+            patch_attention_mask=patch_attention_mask,
+            output_hidden_states=output_hidden_states,
+            **attn_kwargs,
         )
         pooler_output = self.head(last_hidden_state)
         if output_hidden_states:
@@ -395,6 +484,10 @@ def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]
     new_sd = {}
     for name, param in input_sd.items():
         new_name = name
+        # HF SmolVLM checkpoints prefix vision weights with "model." (e.g., "model.vision_model.*").
+        # SiglipVision expects names starting at "vision_model.*" for mapping to base_model/head.
+        if new_name.startswith("model."):
+            new_name = new_name[len("model.") :]
         for pattern, repl in replacements:
             new_name = re.sub(pattern, repl, new_name)
         new_sd[new_name] = param

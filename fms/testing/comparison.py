@@ -63,6 +63,34 @@ def get_signature(
     """
     model.eval()
 
+    target_device = torch.device(device)
+
+    # Helper function to check if two devices are equivalent
+    def devices_match(dev1, dev2):
+        """Check if two devices are equivalent, handling cuda vs cuda:0 case."""
+        if dev1.type != dev2.type:
+            return False
+        if dev1.type == dev2.type == "cuda":
+            # For CUDA devices, if either has no index specified (meaning default cuda:0),
+            # treat it as matching cuda:0
+            idx1 = 0 if dev1.index is None else dev1.index
+            idx2 = 0 if dev2.index is None else dev2.index
+            return idx1 == idx2
+        return dev1 == dev2
+
+    # Move model to device only if needed to avoid repeated post_init calls
+    model_devices = {p.device for p in model.parameters()} | {
+        b.device for b in model.buffers()
+    }
+    needs_move = not model_devices or any(
+        not devices_match(dev, target_device) for dev in model_devices
+    )
+    if needs_move:
+        model = model.to(device)
+        # Call post_init only after device change to update device-dependent buffers
+        if hasattr(model, "post_init") and callable(model.post_init):
+            model.post_init()
+
     cuda_available = torch.cuda.is_available()
 
     model.to(device)
@@ -73,15 +101,19 @@ def get_signature(
         else:
             inp = inp.to(device)
 
-        if not optional_params:
-            optional_params = {}
+        forward_optional_params = (
+            {} if optional_params is None else dict(optional_params)
+        )
+        for key, value in forward_optional_params.items():
+            if isinstance(value, torch.Tensor):
+                forward_optional_params[key] = value.to(device)
 
         if isinstance(params, list):
             inps = {p: inp for p in params}
-            p = model(**inps, **optional_params)
+            p = model(**inps, **forward_optional_params)
         else:
             inps = [inp] * params
-            p = model(*inps, **optional_params)
+            p = model(*inps, **forward_optional_params)
 
         if logits_getter_fn:
             p = logits_getter_fn(p)
