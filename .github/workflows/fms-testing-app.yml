@@ -38,7 +38,7 @@ jobs:
         # In case of a cache miss, but hit on a secondary key, this will update what's changed
         python -m pip install --upgrade pip
         pip install .[dev]
-        
+
         # Enables the virtual env for following steps
         echo "$VIRTUAL_ENV/bin" >> $GITHUB_PATH
         echo "VIRTUAL_ENV=$VIRTUAL_ENV" >> $GITHUB_ENV
@@ -48,10 +48,10 @@ jobs:
         # Install fms from the PR, all dependencies are already
         # installed in the virtual env
         pip install .
-        export OMP_NUM_THREADS=1
+        export OMP_NUM_THREADS=2
         export MKL_NUM_THREADS=1
         export OPENBLAS_NUM_THREADS=1
-        pytest -vv -rP tests/ 
+        pytest -vv -rP tests/
 
     - name: Save Virtualenv
       id: cache-venv-save
