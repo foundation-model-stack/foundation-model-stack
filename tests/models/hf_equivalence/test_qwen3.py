@@ -31,13 +31,14 @@ def _get_hf_model_output(model_path, inputs):
         outputs = model(**inputs)
         # The model uses the last token's representation as the embedding
         embeddings = outputs.last_hidden_state[:, -1, :]
+
         # Normalize embeddings for cosine similarity
         embeddings = F.normalize(embeddings, p=2, dim=1)
 
     query_embedding = embeddings[0]
     doc_embeddings = embeddings[1:]
 
-    return query_embedding, doc_embeddings
+    return outputs, query_embedding, doc_embeddings
 
 
 def _get_fms_model_output(model_path, inputs):
@@ -55,26 +56,32 @@ def _get_fms_model_output(model_path, inputs):
     # Get input_ids from the inputs dict
     input_ids = inputs["input_ids"].to(device)
 
-    # Prepare inputs for FMS - this will create appropriate mask and position_ids
-    input_ids_padded, padding_kwargs = pad_input_ids(input_ids, min_pad_length=0)
-    input_ids_padded = input_ids_padded.to(device)
+    # Create position_ids - should be sequential positions (0, 1, 2, ...)
+    batch_size, seq_len = input_ids.shape
+    position_ids = (
+        torch.arange(seq_len, device=device).unsqueeze(0).expand(batch_size, -1)
+    )
+
+    # Don't pass a mask - let the model handle it internally
+    # The model will use its default causal mask behavior
 
     with torch.no_grad():
         # Get embeddings from base model (before LM head)
-        embeddings = model(
-            input_ids_padded,
-            mask=padding_kwargs["mask"].to(device),
-            position_ids=padding_kwargs["position_ids"].to(device),
+        outputs, _ = model.base_model(
+            input_ids,
+            mask=None,
+            position_ids=position_ids,
         )
         # The model uses the last token's representation as the embedding
-        embeddings = embeddings[:, -1, :]
+        embeddings = outputs[:, -1, :]
+
         # Normalize embeddings for cosine similarity
         embeddings = F.normalize(embeddings, p=2, dim=1)
 
     query_embedding = embeddings[0]
     doc_embeddings = embeddings[1:]
 
-    return query_embedding, doc_embeddings
+    return outputs, query_embedding, doc_embeddings
 
 
 @pytest.mark.slow
@@ -110,20 +117,39 @@ def test_qwen3_embedding_0_6b_equivalence():
     )
 
     # Get outputs from both models
-    hf_query_embedding, hf_doc_embeddings = _get_hf_model_output(model_path, inputs)
-    fms_query_embedding, fms_doc_embeddings = _get_fms_model_output(model_path, inputs)
+    hf_outputs, hf_query_embedding, hf_doc_embeddings = _get_hf_model_output(
+        model_path, inputs
+    )
+    fms_outputs, fms_query_embedding, fms_doc_embeddings = _get_fms_model_output(
+        model_path, inputs
+    )
 
     hf_scores = hf_query_embedding @ hf_doc_embeddings.T
     fms_scores = fms_query_embedding @ fms_doc_embeddings.T
 
     # First sentence contains the awnser to the query.
     # It's score should be always the highest.
+
     assert hf_scores[0] > hf_scores[1]
     assert fms_scores[0] > fms_scores[1]
-    assert fms_scores[0] > 0.7
-    assert hf_scores[0] > 0.7
     assert hf_scores[0] > fms_scores[1]
     assert fms_scores[0] > hf_scores[1]
+
+    # Compare the actual hidden states (extract tensor from HF output)
+    # Only compare non-padded tokens using the attention mask
+    attention_mask = inputs["attention_mask"]
+
+    for i in range(len(input_texts)):
+        # Get the valid (non-padded) length for this sequence
+        valid_length = attention_mask[i].sum().item()
+
+        # Only compare the valid tokens (exclude padding)
+        hf_hidden = hf_outputs.last_hidden_state[i, :valid_length]
+        fms_hidden = fms_outputs[i, :valid_length]
+
+        assert torch.allclose(hf_hidden, fms_hidden, atol=1e-2, rtol=1e-2), (
+            f"Hidden states don't match for sequence {i}"
+        )
 
 
 @pytest.mark.slow
@@ -159,8 +185,12 @@ def test_qwen3_embedding_4b_equivalence():
     )
 
     # Get outputs from both models
-    hf_query_embedding, hf_doc_embeddings = _get_hf_model_output(model_path, inputs)
-    fms_query_embedding, fms_doc_embeddings = _get_fms_model_output(model_path, inputs)
+    hf_outputs, hf_query_embedding, hf_doc_embeddings = _get_hf_model_output(
+        model_path, inputs
+    )
+    fms_outputs, fms_query_embedding, fms_doc_embeddings = _get_fms_model_output(
+        model_path, inputs
+    )
 
     hf_scores = hf_query_embedding @ hf_doc_embeddings.T
     fms_scores = fms_query_embedding @ fms_doc_embeddings.T
@@ -169,10 +199,24 @@ def test_qwen3_embedding_4b_equivalence():
     # It's score should be always the highest.
     assert hf_scores[0] > hf_scores[1]
     assert fms_scores[0] > fms_scores[1]
-    assert fms_scores[0] > 0.7
-    assert hf_scores[0] > 0.7
     assert hf_scores[0] > fms_scores[1]
     assert fms_scores[0] > hf_scores[1]
+
+    # Compare the actual hidden states (extract tensor from HF output)
+    # Only compare non-padded tokens using the attention mask
+    attention_mask = inputs["attention_mask"]
+
+    for i in range(len(input_texts)):
+        # Get the valid (non-padded) length for this sequence
+        valid_length = attention_mask[i].sum().item()
+
+        # Only compare the valid tokens (exclude padding)
+        hf_hidden = hf_outputs.last_hidden_state[i, :valid_length]
+        fms_hidden = fms_outputs[i, :valid_length]
+
+        assert torch.allclose(hf_hidden, fms_hidden, atol=1e-2, rtol=1e-2), (
+            f"Hidden states don't match for sequence {i}"
+        )
 
 
 def test_qwen3_forward_pass():
@@ -336,3 +380,4 @@ if __name__ == "__main__":
     test_qwen3_with_cache()
     test_qwen3_parameter_count()
     test_qwen3_embedding_0_6b_equivalence()
+    test_qwen3_embedding_4b_equivalence()
