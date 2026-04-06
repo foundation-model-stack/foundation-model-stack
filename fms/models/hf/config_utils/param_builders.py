@@ -393,6 +393,7 @@ def build_mistral3_params(config: PretrainedConfig) -> dict:
     config_params["vision_config"] = PixtralVisionConfig(**vision_config_params)
     return config_params
 
+
 def build_ministral3_params(config: PretrainedConfig) -> dict:
     """Param builder for ministral3 mapping Mistral3ForConditionalGeneration to FMS."""
 
@@ -448,6 +449,7 @@ def build_ministral3_text_params(config: PretrainedConfig) -> dict:  #
     return model_params_with_common_opts(
         config, config_params, inner_dim=config.intermediate_size
     )
+
 
 def build_qwen3_embeddings_params(config: PretrainedConfig) -> dict:
     """Param builder for mapping Qwen3ForCausalLM to FMS."""
