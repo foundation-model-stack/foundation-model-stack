@@ -11,6 +11,7 @@ from fms.models.granite import GraniteConfig
 # Used for mistral3
 from fms.models.pixtral_vision import PixtralVisionConfig
 from fms.models.mistral import MistralConfig
+from fms.models.ministral3 import Ministral3TextConfig
 from transformers import PretrainedConfig
 
 
@@ -363,6 +364,10 @@ def build_pixtral_params(config: PretrainedConfig) -> dict:
 def build_mistral3_params(config: PretrainedConfig) -> dict:
     """Param builder for mapping Mistral3ForConditionalGeneration to FMS."""
 
+    ## NOTE: Since ministral3 and mistral3 uses same architecture class
+    # we are combining their build params function into one. They also
+    # use same vision model
+
     # Sanity checks – we currently support only Mistral text + Pixtral vision
     if getattr(config.text_config, "model_type", None) != "mistral":
         raise ValueError(
@@ -387,6 +392,63 @@ def build_mistral3_params(config: PretrainedConfig) -> dict:
     vision_config_params = build_pixtral_params(config.vision_config)
     config_params["vision_config"] = PixtralVisionConfig(**vision_config_params)
     return config_params
+
+
+def build_ministral3_params(config: PretrainedConfig) -> dict:
+    """Param builder for ministral3 mapping Mistral3ForConditionalGeneration to FMS."""
+
+    ## NOTE: Since ministral3 and ministral3 uses same architecture class
+    # we are combining their build params function into one. They also
+    # use same vision model
+
+    # Sanity checks – we currently support only Mistral text + Pixtral vision
+    if getattr(config.text_config, "model_type", None) != "ministral3":
+        raise ValueError(
+            "FMS implementation of Ministral3 currently supports only 'ministral3' language model"
+        )
+
+    if getattr(config.vision_config, "model_type", None) != "pixtral":
+        raise ValueError(
+            "FMS implementation of Ministral3 currently supports only 'pixtral' vision tower"
+        )
+    config_params = {
+        "projector_hidden_act": config.projector_hidden_act,
+        "multimodal_projector_bias": config.multimodal_projector_bias,
+        "spatial_merge_size": config.spatial_merge_size,
+        "image_token_index": config.image_token_index,
+        "vision_feature_layer": config.vision_feature_layer,
+    }
+    # Handle text / vision subconfigs, respectively
+    text_config_params = build_ministral3_text_params(config.text_config)
+    config_params["text_config"] = Ministral3TextConfig(**text_config_params)
+
+    vision_config_params = build_pixtral_params(config.vision_config)
+    config_params["vision_config"] = PixtralVisionConfig(**vision_config_params)
+    return config_params
+
+
+def build_ministral3_text_params(config: PretrainedConfig) -> dict:  #
+    """Param builder for mapping ministral3 with MistralForCausalLM to FMS."""
+    config_params = {
+        "activation_fn": config.hidden_act,
+        "src_vocab_size": config.vocab_size,
+        "nheads": config.num_attention_heads,
+        "nlayers": config.num_hidden_layers,
+        "emb_dim": config.hidden_size,
+        "max_expected_seq_len": config.max_position_embeddings,
+        "kvheads": config.num_key_value_heads,
+        "p_dropout": config.attention_dropout,
+        "head_dim": (
+            getattr(config, "head_dim", None)
+            or config.hidden_size // config.num_attention_heads
+        ),
+        "norm_eps": config.rms_norm_eps,
+        "rope_parameters": config.rope_parameters,
+        "sliding_window": config.sliding_window,
+    }
+    return model_params_with_common_opts(
+        config, config_params, inner_dim=config.intermediate_size
+    )
 
 
 def model_params_with_common_opts(
