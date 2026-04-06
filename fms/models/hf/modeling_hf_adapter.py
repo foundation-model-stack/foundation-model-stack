@@ -2,14 +2,12 @@ import abc
 import copy
 import os
 from packaging.version import Version
-from packaging.version import Version
 from typing import Callable, Dict, Optional, Tuple, Union
 
 import torch
 from torch import nn
 from torch.nn.modules.loss import _Loss
 from transformers import PretrainedConfig, PreTrainedModel, GenerationMixin
-from transformers import __version__ as tf_version
 from transformers import __version__ as tf_version
 from transformers.modeling_outputs import (
     BaseModelOutput,
@@ -23,6 +21,7 @@ if Version(tf_version) >= Version("5.0.0"):
     from transformers.initialization import no_init_weights
 else:
     from transformers.modeling_utils import no_init_weights
+
 
 from fms.models.hf.utils import mask_2d_to_3d, mask_2d_to_3d_bidirectional
 
