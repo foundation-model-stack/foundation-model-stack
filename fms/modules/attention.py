@@ -537,6 +537,7 @@ class UnfusedQKV(QKV):
             linear_config=linear_config,
         )
 
+        # Apply normalization if enabled - this is passed as attention kwarg
         if norm_eps:
             self.norm = True
             self.q_norm = LayerNormParameterized(
@@ -584,7 +585,7 @@ class UnfusedQKV(QKV):
         keys = self.key(k)  # b x klen x (kvheads * head_dim)
         values = self.value(v)  # b x vlen x (kvheads * head_dim)
 
-        # Apply normalization if enabled
+        # Apply normalization if enabled - this is passed as attention kwarg
         # Normalization should be applied per-head, so we need to reshape first
         if self.norm:
             batch_size, q_len, _ = queries.shape
