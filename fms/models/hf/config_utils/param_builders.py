@@ -453,6 +453,7 @@ def build_ministral3_text_params(config: PretrainedConfig) -> dict:  #
 
 def build_qwen3_embeddings_params(config: PretrainedConfig) -> dict:
     """Param builder for mapping Qwen3ForCausalLM to FMS."""
+    rope_theta, _ = reverse_rope_param_lookup(config)
     config_params = {
         "norm_eps": config.rms_norm_eps,
         "bos_token_id": config.bos_token_id,
@@ -463,7 +464,7 @@ def build_qwen3_embeddings_params(config: PretrainedConfig) -> dict:
         "max_expected_seq_len": config.max_position_embeddings,
         "kvheads": config.num_key_value_heads,
         "p_dropout": config.attention_dropout,
-        "rope_base": config.rope_theta,
+        "rope_base": rope_theta,
         "head_dim": getattr(
             config, "head_dim", config.hidden_size // config.num_attention_heads
         ),

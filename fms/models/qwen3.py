@@ -194,21 +194,9 @@ class Qwen3Headless(nn.Module):
         self.config = self.config.updated(**kwargs)
         self.distributed_strategy = distributed_strategy
 
-        embedding = nn.Embedding(
+        self.embedding = nn.Embedding(
             self.config.src_vocab_size, self.config.emb_dim, self.config.pad_id
         )
-        # TP does not work with tied weights
-        if (
-            not isinstance(self.distributed_strategy, TensorParallelStrategy)
-            or not self.config.tie_heads
-        ):
-            self.embedding = self.distributed_strategy.distribute_module(embedding)
-        else:
-            logger.warning(
-                "You're using TP on a model with tied weights between head and embedding. "
-                "The tied weights won't be sharded, which can result in unexpected OOMs."
-            )
-            self.embedding = embedding
 
         self.rot_emb = RotaryEmbedding(
             dim=self.config.head_dim,
@@ -397,17 +385,9 @@ class Qwen3(nn.Module):
         self.distributed_strategy = distributed_strategy
 
         self.base_model = Qwen3Headless(self.config, self.distributed_strategy)
-        head = LinearClassificationHead(
+        self.head = LinearClassificationHead(
             self.config.emb_dim, self.config.src_vocab_size, bias=False
         )
-        # TP does not work with tied weights
-        if (
-            not isinstance(self.distributed_strategy, TensorParallelStrategy)
-            or not self.config.tie_heads
-        ):
-            self.head = self.distributed_strategy.distribute_module(head)
-        else:
-            self.head = head
 
     def get_config(self) -> Qwen3Config:
         return self.config
@@ -591,14 +571,8 @@ def _hf_to_fms_rope(
         # Therefore, to make FMS produce the correct order of outputs when
         # loading from an HF checkpoint, we need to undo the transformation
         # that HF does from the original Meta weights
-        is_gptq_2d_qparam = "gptq" in linear_type_str and param.dim() == 2
         if bool(trans_required_pattern.match(name)) and param.numel() > 1:
             temp = param
-            if is_gptq_2d_qparam:
-                # GPTQ qweights are [in_feat, out_feat] (unlike usual [out_feat, in_feat])
-                # and are fully transposed before & after process.
-                # GPTQ scales and qzeros are also transposed accordingly
-                temp = temp.transpose(0, 1)
             # num_heads is used in the transformation required for hf->fms
             # can't be precomputed because q and k might have different num_heads
             assert model_config is not None and model_config.head_dim is not None
@@ -611,8 +585,6 @@ def _hf_to_fms_rope(
                 temp_view = temp.view(num_heads, 2, -1)
             temp = temp_view.transpose(1, 2).reshape(*temp.size())
 
-            if is_gptq_2d_qparam:
-                temp = temp.transpose(0, 1)
             new_sd[name] = temp
         else:
             new_sd[name] = param
@@ -621,9 +593,7 @@ def _hf_to_fms_rope(
 
 
 def _get_rope_params(linear_type: str) -> list[str]:
-    if "gptq" in linear_type:
-        return ["qweight", "scales", "qzeros", "bias"]
-    elif "int8" in linear_type:
+    if "int8" in linear_type:
         # quantize_weight is fms-model-optimizer identifier of weight clip values
         return ["weight", "bias", "quantize_weight"]
     elif "fp8" in linear_type:
