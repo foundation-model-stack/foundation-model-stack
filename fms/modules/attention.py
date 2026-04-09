@@ -498,6 +498,7 @@ class UnfusedQKV(QKV):
         emb_v_per_head: int,
         use_bias: bool,
         linear_config: Optional[Mapping[str, Any]] = None,
+        apply_norm_per_head: Optional[bool] = None,
         norm_eps: Optional[float] = None,
         head_dim: Optional[int] = None,
         *args,
@@ -517,6 +518,7 @@ class UnfusedQKV(QKV):
 
         self.head_dim = head_dim or emb_kq_per_head
         self.norm_eps = norm_eps or 1e-5
+        self.apply_norm_per_head = apply_norm_per_head
 
         self.query = get_linear(
             self.emb_dim,
@@ -538,7 +540,7 @@ class UnfusedQKV(QKV):
         )
 
         # Apply normalization if enabled - this is passed as attention kwarg
-        if norm_eps:
+        if norm_eps and self.apply_norm_per_head:
             self.norm = True
             self.q_norm = LayerNormParameterized(
                 head_dim,
@@ -587,7 +589,7 @@ class UnfusedQKV(QKV):
 
         # Apply normalization if enabled - this is passed as attention kwarg
         # Normalization should be applied per-head, so we need to reshape first
-        if self.norm:
+        if self.norm and self.apply_norm_per_head:
             batch_size, q_len, _ = queries.shape
             k_len = keys.shape[1]
 
@@ -631,6 +633,7 @@ class FusedQKV(QKV):
         emb_v_per_head: int,
         use_bias: bool,
         linear_config: Optional[Mapping[str, Any]] = None,
+        apply_norm_per_head: Optional[bool] = None,
         norm_eps: Optional[float] = None,
         head_dim: Optional[int] = None,
         *args,
@@ -735,6 +738,14 @@ class MultiHeadAttention(nn.Module):
     scale_factor : float | None
         Optional scaling factor applied to the attention logits. If None, a default scaling based
         on the embedding dimension may be used.
+    apply_norm_per_head : bool | None
+        If True, applies normalization per attention head. If None, normalization is not applied.
+    norm_eps : float | None
+        Epsilon value for normalization to ensure numerical stability. Only used when
+        apply_norm_per_head is True.
+    head_dim : int | None
+        Dimensionality of each attention head. If None, it will be computed based on other
+        parameters.
     has_sinks : bool
         If True, enables the use of sink tokens, which are represented by learnable parameters
         (one per attention head). Sink tokens can be used to aggregate information across tokens
@@ -755,6 +766,7 @@ class MultiHeadAttention(nn.Module):
         fused: bool = True,
         linear_config: Optional[Mapping[str, Any]] = None,
         scale_factor: Optional[float] = None,
+        apply_norm_per_head: Optional[bool] = None,
         norm_eps: Optional[float] = None,
         head_dim: Optional[int] = None,
         has_sinks: bool = False,
@@ -770,6 +782,7 @@ class MultiHeadAttention(nn.Module):
         self.fused = fused
         self.linear_config = linear_config
         self.scale_factor = scale_factor
+        self.apply_norm_per_head = apply_norm_per_head
         self.norm_eps = norm_eps
         self.head_dim = head_dim
         self.has_sinks = has_sinks
@@ -782,6 +795,7 @@ class MultiHeadAttention(nn.Module):
             self.emb_v_per_head,
             self.use_bias,
             linear_config=linear_config,
+            apply_norm_per_head=self.apply_norm_per_head,
             norm_eps=self.norm_eps,
             head_dim=self.head_dim,
         )

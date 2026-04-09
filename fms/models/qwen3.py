@@ -119,6 +119,7 @@ class Qwen3Block(nn.Module):
             position_encoder=rotary_emb,
             fused=self.config.fused_weights,
             linear_config=self.config.linear_config,
+            apply_norm_per_head=True,
             norm_eps=self.config.norm_eps,
             head_dim=self.config.head_dim,
         )
