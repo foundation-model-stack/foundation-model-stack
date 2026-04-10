@@ -436,9 +436,6 @@ class RotaryEmbedding(PositionEncoder):
             return query.reshape(query_shape), key.reshape(key_shape)
 
         freqs = self.cached_freqs[q.device.index][alpha][position_ids]
-
-        position_ids = position_ids.clamp(max=freqs.size(0) - 1)
-
         freqs = freqs.float()  # 1 L D/2 2 2
 
         q_out = (
