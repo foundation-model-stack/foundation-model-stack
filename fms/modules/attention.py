@@ -184,10 +184,10 @@ def _sdpa_store_op(
             # In-place update at specific position
             token_index = attn_kwargs.get("tokens_in_current_block", 0)
             key_cache = torch.ops.spyre.overwrite(
-                input=keys[:, :, token_index:token_index+1, :], output=key_cache, dim=2, offset=update_pos
+                input=keys[:, :, token_index:token_index+1, :], output=key_cache, dims=[2], offset=update_pos
             )
             value_cache = torch.ops.spyre.overwrite(
-                input=values[:, :, token_index:token_index+1, :], output=value_cache, dim=2, offset=update_pos
+                input=values[:, :, token_index:token_index+1, :], output=value_cache, dims=[2], offset=update_pos
             )
             return key_cache, value_cache, key_cache, value_cache
         else:
