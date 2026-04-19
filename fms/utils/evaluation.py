@@ -38,25 +38,6 @@ def _tokenize_cached(
     return context_ids, continuation_ids, input_ids
 
 
-logger = logging.getLogger(__name__)
-
-
-# Module-level cache for tokenization to avoid self being part of cache key
-@functools.lru_cache(maxsize=None)
-def _tokenize_cached(
-    tokenizer: tokenizers.BaseTokenizer, context: str, continuation: str
-) -> Tuple[List[int], List[int], List[int]]:
-    """Tokenize context and continuation strings - cached implementation."""
-    context_ids = tokenizer.convert_tokens_to_ids(tokenizer.tokenize(context))
-    if not len(context_ids):
-        context_ids = [tokenizer.bos_token_id]
-
-    continuation_ids = tokenizer.convert_tokens_to_ids(tokenizer.tokenize(continuation))
-    input_ids = context_ids + continuation_ids[:-1]
-
-    return context_ids, continuation_ids, input_ids
-
-
 @register_model("fms")
 class FMSEvalHarnessLM(LM):
     def __init__(
