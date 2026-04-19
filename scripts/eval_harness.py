@@ -160,7 +160,11 @@ if args.compile:
 
 
 lm_obj = evaluation.FMSEvalHarnessLM(
-    model=model, tokenizer=tokenizer, use_cache=args.no_use_cache, batch_size=args.batch_size, device=device
+    model=model,
+    tokenizer=tokenizer,
+    use_cache=args.no_use_cache,
+    batch_size=args.batch_size,
+    device=device,
 )
 
 results = lm_eval.simple_evaluate(
