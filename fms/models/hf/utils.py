@@ -1,4 +1,5 @@
 import os.path
+import logging
 from typing import Any, Dict, Optional, Union
 
 import torch
@@ -13,6 +14,8 @@ from transformers import (  # type: ignore
 
 from fms.models import get_model
 from fms.models.hf.config_utils import _FMS_MODEL_CONFIG_REGISTRY
+
+logger = logging.getLogger(__name__)
 
 
 def register_fms_models():
@@ -139,6 +142,11 @@ def infer_model_configuration(
                 ignore_patterns = ["*.safetensors"]
                 allow_patterns.append("*.pt")
             elif isinstance(model_id_or_path, str) and model_id_or_path.startswith(
+                "mistralai/Ministral"
+            ):
+                ignore_patterns = ["consolidated.safetensors"]
+                allow_patterns.append("*.safetensors*")
+            elif isinstance(model_id_or_path, str) and model_id_or_path.startswith(
                 "mistralai/Mistral"
             ):
                 ignore_patterns = ["consolidated.safetensors"]
@@ -158,6 +166,20 @@ def infer_model_configuration(
         model_path = str(model_id_or_path)
 
     config = AutoConfig.from_pretrained(model_path)
+
+    ## HACK to map Mistral3ForConditionalGeneration to Ministral3 class successfully
+
+    if (
+        config.architectures[0] == "Mistral3ForConditionalGeneration"
+        and config.text_config.model_type == "ministral3"
+    ):
+        config.architectures = ["FMSMinistral3ForConditionalGeneration"]
+        logger.warning(
+            "%s architecture detected with ministral3 text_config.model_type. "
+            "This will get remapped to FMSMinistral3ForConditionalGeneration for"
+            "building params and configuring class accordingly!"
+            % config.architectures[0]
+        )
 
     config_params = _FMS_MODEL_CONFIG_REGISTRY.hf_config_to_fms_config_params(
         config,

@@ -66,6 +66,12 @@ parser.add_argument(
     help="Disable the kv-cache (on by default)",
 )
 parser.add_argument(
+    "--batch_size",
+    type=int,
+    default=1,
+    help="batch size for loglikelihood() function",
+)
+parser.add_argument(
     "--compile",
     action="store_true",
     help="Use torch.compile (slow for first inference pass)",
@@ -154,7 +160,7 @@ if args.compile:
 
 
 lm_obj = evaluation.FMSEvalHarnessLM(
-    model=model, tokenizer=tokenizer, use_cache=args.no_use_cache, device=device
+    model=model, tokenizer=tokenizer, use_cache=args.no_use_cache, batch_size=args.batch_size, device=device
 )
 
 results = lm_eval.simple_evaluate(

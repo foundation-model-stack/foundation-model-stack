@@ -45,7 +45,12 @@ __FMS_MODEL_REGISTRY_MAP: RegistryMap = {
     "LlavaNextForConditionalGeneration": ("llava_next", pb.build_llava_next_params),
     "MPNetForMaskedLM": ("mpnet", pb.build_mpnet_params),
     "BertForMaskedLM": ("bert", pb.build_bert_params),
+    "Qwen3ForCausalLM": ("qwen3", pb.build_qwen3_embeddings_params),
     "Mistral3ForConditionalGeneration": ("mistral3", pb.build_mistral3_params),
+    # This mapping logic in FMS relies on mapping top level model_type in config.json to a particular class.
+    # However, in case of ministral3 models, this still comes out to be mistral3, and not ministral3.
+    # To distinguish between these models we add a special handling for ministral3 at this mapping layer, to get around this problem.
+    "FMSMinistral3ForConditionalGeneration": ("ministral3", pb.build_ministral3_params),
     # Classify arches have some extra keys for labels
     "RobertaForSequenceClassification": ("roberta_classification", partial(pb.build_roberta_params, is_classify=True)),
     "BertForSequenceClassification": ("bert_classification", partial(pb.build_bert_params, is_classify=True)),
