@@ -70,21 +70,13 @@ class LLaMABlock(nn.Module):
         emb_kq = self.config.emb_dim // self.config.nheads
         emb_v = self.config.emb_dim // self.config.nheads
 
-        self.ln = LayerNormParameterized(
+        self.ln = torch.nn.RMSNorm(
             self.config.emb_dim,
-            elementwise_scale=True,
-            elementwise_shift=False,
-            use_mean=False,
             eps=self.config.norm_eps,
-            use_high_precision_pow=True,
         )
-        self.ff_ln = LayerNormParameterized(
+        self.ff_ln = torch.nn.RMSNorm(
             self.config.emb_dim,
-            elementwise_scale=True,
-            elementwise_shift=False,
-            use_mean=False,
             eps=self.config.norm_eps,
-            use_high_precision_pow=True,
         )
 
         if self.config.kvheads == 0:
@@ -216,16 +208,13 @@ class LLaMAHeadless(nn.Module):
         for i in range(self.config.nlayers):
             block: nn.Module = LLaMABlock(self.config, self.rot_emb)
             block = self.distributed_strategy.distribute_layer(block, i)
+            block.compile(dynamic=False)
             layers.append(block)
         self.layers = nn.ModuleList(layers)
 
-        dec_norm = LayerNormParameterized(
+        dec_norm = torch.nn.RMSNorm(
             self.config.emb_dim,
-            elementwise_scale=True,
-            elementwise_shift=False,
-            use_mean=False,
             eps=self.config.norm_eps,
-            use_high_precision_pow=True,
         )
         self.dec_norm = self.distributed_strategy.distribute_module(
             dec_norm, final_layers=True
@@ -342,7 +331,9 @@ class LLaMAHeadless(nn.Module):
         # bias: nheads x seq_len x seq_len
         if past_key_value_states is None or len(past_key_value_states) == 0:
             past_key_value_states = [None for _ in range(len(self.layers))]
-        x_in = self.embedding(x_in)
+        
+        if x_in.dim() == 2:
+            x_in = self.embedding(x_in)
 
         # this is the output cache for all the decoder layers
         present_key_value_states = []
