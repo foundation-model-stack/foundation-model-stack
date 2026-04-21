@@ -9,6 +9,7 @@ from fms.modules.attention import (
 import torch
 
 from torch.library import custom_op
+from torch import compiler
 import torch.nn.functional as F
 
 
@@ -212,6 +213,11 @@ def __spyre_paged_validate_attn_kwargs_op(
     left_padded_prompt_mask = attn_kwargs.get("left_padded_prompt_mask", None)
     if left_padded_prompt_mask is not None:
         assert input_ids.shape[0] == left_padded_prompt_mask.shape[0]
+
+    if compiler.is_compiling():
+        # When compiling for spyre, don't run expensive KV cache validation.
+        # The input `past_key_value_states` aren't actually sent to the device when running on spyre
+        return
 
     if past_key_value_states is not None:
         for k, v in past_key_value_states:
