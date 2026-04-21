@@ -319,7 +319,10 @@ def generate(
                     position_ids = kwargs.get("position_ids", None)
                     if position_ids is not None:
                         if use_cache:
-                            position_ids = position_ids[:, -decode_multiple:] + decode_multiple
+                            position_ids_list = []
+                            for i in range(position_ids.shape[0]):
+                                position_ids_list.append(torch.arange(0, decode_multiple, dtype=torch.long) + position_ids[i, -1])
+                            position_ids = torch.stack(position_ids_list)
                         else:
                             position_ids = torch.cat(
                                 (position_ids, position_ids[:, -decode_multiple:] + decode_multiple),
@@ -333,13 +336,19 @@ def generate(
         if prepare_model_inputs_hook is not None:
             input_ids, kwargs = prepare_model_inputs_hook(i, input_ids, kwargs)
 
-        alpha = model.base_model.rot_emb.compute_freqs_cis(torch.device("spyre"), max_seq_len)
-        kwargs["selected_freqs"] = model.base_model.rot_emb.cached_freqs[0][alpha][kwargs["position_ids"]].contiguous().to("spyre")
-        kwargs["mask"] = kwargs["mask"].to(dtype=torch.float16).to("spyre")
-        print(f"{input_ids.shape=}\n {kwargs['mask'].shape=}\n {kwargs['position_ids'].shape=}\n {kwargs['selected_freqs'].shape=}\n {kwargs.get('is_filling_mode', None)=}\n {kwargs.get('tokens_in_current_block', None)=}\n {kwargs.get('cache_update_position')=}")
+        if model.head.weight.device.type == "spyre":
+            alpha = model.base_model.rot_emb.compute_freqs_cis(torch.device("spyre"), max_seq_len)
+            kwargs["selected_freqs"] = model.base_model.rot_emb.cached_freqs[0][alpha][kwargs["position_ids"]].contiguous().to("spyre")
+            kwargs["mask"] = kwargs["mask"].to(dtype=torch.float16).to("spyre")
+            model_input_ids = input_ids.to("spyre")
+        else:
+            alpha = model.base_model.rot_emb.compute_freqs_cis(torch.device("cpu"), max_seq_len)
+            kwargs["selected_freqs"] = model.base_model.rot_emb.cached_freqs[None][alpha][kwargs["position_ids"]].contiguous()
+            model_input_ids = input_ids
+        print(f"{input_ids.shape=}\n {kwargs['mask'].shape=}\n {kwargs['mask']=}\n {kwargs['position_ids'].shape=}\n {kwargs['position_ids']=}\n {kwargs['selected_freqs'].shape=}\n {kwargs.get('is_filling_mode', None)=}\n {kwargs.get('tokens_in_current_block', None)=}\n {kwargs.get('cache_update_position')=}")
         # torch.set_printoptions(threshold=100000)
         # print(f"{kwargs['mask']}")
-        output = model(input_ids.to("spyre"), **kwargs)
+        output = model(model_input_ids, **kwargs)
         if use_cache:
             logits, past_key_value_states = output
             # TODO: this should go away when reduce-overhead issues are fixed, or
@@ -360,7 +369,7 @@ def generate(
         if decode_multiple > 1:
             grab_idx = decode_multiple - tokens_in_current_block
             logits = logits.to('cpu')
-            print(f"{grab_idx=} {logits[:, :, :49159]=}")
+            print(f"{-grab_idx=} {logits[:, :, :49159]=}")
             logits = logits[:, -grab_idx, :]
             
         else:
