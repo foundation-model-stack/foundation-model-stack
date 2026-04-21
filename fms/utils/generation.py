@@ -321,7 +321,7 @@ def generate(
                         if use_cache:
                             position_ids_list = []
                             for i in range(position_ids.shape[0]):
-                                position_ids_list.append(torch.arange(0, decode_multiple, dtype=torch.long) + position_ids[i, -1])
+                                position_ids_list.append(torch.arange(0, decode_multiple, dtype=torch.long) + position_ids[i, -1] + 1)
                             position_ids = torch.stack(position_ids_list)
                         else:
                             position_ids = torch.cat(
