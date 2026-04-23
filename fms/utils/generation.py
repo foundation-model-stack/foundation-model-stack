@@ -308,7 +308,8 @@ def generate(
                         (input_ids.shape[0], decode_multiple, current_cache_len),
                         device=input_ids.device
                     )
-                    mask[:, :, :prompt_offset] = -torch.inf
+                    for i in range(mask.shape[0]):
+                        mask[i, :, :prompt_offset[i]] = -torch.inf
 
                     for j in range(decode_multiple):
                         attend_up_to = current_cache_len - decode_multiple + j + 1
@@ -401,7 +402,8 @@ def generate(
             tokens_in_current_block %= 64
 
             grab_idx = decode_multiple - tokens_in_current_block
-            result[:, -grab_idx] = next_val
+            print(f"{next_val.squeeze()=}")
+            result[:, -grab_idx] = next_val.squeeze()
         else:
             result = torch.cat((result, next_val), dim=-1)
 
