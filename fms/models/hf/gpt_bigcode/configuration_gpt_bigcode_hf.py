@@ -56,9 +56,9 @@ class HFAdaptedGPTBigCodeConfig(PretrainedConfig):
             eos_token_id=eos_token_id,
             bos_token_id=bos_token_id,
             is_decoder=is_decoder,
-            # the default for this model is to tie_heads
+            # the default for this model is to tie_heads (True in FMS GPTBigCodeConfig)
             # so set to true if tie_word_embeddings is not given
-            tie_word_embeddings=kwargs.pop("tie_word_embeddings", False),
+            tie_word_embeddings=kwargs.pop("tie_word_embeddings", True),
             **kwargs,
         )
 
@@ -76,4 +76,7 @@ class HFAdaptedGPTBigCodeConfig(PretrainedConfig):
     def from_fms_config(cls, config: GPTBigCodeConfig, **hf_kwargs):
         config_dict = config.as_dict()
         config_dict["pad_token_id"] = config_dict.pop("pad_id")
+        # Set tie_word_embeddings based on tie_heads from FMS config
+        if "tie_word_embeddings" not in hf_kwargs:
+            hf_kwargs["tie_word_embeddings"] = config_dict.get("tie_heads", False)
         return cls.from_dict(config_dict, **hf_kwargs)

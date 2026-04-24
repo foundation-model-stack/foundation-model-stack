@@ -17,7 +17,7 @@ from transformers.modeling_outputs import (
 from transformers.utils import ModelOutput, is_torch_fx_proxy
 
 ## Address transformers API changes
-if Version(tf_version) > Version("5.0.0"):
+if Version(tf_version) >= Version("5.0.0"):
     from transformers.initialization import no_init_weights
 else:
     from transformers.modeling_utils import no_init_weights
