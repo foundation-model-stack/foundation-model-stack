@@ -195,7 +195,7 @@ class GraniteHeadless(nn.Module):
         for i in range(self.config.nlayers):
             block: nn.Module = GraniteBlock(self.config, self.rot_emb)
             block = self.distributed_strategy.distribute_layer(block, i)
-            block.compile(dynamic=False)
+            block.compile()
             layers.append(block)
         self.layers = nn.ModuleList(layers)
 

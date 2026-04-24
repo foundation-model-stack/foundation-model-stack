@@ -183,10 +183,10 @@ def _sdpa_store_op(
         if is_filling and update_pos is not None:
             # In-place update at specific position
             token_index = attn_kwargs.get("tokens_in_current_block", 0)
-            key_cache = torch.ops.spyre.overwrite(
+            torch.ops.spyre.overwrite(
                 input=keys[:, :, token_index:token_index+1, :], output=key_cache, dims=[2], offsets=[update_pos]
             )
-            value_cache = torch.ops.spyre.overwrite(
+            torch.ops.spyre.overwrite(
                 input=values[:, :, token_index:token_index+1, :], output=value_cache, dims=[2], offsets=[update_pos]
             )
             return key_cache, value_cache, key_cache, value_cache
@@ -200,6 +200,7 @@ def _sdpa_store_op(
                 key_cache_result,
                 value_cache_result,
             )
+        
     else:
         return (keys, values, keys, values)
 
@@ -687,7 +688,7 @@ class MultiHeadAttention(nn.Module):
         # You want to apply rotary embeddings pre-cache
         if self.position_encoder is not None:
             queries, keys = self.position_encoder.adjusted_qk(
-                queries, keys, past_kv_state=past_key_value_state, selected_freqs=attn_kwargs["selected_freqs"], use_cache=use_cache
+                queries, keys, position_ids, past_kv_state=past_key_value_state, selected_freqs=attn_kwargs["selected_freqs"], use_cache=use_cache
             )
 
         attn_compute_dict = get_attention_type(**attn_kwargs)
