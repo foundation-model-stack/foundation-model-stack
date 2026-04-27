@@ -346,8 +346,6 @@ def generate(
             alpha = model.base_model.rot_emb.compute_freqs_cis(torch.device("cpu"), max_seq_len)
             kwargs["selected_freqs"] = model.base_model.rot_emb.cached_freqs[None][alpha][kwargs["position_ids"]].contiguous()
             model_input_ids = input_ids
-        print(f"{input_ids.shape=}\n {kwargs.get('is_filling_mode', None)=}\n {kwargs.get('tokens_in_current_block', None)=}\n {kwargs.get('cache_update_position')=}")
-        torch.set_printoptions(threshold=100000)
         output = model(model_input_ids, **kwargs)
         if use_cache:
             logits, past_key_value_states = output
@@ -369,7 +367,6 @@ def generate(
         if decode_multiple > 1:
             grab_idx = decode_multiple - tokens_in_current_block
             logits = logits.to('cpu')
-            print(f"{-grab_idx=} {logits[:, -grab_idx, :20]=}")
             logits = logits[:, -grab_idx, :]
             
         else:
