@@ -222,6 +222,8 @@ def generate(
         contiguous_cache: ensures the cache is contiguous in device memory
         eos_token_id: the optional token id representing the end of sequence
         pad_token_id: the optional token id representing the pad token
+                      (This value doesn't affect the generation function and
+                      is present for parity with paged generation)
         timing: whether to measure timings: "per-token" for each token generation time,
             "e2e" for full generation loop. Both options make `generate` return a tuple
             with the following information:
