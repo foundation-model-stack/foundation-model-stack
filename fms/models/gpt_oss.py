@@ -50,6 +50,8 @@ class GptOssConfig(ModelConfig):
     src_vocab_size: int = 201088
     emb_dim: int = 2880
     head_dim: int = 64
+    eos_token_id: int = 200002
+    bos_token_id: int = 0
     num_attention_heads: int = 64
     sliding_window: int = 128
     rope_base: float = 150000.0

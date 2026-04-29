@@ -10,6 +10,9 @@ from fms.models.hf.lm_head_mixins import LMHeadModelLMHeadMixin
 from fms.models.hf.modeling_hf_adapter import HFDecoder, HFDecoderModelArchitecture
 from fms.models.granite import Granite, GraniteHeadless
 
+from packaging.version import Version
+from transformers import __version__ as tf_version
+
 
 class HFAdaptedGraniteDecoder(HFDecoder):
     """Adapter for the Granite decoder"""
@@ -52,9 +55,6 @@ class HFAdaptedGraniteHeadless(HFDecoderModelArchitecture):
     # attributes required by HF
     config_class = HFAdaptedGraniteConfig
     base_model_prefix = "hf_adapted_granite"
-
-    _tied_weights_keys = ["decoder.model.embedding.weight", "embedding.weight"]
-    _keys_to_ignore_on_save = ["embedding.weight"]
 
     def __init__(
         self,
@@ -109,16 +109,78 @@ class HFAdaptedGraniteHeadless(HFDecoderModelArchitecture):
 
 
 class HFAdaptedGraniteForCausalLM(LMHeadModelLMHeadMixin, HFAdaptedGraniteHeadless):
-    _keys_to_ignore_on_load_missing = [r"lm_head.weight"]
-    _tied_weights_keys = ["embedding.weight", "lm_head.weight"]
+    ## Address transformers API changes
+    if Version(tf_version) >= Version("5.0.0"):
+        _keys_to_ignore_on_load_missing = [r"lm_head.weight"]
+        _tied_weights_keys = {
+            "lm_head.weight": "decoder.model.embedding.weight",
+            "embedding.weight": "decoder.model.embedding.weight",
+        }
+    else:
+        _keys_to_ignore_on_load_missing = [r"lm_head.weight"]
+        _tied_weights_keys = ["embedding.weight", "lm_head.weight"]
 
     def __init__(self, config: HFAdaptedGraniteConfig, *args, **kwargs):
         super().__init__(config=config, bias=False, *args, **kwargs)
+
+    def state_dict(self, *args, **kwargs):
+        """Override to exclude decoder.model.embedding.weight from state_dict.
+
+        This prevents saving duplicate embeddings. The decoder's embedding will be
+        tied to the main embedding during load via tie_weights().
+        """
+        state_dict = super().state_dict(*args, **kwargs)
+        # Remove decoder.model.embedding.weight as it's tied to embedding.weight
+        if "decoder.model.embedding.weight" in state_dict:
+            del state_dict["decoder.model.embedding.weight"]
+        return state_dict
+
+    def load_state_dict(self, state_dict, strict=True, assign=False):
+        """Override to handle missing decoder.model.embedding.weight and ensure weights are tied after loading"""
+        # If decoder.model.embedding.weight is missing from state_dict, that's expected
+        # because we exclude it in state_dict(). It will be tied to embedding.weight.
+        # So we load with strict=False first
+        result = super().load_state_dict(state_dict, strict=False, assign=assign)
+
+        # Filter out the expected missing key from the result
+        filtered_missing_keys = [
+            k for k in result.missing_keys if k != "decoder.model.embedding.weight"
+        ]
+
+        # If strict mode was requested and there are still missing/unexpected keys, raise an error
+        if strict and (filtered_missing_keys or result.unexpected_keys):
+            error_msgs = []
+            if result.unexpected_keys:
+                error_msgs.append(
+                    f"Unexpected key(s) in state_dict: {', '.join(result.unexpected_keys)}"
+                )
+            if filtered_missing_keys:
+                error_msgs.append(
+                    f"Missing key(s) in state_dict: {', '.join(filtered_missing_keys)}"
+                )
+            if error_msgs:
+                raise RuntimeError(
+                    f"Error(s) in loading state_dict for {self.__class__.__name__}:\n\t"
+                    + "\n\t".join(error_msgs)
+                )
+
+        # Manually tie decoder.model.embedding.weight to embedding.weight after loading
+        if self.decoder.model.embedding is not self.embedding:
+            self.decoder.model.embedding.weight = self.embedding.weight
+
+        # Only tie lm_head to embedding if tie_word_embeddings is True AND lm_head.weight was not in the state_dict
+        # (if lm_head.weight was in state_dict, it means they should be separate)
+        if self.config.tie_word_embeddings and "lm_head.weight" not in state_dict:
+            self.lm_head.weight = self.embedding.weight
+
+        return result
 
     @classmethod
     def _hf_model_from_fms(
         cls, model: Granite, config: HFAdaptedGraniteConfig
     ) -> "HFAdaptedGraniteForCausalLM":
+        # Set tie_word_embeddings based on the FMS model's tie_heads config
+        config.tie_word_embeddings = config.tie_heads
         return cls(
             config=config,
             decoder=model.base_model,
