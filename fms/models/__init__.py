@@ -112,15 +112,10 @@ def __maybe_infer_model_variant(
 
         logger.info(f"inferring model configuration from {model_path_or_variant}")
 
-        # Only pass kwargs that are accepted by infer_model_configuration
-        infer_kwargs = {}
-        if "trust_remote_code" in kwargs:
-            infer_kwargs["trust_remote_code"] = kwargs["trust_remote_code"]
-
         extra_kwargs = infer_model_configuration(
             model_path_or_variant,
             download_weights=is_hf_pretrained and variant is not None,  # type: ignore[arg-type]
-            **infer_kwargs,
+            trust_remote_code=kwargs.get("trust_remote_code", False),
         )
         architecture = extra_kwargs.pop("architecture")
         variant = extra_kwargs.pop("variant")
