@@ -120,6 +120,7 @@ def mask_2d_to_3d_bidirectional(
 def infer_model_configuration(
     model_id_or_path: str | os.PathLike,
     download_weights: bool = True,
+    trust_remote_code: bool = False,
 ) -> Dict[str, Any]:
     # if the path does not exist, download it from huggingface and get the local path
     if not os.path.exists(model_id_or_path):
@@ -165,7 +166,7 @@ def infer_model_configuration(
     else:
         model_path = str(model_id_or_path)
 
-    config = AutoConfig.from_pretrained(model_path)
+    config = AutoConfig.from_pretrained(model_path, trust_remote_code=trust_remote_code)
 
     ## HACK to map Mistral3ForConditionalGeneration to Ministral3 class successfully
 
