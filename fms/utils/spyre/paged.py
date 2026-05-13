@@ -223,14 +223,13 @@ def paged_attn_compute_with_sinks(
         if scale is None:
             scale = 1.0 / math.sqrt(head_size)
         scale = math.sqrt(scale)
-        QK = torch.einsum("qhd,khd->hqk", q*scale_factor, keys*scale_factor)
+        QK = torch.einsum("qhd,khd->hqk", q*scale, keys*scale)
         QK += mask
         QK = torch.cat([QK, S], dim=-1)
         QK = QK - QK.max(dim=-1, keepdim=True).values
         W = torch.softmax(QK, dim=-1)
         W = W[..., :-1]  # drop the attention sinks after done
-        attn = torch.matmul(W, values)
-        attn = attn.transpose(0, 1).view(seq_len_q_i, num_query_heads, head_size)
+        attn = torch.einsum("hqk,khd->qhd", W, values)
         output[i][-seq_len_q_i:] = attn
     return output
 
