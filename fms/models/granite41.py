@@ -128,8 +128,11 @@ class Granite41Block(nn.Module):
         **attn_kwargs: Unpack[AttentionKwargs],
     ):
         if self.window_length > 0:
-            old_attn_name = attn_kwargs.get("attn_name", None)
-            attn_kwargs["attn_name"] = "sdpa_with_sinks"
+            old_attn_name = attn_kwargs.get("attn_name", "")
+            if "sdpa" in old_attn_name:
+                attn_kwargs["attn_name"] = "sdpa_with_sinks"
+            elif "paged" in old_attn_name:
+                attn_kwargs["attn_name"] = "spyre_paged_attn_with_sinks"
         # if the cache is not empty, we need to get the kv cache for self and cross attention
         self_attn_past_key_value = past_key_value_state
 

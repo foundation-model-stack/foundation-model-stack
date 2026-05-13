@@ -1,5 +1,5 @@
 import math
-from typing import List, Optional, Tuple
+from typing import List, NotRequired, Optional, Tuple
 
 from fms.modules.attention import (
     AttentionKwargs,
@@ -143,6 +143,127 @@ class SpyrePagedAttentionKwargs(AttentionKwargs):
     mask: Optional[torch.Tensor]  # prefill mask
 
 
+@custom_op("spyre::paged_attn_compute_with_sinks", mutates_args={}, device_types=["cpu", "cuda"])
+def paged_attn_compute_with_sinks(
+    query: torch.Tensor,
+    key_cache: torch.Tensor,
+    value_cache: torch.Tensor,
+    scale: float,
+    current_tkv_mask: torch.Tensor,
+    left_padded_prompt_mask: torch.Tensor,
+    block_table: torch.Tensor,
+    sinks: torch.Tensor,
+    sliding_window: int,
+) -> torch.Tensor:
+    # torch.zeros(NUM_BLOCKS, BLOCK_SIZE, kvheads, head_size, dtype=model_dtype),
+    output = torch.zeros_like(query)
+    num_query_heads = query.shape[2]
+    num_kv_heads = value_cache.shape[2]
+    head_size = value_cache.shape[3]
+    block_size = value_cache.shape[1]
+    seq_len_q = query.shape[1]
+    num_seqs = query.shape[0]
+
+    block_tables_lst = block_table.tolist()
+
+    seq_lens_lst = current_tkv_mask.tolist()
+    for i in range(num_seqs):
+        q = query[i]
+        block_table = block_tables_lst[i]
+        start_pos = int(left_padded_prompt_mask[i].item())
+        seq_len = int(seq_lens_lst[i])
+        seq_len_q_i = seq_len_q
+
+        keys_lst: list[torch.Tensor] = []
+        values_lst: list[torch.Tensor] = []
+        for j in range(start_pos, seq_len):
+            block_number = int(block_table[j // block_size])
+            block_offset = j % block_size
+
+            k = key_cache[block_number, block_offset, :, :]
+            k = k.reshape(num_kv_heads, head_size)
+            keys_lst.append(k)
+
+            v = value_cache[block_number, block_offset, :, :]
+            values_lst.append(v)
+        keys = torch.stack(keys_lst, dim=0)
+        values = torch.stack(values_lst, dim=0)
+        seq_len_kv = keys.shape[0]
+
+        # cut the pads for first prefill
+        if q.shape[0] > seq_len_kv:
+            seq_len_q_i = seq_len_kv
+            q = q[-seq_len_kv:]
+
+        if num_kv_heads > 1:
+            # Handle MQA and GQA
+            keys = torch.repeat_interleave(keys, num_query_heads // num_kv_heads, dim=1)
+            values = torch.repeat_interleave(
+                values, num_query_heads // num_kv_heads, dim=1
+            )
+
+        # Generate mask for prefix attention
+        mask = torch.ones((1, seq_len_q_i, seq_len_kv), dtype=torch.bool)
+        mask[:, :, -seq_len_q_i:] = torch.tril(mask[:, :, -seq_len_q_i:])
+        mask = torch.where(mask.logical_not(), -torch.inf, 0.0).to(
+            device=query.device, dtype=query.dtype
+        )
+        # truncate for sliding window kv_cache
+        mask = mask[..., -seq_len_q_i:, -seq_len_kv:]
+        if 0 < sliding_window < seq_len_kv:
+            mask += torch.tril(
+                mask.new_full((seq_len_q_i, seq_len_kv), -torch.inf),
+                diagonal=(seq_len_kv - seq_len_q_i) - sliding_window,
+            )
+
+        # Sink code
+        # https://github.com/openai/gpt-oss/blob/main/gpt_oss/torch/model.py#L153
+        # from gpt-oss open ai implementation
+        S = sinks.reshape(-1, 1, 1).expand(-1, seq_len_q, -1)  # type: ignore
+        if scale is None:
+            scale = 1.0 / math.sqrt(head_size)
+        scale = math.sqrt(scale)
+        QK = torch.einsum("qhd,khd->hqk", q*scale_factor, keys*scale_factor)
+        QK += mask
+        QK = torch.cat([QK, S], dim=-1)
+        QK = QK - QK.max(dim=-1, keepdim=True).values
+        W = torch.softmax(QK, dim=-1)
+        W = W[..., :-1]  # drop the attention sinks after done
+        attn = torch.matmul(W, values)
+        attn = attn.transpose(0, 1).view(seq_len_q_i, num_query_heads, head_size)
+        output[i][-seq_len_q_i:] = attn
+    return output
+
+
+@paged_attn_compute_with_sinks.register_fake
+def paged_attn_compute_with_sinks_meta(
+    query: torch.Tensor,
+    key_cache: torch.Tensor,
+    value_cache: torch.Tensor,
+    scale: float,
+    current_tkv_mask: torch.Tensor,
+    left_padded_prompt_mask: torch.Tensor,
+    block_table: torch.Tensor,
+    sinks: torch.Tensor,
+    sliding_window: int,
+) -> torch.Tensor:
+    return torch.zeros_like(query)
+
+
+class SpyrePagedAttentionSinkKwargs(SpyrePagedAttentionKwargs):
+    """
+    The sinks attention kwargs to be passed to fms model forward.
+
+    sinks: torch.Tensor
+        this is the tensor weights for the sinks
+    sliding_window: int
+        this is the sliding window size for sinks attention
+    """
+
+    sinks: NotRequired[torch.Tensor]
+    sliding_window: NotRequired[int | None]
+
+
 def __spyre_paged_store_op(
     keys: torch.Tensor,
     values: torch.Tensor,
@@ -186,6 +307,31 @@ def __spyre_paged_compute_op(
         attn_kwargs["current_tkv_mask"],
         attn_kwargs["left_padded_prompt_mask"],
         attn_kwargs["block_table"],
+    )
+
+
+def __spyre_paged_compute_sinks_op(
+    query: torch.Tensor,
+    key_cache: torch.Tensor,
+    value_cache: torch.Tensor,
+    nheads: int,
+    kvheads: int,
+    p_dropout: float,
+    scale_factor: Optional[float],
+    **attn_kwargs,
+) -> torch.Tensor:
+    if scale_factor is None:
+        scale_factor = 1 / math.sqrt(query.shape[-1])
+    return torch.ops.spyre.paged_attn_compute_with_sinks(
+        query,
+        key_cache,
+        value_cache,
+        scale_factor,
+        attn_kwargs["current_tkv_mask"],
+        attn_kwargs["left_padded_prompt_mask"],
+        attn_kwargs["block_table"],
+        attn_kwargs["sinks"],
+        attn_kwargs["sliding_window"],
     )
 
 
@@ -236,5 +382,15 @@ register_attention_op(
     _sdpa_compute_op,
     is_prefill_op=lambda **attn_kwargs: attn_kwargs.get("block_table", None) is None,
     compute_decode_op=__spyre_paged_compute_op,
+    validate_attn_kwargs_op=__spyre_paged_validate_attn_kwargs_op,
+)
+
+
+register_attention_op(
+    "spyre_paged_attn_with_sinks",
+    __spyre_paged_store_op,
+    _sdpa_compute_op,
+    is_prefill_op=lambda **attn_kwargs: attn_kwargs.get("block_table", None) is None,
+    compute_decode_op=__spyre_paged_compute_sinks_op,
     validate_attn_kwargs_op=__spyre_paged_validate_attn_kwargs_op,
 )
