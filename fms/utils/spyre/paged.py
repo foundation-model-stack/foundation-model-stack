@@ -219,7 +219,7 @@ def paged_attn_compute_with_sinks(
         # Sink code
         # https://github.com/openai/gpt-oss/blob/main/gpt_oss/torch/model.py#L153
         # from gpt-oss open ai implementation
-        S = sinks.reshape(-1, 1, 1).expand(-1, seq_len_q, -1)  # type: ignore
+        S = sinks.reshape(-1, 1, 1).expand(-1, seq_len_q_i, -1)  # type: ignore
         if scale is None:
             scale = 1.0 / math.sqrt(head_size)
         scale = math.sqrt(scale)
