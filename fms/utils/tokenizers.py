@@ -221,7 +221,7 @@ class _HFTokenizer(BaseTokenizer):
             DeprecationWarning,
             stacklevel=2,
         )
-        return self.tokenizer.convert_ids_to_tokens(ids)
+        return self.tokenizer.convert_ids_to_tokens(ids.tolist())
 
     def convert_tokens_to_ids(self, tokens: Union[str, list[str]]):
         warnings.warn(
