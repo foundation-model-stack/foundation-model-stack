@@ -591,11 +591,30 @@ def _move_to_real_device(
 ) -> torch.Tensor:
     if param.device == torch.device("meta"):
         is_parameter = isinstance(param, torch.nn.Parameter)
-        param = torch.empty(
-            param.shape,
-            device=real_device,
-            dtype=dtype,
-        )
+        if real_device.type == "spyre":
+            from torch_spyre._C import SpyreTensorLayout
+            # Allocate with spice
+            # Params are only 2D weights for matmuls or 1D weights for layernorm.
+            # We want all 2D weights to be stored row-major instead of default col-major
+            new_size = list(param.shape)
+            new_size.reverse()
+            if param.dim() > 1:
+                stl = SpyreTensorLayout(param.shape, param.stride(), dtype, [1, 0])
+            else:
+                stl = None
+            # logger.info(f"{param.shape=}, {param.stride()=} {stl}")
+            param = torch.empty(
+                param.shape,
+                device=real_device,
+                device_layout=stl,
+                dtype=dtype,
+            )
+        else:
+            param = torch.empty(
+                param.shape,
+                device=real_device,
+                dtype=dtype,
+            )
         if is_parameter:
             param = torch.nn.Parameter(param)
     return param
