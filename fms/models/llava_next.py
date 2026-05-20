@@ -536,11 +536,7 @@ def _hf_to_fms_rope(
         # Use head_dim from config, not emb_dim // nheads. When weight_expansion
         # has already run (e.g. 64->128 for Granite 3.3 2B on Spyre), the weights
         # already have the expanded head_dim and the permutation must match it.
-        # head_size = model_config.head_dim
-        head_size = model_config.emb_dim // model_config.nheads
-        print("===" * 20)
-        print("head size: ", head_size)
-        print("===" * 20)
+        head_size = model_config.head_dim
         linear_type_str = "torch_linear"
         if model_config.linear_config:
             linear_type_str = get_linear_type(
