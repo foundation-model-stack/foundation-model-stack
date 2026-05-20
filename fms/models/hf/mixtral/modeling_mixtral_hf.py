@@ -4,7 +4,9 @@ from typing_extensions import Unpack
 from fms.modules.attention import SDPAAttentionKwargs
 import torch
 import torch.nn as nn
+from packaging.version import Version
 from transformers import PretrainedConfig
+from transformers import __version__ as tf_version
 from transformers.modeling_outputs import BaseModelOutputWithPastAndCrossAttentions
 
 from fms.models.hf.lm_head_mixins import LMHeadModelLMHeadMixin
@@ -55,7 +57,21 @@ class HFAdaptedMixtralHeadless(HFDecoderModelArchitecture):
     config_class = HFAdaptedMixtralConfig
     base_model_prefix = "hf_adapted_mixtral"
 
-    _tied_weights_keys = ["decoder.model.embedding.weight", "embedding.weight"]
+    ## Address transformers API changes
+    if Version(tf_version) >= Version("5.0.0"):
+        # embedding.weight is the alias; decoder.model.embedding.weight is the canonical (saved) copy
+        _tied_weights_keys = {
+            "embedding.weight": "decoder.model.embedding.weight",
+        }
+        _keys_to_ignore_on_load_missing = [r"embedding\.weight"]
+
+        def get_expanded_tied_weights_keys(self, all_submodels: bool = False) -> dict:
+            # tie_word_embeddings=False prevents the base class from returning our mapping;
+            # override to always expose the module-level alias so transformers 5.x can
+            # protect embedding.weight from _initialize_missing_keys reinitialization.
+            return {"embedding.weight": "decoder.model.embedding.weight"}
+    else:
+        _tied_weights_keys = ["decoder.model.embedding.weight", "embedding.weight"]
     _keys_to_ignore_on_save = ["embedding.weight"]
 
     def __init__(
