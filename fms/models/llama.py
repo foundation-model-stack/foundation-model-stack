@@ -317,19 +317,32 @@ class LLaMAHeadless(nn.Module):
 
     def forward(
         self,
-        x_in,
+        x_in: Optional[torch.Tensor],
+        inputs_embeds: Optional[torch.Tensor] = None,
         position_ids=None,
         past_key_value_states=None,
         use_cache=False,
         **attn_kwargs: Unpack[AttentionKwargs],
     ):
-        # Embed the given vocabulary indices using the given attention mask, with pre-/post-norm and dropout as specified
+        if x_in is not None and inputs_embeds is not None:
+            raise ValueError("Specify only one of `x_in` or `inputs_embeds`")
+
+        # Embed the given vocabulary indices (or use precomputed embeddings) using the given attention mask, with
+        # pre-/post-norm and dropout as specified.
         # x_in: batch_size x seq_len
+        # inputs_embeds: batch_size x seq_len x emb_dim
         # mask: batch_size x seq_len x seq_len
         # bias: nheads x seq_len x seq_len
         if past_key_value_states is None or len(past_key_value_states) == 0:
             past_key_value_states = [None for _ in range(len(self.layers))]
-        x_in = self.embedding(x_in)
+        if inputs_embeds is None:
+            if x_in is None:
+                raise ValueError(
+                    "Must provide either `x_in` (token ids) or `inputs_embeds`"
+                )
+            x_in = self.embedding(x_in)
+        else:
+            x_in = inputs_embeds
 
         # this is the output cache for all the decoder layers
         present_key_value_states = []
