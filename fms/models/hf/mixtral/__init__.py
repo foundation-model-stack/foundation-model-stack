@@ -1,5 +1,7 @@
 import torch
+from packaging.version import Version
 from transformers import MixtralConfig, MixtralForCausalLM
+from transformers import __version__ as tf_version
 
 from fms.models.hf.mixtral.modeling_mixtral_hf import (
     HFAdaptedMixtralConfig,
@@ -71,25 +73,38 @@ def convert_to_hf(
             oss_hf_layer.self_attn.o_proj.weight.copy_(fms_hf_layer.attn.dense.weight)
 
             # MoE SwiGLU
-            oss_hf_layer.block_sparse_moe.gate.weight.copy_(
-                fms_hf_layer.ff_sub_layer.gate.weight
-            )
-            for expert_idx, expert_layer in enumerate(
-                oss_hf_layer.block_sparse_moe.experts
-            ):
-                expert_layer.w1.weight.copy_(
-                    fms_hf_layer.ff_sub_layer.cond_ffn.w13.chunk(2, dim=1)[0][
-                        expert_idx
-                    ]
+            if Version(tf_version).major >= 5:
+                # transformers 5.x: block_sparse_moe renamed to mlp; experts
+                # stored as batched 3D tensors instead of a list of modules
+                oss_hf_layer.mlp.gate.weight.copy_(
+                    fms_hf_layer.ff_sub_layer.gate.weight
                 )
-                expert_layer.w3.weight.copy_(
-                    fms_hf_layer.ff_sub_layer.cond_ffn.w13.chunk(2, dim=1)[1][
-                        expert_idx
-                    ]
+                oss_hf_layer.mlp.experts.gate_up_proj.copy_(
+                    fms_hf_layer.ff_sub_layer.cond_ffn.w13
                 )
-                expert_layer.w2.weight.copy_(
-                    fms_hf_layer.ff_sub_layer.cond_ffn.w2[expert_idx]
+                oss_hf_layer.mlp.experts.down_proj.copy_(
+                    fms_hf_layer.ff_sub_layer.cond_ffn.w2
                 )
+            else:
+                oss_hf_layer.block_sparse_moe.gate.weight.copy_(
+                    fms_hf_layer.ff_sub_layer.gate.weight
+                )
+                for expert_idx, expert_layer in enumerate(
+                    oss_hf_layer.block_sparse_moe.experts
+                ):
+                    expert_layer.w1.weight.copy_(
+                        fms_hf_layer.ff_sub_layer.cond_ffn.w13.chunk(2, dim=1)[0][
+                            expert_idx
+                        ]
+                    )
+                    expert_layer.w3.weight.copy_(
+                        fms_hf_layer.ff_sub_layer.cond_ffn.w13.chunk(2, dim=1)[1][
+                            expert_idx
+                        ]
+                    )
+                    expert_layer.w2.weight.copy_(
+                        fms_hf_layer.ff_sub_layer.cond_ffn.w2[expert_idx]
+                    )
 
             # layer norm
             oss_hf_layer.input_layernorm.weight.copy_(fms_hf_layer.ln.weight)

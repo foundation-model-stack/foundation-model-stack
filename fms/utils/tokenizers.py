@@ -221,7 +221,8 @@ class _HFTokenizer(BaseTokenizer):
             DeprecationWarning,
             stacklevel=2,
         )
-        return self.tokenizer.convert_ids_to_tokens(ids)
+        ids_list = ids.tolist() if isinstance(ids, torch.Tensor) else ids
+        return self.tokenizer.convert_ids_to_tokens(ids_list)
 
     def convert_tokens_to_ids(self, tokens: Union[str, list[str]]):
         warnings.warn(

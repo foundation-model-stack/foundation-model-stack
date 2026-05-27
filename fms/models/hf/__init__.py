@@ -1,5 +1,8 @@
 # type: ignore
 from torch import nn
+
+from packaging.version import Version
+
 from fms.models.hf.modeling_hf_adapter import HFModelArchitecture
 from fms.models.gpt_bigcode import GPTBigCode, GPTBigCodeHeadless
 from fms.models.hf.gpt_bigcode import HFAdaptedGPTBigCodeForCausalLM
@@ -20,12 +23,36 @@ from fms.models.hf.roberta.modeling_roberta_hf import (
     HFAdaptedRoBERTaForMaskedLM,
     HFAdaptedRoBERTaHeadless,
 )
+from fms.models.hf.gpt_oss.modeling_gpt_oss_hf import (
+    HFAdaptedGptOssForCausalLM,
+    HFAdaptedGptOssHeadless,
+)
 from fms.models.hf.utils import register_fms_models
 from fms.models.llama import LLaMA
 from fms.models.granite import Granite, GraniteHeadless
 from fms.models.mixtral import Mixtral, MixtralHeadless
 from fms.models.roberta import RoBERTa, RoBERTaHeadless
+from fms.models.gpt_oss import GptOss, GptOssHeadless
 
+from transformers import __version__ as tf_version
+
+# Register Ministral3 if transformers is less than 5.x.x
+# Use .major to correctly exclude pre-release 5.x versions (e.g. 5.0.0rc1 < 5.0.0 in PEP 440)
+if Version(tf_version).major < 5:
+    from transformers import AutoConfig, AutoModelForCausalLM
+
+    # This applies FMS serialization adapters (RoPE fix, weight fusion, etc.)
+    from fms.models.hf.ministral3 import (
+        HFAdaptedMinistral3Config,
+        HFAdaptedMinistral3ForCausalLM,
+        HFAdaptedMinistral3Headless,
+    )
+
+    # Register FMS adapter
+    AutoConfig.register("ministral3", HFAdaptedMinistral3Config)
+    AutoModelForCausalLM.register(
+        HFAdaptedMinistral3Config, HFAdaptedMinistral3ForCausalLM
+    )
 
 """
 mapping from an FMS model to its equivalent HF-Adapted model
@@ -36,11 +63,26 @@ _fms_to_hf_adapt_map = {
     GraniteHeadless: HFAdaptedGraniteHeadless,
     GPTBigCode: HFAdaptedGPTBigCodeForCausalLM,
     GPTBigCodeHeadless: HFAdaptedGPTBigCodeHeadless,
+    GptOss: HFAdaptedGptOssForCausalLM,
+    GptOssHeadless: HFAdaptedGptOssHeadless,
     RoBERTa: HFAdaptedRoBERTaForMaskedLM,
     RoBERTaHeadless: HFAdaptedRoBERTaHeadless,
     Mixtral: HFAdaptedMixtralForCausalLM,
     MixtralHeadless: HFAdaptedMixtralHeadless,
 }
+
+# Add Ministral3 if FMS adapter is available
+try:
+    from fms.models.ministral3 import Ministral3, Ministral3Text
+    from fms.models.hf.ministral3 import (
+        HFAdaptedMinistral3ForCausalLM,
+        HFAdaptedMinistral3Headless,
+    )
+
+    _fms_to_hf_adapt_map[Ministral3Text] = HFAdaptedMinistral3ForCausalLM
+    _fms_to_hf_adapt_map[Ministral3] = HFAdaptedMinistral3ForCausalLM
+except ImportError:
+    pass
 
 """
 list of all headless base HF-Adapted models used in registration
@@ -51,7 +93,17 @@ _headless_models = [
     HFAdaptedLLaMAHeadless,
     HFAdaptedRoBERTaHeadless,
     HFAdaptedMixtralHeadless,
+    HFAdaptedGptOssHeadless,
 ]
+
+# Add Ministral3 headless if available and transformers < 5 (ministral3 is built-in in tf5+)
+if Version(tf_version).major < 5:
+    try:
+        from fms.models.hf.ministral3 import HFAdaptedMinistral3Headless
+
+        _headless_models.append(HFAdaptedMinistral3Headless)
+    except ImportError:
+        pass
 
 """
 list of all causal-lm HF-Adapted models used in registration
@@ -61,7 +113,17 @@ _causal_lm_models = [
     HFAdaptedGraniteForCausalLM,
     HFAdaptedLLaMAForCausalLM,
     HFAdaptedMixtralForCausalLM,
+    HFAdaptedGptOssForCausalLM,
 ]
+
+# Add Ministral3 causal LM if available and transformers < 5 (ministral3 is built-in in tf5+)
+if Version(tf_version).major < 5:
+    try:
+        from fms.models.hf.ministral3 import HFAdaptedMinistral3ForCausalLM
+
+        _causal_lm_models.append(HFAdaptedMinistral3ForCausalLM)
+    except ImportError:
+        pass
 
 """
 list of all masked-lm HF-Adapted models used in registration

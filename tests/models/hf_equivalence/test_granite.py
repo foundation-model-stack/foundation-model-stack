@@ -1,13 +1,11 @@
 import pytest
-import torch
 
 from fms.models import get_model
 from fms.models.hf import to_hf_api
-from fms.testing.comparison import (
-    HFModelSignatureParams,
-    ModelSignatureParams,
-    compare_model_signatures,
-)
+
+
+from packaging.version import Version
+from transformers import __version__ as tf_version
 
 
 @pytest.mark.slow
@@ -35,51 +33,48 @@ def test_granite_8b_equivalence():
     hf_model.eval()
     hf_model_fms.eval()
 
-    # Test Parameter Count
-
-    def count_parameters(m):
-        return sum(p.numel() for p in m.parameters())
-
-    assert count_parameters(hf_model_fms) == count_parameters(hf_model)
-
-    # Test Model Signatures
-
-    inp = torch.arange(0, 16).unsqueeze(0)
-    fms_signature_params = ModelSignatureParams(model=model, params=1, inp=inp)
-    hf_fms_signature_params = HFModelSignatureParams(
-        model=hf_model_fms,
-        params=["input_ids", "labels"],
-        other_params={"return_dict": True},
-        inp=inp,
-    )
-    hf_signature_params = HFModelSignatureParams(
-        model=hf_model,
-        params=["input_ids", "labels"],
-        other_params={"return_dict": True},
-        inp=inp,
-    )
-
-    compare_model_signatures(fms_signature_params, hf_fms_signature_params)
-    compare_model_signatures(hf_fms_signature_params, hf_signature_params)
-
-    # Test Generation Pipeline
+    # Keeping signature tests only at tests/models/hf/test_granite_hf.py
+    # Testing model generation equivalency for Granite 8B
 
     prompt = """q: how are you? a: I am good. How about you? q: What is the weather like today? a:"""
+
+    use_cache = False
+
+    if Version(tf_version) >= Version("5.0.0"):
+        use_cache = True
+    else:
+        # for versions > 4.57.x and < 5.0.0, use_cache is disabled;
+        # this way we are retro compatible with parameter called cache_position
+        # https://huggingface.co/docs/transformers/cache_explanation#cache-position
+        use_cache = False
 
     generator_hf = pipeline(
         task="text-generation",
         model=hf_model,
         tokenizer=tokenizer,
-        use_cache=True,
+        use_cache=use_cache,
         max_new_tokens=20,
+        do_sample=False,
     )
     generator_hf_fms = pipeline(
         task="text-generation",
         model=hf_model_fms,
         tokenizer=tokenizer,
-        use_cache=True,
+        use_cache=use_cache,
         max_new_tokens=20,
+        do_sample=False,
     )
     output_hf = generator_hf(prompt)
     output_hf_fms = generator_hf_fms(prompt)
-    assert output_hf == output_hf_fms
+
+    # Compare generated text
+    if Version(tf_version) >= Version("5.0.0"):
+        assert output_hf[0]["generated_text"] == output_hf_fms[0]["generated_text"], (
+            f"Generated text mismatch:\n"
+            f"HF: {output_hf[0]['generated_text']}\n"
+            f"FMS: {output_hf_fms[0]['generated_text']}"
+        )
+    else:
+        assert output_hf == output_hf_fms, (
+            f"Generated text mismatch:\nHF: {output_hf}\nFMS: {output_hf_fms}"
+        )

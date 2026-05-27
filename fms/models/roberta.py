@@ -33,6 +33,8 @@ class RoBERTaConfig(ModelConfig):
     nheads: int = 12
     nlayers: int = 12
     pad_id: int = 1
+    bos_token_id: int = 0
+    eos_token_id: int = 2
     hidden_grow_factor: float = 4.0
     activation_fn: str = "gelu"
     classifier_activation_fn: str = "tanh"
@@ -651,6 +653,9 @@ def _hf_to_fms_names(hf_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]:
             "classification_head.head",
         ),  # only relevant to SentenceClassification task
         (r"^qa_outputs", "qa_head"),  # only relevant to QuestionAnswering task
+        # Convert HF LayerNorm parameter names (gamma/beta) to PyTorch standard (weight/bias)
+        (r"gamma", "weight"),
+        (r"beta", "bias"),
     ]
     new_sd = {}
     for name, param in hf_sd.items():

@@ -35,6 +35,8 @@ class GPTBigCodeConfig(ModelConfig):
     p_dropout: float = 0.0
     emb_dropout: float = 0.0
     multiquery_attn: bool = True
+    eos_token_id: int = 49152
+    bos_token_id: int = 49152
     ln_eps: float = 1e-5
     linear_config: Optional[Mapping[str, Any]] = (
         None  # pass as {"linear_type": str, <other kwargs>}

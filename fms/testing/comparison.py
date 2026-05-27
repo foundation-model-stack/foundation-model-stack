@@ -65,6 +65,8 @@ def get_signature(
 
     cuda_available = torch.cuda.is_available()
 
+    model.to(device)
+
     def run_forward(inp, optional_params):
         if inp is None:
             inp = torch.arange(16).unsqueeze(0).to(device)

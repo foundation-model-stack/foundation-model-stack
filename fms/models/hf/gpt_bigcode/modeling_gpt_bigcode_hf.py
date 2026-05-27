@@ -12,6 +12,9 @@ from fms.models.hf.gpt_bigcode.configuration_gpt_bigcode_hf import (
 from fms.models.hf.lm_head_mixins import LMHeadModelLMHeadMixin
 from fms.models.hf.modeling_hf_adapter import HFDecoder, HFDecoderModelArchitecture
 
+from packaging.version import Version
+from transformers import __version__ as tf_version
+
 
 class HFAdaptedGPTBigCodeDecoder(HFDecoder):
     """Adapter for the GPTBigCodeDecoder"""
@@ -76,21 +79,98 @@ class HFAdaptedGPTBigCodeHeadless(HFDecoderModelArchitecture):
 class HFAdaptedGPTBigCodeForCausalLM(
     LMHeadModelLMHeadMixin, HFAdaptedGPTBigCodeHeadless
 ):
-    _keys_to_ignore_on_load_missing = [r"lm_head.weight"]
-    _tied_weights_keys = ["embedding.weight", "lm_head.weight"]
+    ## Address transformers API changes
+    if Version(tf_version) >= Version("5.0.0"):
+        _keys_to_ignore_on_load_missing = [
+            r"decoder\.model\.embedding\.weight",
+        ]
+        _tied_weights_keys = {
+            "decoder.model.embedding.weight": "embedding.weight",
+            "lm_head.weight": "embedding.weight",
+        }
+    else:
+        _keys_to_ignore_on_load_missing = [
+            r"decoder\.model\.embedding\.weight",
+            r"lm_head\.weight",
+        ]
+        # For transformers < 5.0.0, set to empty list to disable automatic tying
+        # We'll handle tying manually in load_state_dict
+        _tied_weights_keys = []
 
     def __init__(self, config: HFAdaptedGPTBigCodeConfig, *args, **kwargs):
         super().__init__(config=config, bias=False, *args, **kwargs)
 
-    def _tie_weights(self):
-        # We know that FMS always saves the LM head weight, so ensure the right pointer is shared
-        self.embedding.weight = self.lm_head.weight
-        self.decoder.model.embedding.weight = self.embedding.weight
+    def state_dict(self, *args, **kwargs):
+        """Override to exclude tied weights from state_dict.
+
+        This prevents saving duplicate embeddings. The tied weights will be
+        restored during load via load_state_dict().
+        """
+        state_dict = super().state_dict(*args, **kwargs)
+        # Remove decoder.model.embedding.weight as it's tied to embedding.weight
+        if "decoder.model.embedding.weight" in state_dict:
+            del state_dict["decoder.model.embedding.weight"]
+        # For transformers < 5.0.0, also remove lm_head.weight if tied
+        if Version(tf_version) < Version("5.0.0") and self.config.tie_word_embeddings:
+            if "lm_head.weight" in state_dict:
+                del state_dict["lm_head.weight"]
+        return state_dict
+
+    def load_state_dict(self, state_dict, strict=True, assign=False):
+        """Override to handle missing decoder.model.embedding.weight and lm_head.weight, and ensure weights are tied after loading"""
+        # If decoder.model.embedding.weight and lm_head.weight are missing from state_dict, that's expected
+        # because we exclude them in state_dict(). They will be tied to embedding.weight.
+        # So we load with strict=False first
+        result = super().load_state_dict(state_dict, strict=False, assign=assign)
+
+        # Filter out the expected missing keys from the result
+        expected_missing = ["decoder.model.embedding.weight"]
+        if self.config.tie_word_embeddings and Version(tf_version) < Version("5.0.0"):
+            # For transformers < 5.0.0, lm_head.weight is also excluded from state_dict
+            expected_missing.append("lm_head.weight")
+
+        filtered_missing_keys = [
+            k for k in result.missing_keys if k not in expected_missing
+        ]
+
+        # Manually tie the weights after loading
+        if self.config.tie_word_embeddings:
+            # Tie decoder.model.embedding to embedding
+            if (
+                hasattr(self, "decoder")
+                and hasattr(self.decoder, "model")
+                and hasattr(self.decoder.model, "embedding")
+            ):
+                self.decoder.model.embedding.weight = self.embedding.weight
+            # Tie lm_head to embedding
+            if hasattr(self, "lm_head") and hasattr(self.lm_head, "weight"):
+                self.lm_head.weight = self.embedding.weight
+
+        # If strict mode was requested and there are still missing/unexpected keys, raise an error
+        if strict and (filtered_missing_keys or result.unexpected_keys):
+            error_msgs = []
+            if result.unexpected_keys:
+                error_msgs.append(
+                    f"Unexpected key(s) in state_dict: {', '.join(result.unexpected_keys)}"
+                )
+            if filtered_missing_keys:
+                error_msgs.append(
+                    f"Missing key(s) in state_dict: {', '.join(filtered_missing_keys)}"
+                )
+            if error_msgs:
+                raise RuntimeError(
+                    f"Error(s) in loading state_dict for {self.__class__.__name__}:\n\t"
+                    + "\n\t".join(error_msgs)
+                )
+
+        return result
 
     @classmethod
     def _hf_model_from_fms(
         cls, model: nn.Module, config: HFAdaptedGPTBigCodeConfig
     ) -> "HFAdaptedGPTBigCodeForCausalLM":
+        # Respect the FMS model's tie_heads setting
+        config.tie_word_embeddings = model.config.tie_heads
         return cls(
             config=config,
             decoder=model.base_model,

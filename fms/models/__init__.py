@@ -115,6 +115,7 @@ def __maybe_infer_model_variant(
         extra_kwargs = infer_model_configuration(
             model_path_or_variant,
             download_weights=is_hf_pretrained and variant is not None,  # type: ignore[arg-type]
+            trust_remote_code=kwargs.get("trust_remote_code", False),
         )
         architecture = extra_kwargs.pop("architecture")
         variant = extra_kwargs.pop("variant")
@@ -484,12 +485,13 @@ def get_model(
     # Make sure any uninitialized tensors are at least moved to device
     # TODO: should we raise a warning? are uninitialized tensors ever acceptable?
     if initial_device != torch.device("meta"):
-        def ensure_no_meta(t: torch.Tensor):
-            if t.device == torch.device("meta"):
-                print(t)
-                return torch.empty(t.shape, dtype=t.dtype, device=initial_device)
-            return t
-        fms_model._apply(ensure_no_meta)
+        fms_model._apply(
+            lambda t: (
+                torch.empty_like(t, device=initial_device)
+                if t.device == torch.device("meta")
+                else t
+            )
+        )
 
     return fms_model
 
@@ -497,13 +499,16 @@ def get_model(
 from fms.models import (  # noqa: E402
     bamba,
     gpt_bigcode,
+    gpt_oss,
     granite,
     granite_moe_hybrid,
     llama,
     llava_next,
     mistral,
+    ministral3,
     mistral3,
     mixtral,
+    qwen3,
     roberta,
     siglip_vision,
     mpnet,
@@ -512,13 +517,16 @@ from fms.models import (  # noqa: E402
 __all__ = [
     "bamba",
     "gpt_bigcode",
+    "gpt_oss",
     "granite",
     "granite_moe_hybrid",
     "llama",
     "llava_next",
     "mistral",
+    "ministral3",
     "mistral3",
     "mixtral",
+    "qwen3",
     "roberta",
     "siglip_vision",
     "mpnet",

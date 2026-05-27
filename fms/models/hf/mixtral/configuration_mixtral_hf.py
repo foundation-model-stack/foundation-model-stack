@@ -35,6 +35,7 @@ class HFAdaptedMixtralConfig(PretrainedConfig):
         num_experts: int = 8,
         top_k_experts: int = 2,
         max_expected_seq_len: int = 32768,
+        pad_token_id: Optional[int] = None,
         bos_token_id: int = 1,
         eos_token_id: int = 2,
         p_dropout: float = 0.0,
@@ -58,6 +59,7 @@ class HFAdaptedMixtralConfig(PretrainedConfig):
         self.max_expected_seq_len = max_expected_seq_len
         self.use_cache = use_cache
         super().__init__(
+            pad_token_id=pad_token_id,
             eos_token_id=eos_token_id,
             bos_token_id=bos_token_id,
             is_decoder=is_decoder,
