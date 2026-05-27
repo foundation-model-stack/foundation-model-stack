@@ -596,6 +596,7 @@ def _move_to_real_device(
     param: torch.Tensor,
     real_device: torch.device,
     dtype: Optional[torch.dtype] = None,
+    skip_layout: bool = False,
 ) -> torch.Tensor:
     if param.device == torch.device("meta"):
         is_parameter = isinstance(param, torch.nn.Parameter)
@@ -603,10 +604,12 @@ def _move_to_real_device(
             from torch_spyre._C import SpyreTensorLayout
             # Allocate with spice
             # Params are only 2D weights for matmuls or 1D weights for layernorm.
-            # We want all 2D weights to be stored row-major instead of default col-major
+            # We want all 2D weights to be stored row-major instead of default col-major,
+            # except weights flagged as `skip_layout` (e.g. token embedding, used as a
+            # gather rather than a matmul — keep the default layout).
             new_size = list(param.shape)
             new_size.reverse()
-            if param.dim() > 1:
+            if param.dim() > 1 and not skip_layout:
                 stl = SpyreTensorLayout(param.shape, param.stride(), dtype, [1, 0])
             else:
                 stl = None
@@ -626,6 +629,120 @@ def _move_to_real_device(
         if is_parameter:
             param = torch.nn.Parameter(param)
     return param
+
+
+# FMS parameter names whose weights should keep the default (non-STL) Spyre
+# layout. The token embedding is used as a gather, not a matmul, so it
+# should not get a row-major SpyreTensorLayout.
+_SKIP_LAYOUT_PARAM_NAMES = frozenset({"base_model.embedding.weight"})
+
+
+def _should_skip_layout(param_name: str) -> bool:
+    return param_name in _SKIP_LAYOUT_PARAM_NAMES
+
+
+# ``BLOCK_SIZE``: Spyre stick size at fp16 (128 bytes / 2 bytes per element).
+_SPYRE_BLOCK_SIZE = 64
+
+
+def _padded_vocab(vocab: int, block_size: int = _SPYRE_BLOCK_SIZE) -> int:
+    """Stick-aligned vocab dim + one extra stick (matches the existing
+    ad-hoc pad in Granite.post_init and hf_adapters.pad_lm_head).
+    """
+    return ((vocab + block_size - 1) // block_size) * block_size + block_size
+
+
+def _alloc_full_head_on_spyre(
+    padded_shape: tuple,
+    dtype: torch.dtype,
+):
+    from torch_spyre._C import SpyreTensorLayout
+
+    padded_stride = (padded_shape[1], 1)
+    stl = SpyreTensorLayout(padded_shape, padded_stride, dtype, [1, 0])
+    return torch.empty(
+        padded_shape,
+        device=torch.device("spyre"),
+        device_layout=stl,
+        dtype=dtype,
+    )
+
+
+def materialize_decoupled_head_for_spyre(
+    model,
+    dtype: Optional[torch.dtype] = None,
+) -> None:
+    """Allocate ``model.head.weight`` on Spyre with a row-major STL and a
+    stick-padded vocab dim, populated from the embedding (tied case) or from
+    the existing head storage (untied case).
+
+    This is the Spyre counterpart of the CPU/GPU ``post_init`` tie path:
+    instead of pointing the head at the embedding's storage (which forces a
+    single layout for both), allocate a fresh head tensor with the STL that a
+    matmul wants and fill it from the source weights.
+
+    Two source cases are handled:
+
+    - **Tied** (``head.weight.device == meta``, embedding on Spyre): the
+      checkpoint omitted ``head.weight`` and the model's tie-heads code would
+      normally alias it to the embedding. Source the new head from the
+      embedding instead.
+    - **Untied** (``head.weight.device.type == "spyre"``): the head was loaded
+      from the checkpoint with a row-major STL but at the unpadded vocab dim.
+      Reallocate at the padded dim and reuse the loaded weights. The old
+      head's storage is released when its Parameter is replaced.
+
+    The padded rows are zero-filled, and the source is padded on CPU before
+    the device copy — slice-assigning into a partial range of an STL tensor
+    is not supported by the Spyre backend (it would require an in-place
+    layout conversion on the destination).
+
+    The model's ``config.tie_heads`` is left untouched; the Spyre branch in
+    the model's ``post_init`` short-circuits before the regular tie path.
+    """
+    if not hasattr(model, "head") or not hasattr(model, "base_model"):
+        return
+    embed = getattr(model.base_model, "embedding", None)
+    if embed is None:
+        return
+    embed_w = embed.weight
+    if embed_w.device.type != "spyre":
+        return  # not the Spyre path; let the regular tie code handle it
+
+    head_w = model.head.weight
+    vocab, hidden = head_w.shape
+    is_meta_head = head_w.device == torch.device("meta")
+    if is_meta_head:
+        # Meta head means the checkpoint omitted head.weight. This is only
+        # valid when the model is configured to tie heads; otherwise the
+        # head was simply never loaded and silently sourcing it from the
+        # embedding would fabricate a tied head.
+        ties = getattr(getattr(model, "config", None), "tie_heads", False)
+        if not ties:
+            raise RuntimeError(
+                "head.weight is on meta but config.tie_heads is False; "
+                "checkpoint appears to be missing the LM head weight."
+            )
+        source_dtype = embed_w.dtype
+    else:
+        source_dtype = head_w.dtype
+    target_dtype = dtype if dtype is not None else source_dtype
+    padded = _padded_vocab(vocab)
+    padded_shape = (padded, hidden)
+
+    # Pad the source on CPU, then ship the full padded tensor to Spyre with
+    # the row-major STL in a single copy. Avoids slicing on the Spyre side.
+    source_cpu = (embed_w if is_meta_head else head_w).to("cpu")
+    padded_cpu = torch.nn.functional.pad(
+        source_cpu, (0, 0, 0, padded - vocab)
+    ).to(target_dtype)
+
+    new_head = _alloc_full_head_on_spyre(padded_shape, target_dtype)
+    new_head.copy_(padded_cpu, non_blocking=True)
+
+    model.head.weight = torch.nn.Parameter(
+        new_head, requires_grad=head_w.requires_grad
+    )
 
 
 def _load_partial_state_dict(
@@ -681,6 +798,7 @@ def _load_partial_state_dict(
                         param=param,
                         real_device=device,
                         dtype=tensor_value.dtype if dtype is None else dtype,
+                        skip_layout=_should_skip_layout(key),
                     )
                     setattr(target_module, key_steps[-1], param)
                     param = getattr(target_module, key_steps[-1])

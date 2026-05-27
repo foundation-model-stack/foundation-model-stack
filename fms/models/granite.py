@@ -342,18 +342,19 @@ class Granite(nn.Module):
         self.base_model.reset_parameters()
 
     def post_init(self):
-        # if this model ties weights, they are tied here
-        if self.config.tie_heads:
-            # handle assignment of non-meta weights to meta parameters
+        # On Spyre, decouple the head from the embedding and stick-pad the
+        # head's vocab dim. The embedding is used as a gather (default
+        # layout) and the head is used as a matmul (row-major STL), so they
+        # cannot share storage. Handles both tied (head still on meta after
+        # load) and untied (head loaded with STL but unpadded) cases.
+        if self.base_model.embedding.weight.device.type == "spyre":
+            serialization.materialize_decoupled_head_for_spyre(self)
+        elif self.config.tie_heads:
+            # Non-Spyre tie path, unchanged.
             if self.head.weight.device == torch.device("meta"):
                 self.head.weight = self.base_model.embedding.weight
             else:
                 self.base_model.embedding.weight = self.head.weight
-
-        # Make sure LM head is a multiple of 64 and also not 64*prime_number if running on Spyre
-        if self.head.weight.device.type == "spyre":
-            remainder = ((self.head.weight.shape[0] + 64 - 1) // 64 * 64) - self.head.weight.shape[0]
-            self.head.weight = torch.nn.Parameter(torch.nn.functional.pad(self.head.weight.to("cpu"), (0, 0, 0, remainder+64)).to("spyre"))
 
         self.base_model.post_init()
 

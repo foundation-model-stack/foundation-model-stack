@@ -414,9 +414,12 @@ class LLaMA(nn.Module):
     def post_init(self):
         self.base_model.post_init()
 
-        # if this model ties weights, they are tied here
-        if self.config.tie_heads:
-            # handle assignment of non-meta weights to meta parameters
+        # On Spyre, decouple the head from the embedding (different layouts:
+        # gather vs. matmul) and stick-pad the head's vocab dim.
+        if self.base_model.embedding.weight.device.type == "spyre":
+            serialization.materialize_decoupled_head_for_spyre(self)
+        elif self.config.tie_heads:
+            # Non-Spyre tie path, unchanged.
             if self.head.weight.device == torch.device("meta"):
                 self.head.weight = self.base_model.embedding.weight
             else:
