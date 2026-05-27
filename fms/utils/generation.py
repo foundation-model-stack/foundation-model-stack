@@ -356,12 +356,15 @@ def generate(
             alpha = model.base_model.rot_emb.compute_freqs_cis(torch.device("spyre"), max_seq_len)
             kwargs["selected_freqs"] = model.base_model.rot_emb.cached_freqs[0][alpha][kwargs["position_ids"]].to("spyre")
             kwargs["mask"] = kwargs["mask"].to(dtype=torch.float16).to("spyre")
+            kwargs["position_ids"] = kwargs["position_ids"].to("spyre")
             model_input_ids = input_ids.to("spyre")
         else:
             alpha = model.base_model.rot_emb.compute_freqs_cis(torch.device("cpu"), max_seq_len)
             kwargs["selected_freqs"] = model.base_model.rot_emb.cached_freqs[None][alpha][kwargs["position_ids"]]
             model_input_ids = input_ids
         output = model(model_input_ids, **kwargs)
+        if model.head.weight.device.type == "spyre":
+            kwargs["position_ids"] = kwargs["position_ids"].to("cpu")
         if use_cache:
             logits, past_key_value_states = output
             # TODO: this should go away when reduce-overhead issues are fixed, or
