@@ -278,7 +278,7 @@ class RotaryEmbedding(PositionEncoder):
                         torch.cos(freqs),
                     ],
                     dim=1,
-                ).view(freqs.shape[0], 2, 2, freqs.shape[1]).contiguous().to(dtype=torch.float16) # S, D/2, 2, 2 -> S, 2, 2, D/2
+                ).view(freqs.shape[0], 2, 2, freqs.shape[1]).to(dtype=torch.float16) # S, D/2, 2, 2 -> S, 2, 2, D/2
 
         return alpha
 
