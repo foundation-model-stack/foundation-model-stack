@@ -48,7 +48,7 @@ class FMSEvalHarnessLM(LM):
         self.batch_size = batch_size
         self._rank = rank
         self._world_size = world_size
-        self.device = device
+        self._device = device
 
         # workaround for https://github.com/EleutherAI/lm-evaluation-harness/issues/1333
         # until the fix is in a release

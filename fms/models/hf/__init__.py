@@ -37,7 +37,8 @@ from fms.models.gpt_oss import GptOss, GptOssHeadless
 from transformers import __version__ as tf_version
 
 # Register Ministral3 if transformers is less than 5.x.x
-if Version(tf_version) < Version("5.0.0"):
+# Use .major to correctly exclude pre-release 5.x versions (e.g. 5.0.0rc1 < 5.0.0 in PEP 440)
+if Version(tf_version).major < 5:
     from transformers import AutoConfig, AutoModelForCausalLM
 
     # This applies FMS serialization adapters (RoPE fix, weight fusion, etc.)
@@ -95,13 +96,14 @@ _headless_models = [
     HFAdaptedGptOssHeadless,
 ]
 
-# Add Ministral3 headless if available
-try:
-    from fms.models.hf.ministral3 import HFAdaptedMinistral3Headless
+# Add Ministral3 headless if available and transformers < 5 (ministral3 is built-in in tf5+)
+if Version(tf_version).major < 5:
+    try:
+        from fms.models.hf.ministral3 import HFAdaptedMinistral3Headless
 
-    _headless_models.append(HFAdaptedMinistral3Headless)
-except ImportError:
-    pass
+        _headless_models.append(HFAdaptedMinistral3Headless)
+    except ImportError:
+        pass
 
 """
 list of all causal-lm HF-Adapted models used in registration
@@ -114,13 +116,14 @@ _causal_lm_models = [
     HFAdaptedGptOssForCausalLM,
 ]
 
-# Add Ministral3 causal LM if available
-try:
-    from fms.models.hf.ministral3 import HFAdaptedMinistral3ForCausalLM
+# Add Ministral3 causal LM if available and transformers < 5 (ministral3 is built-in in tf5+)
+if Version(tf_version).major < 5:
+    try:
+        from fms.models.hf.ministral3 import HFAdaptedMinistral3ForCausalLM
 
-    _causal_lm_models.append(HFAdaptedMinistral3ForCausalLM)
-except ImportError:
-    pass
+        _causal_lm_models.append(HFAdaptedMinistral3ForCausalLM)
+    except ImportError:
+        pass
 
 """
 list of all masked-lm HF-Adapted models used in registration

@@ -72,7 +72,7 @@ class HFAdaptedGptOssConfig(PretrainedConfig):
         self.hidden_dim = hidden_dim
         self.head_dim = head_dim
         self.layer_types = layer_types
-        if self.layer_types is None:
+        if self.layer_types is None or len(self.layer_types) != self.nlayers:
             self.layer_types = [
                 "sliding_attention" if bool((i + 1) % 2) else "full_attention"
                 for i in range(self.nlayers)
