@@ -339,12 +339,12 @@ def generate(
 
         if model.head.weight.device.type == "spyre":
             alpha = model.base_model.rot_emb.compute_freqs_cis(torch.device("spyre"), max_seq_len)
-            kwargs["selected_freqs"] = model.base_model.rot_emb.cached_freqs[0][alpha][kwargs["position_ids"]].contiguous().to("spyre")
+            kwargs["selected_freqs"] = model.base_model.rot_emb.cached_freqs[0][alpha][kwargs["position_ids"]].to("spyre")
             kwargs["mask"] = kwargs["mask"].to(dtype=torch.float16).to("spyre")
             model_input_ids = input_ids.to("spyre")
         else:
             alpha = model.base_model.rot_emb.compute_freqs_cis(torch.device("cpu"), max_seq_len)
-            kwargs["selected_freqs"] = model.base_model.rot_emb.cached_freqs[None][alpha][kwargs["position_ids"]].contiguous()
+            kwargs["selected_freqs"] = model.base_model.rot_emb.cached_freqs[None][alpha][kwargs["position_ids"]]
             model_input_ids = input_ids
         output = model(model_input_ids, **kwargs)
         if use_cache:
