@@ -1,7 +1,7 @@
 import logging
 import math
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Mapping, Optional, Tuple
 from typing_extensions import Unpack
 
@@ -29,37 +29,38 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
-class Granite41Config(ModelConfig):
+class GraniteSWAConfig(ModelConfig):
     src_vocab_size: int = 100352  # can be set by tokenizer
-    emb_dim: int = 4096
+    emb_dim: int = 2560
     norm_eps: float = 1e-5
-    nheads: int = 32
+    nheads: int = 20
     head_dim: int = 128  # getattr(config, "head_dim", emb_dim // nheads)
-    kvheads: int = 8
-    nlayers: int = 4
-    pad_id: int = -1
-    hidden_grow_factor: float = 3.125
+    kvheads: int = 4
+    nlayers: int = 24
+    pad_id: int = 100256
+    hidden_grow_factor: float = 3.2
     multiple_of: int = 256
     activation_fn: str = "swish"
     p_dropout: float = 0.0
-    max_expected_seq_len: int = 131072
+    max_expected_seq_len: int = 8192
     ntk_scaling: bool = False
     attn_bias: bool = False
     mlp_bias: bool = False
     tie_heads: bool = True
-    rope_theta: float = 10_000_000.0
+    rope_theta: float = 10_000.0
     embedding_multiplier: float = 12.0
-    logits_scaling: float = 16.0
-    residual_multiplier: float = 0.22
+    logits_scaling: float = 10.0
+    residual_multiplier: float = 0.28
     attention_multiplier: float = 0.0078125
     linear_config: Optional[Mapping[str, Any]] = None
+    is_swa_layer: list[bool] = field(default_factory=lambda: [False, True, True, False, True, True, True, False, True, True, True, False, True, True, True, False, True, True, True, False, True, True, True, False])
     window_length: int = 128
     fused_weights: bool = True
 
 
-class Granite41Block(nn.Module):
-    def __init__(self, config: Granite41Config, rotary_emb: RotaryEmbedding, window_length: int = 0):
-        super(Granite41Block, self).__init__()
+class GraniteSWABlock(nn.Module):
+    def __init__(self, config: GraniteSWAConfig, rotary_emb: RotaryEmbedding, window_length: int = 0):
+        super(GraniteSWABlock, self).__init__()
         self.config = config
         emb_kq = self.config.head_dim
         emb_v = self.config.head_dim
@@ -173,18 +174,18 @@ class Granite41Block(nn.Module):
             return x
 
 
-class Granite41Headless(nn.Module):
+class GraniteSWAHeadless(nn.Module):
     def __init__(
         self,
-        config: Optional[Granite41Config] = None,
+        config: Optional[GraniteSWAConfig] = None,
         distributed_strategy: DistributedStrategy = NoOpStrategy,
         **kwargs,
     ):
-        super(Granite41Headless, self).__init__()
+        super(GraniteSWAHeadless, self).__init__()
         if config is not None:
             self.config = config
         else:
-            self.config = Granite41Config()
+            self.config = GraniteSWAConfig()
         self.config = self.config.updated(**kwargs)
         self.distributed_strategy = distributed_strategy
 
@@ -215,8 +216,8 @@ class Granite41Headless(nn.Module):
 
         layers = []
         for i in range(self.config.nlayers):
-            window_length = 0 if i % 2 == 0 else self.config.window_length
-            block: nn.Module = Granite41Block(self.config, self.rot_emb, window_length)
+            window_length = self.config.window_length if self.config.is_swa_layer[i] else 0
+            block: nn.Module = GraniteSWABlock(self.config, self.rot_emb, window_length)
             block = self.distributed_strategy.distribute_layer(block, i)
             layers.append(block)
         self.layers = nn.ModuleList(layers)
@@ -333,31 +334,31 @@ class Granite41Headless(nn.Module):
         return dec_out, present_key_value_states
 
 
-class Granite41(nn.Module):
+class GraniteSWA(nn.Module):
     def __init__(
         self,
-        config: Optional[Granite41Config] = None,
+        config: Optional[GraniteSWAConfig] = None,
         distributed_strategy: DistributedStrategy = NoOpStrategy,
         **kwargs,
     ):
-        super(Granite41, self).__init__()
+        super(GraniteSWA, self).__init__()
         if config is not None:
             self.config = config
         else:
-            self.config = Granite41Config()
+            self.config = GraniteSWAConfig()
         self.config = self.config.updated(**kwargs)
         self.distributed_strategy = distributed_strategy
 
-        self.base_model = Granite41Headless(self.config, self.distributed_strategy)
+        self.base_model = GraniteSWAHeadless(self.config, self.distributed_strategy)
         self.head = nn.Linear(
             self.config.emb_dim, self.config.src_vocab_size, bias=False
         )
 
     @classmethod
-    def from_config(cls, config: Granite41Config) -> "Granite41":
+    def from_config(cls, config: GraniteSWAConfig) -> "GraniteSWA":
         return cls(config)
 
-    def get_config(self) -> Granite41Config:
+    def get_config(self) -> GraniteSWAConfig:
         return self.config
 
     def reset_parameters(self):
@@ -412,15 +413,15 @@ class Granite41(nn.Module):
             return preds
 
 
-_8b_config = Granite41Config(
+_8b_config = GraniteSWAConfig(
 )
 
-_architecture_name = "granite41"
+_architecture_name = "granite_swa"
 
 
 def _granite_factory_factory(config):
     def factory(**kwargs):
-        return Granite41(config, **kwargs)
+        return GraniteSWA(config, **kwargs)
 
     return factory
 
@@ -429,7 +430,7 @@ models.register_model(_architecture_name, "8b", _granite_factory_factory(_8b_con
 
 
 def _weight_fusion(
-    input_sd: Mapping, model_config: Optional[Granite41Config] = None, **kwargs
+    input_sd: Mapping, model_config: Optional[GraniteSWAConfig] = None, **kwargs
 ):
     has_fused_weights = True
     if model_config:
@@ -497,7 +498,7 @@ def _get_rope_params(linear_type: str) -> list[str]:
 
 
 def _hf_to_fms_rope(
-    input_sd: Mapping[str, Any], model_config: Optional[Granite41Config] = None, **kwargs
+    input_sd: Mapping[str, Any], model_config: Optional[GraniteSWAConfig] = None, **kwargs
 ) -> Mapping[str, Any]:
     new_sd = {}
 
@@ -562,7 +563,7 @@ def _hf_to_fms_rope(
 
 
 def _hf_gptq_granite_check(
-    input_sd: Mapping[str, Any], model_config: Optional[Granite41Config] = None, **kwargs
+    input_sd: Mapping[str, Any], model_config: Optional[GraniteSWAConfig] = None, **kwargs
 ) -> Mapping[str, Any]:
     has_fused_weights = True
     linear_type = "torch_linear"
