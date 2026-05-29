@@ -143,7 +143,11 @@ class SpyrePagedAttentionKwargs(AttentionKwargs):
     mask: Optional[torch.Tensor]  # prefill mask
 
 
-@custom_op("spyre::paged_attn_compute_with_sinks", mutates_args={}, device_types=["cpu", "cuda"])
+@custom_op(
+    "spyre::paged_attn_compute_with_sinks",
+    mutates_args={},
+    device_types=["cpu", "cuda"],
+)
 def paged_attn_compute_with_sinks(
     query: torch.Tensor,
     key_cache: torch.Tensor,
@@ -223,13 +227,19 @@ def paged_attn_compute_with_sinks(
         if scale is None:
             scale = 1.0 / math.sqrt(head_size)
         scale = math.sqrt(scale)
-        QK = torch.einsum("qhd,khd->hqk", q*scale, keys*scale)
-        QK += mask
-        QK = torch.cat([QK, S], dim=-1)
-        QK = QK - QK.max(dim=-1, keepdim=True).values
-        W = torch.softmax(QK, dim=-1)
-        W = W[..., :-1]  # drop the attention sinks after done
-        attn = torch.einsum("hqk,khd->qhd", W, values)
+        attn_weights = torch.einsum("qhd,khd->hqk", q * scale, keys * scale)
+        attn_weights += mask
+        lse = torch.logsumexp(attn_weights, dim=-1)  # (H, Sq)
+        attn_weights = F.softmax(attn_weights, dim=-1, dtype=torch.float32).to(q.dtype)
+        attn = torch.einsum("hqk,khd->qhd", attn_weights, values)  # (Sq, H, D)
+
+        # Apply sink scaling: sink_scale = sigmoid(lse - sinks)
+        sink_scale = torch.sigmoid((lse - sinks.view(-1, 1)).to(torch.float32)).to(
+            attn.dtype
+        )  # (H, Sq)
+        sink_scale_expanded = sink_scale.transpose(0, 1).unsqueeze(-1)  # (Sq, H, 1)
+        attn = attn * sink_scale_expanded  # (Sq, H, D)
+
         output[i][-seq_len_q_i:] = attn
     return output
 

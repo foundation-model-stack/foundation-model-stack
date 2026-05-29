@@ -796,6 +796,7 @@ class MultiHeadAttention(nn.Module):
             norm_eps=self.norm_eps,
             head_dim=self.head_dim,
         )
+
         if self.has_sinks:
             self.sinks = nn.Parameter(torch.empty(self.nheads))
 

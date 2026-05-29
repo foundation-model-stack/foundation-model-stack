@@ -53,13 +53,45 @@ class GraniteSWAConfig(ModelConfig):
     residual_multiplier: float = 0.28
     attention_multiplier: float = 0.0078125
     linear_config: Optional[Mapping[str, Any]] = None
-    is_swa_layer: list[bool] = field(default_factory=lambda: [False, True, True, False, True, True, True, False, True, True, True, False, True, True, True, False, True, True, True, False, True, True, True, False])
+    is_swa_layer: list[bool] = field(
+        default_factory=lambda: [
+            False,
+            True,
+            True,
+            False,
+            True,
+            True,
+            True,
+            False,
+            True,
+            True,
+            True,
+            False,
+            True,
+            True,
+            True,
+            False,
+            True,
+            True,
+            True,
+            False,
+            True,
+            True,
+            True,
+            False,
+        ]
+    )
     window_length: int = 128
     fused_weights: bool = True
 
 
 class GraniteSWABlock(nn.Module):
-    def __init__(self, config: GraniteSWAConfig, rotary_emb: RotaryEmbedding, window_length: int = 0):
+    def __init__(
+        self,
+        config: GraniteSWAConfig,
+        rotary_emb: RotaryEmbedding,
+        window_length: int = 0,
+    ):
         super(GraniteSWABlock, self).__init__()
         self.config = config
         emb_kq = self.config.head_dim
@@ -100,7 +132,7 @@ class GraniteSWABlock(nn.Module):
             fused=self.config.fused_weights,
             linear_config=self.config.linear_config,
             scale_factor=self.config.attention_multiplier,
-            has_sinks=window_length > 0,
+            has_sinks=True,
         )
 
         self.ff_sub_layer = GatedLinearUnit(
@@ -116,7 +148,7 @@ class GraniteSWABlock(nn.Module):
 
         if self.config.p_dropout != 0:
             self.dropout = nn.Dropout(self.config.p_dropout)
-        
+
         self.window_length = window_length
 
     def forward(
@@ -128,12 +160,11 @@ class GraniteSWABlock(nn.Module):
         use_cache=False,
         **attn_kwargs: Unpack[AttentionKwargs],
     ):
-        if self.window_length > 0:
-            old_attn_name = attn_kwargs.get("attn_name", "")
-            if "sdpa" in old_attn_name:
-                attn_kwargs["attn_name"] = "sdpa_with_sinks"
-            elif "paged" in old_attn_name:
-                attn_kwargs["attn_name"] = "spyre_paged_attn_with_sinks"
+        old_attn_name = attn_kwargs.get("attn_name", "")
+        if "sdpa" in old_attn_name:
+            attn_kwargs["attn_name"] = "sdpa_with_sinks"
+        elif "paged" in old_attn_name:
+            attn_kwargs["attn_name"] = "spyre_paged_attn_with_sinks"
         # if the cache is not empty, we need to get the kv cache for self and cross attention
         self_attn_past_key_value = past_key_value_state
 
@@ -216,7 +247,9 @@ class GraniteSWAHeadless(nn.Module):
 
         layers = []
         for i in range(self.config.nlayers):
-            window_length = self.config.window_length if self.config.is_swa_layer[i] else 0
+            window_length = (
+                self.config.window_length if self.config.is_swa_layer[i] else 0
+            )
             block: nn.Module = GraniteSWABlock(self.config, self.rot_emb, window_length)
             block = self.distributed_strategy.distribute_layer(block, i)
             layers.append(block)
@@ -413,8 +446,7 @@ class GraniteSWA(nn.Module):
             return preds
 
 
-_8b_config = GraniteSWAConfig(
-)
+_8b_config = GraniteSWAConfig()
 
 _architecture_name = "granite_swa"
 
@@ -458,6 +490,7 @@ def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]
         (r"self_attn\.v_proj", "attn.in_proj.value"),
         (r"self_attn\.q_proj", "attn.in_proj.query"),
         (r"self_attn\.o_proj", "attn.dense"),
+        (r"self_attn\.sinks", "attn.sinks"),
         (r"mlp\.gate_proj", "ff_sub_layer.wg"),
         (r"mlp\.up_proj", "ff_sub_layer.w1"),
         (r"mlp\.down_proj", "ff_sub_layer.w2"),
@@ -498,7 +531,9 @@ def _get_rope_params(linear_type: str) -> list[str]:
 
 
 def _hf_to_fms_rope(
-    input_sd: Mapping[str, Any], model_config: Optional[GraniteSWAConfig] = None, **kwargs
+    input_sd: Mapping[str, Any],
+    model_config: Optional[GraniteSWAConfig] = None,
+    **kwargs,
 ) -> Mapping[str, Any]:
     new_sd = {}
 
@@ -563,7 +598,9 @@ def _hf_to_fms_rope(
 
 
 def _hf_gptq_granite_check(
-    input_sd: Mapping[str, Any], model_config: Optional[GraniteSWAConfig] = None, **kwargs
+    input_sd: Mapping[str, Any],
+    model_config: Optional[GraniteSWAConfig] = None,
+    **kwargs,
 ) -> Mapping[str, Any]:
     has_fused_weights = True
     linear_type = "torch_linear"

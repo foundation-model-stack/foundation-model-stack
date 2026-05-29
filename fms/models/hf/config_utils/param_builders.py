@@ -188,7 +188,7 @@ def build_granite_swa_params(config: PretrainedConfig) -> dict:
         ),
         "pad_id": config.pad_token_id,
         "window_length": config.sliding_window,
-        "is_swa_layer": [layer == "full_attention" for layer in config.layer_types],
+        "is_swa_layer": [layer == "sliding_attention" for layer in config.layer_types],
     }
     return model_params_with_common_opts(
         config, config_params, inner_dim=config.intermediate_size
