@@ -34,7 +34,7 @@ from fms.modules.linear import (
     get_linear_type,
 )
 from fms.modules.positions import PositionEncoder
-from fms.modules.tp import TPModule
+from fms.modules.tp import ShardType, TPModule
 
 __sdpa_previous_flash: bool = torch.backends.cuda.flash_sdp_enabled()
 __sdpa_previous_mem_efficient: bool = torch.backends.cuda.mem_efficient_sdp_enabled()
@@ -968,6 +968,9 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
         group: Optional[ProcessGroup] = None,
         linear_config: Optional[Mapping[str, Any]] = None,
         scale_factor: Optional[float] = None,
+        apply_norm_per_head: Optional[bool] = None,
+        norm_eps: Optional[float] = None,
+        head_dim: Optional[int] = None,
     ):
         assert torch.distributed.is_initialized()
 
@@ -993,6 +996,9 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
             fused,
             linear_config,
             scale_factor,
+            apply_norm_per_head=apply_norm_per_head,
+            norm_eps=norm_eps,
+            head_dim=head_dim,
         )
         self.pre_tp_nheads = nheads
         self.pre_tp_kvheads = kvheads
@@ -1039,6 +1045,24 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
                 "dense": LinearModuleShardingInfo(self.dense, 1, [self.world_size]),
             }
 
+        # q_norm/k_norm are per-head LayerNorm scale weights replicated across all
+        # TP ranks (no sharding). Load them before the linear sharding map so they
+        # are not counted as unused keys.
+        if self.apply_norm_per_head:
+            for norm_name in ("q_norm", "k_norm"):
+                norm_weight_key = next(
+                    (k for k in tensor_values if norm_name in k.split(".")), None
+                )
+                if norm_weight_key is not None:
+                    norm_module = getattr(self.in_proj, norm_name)
+                    self.sharded_copy(
+                        param=norm_module.weight,
+                        tensor_value=tensor_values.pop(norm_weight_key),
+                        dim=0,
+                        max_partition_sizes=[self.world_size],
+                        shard_type=ShardType.CLONE,
+                    )
+
         type_sharding_map = get_all_linear_type_to_sharding_maps()
 
         # TODO: Remove assumption that all layers in module share quantization
@@ -1068,6 +1092,9 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
             fused=mha.fused,
             linear_config=mha.linear_config,
             scale_factor=mha.scale_factor,
+            apply_norm_per_head=mha.apply_norm_per_head,
+            norm_eps=mha.norm_eps,
+            head_dim=mha.head_dim,
         )
         return tp_mha
 
