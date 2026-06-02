@@ -1055,13 +1055,9 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
                 )
                 if norm_weight_key is not None:
                     norm_module = getattr(self.in_proj, norm_name)
-                    self.sharded_copy(
-                        param=norm_module.weight,
-                        tensor_value=tensor_values.pop(norm_weight_key),
-                        dim=0,
-                        max_partition_sizes=[self.world_size],
-                        shard_type=ShardType.CLONE,
-                    )
+                    # FIX: Per-head norm weights should be fully replicated, not sharded
+                    # Each TP rank needs the complete [head_dim] weight to normalize its local heads
+                    norm_module.weight.data.copy_(tensor_values.pop(norm_weight_key))
 
         type_sharding_map = get_all_linear_type_to_sharding_maps()
 
