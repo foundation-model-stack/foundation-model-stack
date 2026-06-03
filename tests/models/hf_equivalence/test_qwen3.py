@@ -375,9 +375,80 @@ def test_qwen3_with_cache():
         assert len(cache) == 28, f"Expected 28 layers of cache, got {len(cache)}"
 
 
+@pytest.mark.slow
+def test_qwen3_4b_decoder_equivalence():
+    """
+    Test equivalence between FMS and HuggingFace for the Qwen3-4B decoder (generative) model.
+
+    Loads both implementations, runs greedy text generation on the same prompt,
+    and asserts that the generated text is identical.
+
+    Note: requires downloading Qwen/Qwen3-4B from HuggingFace Hub.
+    """
+    from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
+    from fms.models.hf import to_hf_api
+
+    model_path = "Qwen/Qwen3-4B"
+
+    try:
+        tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=True)
+        hf_model = AutoModelForCausalLM.from_pretrained(
+            model_path, torch_dtype=torch.float32
+        )
+    except Exception as e:
+        pytest.skip(f"Model not available: {e}")
+
+    fms_model = get_model(
+        "hf_pretrained",
+        model_path,
+        data_type=torch.float32,
+        device_type=device,
+    )
+
+    hf_model_fms = to_hf_api(
+        fms_model,
+        bos_token_id=hf_model.config.bos_token_id,
+        eos_token_id=hf_model.config.eos_token_id,
+        pad_token_id=hf_model.config.pad_token_id,
+    )
+
+    fms_model.eval()
+    hf_model.eval()
+    hf_model_fms.eval()
+
+    prompt = "q: how are you? a: I am good. How about you? q: What is the capital of France? a:"
+
+    generator_hf = pipeline(
+        task="text-generation",
+        model=hf_model,
+        tokenizer=tokenizer,
+        num_beams=1,
+        max_new_tokens=20,
+        do_sample=False,
+    )
+    generator_hf_fms = pipeline(
+        task="text-generation",
+        model=hf_model_fms,
+        tokenizer=tokenizer,
+        num_beams=1,
+        max_new_tokens=20,
+        do_sample=False,
+    )
+
+    output_hf = generator_hf(prompt)
+    output_hf_fms = generator_hf_fms(prompt)
+
+    assert output_hf[0]["generated_text"] == output_hf_fms[0]["generated_text"], (
+        f"Generated text mismatch:\n"
+        f"HF:  {output_hf[0]['generated_text']}\n"
+        f"FMS: {output_hf_fms[0]['generated_text']}"
+    )
+
+
 if __name__ == "__main__":
     test_qwen3_forward_pass()
     test_qwen3_with_cache()
     test_qwen3_parameter_count()
     test_qwen3_embedding_0_6b_equivalence()
     test_qwen3_embedding_4b_equivalence()
+    test_qwen3_4b_decoder_equivalence()
