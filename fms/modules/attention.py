@@ -34,7 +34,7 @@ from fms.modules.linear import (
     get_linear_type,
 )
 from fms.modules.positions import PositionEncoder
-from fms.modules.tp import ShardType, TPModule
+from fms.modules.tp import TPModule
 
 __sdpa_previous_flash: bool = torch.backends.cuda.flash_sdp_enabled()
 __sdpa_previous_mem_efficient: bool = torch.backends.cuda.mem_efficient_sdp_enabled()
@@ -584,8 +584,6 @@ class UnfusedQKV(QKV):
         keys = self.key(k)  # b x klen x (kvheads * head_dim)
         values = self.value(v)  # b x vlen x (kvheads * head_dim)
 
-        # Apply normalization if enabled - this is passed as attention kwarg
-        # Normalization should be applied per-head, so we need to reshape first
         if self.apply_norm_per_head:
             batch_size, q_len, _ = queries.shape
             k_len = keys.shape[1]
