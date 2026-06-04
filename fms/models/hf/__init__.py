@@ -28,7 +28,6 @@ from fms.models.hf.gpt_oss.modeling_gpt_oss_hf import (
     HFAdaptedGptOssHeadless,
 )
 from fms.models.hf.qwen3 import (
-    HFAdaptedQwen3Config,
     HFAdaptedQwen3ForCausalLM,
     HFAdaptedQwen3Headless,
 )

@@ -1,5 +1,3 @@
-from typing import Optional
-
 from transformers import PretrainedConfig
 
 from fms.models.qwen3 import Qwen3Config
