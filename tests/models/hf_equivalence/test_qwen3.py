@@ -6,6 +6,9 @@ import random
 from fms.models import get_model
 from fms.utils.generation import pad_input_ids
 
+from packaging.version import Version
+from transformers import __version__ as tf_version
+
 device = "cpu"
 SEED = 42
 random.seed(SEED)
@@ -416,13 +419,28 @@ def test_qwen3_4b_decoder_equivalence():
     hf_model.eval()
     hf_model_fms.eval()
 
+    # Explicitly set generation config to ensure deterministic behavior
+    hf_model.generation_config.do_sample = False
+    hf_model_fms.generation_config.do_sample = False
+
     prompt = "q: how are you? a: I am good. How about you? q: What is the capital of France? a:"
+
+    use_cache = False
+
+    if Version(tf_version) >= Version("5.0.0"):
+        use_cache = True
+    else:
+        # for versions > 4.57.x and < 5.0.0, use_cache is disabled;
+        # this way we are retro compatible with parameter called cache_position
+        # https://huggingface.co/docs/transformers/cache_explanation#cache-position
+        use_cache = False
 
     generator_hf = pipeline(
         task="text-generation",
         model=hf_model,
         tokenizer=tokenizer,
         num_beams=1,
+        use_cache=use_cache,
         max_new_tokens=20,
         do_sample=False,
     )
@@ -431,6 +449,7 @@ def test_qwen3_4b_decoder_equivalence():
         model=hf_model_fms,
         tokenizer=tokenizer,
         num_beams=1,
+        use_cache=use_cache,
         max_new_tokens=20,
         do_sample=False,
     )
@@ -438,11 +457,17 @@ def test_qwen3_4b_decoder_equivalence():
     output_hf = generator_hf(prompt)
     output_hf_fms = generator_hf_fms(prompt)
 
-    assert output_hf[0]["generated_text"] == output_hf_fms[0]["generated_text"], (
-        f"Generated text mismatch:\n"
-        f"HF:  {output_hf[0]['generated_text']}\n"
-        f"FMS: {output_hf_fms[0]['generated_text']}"
-    )
+    # Compare generated text
+    if Version(tf_version) >= Version("5.0.0"):
+        assert output_hf[0]["generated_text"] == output_hf_fms[0]["generated_text"], (
+            f"Generated text mismatch:\n"
+            f"HF:  {output_hf[0]['generated_text']}\n"
+            f"FMS: {output_hf_fms[0]['generated_text']}"
+        )
+    else:
+        assert output_hf == output_hf_fms, (
+            f"Generated text mismatch:\nHF: {output_hf}\nFMS: {output_hf_fms}"
+        )
 
 
 if __name__ == "__main__":
