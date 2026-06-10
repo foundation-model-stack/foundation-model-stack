@@ -405,6 +405,7 @@ class LlavaNext(nn.Module):
 
         # No image data to pre-process
         if pixel_values is None or pixel_values.size(0) == 0:
+            input_ids = self.language_model.base_model.embedding(input_ids)
             return input_ids, kwargs
 
         inputs = kwargs.get("inputs")
