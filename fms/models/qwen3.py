@@ -13,9 +13,11 @@ from fms.distributed.strategy import (
     DistributedStrategy,
     NoOpStrategy,
 )
+from fms.utils.headless import gather_outputs
 from fms.modules.attention import (
     AttentionKwargs,
     MultiHeadAttention,
+    get_attention_type,
 )
 from fms.modules.feedforward import GatedLinearUnit
 from fms.modules.head import LinearClassificationHead
@@ -446,10 +448,17 @@ class Qwen3(nn.Module):
         last_n_tokens: int = 0,
         **attn_kwargs: Unpack[AttentionKwargs],
     ):
+        get_attention_type(**attn_kwargs)["validate_attn_kwargs"](
+            input_ids=x,
+            position_ids=position_ids,
+            past_key_value_states=past_key_value_states,
+            **attn_kwargs,
+        )
         output, cache = self.base_model(
             x, position_ids, past_key_value_states, use_cache, **attn_kwargs
         )
 
+        output = gather_outputs(output, last_n_tokens, **attn_kwargs)
         output = self.head(output)
 
         if use_cache:
@@ -476,7 +485,7 @@ _0_6b_config = Qwen3Config(
 )
 
 _4b_config = Qwen3Config(
-    src_vocab_size=151665,
+    src_vocab_size=151936,
     emb_dim=2560,
     norm_eps=1e-6,
     nheads=32,
