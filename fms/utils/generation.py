@@ -201,6 +201,9 @@ def generate(
     ] = None,
     extra_kwargs: Optional[MutableMapping[str, Any]] = None,
     decode_multiple: int = 64,  # NEW PARAMETER
+    prefill_only: bool = False,
+    decode_only: bool = False,
+    decode_kv_cache_len: int = 0,
 ):
     """
     A trivial generate function that can be used for validation/testing in
@@ -242,9 +245,24 @@ def generate(
         extra_kwargs: an optional mapping of additional kwargs to pass to the model.
             For example: if extra_kwargs contains position_ids and mask keys, these
             model parameters will be updated as-appropriate for each token generated.
+        prefill_only: if True, run only the prefill step (one forward pass over
+            the prompt) and return after producing a single next token. Useful
+            for benchmarking or inspecting prefill behavior in isolation.
+        decode_only: if True, skip prefill and run only decode iterations using
+            a fabricated (garbage) KV cache. Requires use_cache=True. The model
+            must expose `model.config` with `nlayers`, `nheads`, `kvheads`, and
+            `emb_dim` (kvheads==0 means MHA, treated as nheads). Output tokens
+            are not meaningful — this is for benchmarking decode in isolation.
+        decode_kv_cache_len: length of the fabricated KV cache (per layer) when
+            decode_only is True. Defaults to the prompt length.
     """
     if num_beams != 1:
         raise NotImplementedError("generate() does yet not support beam search")
+
+    if prefill_only and decode_only:
+        raise ValueError("prefill_only and decode_only are mutually exclusive")
+    if decode_only and not use_cache:
+        raise ValueError("decode_only=True requires use_cache=True")
 
     kwargs: MutableMapping[str, Any] = dict()
     if extra_kwargs is not None:
@@ -286,9 +304,87 @@ def generate(
     # Fix until slicing works on Spyre
     kwargs["last_n_tokens"] = 0
 
+    if decode_only:
+        config = getattr(model, "config", None)
+        if config is None:
+            raise ValueError(
+                "decode_only=True requires model to expose a `config` attribute "
+                "with nlayers, nheads, kvheads, emb_dim"
+            )
+        nlayers = config.nlayers
+        nheads = config.nheads
+        kvheads = config.kvheads if config.kvheads != 0 else nheads
+        head_dim = config.emb_dim // nheads
+        cache_len = decode_kv_cache_len if decode_kv_cache_len > 0 else decode_multiple
+        batch_size = input_ids.shape[0]
+        param = next(
+            (p for p in model.parameters() if p.is_floating_point()), None
+        )
+        cache_dtype = param.dtype if param is not None else torch.float32
+        cache_device = input_ids.device
+        # KV cache must live on the same device as the model — otherwise the
+        # in-attention torch.cat(cache, new_kv) crosses devices on Spyre.
+        kv_device = (
+            torch.device("spyre")
+            if model.head.weight.device.type == "spyre"
+            else cache_device
+        )
+        garbage_cache = [
+            (
+                torch.zeros(
+                    batch_size, kvheads, cache_len, head_dim,
+                    dtype=cache_dtype, device=kv_device,
+                ),
+                torch.zeros(
+                    batch_size, kvheads, cache_len, head_dim,
+                    dtype=cache_dtype, device=kv_device,
+                ),
+            )
+            for _ in range(nlayers)
+        ]
+        kwargs["past_key_value_states"] = garbage_cache
+        # Spyre's compiled graph expects decode_multiple-length inputs; feed a
+        # block of `decode_multiple` tokens (last prompt token + padding) and
+        # let the EXPANSION branch below build the matching mask/position_ids.
+        last_tok = input_ids[:, -1:]
+        pad = input_ids.new_zeros((batch_size, decode_multiple - 1))
+        next_input = torch.cat([last_tok, pad], dim=1)
+        # seed position_ids: for decode_multiple > 1 EXPANSION uses (last+1),
+        # so we seed at cache_len-1; for decode_multiple == 1 we skip the
+        # extension and seed directly at cache_len.
+        if "position_ids" in kwargs and kwargs["position_ids"] is not None:
+            seed_pos = cache_len - 1 if decode_multiple > 1 else cache_len
+            kwargs["position_ids"] = torch.full(
+                (batch_size, 1), seed_pos,
+                dtype=torch.long, device=cache_device,
+            )
+        # all garbage-cache positions are valid context, so prompt_offset = 0
+        prompt_offset = torch.zeros(batch_size, dtype=torch.long, device=cache_device)
+        if decode_multiple > 1:
+            # Drop any caller-supplied mask; EXPANSION rebuilds it.
+            kwargs.pop("mask", None)
+        else:
+            # Regular decode (decode_multiple == 1): EXPANSION never runs, so
+            # seed a 1-token mask sized to cover the garbage cache plus the new
+            # token (cache + new = cache_len + 1).
+            mask = torch.zeros(
+                (batch_size, 1, cache_len + 1),
+                dtype=cache_dtype, device=cache_device,
+            )
+            for i in range(batch_size):
+                mask[i, :, :prompt_offset[i]] = -torch.inf
+            kwargs["mask"] = mask
+            # Match input shape to a single-token decode step.
+            next_input = input_ids[:, -1:]
+
     if decode_multiple > 1:
-        current_cache_len = input_ids.shape[1]
-        tokens_in_current_block = decode_multiple - 1
+        if decode_only:
+            current_cache_len = cache_len
+            # start in EXPANSION (not FILLING) since there is no prior prefill block
+            tokens_in_current_block = 0
+        else:
+            current_cache_len = input_ids.shape[1]
+            tokens_in_current_block = decode_multiple - 1
         filling_input_ids = None
         # Disabled until slicing works
         # kwargs["last_n_tokens"] = decode_multiple
@@ -300,9 +396,15 @@ def generate(
     eos_reached: bool = False
     is_filling = 0
 
+    # In decode_only mode, max_seq_len may have been sized for the original
+    # prompt (e.g. ids.shape[1] + max_new_tokens) and would truncate the
+    # decode_multiple-length next_input. Use decode_multiple as the floor.
+    effective_max_seq_len = (
+        max(max_seq_len, decode_multiple) if decode_only else max_seq_len
+    )
     for i in range(max_new_tokens):
-        input_ids = next_input[:, -max_seq_len:]
-        if i > 0:  # Decode
+        input_ids = next_input[:, -effective_max_seq_len:]
+        if i > 0 or decode_only:  # Decode
             if decode_multiple > 1:  # Padded decode
                 # In padded decode for Spyre, we either add a new 64 block to the kv-cache, or we fill that block
                 is_filling = tokens_in_current_block > 0
@@ -347,7 +449,11 @@ def generate(
                         kwargs["position_ids"] = position_ids
 
             else:  # Regular decode
-                kwargs = __update_padding_kwargs(use_cache, kwargs)
+                # On iter==0 of decode_only, mask/position_ids are already
+                # seeded for the (cache + new) shape — skip the extension that
+                # would push the mask one slot past the kv tensor.
+                if not (decode_only and i == 0):
+                    kwargs = __update_padding_kwargs(use_cache, kwargs)
 
         if prepare_model_inputs_hook is not None:
             input_ids, kwargs = prepare_model_inputs_hook(i, input_ids, kwargs)
@@ -442,6 +548,9 @@ def generate(
             start_time = time.time()
 
         if eos_reached:
+            break
+
+        if prefill_only:
             break
 
     if timing == "e2e":
