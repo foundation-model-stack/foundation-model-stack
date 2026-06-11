@@ -802,7 +802,7 @@ def _load_partial_state_dict(
                     )
                     setattr(target_module, key_steps[-1], param)
                     param = getattr(target_module, key_steps[-1])
-                param.copy_(tensor_value, non_blocking=True)
+                param.copy_(tensor_value, non_blocking=False)
 
             elif tp_module is not None and tp_module not in seen_tp_modules:
                 seen_tp_modules.add(tp_module)
