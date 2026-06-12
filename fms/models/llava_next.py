@@ -405,6 +405,7 @@ class LlavaNext(nn.Module):
 
         # No image data to pre-process
         if pixel_values is None or pixel_values.size(0) == 0:
+            input_ids = self.language_model.base_model.embedding(input_ids)
             return input_ids, kwargs
 
         inputs = kwargs.get("inputs")
@@ -426,10 +427,11 @@ class LlavaNext(nn.Module):
             image_newline=self.image_newline,
         )
 
-        special_image_mask = (input_ids == self.config.image_token_index).unsqueeze(-1)
-        special_image_mask = special_image_mask.expand_as(inputs).to(inputs.device)
         image_features = image_features.to(inputs.device, inputs.dtype)
-        inputs = inputs.masked_scatter(special_image_mask, image_features)
+        image_positions = (input_ids[0] == self.config.image_token_index).nonzero(
+            as_tuple=True
+        )[0]
+        inputs[0, image_positions] = image_features
         return inputs, kwargs
 
 
