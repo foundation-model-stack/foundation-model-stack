@@ -969,6 +969,7 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
         group: Optional[ProcessGroup] = None,
         linear_config: Optional[Mapping[str, Any]] = None,
         scale_factor: Optional[float] = None,
+        has_sinks: bool = False,
     ):
         assert torch.distributed.is_initialized()
 
@@ -994,6 +995,7 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
             fused,
             linear_config,
             scale_factor,
+            has_sinks=has_sinks,
         )
         self.pre_tp_nheads = nheads
         self.pre_tp_kvheads = kvheads
