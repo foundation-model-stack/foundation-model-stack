@@ -995,7 +995,7 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
             fused,
             linear_config,
             scale_factor,
-            has_sinks=has_sinks,
+            has_sinks,
         )
         self.pre_tp_nheads = nheads
         self.pre_tp_kvheads = kvheads
