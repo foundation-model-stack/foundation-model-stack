@@ -352,7 +352,12 @@ def _math_attention_with_sinks_op(
         )
 
     if 0 < sliding_window < kv_tokens:
-        mask += torch.tril(
+        # Out-of-place: a supplied `mask` may alias the caller's tensor (mask.to(same
+        # dtype) and the full-width slice above both share storage). The paged path
+        # reuses one mask tensor across all layers, so an in-place `+=` here would
+        # accumulate the sliding-window tril onto that shared mask, corrupting every
+        # later layer (double-masking at clipped query positions).
+        mask = mask + torch.tril(
             mask.new_full((n_tokens, kv_tokens), -torch.inf),
             diagonal=(kv_tokens - n_tokens) - sliding_window,
         )
@@ -796,6 +801,7 @@ class MultiHeadAttention(nn.Module):
             norm_eps=self.norm_eps,
             head_dim=self.head_dim,
         )
+
         if self.has_sinks:
             self.sinks = nn.Parameter(torch.empty(self.nheads))
 
@@ -889,6 +895,7 @@ class MultiHeadAttention(nn.Module):
                     past_key_value_state[0],
                     past_key_value_state[1],
                     **attn_kwargs,
+                    sliding_window=sliding_window,
                 )
             )
         else:
@@ -968,6 +975,7 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
         group: Optional[ProcessGroup] = None,
         linear_config: Optional[Mapping[str, Any]] = None,
         scale_factor: Optional[float] = None,
+        has_sinks: bool = False,
     ):
         assert torch.distributed.is_initialized()
 
@@ -993,6 +1001,7 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
             fused,
             linear_config,
             scale_factor,
+            has_sinks,
         )
         self.pre_tp_nheads = nheads
         self.pre_tp_kvheads = kvheads
