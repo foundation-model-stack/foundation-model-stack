@@ -225,10 +225,12 @@ def paged_attn_compute_with_sinks(
         # https://github.com/openai/gpt-oss/blob/main/gpt_oss/torch/model.py#L153
         # from gpt-oss open ai implementation
         S = sinks.reshape(-1, 1, 1).expand(-1, seq_len_q_i, -1)  # type: ignore
-        if scale is None:
-            scale = 1.0 / math.sqrt(head_size)
-        scale = math.sqrt(scale)
-        attn_weights = torch.einsum("qhd,khd->hqk", q * scale, keys * scale)
+        # NOTE: do NOT reassign `scale` here. This runs inside the per-sequence
+        # loop, so `scale = math.sqrt(scale)` would compound across rows (row 1
+        # would get sqrt(sqrt(scale)), row 2 the 4th root, ...), corrupting every
+        # batch row except row 0. Use a fresh local applied to both q and k.
+        sqrt_scale = math.sqrt(scale if scale is not None else 1.0 / math.sqrt(head_size))
+        attn_weights = torch.einsum("qhd,khd->hqk", q * sqrt_scale, keys * sqrt_scale)
         attn_weights += mask
         lse = torch.logsumexp(attn_weights, dim=-1)  # (H, Sq)
         attn_weights = F.softmax(attn_weights, dim=-1, dtype=torch.float32).to(q.dtype)
