@@ -352,7 +352,12 @@ def _math_attention_with_sinks_op(
         )
 
     if 0 < sliding_window < kv_tokens:
-        mask += torch.tril(
+        # Out-of-place: a supplied `mask` may alias the caller's tensor (mask.to(same
+        # dtype) and the full-width slice above both share storage). The paged path
+        # reuses one mask tensor across all layers, so an in-place `+=` here would
+        # accumulate the sliding-window tril onto that shared mask, corrupting every
+        # later layer (double-masking at clipped query positions).
+        mask = mask + torch.tril(
             mask.new_full((n_tokens, kv_tokens), -torch.inf),
             diagonal=(kv_tokens - n_tokens) - sliding_window,
         )
