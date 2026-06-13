@@ -3,6 +3,7 @@ from typing import List, NotRequired, Optional, Tuple
 
 from fms.modules.attention import (
     AttentionKwargs,
+    _math_attention_with_sinks_op,
     _sdpa_compute_op,
     register_attention_op,
 )
@@ -398,7 +399,7 @@ register_attention_op(
 register_attention_op(
     "spyre_paged_attn_with_sinks",
     __spyre_paged_store_op,
-    _sdpa_compute_op,
+    _math_attention_with_sinks_op,
     is_prefill_op=lambda **attn_kwargs: attn_kwargs.get("block_table", None) is None,
     compute_decode_op=__spyre_paged_compute_sinks_op,
     validate_attn_kwargs_op=__spyre_paged_validate_attn_kwargs_op,
