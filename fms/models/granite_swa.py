@@ -333,6 +333,24 @@ class GraniteSWAHeadless(nn.Module):
         if past_key_value_states is None or len(past_key_value_states) == 0:
             past_key_value_states = [None for _ in range(len(self.layers))]
 
+        # Default position_ids when not supplied. We must NOT let RoPE infer the
+        # decode position from a per-layer cache size (RotaryEmbedding.adjusted_qk
+        # does `position_ids += past_kv_state[0].size(2)` when position_ids is None):
+        # SWA layers trim their KV-cache to the sliding window, so that size is
+        # frozen at the window length and yields a wrong, layer-inconsistent RoPE
+        # position once the sequence exceeds the window. Derive the true past length
+        # from the longest (full-attention, untrimmed) layer cache and build a single
+        # position_ids shared by every layer.
+        if position_ids is None:
+            past_seen_tokens = 0
+            for layer_cache in past_key_value_states:
+                if layer_cache is not None and layer_cache[0] is not None and layer_cache[0].numel() > 0:
+                    past_seen_tokens = max(past_seen_tokens, layer_cache[0].size(2))
+            seq_len = x_in.size(1)
+            position_ids = (
+                torch.arange(seq_len, dtype=torch.long, device=x_in.device) + past_seen_tokens
+            ).unsqueeze(0).expand(x_in.size(0), -1)
+
         if x_in.dim() == 2:  # input is not already embedded
             x_in = self.embedding(x_in)
         x_in = x_in * self.config.embedding_multiplier
