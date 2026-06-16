@@ -461,7 +461,64 @@ class GraniteSWA(nn.Module):
             return preds
 
 
-_8b_config = GraniteSWAConfig()
+_3b_config = GraniteSWAConfig()
+
+_20b_config = GraniteSWAConfig(
+    emb_dim=4096,
+    nheads=32,
+    kvheads=8,
+    nlayers=44,
+    hidden_grow_factor=8.0, # 32768/4096
+    max_expected_seq_len=4096,
+    logits_scaling=16.0,
+    residual_multiplier=0.175,
+    is_swa_layer=[
+        False,
+        True,
+        True,
+        False,
+        True,
+        True,
+        True,
+        False,
+        True,
+        True,
+        True,
+        False,
+        True,
+        True,
+        True,
+        False,
+        True,
+        True,
+        True,
+        False,
+        True,
+        True,
+        True,
+        False,
+        True,
+        True,
+        True,
+        False,
+        True,
+        True,
+        True,
+        False,
+        True,
+        True,
+        True,
+        False,
+        True,
+        True,
+        True,
+        False,
+        True,
+        True,
+        True,
+        False,
+    ],
+)
 
 _architecture_name = "granite_swa"
 
@@ -473,7 +530,8 @@ def _granite_factory_factory(config):
     return factory
 
 
-models.register_model(_architecture_name, "8b", _granite_factory_factory(_8b_config))
+models.register_model(_architecture_name, "3b", _granite_factory_factory(_3b_config))
+models.register_model(_architecture_name, "20b", _granite_factory_factory(_20b_config))
 
 
 def _weight_fusion(
