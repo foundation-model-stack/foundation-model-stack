@@ -895,7 +895,6 @@ class MultiHeadAttention(nn.Module):
                     past_key_value_state[0],
                     past_key_value_state[1],
                     **attn_kwargs,
-                    sliding_window=sliding_window,
                 )
             )
         else:
