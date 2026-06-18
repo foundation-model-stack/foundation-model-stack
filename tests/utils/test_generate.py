@@ -284,3 +284,40 @@ def test_trimming():
     torch.testing.assert_close(result, torch.ones((20,)))
     result = trim_prefix(sentence, pad_token_id=2)
     torch.testing.assert_close(result, sentence)
+
+
+def test_pad_input_ids_nonzero_pad_token_id():
+    # Regression: with a non-zero pad_token_id, the left-pad key columns must NOT
+    # be attendable by real query rows. Previously the pad/real segmentation was
+    # derived from `pads.bool()` (the pad fill value), which is True for any
+    # non-zero pad_token_id, marking pads as real and letting every real query
+    # attend the leading pad keys (corrupting attention from layer 0).
+    pad_token_id = 100256
+    input_ids = [
+        torch.arange(1, 5, dtype=torch.long),  # 4 real tokens
+        torch.arange(1, 10, dtype=torch.long),  # 9 real tokens
+    ]
+    min_pad_length = 12
+
+    _, padding_kwargs = pad_input_ids(
+        input_ids, min_pad_length=min_pad_length, pad_token_id=pad_token_id
+    )
+    mask = padding_kwargs["mask"]  # additive: 0.0 attend, -inf block; (B, S, S)
+
+    for b, seq in enumerate(input_ids):
+        real_len = seq.size(0)
+        st = min_pad_length - real_len  # first real token index (left padding)
+
+        # Every real query attends only real keys up to and including itself
+        # (strict causal over the real region), never the leading pad columns.
+        for q in range(st, min_pad_length):
+            allowed = (mask[b, q] == 0).nonzero(as_tuple=True)[0].tolist()
+            assert allowed == list(range(st, q + 1)), (
+                f"row {b} query {q}: expected real causal keys "
+                f"{list(range(st, q + 1))}, got {allowed}"
+            )
+
+        # Pad query rows keep self-attention so their softmax is not all -inf
+        # (NaN guard); at minimum each pad row attends itself.
+        for q in range(0, st):
+            assert mask[b, q, q] == 0, f"row {b} pad query {q} lost self-attention"
