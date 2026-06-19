@@ -216,7 +216,11 @@ class LlavaNext(nn.Module):
         return self.config
 
     def reset_parameters(self):
-        nn.init.xavier_uniform_(self.image_newline.data)
+        # image_newline is 1-D so normal_ matches the construction-time init
+        nn.init.normal_(
+            self.image_newline,
+            std=1 / math.sqrt(self.config.text_config.emb_dim),
+        )
         if not self._vision_only:
             self.language_model.reset_parameters()
         self.vision_tower.reset_parameters()
