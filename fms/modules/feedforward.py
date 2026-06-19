@@ -633,6 +633,8 @@ class TPConditionalFeedForward(ConditionalFeedForward, TPModule):
         dim: int,
         intermediate_size: int,
         group: Optional[ProcessGroup] = None,
+        use_bias: bool = False,
+        swiglu_limit: Optional[float] = None,
     ):
         assert torch.distributed.is_initialized()
         rank, world_size = distributed.rank_and_world(group)
@@ -642,9 +644,11 @@ class TPConditionalFeedForward(ConditionalFeedForward, TPModule):
         )
         ConditionalFeedForward.__init__(
             self,
-            num_experts,
-            dim,
-            intermediate_size // world_size,
+            num_experts=num_experts,
+            dim=dim,
+            intermediate_size=intermediate_size // world_size,
+            use_bias=use_bias,
+            swiglu_limit=swiglu_limit,
         )
         self.setup_tp(rank, group)
 
