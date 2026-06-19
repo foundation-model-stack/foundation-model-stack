@@ -1076,6 +1076,10 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
             fused=mha.fused,
             linear_config=mha.linear_config,
             scale_factor=mha.scale_factor,
+            apply_norm_per_head=mha.apply_norm_per_head,
+            norm_eps=mha.norm_eps,
+            head_dim=mha.head_dim,
+            has_sinks=mha.has_sinks,
         )
         return tp_mha
 

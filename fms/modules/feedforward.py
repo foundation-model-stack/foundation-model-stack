@@ -680,6 +680,8 @@ class TPConditionalFeedForward(ConditionalFeedForward, TPModule):
             dim=cff.dim,
             intermediate_size=cff.intermediate_size,
             group=group,
+            use_bias=cff.use_bias,
+            swiglu_limit=cff.swiglu_limit,
         )
 
         return tp_cff
