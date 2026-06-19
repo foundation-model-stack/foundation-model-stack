@@ -125,8 +125,8 @@ class TPLinearClassificationHead(LinearClassificationHead, TPModule):
         )
         LinearClassificationHead.__init__(
             self,
-            emb_dim,
-            vocab_size // world_size,
+            emb_dim=emb_dim,
+            vocab_size=vocab_size // world_size,
             bias=bias,
             device=device,
             dtype=dtype,
