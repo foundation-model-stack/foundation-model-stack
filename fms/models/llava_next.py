@@ -139,10 +139,21 @@ class LlavaNextMultiModalProjector(nn.Module):
 
 
 class LlavaNext(nn.Module):
+    # HF-side checkpoint key prefixes to load when vision_only=True.
+    # Covers vision encoder, projector, and the text embedding needed for
+    # image-token merging. LLM decoder shard files are never opened.
+    VISION_ONLY_HF_PREFIXES: tuple = (
+        "vision_tower.",
+        "multi_modal_projector.",
+        "language_model.model.embed_tokens.",  # HF name
+        "language_model.base_model.embedding.",  # FMS name (if checkpoint is already FMS)
+    )
+
     def __init__(
         self,
         config: Optional[LlavaNextConfig] = None,
         distributed_strategy: DistributedStrategy = NoOpStrategy,
+        vision_only: bool = False,
         **kwargs,
     ):
         super(LlavaNext, self).__init__()
@@ -159,6 +170,7 @@ class LlavaNext(nn.Module):
             self.config.vision_config.fused_weights = False
 
         self.distributed_strategy = distributed_strategy
+        self._vision_only = vision_only
 
         if not isinstance(self.config.vision_config, SiglipVisionConfig):
             print(
@@ -169,11 +181,19 @@ class LlavaNext(nn.Module):
                 "FMS implementation of LlavaNext currently supports only Granite language model"
             )
 
-        # Only supporting granite text decoder encoder for now
-        self.language_model = Granite(
-            self.config.text_config,
-            distributed_strategy,
-        )
+        if not vision_only:
+            # Only supporting granite text decoder encoder for now
+            self.language_model = Granite(
+                self.config.text_config,
+                distributed_strategy,
+            )
+        else:
+            # Only the embedding layer is needed to merge image tokens into
+            # text embedding space; the full LLM decoder stack is not constructed.
+            self.text_embedding = nn.Embedding(
+                self.config.text_config.src_vocab_size,
+                self.config.text_config.emb_dim,
+            )
 
         # Only supporting siglip vision encoder for now
         self.vision_tower = SiglipVision(
@@ -197,13 +217,20 @@ class LlavaNext(nn.Module):
 
     def reset_parameters(self):
         nn.init.xavier_uniform_(self.image_newline.data)
-        self.language_model.reset_parameters()
+        if not self._vision_only:
+            self.language_model.reset_parameters()
         self.vision_tower.reset_parameters()
         self.multi_modal_projector.reset_parameters()
 
     def post_init(self):
-        self.language_model.post_init()
+        if not self._vision_only:
+            self.language_model.post_init()
         self.vision_tower.post_init()
+
+    def _get_text_embeddings(self, input_ids: torch.Tensor) -> torch.Tensor:
+        if self._vision_only:
+            return self.text_embedding(input_ids)
+        return self.language_model.base_model.embedding(input_ids)
 
     def unpad_image(self, tensor: torch.Tensor, original_image_size: torch.Tensor):
         if not isinstance(original_image_size, (list, tuple)):
@@ -395,9 +422,9 @@ class LlavaNext(nn.Module):
     ):
         # Use with arg `prepare_model_inputs_hook=model.prepare_inputs_for_generation` when calling generate()
 
-        if kwargs["use_cache"] and iteration > 0:
+        if kwargs.get("use_cache") and iteration > 0:
             # No need to process image data again in cached decoding stage.
-            input_ids = self.language_model.base_model.embedding(input_ids)
+            input_ids = self._get_text_embeddings(input_ids)
             return input_ids, kwargs
 
         pixel_values = kwargs.get("pixel_values")
@@ -405,7 +432,7 @@ class LlavaNext(nn.Module):
 
         # No image data to pre-process
         if pixel_values is None or pixel_values.size(0) == 0:
-            input_ids = self.language_model.base_model.embedding(input_ids)
+            input_ids = self._get_text_embeddings(input_ids)
             return input_ids, kwargs
 
         inputs = kwargs.get("inputs")
@@ -414,7 +441,7 @@ class LlavaNext(nn.Module):
 
         # embedded inputs supersede input_ids
         if inputs is None:
-            inputs = self.language_model.base_model.embedding(input_ids)
+            inputs = self._get_text_embeddings(input_ids)
 
         image_features = self.get_image_features(
             pixel_values,
