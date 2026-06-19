@@ -154,10 +154,21 @@ class Mistral3MultiModalProjector(nn.Module):
 
 
 class Mistral3(nn.Module):
+    # HF-side checkpoint key prefixes to load when vision_only=True.
+    # Covers vision encoder, projector, and the text embedding needed for
+    # image-token merging. LLM decoder shard files are never opened.
+    VISION_ONLY_HF_PREFIXES: tuple = (
+        "vision_tower.",
+        "multi_modal_projector.",
+        "language_model.model.embed_tokens.",  # HF name
+        "language_model.base_model.embedding.",  # FMS name (if checkpoint is already FMS)
+    )
+
     def __init__(
         self,
         config: Optional[Mistral3Config] = None,
         distributed_strategy: DistributedStrategy = NoOpStrategy,
+        vision_only: bool = False,
         **kwargs,
     ):
         super().__init__()
@@ -176,11 +187,20 @@ class Mistral3(nn.Module):
             self.config.vision_config.fused_weights = False
 
         self.distributed_strategy = distributed_strategy
+        self._vision_only = vision_only
 
-        # Currently, we always use mistral for the LLM
-        self.language_model = Mistral(
-            self.config.text_config, self.distributed_strategy
-        )
+        if not vision_only:
+            # Currently, we always use mistral for the LLM
+            self.language_model = Mistral(
+                self.config.text_config, self.distributed_strategy
+            )
+        else:
+            # Only the embedding layer is needed to merge image tokens into
+            # text embedding space; the full LLM decoder stack is not constructed.
+            self.text_embedding = nn.Embedding(
+                self.config.text_config.src_vocab_size,
+                self.config.text_config.emb_dim,
+            )
         # Vision encoder and projector for multimodal features
         self.vision_tower = PixtralVisionModel(
             self.config.vision_config, self.distributed_strategy
@@ -197,12 +217,14 @@ class Mistral3(nn.Module):
         return self.config
 
     def reset_parameters(self):
-        self.language_model.reset_parameters()
+        if not self._vision_only:
+            self.language_model.reset_parameters()
         self.vision_tower.reset_parameters()
 
     def post_init(self):
-        # Language model post init will handle head tying etc.
-        self.language_model.post_init()
+        if not self._vision_only:
+            # Language model post init will handle head tying etc.
+            self.language_model.post_init()
         self.vision_tower.post_init()
 
     def prepare_inputs_for_generation(
@@ -245,6 +267,8 @@ class Mistral3(nn.Module):
         # Precomputed embeddings take priority over input IDs
         if input_embeds is not None:
             return input_embeds
+        if self._vision_only:
+            return self.text_embedding(input_ids)
         return self.language_model.base_model.embedding(input_ids)
 
     def _get_image_features(

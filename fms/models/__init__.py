@@ -346,6 +346,7 @@ def get_model(
         device = torch.device(device_type)
 
     extra_args = kwargs
+    vision_only = extra_args.pop("vision_only", False)
     # TODO: streamline this logic
     data_type_parsed: Optional[torch.dtype] = None
     if isinstance(data_type, str):  # convert str to torch.dtype
@@ -388,6 +389,10 @@ def get_model(
         source,
         **kwargs,
     )
+
+    # Forward vision_only to the model constructor (popped before infer to avoid
+    # being misinterpreted as a config kwarg by __maybe_infer_model_variant).
+    extra_args["vision_only"] = vision_only
 
     lazy_sd: MutableMapping[str, Any] = {}
     if model_path is not None:
@@ -460,6 +465,7 @@ def get_model(
             checkpoint_sharding=checkpoint_sharding,
             initial_device=initial_device,
             rank=rank,
+            key_prefix_filter=getattr(fms_model, "VISION_ONLY_HF_PREFIXES", None) if vision_only else None,
         )
     else:
         # move from meta device to real device

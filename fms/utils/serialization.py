@@ -502,6 +502,7 @@ def load_state_dict_into_model(
     checkpoint_sharding: Optional[str] = None,
     initial_device: torch.device = torch.device("cpu"),
     rank: int = 0,
+    key_prefix_filter: Optional[tuple] = None,
 ) -> None:
     """
     This function loads state_dict into model in the most efficient way possible,
@@ -547,6 +548,15 @@ def load_state_dict_into_model(
         for key in sd_keys:
             if key in used_keys:
                 continue
+
+            # Skip checkpoint keys that don't match any allowed prefix (HF-side names).
+            # Filtered tensors are never read from disk when using LazySafetensorsDict.
+            if key_prefix_filter is not None and not any(
+                key.startswith(p) for p in key_prefix_filter
+            ):
+                unused_keys.add(key)
+                continue
+
             used_keys.add(key)
 
             partial_sd = {key: state_dict[key]}

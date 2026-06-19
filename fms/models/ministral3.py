@@ -362,6 +362,7 @@ class Ministral3(Mistral3):  # type: ignore[misc]
         self,
         config: Optional[Ministral3Config] = None,
         distributed_strategy: DistributedStrategy = NoOpStrategy,
+        vision_only: bool = False,
         **kwargs,
     ):
         nn.Module.__init__(self)
@@ -380,11 +381,20 @@ class Ministral3(Mistral3):  # type: ignore[misc]
             self.config.vision_config.fused_weights = False
 
         self.distributed_strategy = distributed_strategy
+        self._vision_only = vision_only
 
-        # Ministral3Text is structurally compatible with Mistral for the language model
-        self.language_model: Ministral3Text = Ministral3Text(  # type: ignore[assignment]
-            self.config.text_config, self.distributed_strategy
-        )
+        if not vision_only:
+            # Ministral3Text is structurally compatible with Mistral for the language model
+            self.language_model: Ministral3Text = Ministral3Text(  # type: ignore[assignment]
+                self.config.text_config, self.distributed_strategy
+            )
+        else:
+            # Only the embedding layer is needed to merge image tokens into
+            # text embedding space; the full LLM decoder stack is not constructed.
+            self.text_embedding = nn.Embedding(
+                self.config.text_config.src_vocab_size,
+                self.config.text_config.emb_dim,
+            )
         # Vision encoder and projector for multimodal features
         self.vision_tower = PixtralVisionModel(
             self.config.vision_config, self.distributed_strategy
