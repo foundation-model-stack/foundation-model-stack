@@ -444,13 +444,14 @@ class TPGatedLinearUnit(GatedLinearUnit, TPModule):
 
     def _initialize_empty_module(self):
         return TPGatedLinearUnit(
-            self.width,
-            self.grow_factor * self.world_size,
-            self.multiple_of,
-            self.a,
-            self.p_dropout,
-            self.use_bias,
+            emb_dim=self.width,
+            hidden_grow_factor=self.grow_factor * self.world_size,
+            multiple_of=self.multiple_of,
+            activation_fn=self.a,
+            p_dropout=self.p_dropout,
+            use_bias=self.use_bias,
             fused=False,
+            linear_config=self.linear_config,
         ).to(self.w2.weight.device)
 
 
