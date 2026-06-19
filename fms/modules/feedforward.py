@@ -133,13 +133,13 @@ class TPFeedForwardBlock(FeedForwardBlock, TPModule):
         )
         FeedForwardBlock.__init__(
             self,
-            emb_dim,
-            hidden_grow_factor / world_size,
-            multiple_of,
-            activation_fn,
-            p_dropout,
-            use_bias,
-            linear_config,
+            emb_dim=emb_dim,
+            hidden_grow_factor=hidden_grow_factor / world_size,
+            multiple_of=multiple_of,
+            activation_fn=activation_fn,
+            p_dropout=p_dropout,
+            use_bias=use_bias,
+            linear_config=linear_config,
         )
         self.setup_tp(rank, group)
 
