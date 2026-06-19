@@ -27,12 +27,17 @@ from fms.models.hf.gpt_oss.modeling_gpt_oss_hf import (
     HFAdaptedGptOssForCausalLM,
     HFAdaptedGptOssHeadless,
 )
+from fms.models.hf.qwen3 import (
+    HFAdaptedQwen3ForCausalLM,
+    HFAdaptedQwen3Headless,
+)
 from fms.models.hf.utils import register_fms_models
 from fms.models.llama import LLaMA
 from fms.models.granite import Granite, GraniteHeadless
 from fms.models.mixtral import Mixtral, MixtralHeadless
 from fms.models.roberta import RoBERTa, RoBERTaHeadless
 from fms.models.gpt_oss import GptOss, GptOssHeadless
+from fms.models.qwen3 import Qwen3, Qwen3Headless
 
 from transformers import __version__ as tf_version
 
@@ -69,6 +74,8 @@ _fms_to_hf_adapt_map = {
     RoBERTaHeadless: HFAdaptedRoBERTaHeadless,
     Mixtral: HFAdaptedMixtralForCausalLM,
     MixtralHeadless: HFAdaptedMixtralHeadless,
+    Qwen3: HFAdaptedQwen3ForCausalLM,
+    Qwen3Headless: HFAdaptedQwen3Headless,
 }
 
 # Add Ministral3 if FMS adapter is available
@@ -94,6 +101,7 @@ _headless_models = [
     HFAdaptedRoBERTaHeadless,
     HFAdaptedMixtralHeadless,
     HFAdaptedGptOssHeadless,
+    HFAdaptedQwen3Headless,
 ]
 
 # Add Ministral3 headless if available and transformers < 5 (ministral3 is built-in in tf5+)
@@ -114,6 +122,7 @@ _causal_lm_models = [
     HFAdaptedLLaMAForCausalLM,
     HFAdaptedMixtralForCausalLM,
     HFAdaptedGptOssForCausalLM,
+    HFAdaptedQwen3ForCausalLM,
 ]
 
 # Add Ministral3 causal LM if available and transformers < 5 (ministral3 is built-in in tf5+)
