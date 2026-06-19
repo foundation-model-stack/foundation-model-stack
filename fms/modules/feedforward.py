@@ -299,13 +299,14 @@ class GatedLinearUnit(nn.Module):
     def _initialize_empty_module(self):
         with torch.device("meta"):
             return GatedLinearUnit(
-                self.width,
-                self.grow_factor,
-                self.multiple_of,
-                self.a,
-                self.p_dropout,
-                self.use_bias,
+                emb_dim=self.width,
+                hidden_grow_factor=self.grow_factor,
+                multiple_of=self.multiple_of,
+                activation_fn=self.a,
+                p_dropout=self.p_dropout,
+                use_bias=self.use_bias,
                 fused=False,
+                linear_config=self.linear_config,
             )
 
     def unfuse_weights(self):
