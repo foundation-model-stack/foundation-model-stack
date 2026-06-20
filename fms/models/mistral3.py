@@ -339,7 +339,9 @@ class Mistral3(nn.Module):
         image_positions = (input_ids[0] == self.config.image_token_index).nonzero(
             as_tuple=True
         )[0]
-        text_embeds[0, image_positions] = img_features.to(dtype)
+        text_embeds[0, image_positions] = img_features.to(
+            device=text_embeds.device, dtype=dtype
+        )
         return text_embeds
 
     def forward(
