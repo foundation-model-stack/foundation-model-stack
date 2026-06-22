@@ -231,11 +231,13 @@ class TestMinistral3VisionOnly:
         model = Ministral3(config, vision_only=True)
         # Patch vision_tower.reset_parameters to avoid unrelated recursion in pixtral
         import unittest.mock as mock
+
         with mock.patch.object(model.vision_tower, "reset_parameters"):
             model.reset_parameters()  # should not raise AttributeError
 
     def test_vision_only_inherits_get_text_embeddings_from_mistral3(self, config):
         """Ministral3 uses Mistral3._get_text_embeddings — verify the MRO dispatches correctly."""
         from fms.models.mistral3 import Mistral3
+
         model = Ministral3(config, vision_only=True)
         assert type(model)._get_text_embeddings is Mistral3._get_text_embeddings

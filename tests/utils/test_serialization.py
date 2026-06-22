@@ -165,7 +165,8 @@ def test_load_state_dict_into_model_key_prefix_filter():
     # vision layer loaded, language layer still zeros (not loaded)
     torch.testing.assert_close(model.vision_layers[0].weight, vision_weight)
     torch.testing.assert_close(
-        model.language_layers[0].weight, torch.zeros(4, 4),
+        model.language_layers[0].weight,
+        torch.zeros(4, 4),
         msg="language weights should NOT have been loaded",
     )
 

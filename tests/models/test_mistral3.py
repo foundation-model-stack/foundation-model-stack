@@ -208,5 +208,6 @@ class TestMistral3VisionOnly:
         model = Mistral3(config, vision_only=True)
         # Patch vision_tower.reset_parameters to avoid unrelated recursion in pixtral
         import unittest.mock as mock
+
         with mock.patch.object(model.vision_tower, "reset_parameters"):
             model.reset_parameters()  # should not raise AttributeError

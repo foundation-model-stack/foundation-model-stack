@@ -251,6 +251,7 @@ class TestLlavaNextVisionOnly:
         model = LlavaNext(config, vision_only=True)
         # Patch vision_tower.reset_parameters to avoid unrelated recursion in siglip
         import unittest.mock as mock
+
         with mock.patch.object(model.vision_tower, "reset_parameters"):
             model.reset_parameters()  # should not raise AttributeError
 

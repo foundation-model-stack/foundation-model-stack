@@ -259,7 +259,9 @@ def test_get_model_vision_only_prefix_filter_applied(tmp_path):
     # can assert which were loaded without relying on random-init values.
     with torch.no_grad():
         for name, p in full_model.named_parameters():
-            if name.startswith("vision_tower.") or name.startswith("multi_modal_projector."):
+            if name.startswith("vision_tower.") or name.startswith(
+                "multi_modal_projector."
+            ):
                 p.fill_(1.0)
             elif name.startswith("language_model."):
                 p.fill_(2.0)
@@ -282,5 +284,7 @@ def test_get_model_vision_only_prefix_filter_applied(tmp_path):
 
     # Vision tower and projector params should be 1.0 (loaded from checkpoint)
     for name, p in vision_model.named_parameters():
-        if name.startswith("vision_tower.") or name.startswith("multi_modal_projector."):
+        if name.startswith("vision_tower.") or name.startswith(
+            "multi_modal_projector."
+        ):
             assert p.eq(1.0).all(), f"{name} was not loaded from checkpoint"

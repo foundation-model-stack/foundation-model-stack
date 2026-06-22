@@ -465,7 +465,9 @@ def get_model(
             checkpoint_sharding=checkpoint_sharding,
             initial_device=initial_device,
             rank=rank,
-            key_prefix_filter=getattr(fms_model, "VISION_ONLY_HF_PREFIXES", None) if vision_only else None,
+            key_prefix_filter=getattr(fms_model, "VISION_ONLY_HF_PREFIXES", None)
+            if vision_only
+            else None,
         )
     else:
         # move from meta device to real device
