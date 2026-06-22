@@ -542,6 +542,7 @@ def load_state_dict_into_model(
     # 3. Iterate over the weights and load them into the model
     used_keys = set()
     unused_keys = set()
+    filtered_keys = set()  # keys intentionally skipped by key_prefix_filter
     sd_keys = set(state_dict.keys())
 
     with torch.no_grad():
@@ -554,7 +555,7 @@ def load_state_dict_into_model(
             if key_prefix_filter is not None and not any(
                 key.startswith(p) for p in key_prefix_filter
             ):
-                unused_keys.add(key)
+                filtered_keys.add(key)
                 continue
 
             used_keys.add(key)
@@ -588,11 +589,28 @@ def load_state_dict_into_model(
             del partial_sd
             del fms_partial_sd
 
-    if unused_keys and rank == 0:
-        logger.warning(
-            f"Keys from checkpoint (adapted to FMS) "
-            f"not copied into model: {unused_keys}"
-        )
+    if rank == 0:
+        if filtered_keys:
+            # Summarise by prefix rather than listing every individual key.
+            prefix_counts: dict[str, int] = {}
+            for key in filtered_keys:
+                matched = next(
+                    (p for p in key_prefix_filter if key.startswith(p)), key.split(".")[0] + "."  # type: ignore[union-attr]
+                )
+                prefix_counts[matched] = prefix_counts.get(matched, 0) + 1
+            summary = ", ".join(
+                f'"{p}" ({n} key{"s" if n != 1 else ""})' for p, n in sorted(prefix_counts.items())
+            )
+            logger.info(
+                f"key_prefix_filter is set {list(key_prefix_filter)}; "  # type: ignore[arg-type]
+                f"intentionally skipped checkpoint keys outside allowed prefixes: {summary}"
+            )
+
+        if unused_keys:
+            logger.warning(
+                f"Keys from checkpoint (adapted to FMS) "
+                f"not copied into model: {unused_keys}"
+            )
 
 
 def _copy_if_present(parameter, tensor_value):
