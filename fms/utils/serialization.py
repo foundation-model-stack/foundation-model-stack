@@ -591,19 +591,9 @@ def load_state_dict_into_model(
 
     if rank == 0:
         if filtered_keys:
-            # Summarise by prefix rather than listing every individual key.
-            prefix_counts: dict[str, int] = {}
-            for key in filtered_keys:
-                matched = next(
-                    (p for p in key_prefix_filter if key.startswith(p)), key.split(".")[0] + "."  # type: ignore[union-attr]
-                )
-                prefix_counts[matched] = prefix_counts.get(matched, 0) + 1
-            summary = ", ".join(
-                f'"{p}" ({n} key{"s" if n != 1 else ""})' for p, n in sorted(prefix_counts.items())
-            )
             logger.info(
-                f"key_prefix_filter is set {list(key_prefix_filter)}; "  # type: ignore[arg-type]
-                f"intentionally skipped checkpoint keys outside allowed prefixes: {summary}"
+                f"key_prefix_filter {list(key_prefix_filter)} is set; "  # type: ignore[arg-type]
+                f"skipped {len(filtered_keys)} checkpoint keys outside allowed prefixes"
             )
 
         if unused_keys:
