@@ -969,6 +969,7 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
         apply_norm_per_head: Optional[bool] = None,
         norm_eps: Optional[float] = None,
         head_dim: Optional[int] = None,
+        has_sinks: bool = False,
     ):
         assert torch.distributed.is_initialized()
 
@@ -983,20 +984,21 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
         )
         MultiHeadAttention.__init__(
             self,
-            emb_dim,
-            emb_kq,
-            emb_v,
-            nheads // world_size,
-            (kvheads // world_size) if kvheads >= world_size else 1,
-            p_dropout,
-            use_bias,
-            position_encoder,
-            fused,
-            linear_config,
-            scale_factor,
+            emb_dim=emb_dim,
+            emb_kq=emb_kq,
+            emb_v=emb_v,
+            nheads=nheads // world_size,
+            kvheads=(kvheads // world_size) if kvheads >= world_size else 1,
+            p_dropout=p_dropout,
+            use_bias=use_bias,
+            position_encoder=position_encoder,
+            fused=fused,
+            linear_config=linear_config,
+            scale_factor=scale_factor,
             apply_norm_per_head=apply_norm_per_head,
             norm_eps=norm_eps,
             head_dim=head_dim,
+            has_sinks=has_sinks,
         )
         self.pre_tp_nheads = nheads
         self.pre_tp_kvheads = kvheads
@@ -1089,6 +1091,7 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
             apply_norm_per_head=mha.apply_norm_per_head,
             norm_eps=mha.norm_eps,
             head_dim=mha.head_dim,
+            has_sinks=mha.has_sinks,
         )
         return tp_mha
 
