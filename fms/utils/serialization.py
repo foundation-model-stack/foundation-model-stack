@@ -544,20 +544,23 @@ def load_state_dict_into_model(
     # 3. Iterate over the weights and load them into the model
     used_keys = set()
     unused_keys = set()
-    filtered_keys = set()  # keys intentionally skipped by key_prefix_filter
     sd_keys = set(state_dict.keys())
+
+    # Pre-compute filtered keys so they are excluded from neighbor discovery.
+    # Without this, a key with no numeric segment (e.g. the embedding key) would
+    # pull filtered LLM keys in as "neighbors", bypassing the filter and producing
+    # spurious unused_keys warnings.
+    if key_prefix_filter is not None:
+        filtered_keys = {
+            k for k in sd_keys
+            if not any(k.startswith(p) for p in key_prefix_filter)
+        }
+    else:
+        filtered_keys = set()
 
     with torch.no_grad():
         for key in sd_keys:
-            if key in used_keys:
-                continue
-
-            # Skip checkpoint keys that don't match any allowed prefix (HF-side names).
-            # Filtered tensors are never read from disk when using LazySafetensorsDict.
-            if key_prefix_filter is not None and not any(
-                key.startswith(p) for p in key_prefix_filter
-            ):
-                filtered_keys.add(key)
+            if key in used_keys or key in filtered_keys:
                 continue
 
             used_keys.add(key)
@@ -565,7 +568,8 @@ def load_state_dict_into_model(
             partial_sd = {key: state_dict[key]}
             # Find neighbors to the key. If the adapter requires a neighbor and
             # this function doesn't find it, it will crash.
-            remaining_keys = sd_keys.difference(used_keys)
+            # Exclude filtered keys so they are never pulled in as neighbors.
+            remaining_keys = sd_keys.difference(used_keys).difference(filtered_keys)
             neighbors = _find_key_neighbors(key, remaining_keys)
             for neighbor in neighbors:
                 partial_sd[neighbor] = state_dict[neighbor]
