@@ -82,23 +82,6 @@ get_model(..., vision_only=True)
 - `vision_tower` (SiglipVision)
 - `multi_modal_projector` (LlavaNextMultiModalProjector)
 
-Text embeddings are accessed in `prepare_inputs_for_generation` directly as
-`self.language_model.base_model.embedding(input_ids)` — the same pattern as
-`Mistral3`. Completing `vision_only` support here would require: a `vision_only` flag in
-`__init__`, a conditional `text_embedding`, guarded `reset_parameters` /
-`post_init` calls, and an extraction of the inline embedding accesses in
-`prepare_inputs_for_generation` into a `_get_text_embeddings` helper.
-
-`LlavaNext` already carries a `VISION_ONLY_HF_PREFIXES` class attribute
-(added alongside `Mistral3`), so `get_model` will pick up the right prefix
-filter automatically once the constructor-side changes are made. The HF prefix
-names happen to be identical to `Mistral3` because both architectures use the
-same top-level key naming convention (`vision_tower.`, `multi_modal_projector.`,
-`language_model.model.embed_tokens.`).
-
-The constructor-side changes are not included in this work; the model is noted
-here as the natural next candidate.
-
 ---
 
 ## Guide for Future Multimodal Models
