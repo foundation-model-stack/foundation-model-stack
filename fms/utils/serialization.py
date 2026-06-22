@@ -552,8 +552,7 @@ def load_state_dict_into_model(
     # spurious unused_keys warnings.
     if key_prefix_filter is not None:
         filtered_keys = {
-            k for k in sd_keys
-            if not any(k.startswith(p) for p in key_prefix_filter)
+            k for k in sd_keys if not any(k.startswith(p) for p in key_prefix_filter)
         }
     else:
         filtered_keys = set()
