@@ -535,6 +535,8 @@ def load_state_dict_into_model(
     adapter_kwargs: dict[str, Any] = {}
     if hasattr(model, "config"):
         adapter_kwargs["model_config"] = model.config
+    if hasattr(model, "_vision_only"):
+        adapter_kwargs["vision_only"] = model._vision_only
 
     # 2. Decide if model needs sharding and how (for now only TP)
     needs_tp_sharding = checkpoint_sharding != "tp" and distributed_strategy == "tp"
@@ -724,9 +726,12 @@ def _load_partial_state_dict(
 
 # Expand QKV and Dense weights to match head_dim override
 def _weight_expansion_for_mismatched_head_dim(
-    input_sd: Mapping[str, Any], model_config
+    input_sd: Mapping[str, Any], model_config=None, **kwargs
 ) -> Mapping[str, Any]:
     new_sd = dict(input_sd)
+
+    if model_config is None:
+        return new_sd
 
     # For multi model this expansion will be applicable only to the language_model
     if hasattr(model_config, "text_config") and isinstance(

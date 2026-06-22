@@ -160,8 +160,8 @@ class Mistral3(nn.Module):
     VISION_ONLY_HF_PREFIXES: tuple = (
         "vision_tower.",
         "multi_modal_projector.",
-        "language_model.model.embed_tokens.",  # HF name
-        "language_model.base_model.embedding.",  # FMS name (if checkpoint is already FMS)
+        "language_model.model.embed_tokens.",  # HF name → remapped to text_embedding by adapter
+        "text_embedding.",  # FMS name when checkpoint is already from a vision_only model
     )
 
     def __init__(
@@ -397,14 +397,18 @@ def _weight_fusion(
 serialization.register_adapter_step(_architecture_name, "weight_fusion", _weight_fusion)
 
 
-def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]:
+def _hf_to_fms_names(
+    input_sd: Mapping[str, Any], vision_only: bool = False, **kwargs
+) -> Mapping[str, Any]:
+    embed_dst = (
+        "text_embedding.weight"
+        if vision_only
+        else "language_model.base_model.embedding.weight"
+    )
     replacements = replacements = [
         # Language Model
         (r"^language_model.lm_head.weight", "language_model.head.weight"),
-        (
-            r"^language_model.model.embed_tokens.weight",
-            "language_model.base_model.embedding.weight",
-        ),
+        (r"^language_model.model.embed_tokens.weight", embed_dst),
         (r"^language_model.model.norm", "language_model.base_model.dec_norm"),
         (r"^language_model.model.layers", "language_model.base_model.layers"),
         (r"self_attn\.k_proj", "attn.in_proj.key"),
