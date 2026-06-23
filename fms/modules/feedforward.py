@@ -133,13 +133,13 @@ class TPFeedForwardBlock(FeedForwardBlock, TPModule):
         )
         FeedForwardBlock.__init__(
             self,
-            emb_dim,
-            hidden_grow_factor / world_size,
-            multiple_of,
-            activation_fn,
-            p_dropout,
-            use_bias,
-            linear_config,
+            emb_dim=emb_dim,
+            hidden_grow_factor=hidden_grow_factor / world_size,
+            multiple_of=multiple_of,
+            activation_fn=activation_fn,
+            p_dropout=p_dropout,
+            use_bias=use_bias,
+            linear_config=linear_config,
         )
         self.setup_tp(rank, group)
 
@@ -299,13 +299,14 @@ class GatedLinearUnit(nn.Module):
     def _initialize_empty_module(self):
         with torch.device("meta"):
             return GatedLinearUnit(
-                self.width,
-                self.grow_factor,
-                self.multiple_of,
-                self.a,
-                self.p_dropout,
-                self.use_bias,
+                emb_dim=self.width,
+                hidden_grow_factor=self.grow_factor,
+                multiple_of=self.multiple_of,
+                activation_fn=self.a,
+                p_dropout=self.p_dropout,
+                use_bias=self.use_bias,
                 fused=False,
+                linear_config=self.linear_config,
             )
 
     def unfuse_weights(self):
@@ -365,14 +366,14 @@ class TPGatedLinearUnit(GatedLinearUnit, TPModule):
         )
         GatedLinearUnit.__init__(
             self,
-            emb_dim,
-            hidden_grow_factor / world_size,
-            multiple_of,
-            activation_fn,
-            p_dropout,
-            use_bias,
-            fused,
-            linear_config,
+            emb_dim=emb_dim,
+            hidden_grow_factor=hidden_grow_factor / world_size,
+            multiple_of=multiple_of,
+            activation_fn=activation_fn,
+            p_dropout=p_dropout,
+            use_bias=use_bias,
+            fused=fused,
+            linear_config=linear_config,
         )
         self.setup_tp(rank, group)
 
@@ -444,13 +445,14 @@ class TPGatedLinearUnit(GatedLinearUnit, TPModule):
 
     def _initialize_empty_module(self):
         return TPGatedLinearUnit(
-            self.width,
-            self.grow_factor * self.world_size,
-            self.multiple_of,
-            self.a,
-            self.p_dropout,
-            self.use_bias,
+            emb_dim=self.width,
+            hidden_grow_factor=self.grow_factor * self.world_size,
+            multiple_of=self.multiple_of,
+            activation_fn=self.a,
+            p_dropout=self.p_dropout,
+            use_bias=self.use_bias,
             fused=False,
+            linear_config=self.linear_config,
         ).to(self.w2.weight.device)
 
 
@@ -633,6 +635,8 @@ class TPConditionalFeedForward(ConditionalFeedForward, TPModule):
         dim: int,
         intermediate_size: int,
         group: Optional[ProcessGroup] = None,
+        use_bias: bool = False,
+        swiglu_limit: Optional[float] = None,
     ):
         assert torch.distributed.is_initialized()
         rank, world_size = distributed.rank_and_world(group)
@@ -642,9 +646,11 @@ class TPConditionalFeedForward(ConditionalFeedForward, TPModule):
         )
         ConditionalFeedForward.__init__(
             self,
-            num_experts,
-            dim,
-            intermediate_size // world_size,
+            num_experts=num_experts,
+            dim=dim,
+            intermediate_size=intermediate_size // world_size,
+            use_bias=use_bias,
+            swiglu_limit=swiglu_limit,
         )
         self.setup_tp(rank, group)
 
@@ -675,6 +681,8 @@ class TPConditionalFeedForward(ConditionalFeedForward, TPModule):
             dim=cff.dim,
             intermediate_size=cff.intermediate_size,
             group=group,
+            use_bias=cff.use_bias,
+            swiglu_limit=cff.swiglu_limit,
         )
 
         return tp_cff
