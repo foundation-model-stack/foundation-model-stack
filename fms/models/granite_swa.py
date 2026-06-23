@@ -344,12 +344,21 @@ class GraniteSWAHeadless(nn.Module):
         if position_ids is None:
             past_seen_tokens = 0
             for layer_cache in past_key_value_states:
-                if layer_cache is not None and layer_cache[0] is not None and layer_cache[0].numel() > 0:
+                if (
+                    layer_cache is not None
+                    and layer_cache[0] is not None
+                    and layer_cache[0].numel() > 0
+                ):
                     past_seen_tokens = max(past_seen_tokens, layer_cache[0].size(2))
             seq_len = x_in.size(1)
             position_ids = (
-                torch.arange(seq_len, dtype=torch.long, device=x_in.device) + past_seen_tokens
-            ).unsqueeze(0).expand(x_in.size(0), -1)
+                (
+                    torch.arange(seq_len, dtype=torch.long, device=x_in.device)
+                    + past_seen_tokens
+                )
+                .unsqueeze(0)
+                .expand(x_in.size(0), -1)
+            )
 
         if x_in.dim() == 2:  # input is not already embedded
             x_in = self.embedding(x_in)
@@ -468,7 +477,7 @@ _20b_config = GraniteSWAConfig(
     nheads=32,
     kvheads=8,
     nlayers=44,
-    hidden_grow_factor=8.0, # 32768/4096
+    hidden_grow_factor=8.0,  # 32768/4096
     max_expected_seq_len=4096,
     logits_scaling=16.0,
     residual_multiplier=0.175,
