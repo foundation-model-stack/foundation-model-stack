@@ -239,6 +239,8 @@ class LlavaNext(nn.Module):
     def unpad_image(self, tensor: torch.Tensor, original_image_size: torch.Tensor):
         if not isinstance(original_image_size, (list, tuple)):
             original_size = original_image_size.tolist()
+        else:
+            original_size = original_image_size
         original_height, original_width = original_size
         current_height, current_width = tensor.shape[1:]
 
@@ -266,6 +268,8 @@ class LlavaNext(nn.Module):
     ):
         if not isinstance(original_image_size, (list, tuple)):
             original_size = original_image_size.tolist()
+        else:
+            original_size = original_image_size
 
         original_height, original_width = original_size
         best_fit = None
