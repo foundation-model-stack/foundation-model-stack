@@ -362,6 +362,7 @@ class Ministral3(Mistral3):  # type: ignore[misc]
         self,
         config: Optional[Ministral3Config] = None,
         distributed_strategy: DistributedStrategy = NoOpStrategy,
+        vision_only: bool = False,
         **kwargs,
     ):
         nn.Module.__init__(self)
@@ -380,11 +381,20 @@ class Ministral3(Mistral3):  # type: ignore[misc]
             self.config.vision_config.fused_weights = False
 
         self.distributed_strategy = distributed_strategy
+        self._vision_only = vision_only
 
-        # Ministral3Text is structurally compatible with Mistral for the language model
-        self.language_model: Ministral3Text = Ministral3Text(  # type: ignore[assignment]
-            self.config.text_config, self.distributed_strategy
-        )
+        if not vision_only:
+            # Ministral3Text is structurally compatible with Mistral for the language model
+            self.language_model: Ministral3Text = Ministral3Text(  # type: ignore[assignment]
+                self.config.text_config, self.distributed_strategy
+            )
+        else:
+            # Only the embedding layer is needed to merge image tokens into
+            # text embedding space; the full LLM decoder stack is not constructed.
+            self.text_embedding = nn.Embedding(
+                self.config.text_config.src_vocab_size,
+                self.config.text_config.emb_dim,
+            )
         # Vision encoder and projector for multimodal features
         self.vision_tower = PixtralVisionModel(
             self.config.vision_config, self.distributed_strategy
@@ -434,14 +444,18 @@ def _weight_fusion(
 serialization.register_adapter_step(_architecture_name, "weight_fusion", _weight_fusion)
 
 
-def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]:
+def _hf_to_fms_names(
+    input_sd: Mapping[str, Any], vision_only: bool = False, **kwargs
+) -> Mapping[str, Any]:
+    embed_dst = (
+        "text_embedding.weight"
+        if vision_only
+        else "language_model.base_model.embedding.weight"
+    )
     replacements = replacements = [
         # Language Model
         (r"^language_model.lm_head.weight", "language_model.head.weight"),
-        (
-            r"^language_model.model.embed_tokens.weight",
-            "language_model.base_model.embedding.weight",
-        ),
+        (r"^language_model.model.embed_tokens.weight", embed_dst),
         (r"^language_model.model.norm", "language_model.base_model.dec_norm"),
         (r"^language_model.model.layers", "language_model.base_model.layers"),
         (r"self_attn\.k_proj", "attn.in_proj.key"),

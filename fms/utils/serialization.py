@@ -502,6 +502,7 @@ def load_state_dict_into_model(
     checkpoint_sharding: Optional[str] = None,
     initial_device: torch.device = torch.device("cpu"),
     rank: int = 0,
+    key_prefix_filter: Optional[tuple] = None,
 ) -> None:
     """
     This function loads state_dict into model in the most efficient way possible,
@@ -534,6 +535,8 @@ def load_state_dict_into_model(
     adapter_kwargs: dict[str, Any] = {}
     if hasattr(model, "config"):
         adapter_kwargs["model_config"] = model.config
+    if hasattr(model, "_vision_only"):
+        adapter_kwargs["vision_only"] = model._vision_only
 
     # 2. Decide if model needs sharding and how (for now only TP)
     needs_tp_sharding = checkpoint_sharding != "tp" and distributed_strategy == "tp"
@@ -543,16 +546,29 @@ def load_state_dict_into_model(
     unused_keys = set()
     sd_keys = set(state_dict.keys())
 
+    # Pre-compute filtered keys so they are excluded from neighbor discovery.
+    # Without this, a key with no numeric segment (e.g. the embedding key) would
+    # pull filtered LLM keys in as "neighbors", bypassing the filter and producing
+    # spurious unused_keys warnings.
+    if key_prefix_filter is not None:
+        filtered_keys = {
+            k for k in sd_keys if not any(k.startswith(p) for p in key_prefix_filter)
+        }
+    else:
+        filtered_keys = set()
+
     with torch.no_grad():
         for key in sd_keys:
-            if key in used_keys:
+            if key in used_keys or key in filtered_keys:
                 continue
+
             used_keys.add(key)
 
             partial_sd = {key: state_dict[key]}
             # Find neighbors to the key. If the adapter requires a neighbor and
             # this function doesn't find it, it will crash.
-            remaining_keys = sd_keys.difference(used_keys)
+            # Exclude filtered keys so they are never pulled in as neighbors.
+            remaining_keys = sd_keys.difference(used_keys).difference(filtered_keys)
             neighbors = _find_key_neighbors(key, remaining_keys)
             for neighbor in neighbors:
                 partial_sd[neighbor] = state_dict[neighbor]
@@ -578,11 +594,18 @@ def load_state_dict_into_model(
             del partial_sd
             del fms_partial_sd
 
-    if unused_keys and rank == 0:
-        logger.warning(
-            f"Keys from checkpoint (adapted to FMS) "
-            f"not copied into model: {unused_keys}"
-        )
+    if rank == 0:
+        if filtered_keys:
+            logger.info(
+                f"key_prefix_filter {list(key_prefix_filter)} is set; "  # type: ignore[arg-type]
+                f"skipped {len(filtered_keys)} checkpoint keys outside allowed prefixes"
+            )
+
+        if unused_keys:
+            logger.warning(
+                f"Keys from checkpoint (adapted to FMS) "
+                f"not copied into model: {unused_keys}"
+            )
 
 
 def _copy_if_present(parameter, tensor_value):
@@ -706,9 +729,12 @@ def _load_partial_state_dict(
 
 # Expand QKV and Dense weights to match head_dim override
 def _weight_expansion_for_mismatched_head_dim(
-    input_sd: Mapping[str, Any], model_config
+    input_sd: Mapping[str, Any], model_config=None, **kwargs
 ) -> Mapping[str, Any]:
     new_sd = dict(input_sd)
+
+    if model_config is None:
+        return new_sd
 
     # For multi model this expansion will be applicable only to the language_model
     if hasattr(model_config, "text_config") and isinstance(

@@ -167,3 +167,124 @@ def test_guess_numlayers():
     model = models._get_model_instance("llama", "micro")
     sd = model.state_dict()
     assert models._guess_num_layers(sd) == 5
+
+
+def _make_ministral3_small():
+    """Return a tiny Ministral3Config suitable for unit tests (no weights needed)."""
+    from fms.models.ministral3 import Ministral3Config, Ministral3TextConfig
+    from fms.models.pixtral_vision import PixtralVisionConfig
+
+    text_cfg = Ministral3TextConfig(
+        src_vocab_size=384,
+        nheads=8,
+        nlayers=2,
+        hidden_grow_factor=3.5,
+        multiple_of=2,
+        emb_dim=16,
+        head_dim=64,
+        max_expected_seq_len=1024,
+        kvheads=2,
+        fused_weights=True,
+        pad_id=0,
+        rope_parameters={
+            "rope_type": "yarn",
+            "rope_theta": 1000.0,
+            "beta_fast": 32.0,
+            "beta_slow": 1.0,
+            "factor": 1.0,
+            "original_max_position_embeddings": 512,
+            "mscale": 1.0,
+            "mscale_all_dim": 1.0,
+            "llama_4_scaling_beta": 0.1,
+        },
+    )
+    vision_cfg = PixtralVisionConfig(
+        hidden_size=16,
+        intermediate_size=64,
+        nlayers=2,
+        nheads=8,
+        nchannels=3,
+        image_size=280,
+        patch_size=14,
+        fused_weights=True,
+    )
+    return Ministral3Config(
+        text_config=text_cfg,
+        vision_config=vision_cfg,
+        spatial_merge_size=2,
+        image_token_index=10,
+        vision_feature_layer=-1,
+    )
+
+
+def test_get_model_vision_only_flag_passed_to_model():
+    """vision_only=True is forwarded through _get_model_instance to the constructor."""
+    from fms.models.llava_next import LlavaNext
+
+    # llava_next has no rope-params config issue and its factory accepts **kwargs cleanly
+    model = models._get_model_instance(
+        "llava_next",
+        "granite_vision_3_2_2b",
+        extra_args={"vision_only": True},
+    )
+    assert isinstance(model, LlavaNext)
+    assert model._vision_only is True
+    assert hasattr(model, "text_embedding")
+    assert not hasattr(model, "language_model")
+
+
+def test_get_model_vision_only_default_false():
+    """vision_only defaults to False — language_model is present without the flag."""
+    from fms.models.llava_next import LlavaNext
+
+    model = models._get_model_instance(
+        "llava_next",
+        "granite_vision_3_2_2b",
+        extra_args={"vision_only": False},
+    )
+    assert isinstance(model, LlavaNext)
+    assert model._vision_only is False
+    assert hasattr(model, "language_model")
+    assert not hasattr(model, "text_embedding")
+
+
+def test_get_model_vision_only_prefix_filter_applied(tmp_path):
+    """get_model passes key_prefix_filter when vision_only=True, skipping LLM keys."""
+    from safetensors.torch import save_file
+    from fms.models.llava_next import LlavaNext
+
+    full_model = models._get_model_instance("llava_next", "granite_vision_3_2_2b")
+
+    # Stamp vision components with 1.0 and language components with 2.0 so we
+    # can assert which were loaded without relying on random-init values.
+    with torch.no_grad():
+        for name, p in full_model.named_parameters():
+            if name.startswith("vision_tower.") or name.startswith(
+                "multi_modal_projector."
+            ):
+                p.fill_(1.0)
+            elif name.startswith("language_model."):
+                p.fill_(2.0)
+
+    save_file(
+        {k: v.contiguous() for k, v in full_model.state_dict().items()},
+        tmp_path / "model.safetensors",
+    )
+
+    vision_model = models.get_model(
+        "llava_next",
+        "granite_vision_3_2_2b",
+        model_path=str(tmp_path),
+        vision_only=True,
+    )
+    assert isinstance(vision_model, LlavaNext)
+    assert vision_model._vision_only is True
+    assert hasattr(vision_model, "text_embedding")
+    assert not hasattr(vision_model, "language_model")
+
+    # Vision tower and projector params should be 1.0 (loaded from checkpoint)
+    for name, p in vision_model.named_parameters():
+        if name.startswith("vision_tower.") or name.startswith(
+            "multi_modal_projector."
+        ):
+            assert p.eq(1.0).all(), f"{name} was not loaded from checkpoint"
