@@ -68,3 +68,28 @@ class TestSiglip(
         # modify nlayers to the new value expected and check equivalence
         config.nlayers = config.nlayers + 1
         assert model.get_config().as_dict() == config.as_dict()
+
+
+def test_siglip_embeddings_ignores_patch_attention_mask_when_navit_disabled():
+    """
+    Regression test: if a caller passes a patch_attention_mask while NaViT bucketing is disabled, we should
+    still use the standard positional embedding path (patch_attention_mask must not silently enable NaViT).
+    """
+    from fms.models.siglip_vision import SiglipVisionEmbeddings
+
+    config = SiglipVisionConfig(
+        hidden_size=8,
+        image_size=32,
+        patch_size=16,
+        use_navit_position_buckets=False,
+    )
+    embeddings = SiglipVisionEmbeddings(config)
+
+    torch.manual_seed(0)
+    pixel_values = torch.randn(1, 3, 32, 32)
+    patch_attention_mask = torch.tensor([[[True, True], [False, False]]])
+
+    out_no_mask = embeddings(pixel_values, patch_attention_mask=None)
+    out_with_mask = embeddings(pixel_values, patch_attention_mask=patch_attention_mask)
+
+    torch.testing.assert_close(out_no_mask, out_with_mask)
