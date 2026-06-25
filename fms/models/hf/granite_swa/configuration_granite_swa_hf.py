@@ -72,7 +72,9 @@ class GraniteSWAConfig(PretrainedConfig):
         self.num_hidden_layers = num_hidden_layers
         self.num_attention_heads = num_attention_heads
         self.num_key_value_heads = (
-            num_key_value_heads if num_key_value_heads is not None else num_attention_heads
+            num_key_value_heads
+            if num_key_value_heads is not None
+            else num_attention_heads
         )
         self.hidden_act = hidden_act
         self.max_position_embeddings = max_position_embeddings
