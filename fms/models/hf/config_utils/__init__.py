@@ -40,6 +40,7 @@ __FMS_MODEL_REGISTRY_MAP: RegistryMap = {
     "RobertaForQuestionAnswering": ("roberta_question_answering", pb.build_roberta_params),
     "GraniteForCausalLM": ("granite", pb.build_granite_params),
     "GraniteMoeHybridForCausalLM": ("granite_moe_hybrid", pb.build_granite_moe_hybrid_params),
+    "GraniteSWAForCausalLM": ("granite_swa", pb.build_granite_swa_params),
     "MistralForCausalLM": ("mistral", pb.build_mistral_params),
     "BambaForCausalLM": ("bamba", pb.build_bamba_params),
     "LlavaNextForConditionalGeneration": ("llava_next", pb.build_llava_next_params),

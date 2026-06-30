@@ -165,6 +165,36 @@ def build_granite_moe_hybrid_params(config: PretrainedConfig) -> dict:
     )
 
 
+def build_granite_swa_params(config: PretrainedConfig) -> dict:
+    """Param builder for mapping Granite 4.5 / GraniteSWAForCausalLM model to FMS."""
+    rope_theta, _ = reverse_rope_param_lookup(config)
+
+    config_params = {
+        "attn_bias": getattr(config, "attention_bias", False),
+        "mlp_bias": getattr(config, "mlp_bias", False),
+        "kvheads": config.num_key_value_heads,
+        "norm_eps": config.rms_norm_eps,
+        "multiple_of": 1,
+        "emb_dim": config.hidden_size,
+        "max_expected_seq_len": config.max_position_embeddings,
+        "residual_multiplier": config.residual_multiplier,
+        "attention_multiplier": config.attention_multiplier,
+        "logits_scaling": config.logits_scaling,
+        "embedding_multiplier": config.embedding_multiplier,
+        "rope_theta": rope_theta,
+        "activation_fn": config.hidden_act,
+        "head_dim": getattr(
+            config, "head_dim", config.hidden_size // config.num_attention_heads
+        ),
+        "pad_id": config.pad_token_id,
+        "window_length": config.sliding_window,
+        "is_swa_layer": [layer == "sliding_attention" for layer in config.layer_types],
+    }
+    return model_params_with_common_opts(
+        config, config_params, inner_dim=config.intermediate_size
+    )
+
+
 def build_mistral_params(config: PretrainedConfig) -> dict:
     """Param builder for mapping MistralForCausalLM to FMS."""
     rope_theta, _ = reverse_rope_param_lookup(config)

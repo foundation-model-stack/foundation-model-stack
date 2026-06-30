@@ -22,6 +22,8 @@ def gather_outputs(
         base_model_output = base_model_output[:, -1, :]
     # this is the base case
     elif last_n_tokens > 0 and base_model_output.shape[1] >= last_n_tokens:
-        base_model_output = base_model_output[:, -last_n_tokens:, :]
+        base_model_output = base_model_output.narrow(
+            1, base_model_output.shape[1] - last_n_tokens, last_n_tokens
+        )
 
     return base_model_output
