@@ -148,7 +148,7 @@ class LlavaNext(nn.Module):
         "language_model.model.embed_tokens.",  # HF name → remapped to text_embedding by adapter
         "text_embedding.",  # FMS name when checkpoint is already from a vision_only model
         "image_newline",  # scalar parameter appended to image features in pack_image_features;
-                          # not under vision_tower/projector prefix but required for correct merging
+        # not under vision_tower/projector prefix but required for correct merging
     )
 
     def __init__(
