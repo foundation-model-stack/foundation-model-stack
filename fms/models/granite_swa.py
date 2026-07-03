@@ -478,9 +478,10 @@ _20b_config = GraniteSWAConfig(
     kvheads=8,
     nlayers=44,
     hidden_grow_factor=8.0,  # 32768/4096
-    max_expected_seq_len=4096,
+    max_expected_seq_len=131072,
     logits_scaling=16.0,
     residual_multiplier=0.175,
+    rope_theta=50000000,
     is_swa_layer=[
         False,
         True,
