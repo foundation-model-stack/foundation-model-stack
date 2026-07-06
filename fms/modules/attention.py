@@ -1147,6 +1147,7 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
             position_ids,
             past_key_value_state,
             use_cache,
+            sliding_window=sliding_window,
             **attn_kwargs,
         )
 
