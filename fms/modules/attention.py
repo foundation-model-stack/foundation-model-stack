@@ -34,7 +34,7 @@ from fms.modules.linear import (
     get_linear_type,
 )
 from fms.modules.positions import PositionEncoder
-from fms.modules.tp import TPModule
+from fms.modules.tp import ShardType, TPModule
 
 __sdpa_previous_flash: bool = torch.backends.cuda.flash_sdp_enabled()
 __sdpa_previous_mem_efficient: bool = torch.backends.cuda.mem_efficient_sdp_enabled()
@@ -1064,6 +1064,22 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
                     # FIX: Per-head norm weights should be fully replicated, not sharded
                     # Each TP rank needs the complete [head_dim] weight to normalize its local heads
                     norm_module.weight.data.copy_(tensor_values.pop(norm_weight_key))
+
+        # sinks: one learnable scalar per attention head. Shard along the head
+        # dimension exactly like the query heads so each rank holds the sinks for
+        # its local heads. Pop before the linear map so it is not flagged unused.
+        if self.has_sinks:
+            sinks_key = next(
+                (k for k in tensor_values if k.split(".")[-1] == "sinks"), None
+            )
+            if sinks_key is not None:
+                self.sharded_copy(
+                    self.sinks,
+                    tensor_values.pop(sinks_key),
+                    dim=0,
+                    max_partition_sizes=[self.pre_tp_nheads],
+                    shard_type=ShardType.SHARD,
+                )
 
         type_sharding_map = get_all_linear_type_to_sharding_maps()
 
