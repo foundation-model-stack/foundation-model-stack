@@ -179,52 +179,17 @@ def paged_attn_compute_with_sinks(
         seq_len = int(seq_lens_lst[i])
         seq_len_q_i = seq_len_q
 
-        keys_lst: list[torch.Tensor] = []
-        values_lst: list[torch.Tensor] = []
-        for j in range(start_pos, seq_len):
-            block_number = int(block_table[j // block_size])
-            block_offset = j % block_size
-
-            k = key_cache[block_number, block_offset, :, :]
-            k = k.reshape(num_kv_heads, head_size)
-            keys_lst.append(k)
-
-            v = value_cache[block_number, block_offset, :, :]
-            values_lst.append(v)
-        keys = torch.stack(keys_lst, dim=0)
-        values = torch.stack(values_lst, dim=0)
-        seq_len_kv = keys.shape[0]
+        # Number of valid keys for this sequence (tokens [start_pos, seq_len)).
+        # We walk these in cache-block-sized chunks with an online (flash)
+        # softmax so the full [seq_len_kv, H, D] K/V tensors are never
+        # materialized -- only one block-sized chunk is resident at a time.
+        seq_len_kv = seq_len - start_pos
 
         # cut the pads for first prefill
         if q.shape[0] > seq_len_kv:
             seq_len_q_i = seq_len_kv
             q = q[-seq_len_kv:]
 
-        if num_kv_heads > 1:
-            # Handle MQA and GQA
-            keys = torch.repeat_interleave(keys, num_query_heads // num_kv_heads, dim=1)
-            values = torch.repeat_interleave(
-                values, num_query_heads // num_kv_heads, dim=1
-            )
-
-        # Generate mask for prefix attention
-        mask = torch.ones((1, seq_len_q_i, seq_len_kv), dtype=torch.bool)
-        mask[:, :, -seq_len_q_i:] = torch.tril(mask[:, :, -seq_len_q_i:])
-        mask = torch.where(mask.logical_not(), -torch.inf, 0.0).to(
-            device=query.device, dtype=query.dtype
-        )
-        # truncate for sliding window kv_cache
-        mask = mask[..., -seq_len_q_i:, -seq_len_kv:]
-        if 0 < sliding_window < seq_len_kv:
-            mask += torch.tril(
-                mask.new_full((seq_len_q_i, seq_len_kv), -torch.inf),
-                diagonal=(seq_len_kv - seq_len_q_i) - sliding_window,
-            )
-
-        # Sink code
-        # https://github.com/openai/gpt-oss/blob/main/gpt_oss/torch/model.py#L153
-        # from gpt-oss open ai implementation
-        S = sinks.reshape(-1, 1, 1).expand(-1, seq_len_q_i, -1)  # type: ignore # noqa: F841
         # NOTE: do NOT reassign `scale` here. This runs inside the per-sequence
         # loop, so `scale = math.sqrt(scale)` would compound across rows (row 1
         # would get sqrt(sqrt(scale)), row 2 the 4th root, ...), corrupting every
@@ -232,20 +197,103 @@ def paged_attn_compute_with_sinks(
         sqrt_scale = math.sqrt(
             scale if scale is not None else 1.0 / math.sqrt(head_size)
         )
-        attn_weights = torch.einsum("qhd,khd->hqk", q * sqrt_scale, keys * sqrt_scale)
-        attn_weights += mask
-        lse = torch.logsumexp(attn_weights, dim=-1)  # (H, Sq)
-        attn_weights = F.softmax(attn_weights, dim=-1, dtype=torch.float32).to(q.dtype)
-        attn = torch.einsum("hqk,khd->qhd", attn_weights, values)  # (Sq, H, D)
+        q_scaled = (q * sqrt_scale).to(torch.float32)  # (Sq, Hq, D)
+
+        # Query row qi (0..Sq-1) corresponds to absolute position
+        #   q_abs = (seq_len - seq_len_q_i) + qi,
+        # and kv index k (0..seq_len_kv-1) to absolute position
+        #   k_abs = start_pos + k.
+        # This reproduces the reference mask exactly (causal tril on the last
+        # seq_len_q_i columns, plus the sliding-window tril) evaluated per chunk.
+        q_abs = (seq_len - seq_len_q_i) + torch.arange(
+            seq_len_q_i, device=query.device
+        )  # (Sq,)
+        expansion = num_query_heads // num_kv_heads
+
+        # Online-softmax accumulators (fp32 for stability), per (Hq, Sq).
+        neg_inf = float("-inf")
+        m = torch.full(
+            (num_query_heads, seq_len_q_i), neg_inf, dtype=torch.float32,
+            device=query.device,
+        )
+        denom = torch.zeros(
+            (num_query_heads, seq_len_q_i), dtype=torch.float32, device=query.device
+        )
+        acc = torch.zeros(
+            (seq_len_q_i, num_query_heads, head_size), dtype=torch.float32,
+            device=query.device,
+        )
+
+        # Iterate the sequence's KV in cache-block-aligned chunks. For chunk
+        # covering absolute positions [j0, j1), all positions share one cache
+        # block, so the gather is a contiguous slice of that block.
+        j = start_pos
+        while j < seq_len:
+            block_number = int(block_table[j // block_size])
+            block_offset = j % block_size
+            chunk = min(block_size - block_offset, seq_len - j)
+
+            # (chunk, kv_heads, D) slice from a single cache block.
+            k_blk = key_cache[block_number, block_offset : block_offset + chunk, :, :]
+            v_blk = value_cache[block_number, block_offset : block_offset + chunk, :, :]
+
+            if expansion != 1:
+                # Handle MQA and GQA: expand kv heads to query heads.
+                k_blk = torch.repeat_interleave(k_blk, expansion, dim=1)
+                v_blk = torch.repeat_interleave(v_blk, expansion, dim=1)
+
+            k_scaled = (k_blk * sqrt_scale).to(torch.float32)  # (chunk, Hq, D)
+            v_blk_f = v_blk.to(torch.float32)  # (chunk, Hq, D)
+
+            scores = torch.einsum(
+                "qhd,khd->hqk", q_scaled, k_scaled
+            )  # (Hq, Sq, chunk)
+
+            # Additive mask for this chunk, built from absolute positions.
+            # j walks absolute positions from start_pos, so this chunk covers
+            # absolute key positions [j, j + chunk).
+            k_abs = torch.arange(j, j + chunk, device=query.device)  # (chunk,)
+            visible = k_abs.unsqueeze(0) <= q_abs.unsqueeze(1)  # causal (Sq, chunk)
+            if 0 < sliding_window < seq_len_kv:
+                visible &= (
+                    q_abs.unsqueeze(1) - k_abs.unsqueeze(0)
+                ) < sliding_window
+            chunk_mask = torch.where(
+                visible, 0.0, neg_inf
+            ).to(torch.float32)  # (Sq, chunk)
+            scores = scores + chunk_mask.unsqueeze(0)  # broadcast over heads
+
+            # Online softmax update.
+            block_max = scores.amax(dim=-1)  # (Hq, Sq)
+            m_new = torch.maximum(m, block_max)
+            # Rows with no visible key yet keep m_new == -inf; guard so the
+            # rescale factor is 0 (not nan) until the first visible key.
+            m_safe = torch.where(torch.isinf(m_new), 0.0, m_new)
+            alpha = torch.exp(m - m_safe)  # (Hq, Sq); exp(-inf-0)=0 on first fill
+            p = torch.exp(scores - m_safe.unsqueeze(-1))  # (Hq, Sq, chunk)
+
+            denom = denom * alpha + p.sum(dim=-1)
+            # acc is (Sq, Hq, D); alpha/p are (Hq, Sq, *) -> align axes.
+            acc = acc * alpha.transpose(0, 1).unsqueeze(-1) + torch.einsum(
+                "hqk,khd->qhd", p, v_blk_f
+            )
+            m = m_new
+
+            j += chunk
+
+        # lse = log(sum exp(logits)) = m + log(denom); matches the reference
+        # torch.logsumexp(attn_weights) used for the sink scale.
+        lse = m + torch.log(denom)  # (Hq, Sq)
+        attn = acc / denom.transpose(0, 1).unsqueeze(-1)  # (Sq, Hq, D)
 
         # Apply sink scaling: sink_scale = sigmoid(lse - sinks)
-        sink_scale = torch.sigmoid((lse - sinks.view(-1, 1)).to(torch.float32)).to(
-            attn.dtype
-        )  # (H, Sq)
-        sink_scale_expanded = sink_scale.transpose(0, 1).unsqueeze(-1)  # (Sq, H, 1)
-        attn = attn * sink_scale_expanded  # (Sq, H, D)
+        sink_scale = torch.sigmoid(
+            (lse - sinks.view(-1, 1)).to(torch.float32)
+        )  # (Hq, Sq)
+        sink_scale_expanded = sink_scale.transpose(0, 1).unsqueeze(-1)  # (Sq, Hq, 1)
+        attn = attn * sink_scale_expanded  # (Sq, Hq, D)
 
-        output[i][-seq_len_q_i:] = attn
+        output[i][-seq_len_q_i:] = attn.to(output.dtype)
     return output
 
 
