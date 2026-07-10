@@ -120,3 +120,91 @@ def test_load_state_dict():
                 rank=0,
                 world_size=4,
             )
+
+
+def test_load_state_dict_into_model_key_prefix_filter():
+    """key_prefix_filter skips non-matching keys and loads matching ones.
+
+    Keys must have a numeric layer index so _find_key_neighbors groups them
+    independently (one key per layer) rather than treating all non-layered keys
+    as a single neighbor group.
+    """
+    import torch.nn as nn
+
+    class _Layer(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.weight = nn.Parameter(torch.zeros(4, 4))
+
+    class _TinyModel(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.vision_layers = nn.ModuleList([_Layer()])
+            self.language_layers = nn.ModuleList([_Layer()])
+
+    arch = "_test_prefix_filter"
+    serialization.register_adapter_step(arch, "noop", lambda sd, **kw: sd)
+    serialization.register_adapter(arch, "fms", ["noop"])
+
+    model = _TinyModel()
+    vision_weight = torch.ones(4, 4)
+    language_weight = torch.full((4, 4), 2.0)
+    state_dict = {
+        "vision_layers.0.weight": vision_weight,
+        "language_layers.0.weight": language_weight,
+    }
+
+    serialization.load_state_dict_into_model(
+        model=model,
+        state_dict=dict(state_dict),
+        architecture=arch,
+        source="fms",
+        key_prefix_filter=("vision_layers.",),
+    )
+
+    # vision layer loaded, language layer still zeros (not loaded)
+    torch.testing.assert_close(model.vision_layers[0].weight, vision_weight)
+    torch.testing.assert_close(
+        model.language_layers[0].weight,
+        torch.zeros(4, 4),
+        msg="language weights should NOT have been loaded",
+    )
+
+
+def test_load_state_dict_into_model_no_filter_loads_all():
+    """Without key_prefix_filter all keys are loaded as normal."""
+    import torch.nn as nn
+
+    class _Layer(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.weight = nn.Parameter(torch.zeros(4, 4))
+
+    class _TinyModel(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.vision_layers = nn.ModuleList([_Layer()])
+            self.language_layers = nn.ModuleList([_Layer()])
+
+    arch = "_test_no_filter"
+    serialization.register_adapter_step(arch, "noop", lambda sd, **kw: sd)
+    serialization.register_adapter(arch, "fms", ["noop"])
+
+    model = _TinyModel()
+    vision_weight = torch.ones(4, 4)
+    language_weight = torch.full((4, 4), 2.0)
+    state_dict = {
+        "vision_layers.0.weight": vision_weight,
+        "language_layers.0.weight": language_weight,
+    }
+
+    serialization.load_state_dict_into_model(
+        model=model,
+        state_dict=dict(state_dict),
+        architecture=arch,
+        source="fms",
+        key_prefix_filter=None,
+    )
+
+    torch.testing.assert_close(model.vision_layers[0].weight, vision_weight)
+    torch.testing.assert_close(model.language_layers[0].weight, language_weight)
