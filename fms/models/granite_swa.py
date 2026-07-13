@@ -215,6 +215,12 @@ class GraniteSWAHeadless(nn.Module):
         else:
             self.config = GraniteSWAConfig()
         self.config = self.config.updated(**kwargs)
+
+        assert len(self.config.is_swa_layer) == self.config.nlayers, (
+            f"is_swa_layer has {len(self.config.is_swa_layer)} entries but nlayers is "
+            f"{self.config.nlayers}; they must match (one bool per layer)."
+        )
+
         self.distributed_strategy = distributed_strategy
 
         self.width = self.config.emb_dim
