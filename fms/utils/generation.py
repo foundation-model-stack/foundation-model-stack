@@ -58,6 +58,13 @@ def pad_input_ids(
             device=input_ids_i.device,
         )
         non_pads = torch.ones(seq_len, dtype=torch.bool, device=input_ids_i.device)
+        # Pad/real segmentation for the attention mask. This must be derived from
+        # token *position*, not `pads.bool()`: the latter is the pad fill value and
+        # is True for any non-zero pad_token_id, which would mark pads as real and
+        # let real queries attend the pad keys.
+        is_pad = torch.zeros(
+            max_len - seq_len, dtype=torch.bool, device=input_ids_i.device
+        )
 
         # Setting this to 0, however if 0 is the eos, we will end up truncating the output if using truncate_after_eos
         # once this workflow works for nested tensor, this can probably be removed
@@ -71,13 +78,13 @@ def pad_input_ids(
         if padding_side == "left":
             padded_input_ids_list.append(torch.cat((pads, input_ids_i)))
             mask_list.append(
-                torch.cat((pads.bool(), non_pads))
+                torch.cat((is_pad, non_pads))
             )  # This will be False for pad tokens
             position_ids_list.append(torch.cat((pos_ids_pads, pos_ids_seq)))
         elif padding_side == "right":
             padded_input_ids_list.append(torch.cat((input_ids_i, pads)))
             mask_list.append(
-                torch.cat((non_pads, pads.bool()))
+                torch.cat((non_pads, is_pad))
             )  # This will be False for pad tokens
             position_ids_list.append(torch.cat((pos_ids_seq, pos_ids_pads)))
         else:

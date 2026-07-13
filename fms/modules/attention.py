@@ -34,7 +34,7 @@ from fms.modules.linear import (
     get_linear_type,
 )
 from fms.modules.positions import PositionEncoder
-from fms.modules.tp import TPModule
+from fms.modules.tp import ShardType, TPModule
 
 __sdpa_previous_flash: bool = torch.backends.cuda.flash_sdp_enabled()
 __sdpa_previous_mem_efficient: bool = torch.backends.cuda.mem_efficient_sdp_enabled()
@@ -352,7 +352,12 @@ def _math_attention_with_sinks_op(
         )
 
     if 0 < sliding_window < kv_tokens:
-        mask += torch.tril(
+        # Out-of-place: a supplied `mask` may alias the caller's tensor (mask.to(same
+        # dtype) and the full-width slice above both share storage). The paged path
+        # reuses one mask tensor across all layers, so an in-place `+=` here would
+        # accumulate the sliding-window tril onto that shared mask, corrupting every
+        # later layer (double-masking at clipped query positions).
+        mask = mask + torch.tril(
             mask.new_full((n_tokens, kv_tokens), -torch.inf),
             diagonal=(kv_tokens - n_tokens) - sliding_window,
         )
@@ -794,6 +799,7 @@ class MultiHeadAttention(nn.Module):
             norm_eps=self.norm_eps,
             head_dim=self.head_dim,
         )
+
         if self.has_sinks:
             self.sinks = nn.Parameter(torch.empty(self.nheads))
 
@@ -1059,6 +1065,22 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
                     # Each TP rank needs the complete [head_dim] weight to normalize its local heads
                     norm_module.weight.data.copy_(tensor_values.pop(norm_weight_key))
 
+        # sinks: one learnable scalar per attention head. Shard along the head
+        # dimension exactly like the query heads so each rank holds the sinks for
+        # its local heads. Pop before the linear map so it is not flagged unused.
+        if self.has_sinks:
+            sinks_key = next(
+                (k for k in tensor_values if k.split(".")[-1] == "sinks"), None
+            )
+            if sinks_key is not None:
+                self.sharded_copy(
+                    self.sinks,
+                    tensor_values.pop(sinks_key),
+                    dim=0,
+                    max_partition_sizes=[self.pre_tp_nheads],
+                    shard_type=ShardType.SHARD,
+                )
+
         type_sharding_map = get_all_linear_type_to_sharding_maps()
 
         # TODO: Remove assumption that all layers in module share quantization
@@ -1141,6 +1163,7 @@ class TPMultiHeadAttention(MultiHeadAttention, TPModule):
             position_ids,
             past_key_value_state,
             use_cache,
+            sliding_window=sliding_window,
             **attn_kwargs,
         )
 
