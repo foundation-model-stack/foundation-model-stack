@@ -596,7 +596,7 @@ def _move_to_real_device(
     param: torch.Tensor,
     real_device: torch.device,
     dtype: Optional[torch.dtype] = None,
-    skip_layout: bool = False,
+    stl: Optional[Any] = None,
 ) -> torch.Tensor:
     if param.device == torch.device("meta"):
         is_parameter = isinstance(param, torch.nn.Parameter)
@@ -605,14 +605,9 @@ def _move_to_real_device(
             # Allocate with spice
             # Params are only 2D weights for matmuls or 1D weights for layernorm.
             # We want all 2D weights to be stored row-major instead of default col-major,
-            # except weights flagged as `skip_layout` (e.g. token embedding, used as a
-            # gather rather than a matmul — keep the default layout).
-            new_size = list(param.shape)
-            new_size.reverse()
-            if param.dim() > 1 and not skip_layout:
+            # except weights with a caller-supplied stl.
+            if stl is None and param.dim() > 1:
                 stl = SpyreTensorLayout(param.shape, param.stride(), dtype, [1, 0])
-            else:
-                stl = None
             # logger.info(f"{param.shape=}, {param.stride()=} {stl}")
             param = torch.empty(
                 param.shape,
@@ -631,14 +626,9 @@ def _move_to_real_device(
     return param
 
 
-# FMS parameter names whose weights should keep the default (non-STL) Spyre
-# layout. The token embedding is used as a gather, not a matmul, so it
-# should not get a row-major SpyreTensorLayout.
-_SKIP_LAYOUT_PARAM_NAMES = frozenset({"base_model.embedding.weight"})
-
-
-def _should_skip_layout(param_name: str) -> bool:
-    return param_name in _SKIP_LAYOUT_PARAM_NAMES
+# The token embedding is used as a gather (not a matmul) and requires a
+# specific tiled layout rather than the default row-major STL.
+_EMBEDDING_PARAM_NAME = "base_model.embedding.weight"
 
 
 # ``BLOCK_SIZE``: Spyre stick size at fp16 (128 bytes / 2 bytes per element).
@@ -794,11 +784,21 @@ def _load_partial_state_dict(
 
                 # cast module parameter to non-meta device
                 if param.device == torch.device("meta"):
+                    _dtype = tensor_value.dtype if dtype is None else dtype
+                    if key == _EMBEDDING_PARAM_NAME and device.type == "spyre":
+                        from torch_spyre._C import SpyreTensorLayout
+                        from torch_spyre._C import get_device_dtype
+
+                        stl = SpyreTensorLayout(
+                            [49159, 64, 64], [4096, 64, 1], get_device_dtype(_dtype)
+                        )
+                    else:
+                        stl = None
                     param = _move_to_real_device(
                         param=param,
                         real_device=device,
-                        dtype=tensor_value.dtype if dtype is None else dtype,
-                        skip_layout=_should_skip_layout(key),
+                        dtype=_dtype,
+                        stl=stl,
                     )
                     setattr(target_module, key_steps[-1], param)
                     param = getattr(target_module, key_steps[-1])
