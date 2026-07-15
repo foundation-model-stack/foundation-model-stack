@@ -59,6 +59,21 @@ if Version(tf_version).major < 5:
         HFAdaptedMinistral3Config, HFAdaptedMinistral3ForCausalLM
     )
 
+# Register a granite_swa config so transformers AutoConfig can parse a
+# granite_swa checkpoint's config.json without a granite_swa implementation in
+# transformers itself. Loading still happens via FMS's hf_pretrained path
+# (config_utils param builder -> native GraniteSWA), so no AutoModel/modeling
+# wrapper is needed here. Registered unconditionally (transformers main has no
+# granite_swa); guard the double-registration error so we stay forward
+# compatible if a future transformers ships it natively.
+from transformers import AutoConfig as _AutoConfig
+from fms.models.hf.granite_swa import GraniteSWAConfig
+
+try:
+    _AutoConfig.register("granite_swa", GraniteSWAConfig)
+except ValueError:
+    pass
+
 """
 mapping from an FMS model to its equivalent HF-Adapted model
 """
