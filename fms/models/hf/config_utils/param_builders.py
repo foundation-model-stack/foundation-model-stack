@@ -19,11 +19,16 @@ def reverse_rope_param_lookup(config: PretrainedConfig):
     """This function allows fetching the rope_theta from the config
     allowing compatibility with transformers 5.0 changes
     """
-    if hasattr(config, "rope_parameters"):
-        rope_theta = config.rope_parameters["rope_theta"]
-        rope_scaling = getattr(config.rope_parameters, "rope_scaling", None)
+    # transformers 5.0 folds rope config into a `rope_parameters` dict, but a
+    # config may declare the attribute yet leave it None (e.g. a config.json
+    # written for pre-5.0 transformers that only sets `rope_theta`). Guard on
+    # the value being non-None, not just the attribute existing.
+    rope_parameters = getattr(config, "rope_parameters", None)
+    if rope_parameters is not None:
+        rope_theta = rope_parameters["rope_theta"]
+        rope_scaling = rope_parameters.get("rope_scaling", None)
     else:
-        rope_theta = config.rope_theta
+        rope_theta = getattr(config, "rope_theta", None)
         rope_scaling = getattr(config, "rope_scaling", None)
 
     return rope_theta, rope_scaling
