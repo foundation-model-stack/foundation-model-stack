@@ -171,7 +171,7 @@ def build_granite_moe_hybrid_params(config: PretrainedConfig) -> dict:
 
 
 def build_granite_swa_params(config: PretrainedConfig) -> dict:
-    """Param builder for mapping Granite 4.5 / GraniteSWAForCausalLM model to FMS."""
+    """Param builder for mapping Granite 4.1 / GraniteSWAForCausalLM model to FMS."""
     rope_theta, _ = reverse_rope_param_lookup(config)
 
     config_params = {

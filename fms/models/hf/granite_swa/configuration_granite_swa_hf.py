@@ -5,7 +5,7 @@ This is a self-contained ``PretrainedConfig`` subclass that lets
 "granite_swa"`` without requiring a ``granite_swa`` implementation in
 transformers itself.
 
-It mirrors the upstream GraniteSWA HF config (Granite 4.5 / sliding-window
+It mirrors the upstream GraniteSWA HF config (Granite 4.1 / sliding-window
 attention with learnable attention sinks). FMS does *not* consume this class
 directly to build the model: the generic ``hf_pretrained`` loading path reads
 the raw config attributes via
