@@ -592,25 +592,72 @@ def _copy_if_present(parameter, tensor_value):
     parameter.copy_(tensor_value, non_blocking=True)
 
 
+# ``BLOCK_SIZE``: Spyre stick size at fp16 (128 bytes / 2 bytes per element).
+_SPYRE_BLOCK_SIZE = 64
+
+
+def _indirect_access_layout(param: torch.Tensor, dtype: torch.dtype):
+    """STL for a gather table [rows, D] indexed along its leading dim.
+
+    A gather (embedding lookup) selects whole rows of the table, so the indexed
+    (leading) dim must be the OUTERMOST device dim rather than being buried
+    under the default tiling. Lay the table out as device dims
+    ``[rows, D // STICK, STICK]`` -- rows outermost, stick left on the trailing
+    dim. See ``test-spyre-scripts/test_indirect.py`` for the reference pattern.
+
+    Falls back to the default layout (``None``) when the trailing dim is not a
+    whole number of sticks, since the explicit constructor requires it.
+    """
+    from torch.spyre import get_device_dtype
+    from torch_spyre._C import SpyreTensorLayout
+
+    rows, d = param.shape
+    if d % _SPYRE_BLOCK_SIZE != 0:
+        logger.warning(
+            "Embedding dim %d is not a multiple of the Spyre stick size %d; "
+            "falling back to the default layout, which is not gather-optimal.",
+            d,
+            _SPYRE_BLOCK_SIZE,
+        )
+        return None
+    # Explicit device-dim constructor (device_size, stride_map, device_dtype):
+    # the row-count formula cannot place the leading dim outermost without
+    # moving the stick onto it, so build the device dims directly. This mirrors
+    # test_indirect.py, which uses the device dtype (DataFormats), not the host
+    # torch.dtype.
+    return SpyreTensorLayout(
+        [rows, d // _SPYRE_BLOCK_SIZE, _SPYRE_BLOCK_SIZE],
+        [d, _SPYRE_BLOCK_SIZE, 1],
+        get_device_dtype(dtype),
+    )
+
+
 def _move_to_real_device(
     param: torch.Tensor,
     real_device: torch.device,
     dtype: Optional[torch.dtype] = None,
-    skip_layout: bool = False,
+    layout_kind: str = "matmul",
 ) -> torch.Tensor:
     if param.device == torch.device("meta"):
         is_parameter = isinstance(param, torch.nn.Parameter)
         if real_device.type == "spyre":
             from torch_spyre._C import SpyreTensorLayout
-            # Allocate with spice
-            # Params are only 2D weights for matmuls or 1D weights for layernorm.
-            # We want all 2D weights to be stored row-major instead of default col-major,
-            # except weights flagged as `skip_layout` (e.g. token embedding, used as a
-            # gather rather than a matmul — keep the default layout).
+            # Allocate with spice. Params are 2D weights for matmuls, 1D weights
+            # for layernorm, or the 2D token embedding table (a gather source).
+            # Layout is selected by `layout_kind`:
+            #   "matmul"   -> row-major STL, so 2D weights are stored row-major
+            #                 instead of the default col-major.
+            #   "indirect" -> indexed (leading) dim outermost with the stick on
+            #                 the trailing dim, which is what a gather along the
+            #                 leading dim needs (e.g. the token embedding). See
+            #                 test-spyre-scripts/test_indirect.py.
+            #   "none"     -> default Spyre layout (no STL).
             new_size = list(param.shape)
             new_size.reverse()
-            if param.dim() > 1 and not skip_layout:
+            if param.dim() > 1 and layout_kind == "matmul":
                 stl = SpyreTensorLayout(param.shape, param.stride(), dtype, [1, 0])
+            elif param.dim() > 1 and layout_kind == "indirect":
+                stl = _indirect_access_layout(param, dtype)
             else:
                 stl = None
             # logger.info(f"{param.shape=}, {param.stride()=} {stl}")
@@ -631,18 +678,18 @@ def _move_to_real_device(
     return param
 
 
-# FMS parameter names whose weights should keep the default (non-STL) Spyre
-# layout. The token embedding is used as a gather, not a matmul, so it
-# should not get a row-major SpyreTensorLayout.
-_SKIP_LAYOUT_PARAM_NAMES = frozenset({"base_model.embedding.weight"})
+# FMS parameter names that are gather tables (indexed along their leading dim)
+# rather than matmul operands. These get the indirect-access layout instead of
+# the row-major matmul STL. The token embedding is used as a gather, not a
+# matmul, so it needs its vocab dim outermost on device.
+_INDIRECT_ACCESS_PARAM_NAMES = frozenset({"base_model.embedding.weight"})
 
 
-def _should_skip_layout(param_name: str) -> bool:
-    return param_name in _SKIP_LAYOUT_PARAM_NAMES
-
-
-# ``BLOCK_SIZE``: Spyre stick size at fp16 (128 bytes / 2 bytes per element).
-_SPYRE_BLOCK_SIZE = 64
+def _layout_kind_for(param_name: str) -> str:
+    """Select the Spyre device layout for a parameter by its FMS name."""
+    if param_name in _INDIRECT_ACCESS_PARAM_NAMES:
+        return "indirect"
+    return "matmul"
 
 
 def _padded_vocab(vocab: int, block_size: int = _SPYRE_BLOCK_SIZE) -> int:
@@ -798,7 +845,7 @@ def _load_partial_state_dict(
                         param=param,
                         real_device=device,
                         dtype=tensor_value.dtype if dtype is None else dtype,
-                        skip_layout=_should_skip_layout(key),
+                        layout_kind=_layout_kind_for(key),
                     )
                     setattr(target_module, key_steps[-1], param)
                     param = getattr(target_module, key_steps[-1])
