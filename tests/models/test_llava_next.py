@@ -106,6 +106,8 @@ class TestLlavaNext(
     ModelCompileTestSuite,
     LlavaNextFixtures,
 ):
+    _supports_generation = True
+    
     @staticmethod
     def get_logits(f_out):
         return f_out[0]
