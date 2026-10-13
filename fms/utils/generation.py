@@ -179,6 +179,34 @@ def _make_cache_dynamic(
     return past_key_value_states
 
 
+def _top_p_filter(logits: torch.Tensor, top_p: float) -> torch.Tensor:
+    """
+    Nucleus (top-p) filtering: keep the smallest set of highest-probability
+    tokens whose cumulative probability exceeds top_p, and mask the rest.
+
+    Args:
+        logits: logits of shape (batch x vocab)
+        top_p: cumulative probability threshold. 1.0 disables filtering.
+
+    Returns:
+        logits with tokens outside the nucleus set to -inf
+    """
+    if top_p >= 1.0:
+        return logits
+
+    sorted_logits, sorted_idx = torch.sort(logits, descending=True, dim=-1)
+    sorted_probs = F.softmax(sorted_logits, dim=-1)
+    cumulative_probs = torch.cumsum(sorted_probs, dim=-1)
+
+    # remove a token if the probability mass *before* it already exceeds top_p;
+    # this always keeps the most likely token and the one that crosses top_p
+    sorted_remove = (cumulative_probs - sorted_probs) > top_p
+
+    # map the mask from sorted order back to the original token order
+    remove = torch.zeros_like(sorted_remove).scatter(1, sorted_idx, sorted_remove)
+    return logits.masked_fill(remove, float("-inf"))
+
+
 def generate(
     model: Union[Callable, torch.nn.Module],
     input_ids: torch.Tensor,
@@ -186,6 +214,7 @@ def generate(
     max_new_tokens: int = 256,
     temperature: float = 1.0,
     top_k: int = 10,
+    top_p: float = 1.0,
     do_sample: bool = True,
     num_beams: int = 1,
     use_cache: bool = False,
@@ -222,6 +251,7 @@ def generate(
         max_new_tokens: max tokens to generate
         temperature: temperature of softmax when sampling
         top_k: only search among top k tokens
+        top_p: only sample among the smallest set of tokens whose cumulative probability exceeds top_p. 1.0 disables.
         do_sample: multinomial sampling. False for greedy.
         num_beams: TODO: support beam search
         use_cache: requires that the model accept use_cache and
@@ -322,6 +352,7 @@ def generate(
                 v, _ = torch.topk(logits, top_k)
                 logits[logits < v[:, [-1]]] = -float("inf")
 
+            logits = _top_p_filter(logits, top_p)
             probs = F.softmax(logits, dim=-1)
             next_val = torch.multinomial(probs, num_samples=1)
         else:
