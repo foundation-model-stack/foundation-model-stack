@@ -195,7 +195,7 @@ def _top_p_filter(logits: torch.Tensor, top_p: float) -> torch.Tensor:
         return logits
 
     sorted_logits, sorted_idx = torch.sort(logits, descending=True, dim=-1)
-    sorted_probs = F.softmax(sorted_logits, dim=-1)
+    sorted_probs = F.softmax(sorted_logits.float(), dim=-1)
     cumulative_probs = torch.cumsum(sorted_probs, dim=-1)
 
     # remove a token if the probability mass *before* it already exceeds top_p;
@@ -203,7 +203,7 @@ def _top_p_filter(logits: torch.Tensor, top_p: float) -> torch.Tensor:
     sorted_remove = (cumulative_probs - sorted_probs) > top_p
 
     # map the mask from sorted order back to the original token order
-    remove = torch.zeros_like(sorted_remove).scatter(1, sorted_idx, sorted_remove)
+    remove = sorted_remove.scatter(-1, sorted_idx, sorted_remove)
     return logits.masked_fill(remove, float("-inf"))
 
 
@@ -251,7 +251,8 @@ def generate(
         max_new_tokens: max tokens to generate
         temperature: temperature of softmax when sampling
         top_k: only search among top k tokens
-        top_p: only sample among the smallest set of tokens whose cumulative probability exceeds top_p. 1.0 disables.
+        top_p: only sample among the smallest set of tokens whose cumulative
+            probability exceeds top_p. Must be in [0, 1]; 1.0 disables.
         do_sample: multinomial sampling. False for greedy.
         num_beams: TODO: support beam search
         use_cache: requires that the model accept use_cache and
@@ -280,6 +281,9 @@ def generate(
     """
     if num_beams != 1:
         raise NotImplementedError("generate() does yet not support beam search")
+
+    if not 0.0 <= top_p <= 1.0:
+        raise ValueError(f"top_p must be between 0 and 1, got {top_p}")
 
     kwargs: MutableMapping[str, Any] = dict()
     if extra_kwargs is not None:

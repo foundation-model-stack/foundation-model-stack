@@ -1,3 +1,4 @@
+import pytest
 import torch
 import torch.nn.functional as F
 from torch import nn
@@ -370,3 +371,10 @@ def test_generate_top_p():
     # sanity check: with top_p disabled, the tail tokens do show up
     result = generate(FixedDistModelMock(), ids, top_p=1.0, **kwargs)
     assert {2, 3} <= set(result[0, 1:].tolist())
+
+
+def test_generate_top_p_invalid():
+    ids = torch.zeros(1, 1, dtype=torch.long)
+    for bad in (-0.1, 1.5):
+        with pytest.raises(ValueError):
+            generate(FixedDistModelMock(), ids, top_p=bad)
