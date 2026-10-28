@@ -1,9 +1,11 @@
+import pytest
 import torch
 import torch.nn.functional as F
 from torch import nn
 
 from fms.models import get_model
 from fms.utils.generation import (
+    _top_p_filter,
     generate,
     pad_input_ids,
     trim_prefix,
@@ -321,3 +323,58 @@ def test_pad_input_ids_nonzero_pad_token_id():
         # (NaN guard); at minimum each pad row attends itself.
         for q in range(0, st):
             assert mask[b, q, q] == 0, f"row {b} pad query {q} lost self-attention"
+
+
+def test_top_p_filter_keeps_smallest_nucleus():
+    # probs = [0.5, 0.3, 0.15, 0.05] -> cumulative [0.5, 0.8, 0.95, 1.0]
+    # with top_p=0.7, token 1 (0.5) isn't enough, token 2 crosses 0.7: keep 2 tokens
+    probs = torch.tensor([[0.5, 0.3, 0.15, 0.05]])
+    out = _top_p_filter(probs.log(), top_p=0.7)
+    assert torch.isfinite(out).tolist() == [[True, True, False, False]]
+
+
+def test_top_p_filter_unsorted_input():
+    # same distribution, shuffled: the mask must follow the original positions
+    probs = torch.tensor([[0.05, 0.5, 0.15, 0.3]])
+    out = _top_p_filter(probs.log(), top_p=0.7)
+    assert torch.isfinite(out).tolist() == [[False, True, False, True]]
+
+
+def test_top_p_filter_always_keeps_best_token():
+    probs = torch.tensor([[0.9, 0.05, 0.05]])
+    out = _top_p_filter(probs.log(), top_p=0.1)
+    assert torch.isfinite(out).tolist() == [[True, False, False]]
+
+
+def test_top_p_filter_one_is_noop():
+    logits = torch.randn(2, 10)
+    assert torch.equal(_top_p_filter(logits.clone(), top_p=1.0), logits)
+
+
+class FixedDistModelMock(nn.Module):
+    """Returns the same next-token distribution [0.5, 0.3, 0.15, 0.05] everywhere."""
+
+    def forward(self, inputs, **kwargs):
+        logits = torch.tensor([0.5, 0.3, 0.15, 0.05]).log()
+        return logits.expand(inputs.shape[0], inputs.shape[1], 4).clone()
+
+
+def test_generate_top_p():
+    torch.manual_seed(0)
+    ids = torch.zeros(1, 1, dtype=torch.long)
+    kwargs = dict(max_new_tokens=200, do_sample=True, top_k=0)
+
+    # nucleus for top_p=0.7 is tokens {0, 1}; 2 and 3 must never be sampled
+    result = generate(FixedDistModelMock(), ids, top_p=0.7, **kwargs)
+    assert set(result[0, 1:].tolist()) == {0, 1}
+
+    # sanity check: with top_p disabled, the tail tokens do show up
+    result = generate(FixedDistModelMock(), ids, top_p=1.0, **kwargs)
+    assert {2, 3} <= set(result[0, 1:].tolist())
+
+
+def test_generate_top_p_invalid():
+    ids = torch.zeros(1, 1, dtype=torch.long)
+    for bad in (-0.1, 1.5):
+        with pytest.raises(ValueError):
+            generate(FixedDistModelMock(), ids, top_p=bad)
